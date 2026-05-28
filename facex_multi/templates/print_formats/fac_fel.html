@@ -1,0 +1,344 @@
+<script>
+    document.title = "{{ doc.name }}";
+</script>
+{# ============================================================= #}
+{# RESOLUCIÓN DE CONTEXTO FEL                                    #}
+{# ============================================================= #}
+
+{% set si          = doc %}
+{% set bfel_raw    = si.bfel_status or '' %}
+{% set bfel_code   = bfel_raw[:2] %}
+{% set is_certified = bfel_code == '02' %}
+{% set is_no_enviar = bfel_code == '00' %}
+{% set is_draft     = si.docstatus == 0 %}
+{% set is_cancelled = si.docstatus == 2 %}
+
+{% set serie_prefix = (si.name or '')[:4] %}
+
+{% set bdm_list = frappe.get_all(
+    "BFEL Document Map",
+    filters={"type_docdte": serie_prefix},
+    fields=["name","fel_document_type","bfel_settings","notes"],
+    limit=1
+) %}
+
+{# ============================================================= #}
+{# GUARDIA: sin configuración FEL                                #}
+{# ============================================================= #}
+
+{% if not bdm_list %}
+
+<div class="fel-error">
+  ESTE DOCUMENTO NO TIENE CONFIGURACIÓN FEL
+  <small>Serie buscada: {{ serie_prefix }}</small>
+</div>
+
+{# ============================================================= #}
+{# GUARDIA: estado no reconocido (ej. 01 Enviar / 03 No Proc.)   #}
+{# ============================================================= #}
+
+{% elif not is_certified and not is_no_enviar and not is_cancelled %}
+
+<div class="fel-error">
+  DOCUMENTO FEL NO CERTIFICADO
+  <small>Estado actual: {{ bfel_raw or '(sin estado)' }}</small>
+</div>
+
+{% else %}
+
+{% set bdm = frappe.get_doc("BFEL Document Map", bdm_list[0].name) %}
+{% set bs_list = frappe.get_all("BFEL Settings", filters={"company": doc.company, "enabled": 1}, limit=1) %}
+{% if not bs_list %}
+  {% set bs_list = frappe.get_all("BFEL Settings", filters={"enabled": 1}, limit=1) %}
+{% endif %}
+{% if bs_list %}
+  {% set bs = frappe.get_doc("BFEL Settings", bs_list[0].name) %}
+{% else %}
+  {% set bs = frappe.get_doc("BFEL Settings", bdm.bfel_settings) %}
+{% endif %}
+
+{# ============================================================= #}
+{# WATERMARKS                                                     #}
+{# ============================================================= #}
+
+{% if is_cancelled %}
+<div class="watermark wm-cancelada">CANCELADA</div>
+{% endif %}
+
+{% if is_cancelled and si.bfel_documento_anulado == 1 %}
+<div class="watermark wm-anulada-fel">ANULADA FEL</div>
+{% endif %}
+
+{% if is_no_enviar and is_draft %}
+<div class="watermark wm-borrador">EN BORRADOR</div>
+{% endif %}
+
+{# ============================================================= #}
+{# HEADER                                                         #}
+{# ============================================================= #}
+
+<div class="header">
+
+  <div class="header-left">
+
+    {% set lh_name = frappe.db.get_value("Company", bs.company, "default_letter_head") %}
+    {% if lh_name %}
+      {% set lh = frappe.get_doc("Letter Head", lh_name) %}
+      {% if lh.image %}
+        <img src="{{ lh.image }}" class="logo" alt="Logo">
+      {% endif %}
+    {% endif %}
+
+    <div class="company-info">
+      <div class="company-name">{{ bs.company }}</div>
+      <div>NIT: {{ bs.company_nit }}</div>
+      <div>{{ frappe.db.get_value("Company", bs.company, "company_name") or '' }}</div>
+      <div>{{ frappe.db.get_value("Company", bs.company, "email") or '' }}</div>
+      <div>{{ frappe.db.get_value("Company", bs.company, "phone_no") or '' }}</div>
+    </div>
+
+  </div>
+
+  <div class="header-right">
+
+    <div class="fel-title">{{ bdm.fel_document_type | upper }}</div>
+    <div class="fel-subtitle">DOCUMENTO TRIBUTARIO ELECTRÓNICO</div>
+
+    {% if is_certified %}
+      <div class="fel-badge">FEL CERTIFICADA</div>
+    {% elif is_no_enviar and is_draft %}
+      <div class="fel-badge estado-draft">EN BORRADOR</div>
+    {% elif is_no_enviar %}
+      <div class="fel-badge estado-interno">DOCUMENTO INTERNO</div>
+    {% endif %}
+
+    <div class="invoice-ref">REF: {{ si.name }}</div>
+
+  </div>
+
+</div>
+
+<div class="divider"></div>
+
+{# ============================================================= #}
+{# DATOS DEL CLIENTE                                              #}
+{# ============================================================= #}
+
+<div class="section-title">Datos del Cliente</div>
+
+<div class="client-grid">
+
+  <div class="info-box">
+    <div class="label">Cliente</div>
+    <div class="value">{{ si.bfel_nombre or si.customer_name }}</div>
+  </div>
+
+  <div class="info-box">
+    <div class="label">NIT / CUI</div>
+    <div class="value">{{ si.bfel_nit or si.bfel_cui or 'CF' }}</div>
+  </div>
+
+  <div class="info-box full">
+    <div class="label">Dirección</div>
+    <div class="value">{{ si.bfel_direccion or '' }}</div>
+  </div>
+
+</div>
+
+{# ============================================================= #}
+{# DATOS DE CERTIFICACIÓN FEL - solo si está certificada         #}
+{# ============================================================= #}
+
+{% if is_certified %}
+
+<div class="section-title">Datos de Certificación FEL</div>
+
+<div class="doc-grid">
+
+  <div class="doc-item">
+    <div class="doc-label">Fecha Certificación</div>
+    <div class="doc-value">{{ si.bfel_fechacertificacion or '' }}</div>
+  </div>
+
+  <div class="doc-item">
+    <div class="doc-label">Moneda</div>
+    <div class="doc-value">{{ si.currency }}</div>
+  </div>
+
+  <div class="doc-item">
+    <div class="doc-label">Serie DTE</div>
+    <div class="doc-value">{{ si.bfel_docto_serie or '' }}</div>
+  </div>
+
+  <div class="doc-item">
+    <div class="doc-label">Número DTE</div>
+    <div class="doc-value">{{ si.bfel_docto_no or '' }}</div>
+  </div>
+
+  <div class="doc-item uuid-item">
+    <div class="doc-label">UUID de Autorización SAT</div>
+    <div class="doc-value uuid-value">{{ si.bfel_uuid or '' }}</div>
+  </div>
+
+</div>
+
+{% endif %}
+
+{# ============================================================= #}
+{# DETALLE DE ITEMS                                               #}
+{# ============================================================= #}
+
+<div class="section-title">Detalle {{ bdm.fel_document_type }}</div>
+
+<table class="items-table">
+  <thead>
+    <tr>
+      <th class="qty-col">Cantidad</th>
+      <th>Descripción</th>
+      <th class="money-col">Precio Unitario</th>
+      <th class="money-col">Subtotal</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% set ns = namespace(total=0) %}
+    {% for sii in si.items %}
+      {% set ns.total = ns.total + (sii.amount or 0) %}
+      <tr>
+        <td class="qty-col">{{ sii.qty }}</td>
+        <td>
+          <div class="item-name">{{ sii.item_name }}</div>
+          {% if sii.description and sii.description != sii.item_name %}
+          <div class="item-description">{{ sii.description }}</div>
+          {% endif %}
+        </td>
+        <td class="money-col">{{ frappe.utils.fmt_money(sii.rate, currency=si.currency) }}</td>
+        <td class="money-col">{{ frappe.utils.fmt_money(sii.amount, currency=si.currency) }}</td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{# ============================================================= #}
+{# TOTALES                                                        #}
+{# ============================================================= #}
+
+<div class="total-wrapper">
+  <div class="total-box">
+    <div class="total-label">TOTAL {{ si.currency }}</div>
+    <div class="total-value">{{ frappe.utils.fmt_money(ns.total, currency=si.currency) }}</div>
+  </div>
+</div>
+
+<div class="letters-box">
+  <span class="letters-label">Total en Letras:</span>
+  <span class="letters-value">{{ frappe.utils.money_in_words(ns.total, si.currency) }}</span>
+</div>
+
+{# ============================================================= #}
+{# SECCIÓN QR - solo documentos certificados                     #}
+{# SAT Guatemala: felpub.c.sat.gob.gt/verificador-web/...        #}
+{# ============================================================= #}
+
+{% if is_certified %}
+
+{% set sat_emisor   = (bs.company_nit or '') | replace('-', '') %}
+{% set sat_receptor = (si.bfel_nit or 'CF') | replace('-', '') %}
+{% set sat_monto    = "%.6f"|format(si.grand_total) %}
+{% set sat_url      = 'https://felpub.c.sat.gob.gt/verificador-web/publico/vistas/verificacionDte.jsf?tipo=autorizacion&numero=' + (si.bfel_uuid or '') + '&emisor=' + sat_emisor + '&receptor=' + sat_receptor + '&monto=' + sat_monto %}
+{% set qr_src       = get_qr_base64(sat_url) %}
+
+<div class="qr-section">
+
+  <div class="qr-left">
+    <img
+      src="{{ qr_src }}"
+      class="qr-img"
+      alt="QR Verificación SAT"
+    >
+    <div class="qr-label">Verificar en SAT</div>
+    <div class="qr-sat-domain">felpub.c.sat.gob.gt</div>
+  </div>
+
+  <div class="qr-right">
+
+    <div class="qr-right-title">Documento Certificado Electrónicamente</div>
+
+    <div class="qr-row">
+      <span class="qr-row-label">UUID de Autorización</span>
+      <span class="qr-row-value uuid">{{ si.bfel_uuid or '' }}</span>
+    </div>
+
+    <div class="qr-row">
+      <span class="qr-row-label">Serie DTE</span>
+      <span class="qr-row-value">{{ si.bfel_docto_serie or '' }}</span>
+    </div>
+
+    <div class="qr-row">
+      <span class="qr-row-label">Número DTE</span>
+      <span class="qr-row-value">{{ si.bfel_docto_no or '' }}</span>
+    </div>
+
+    <div class="qr-row">
+      <span class="qr-row-label">Fecha Certificación</span>
+      <span class="qr-row-value">{{ si.bfel_fechacertificacion or '' }}</span>
+    </div>
+
+    <div class="qr-row">
+      <span class="qr-row-label">NIT Emisor</span>
+      <span class="qr-row-value">{{ bs.company_nit }}</span>
+    </div>
+
+    <div class="qr-disclaimer">
+      Escanee el código QR para verificar la autenticidad de este documento
+      en el portal oficial de la SAT Guatemala. Este documento fue generado
+      y certificado electrónicamente conforme al régimen FEL.
+    </div>
+
+  </div>
+
+</div>
+
+{% endif %}
+
+{# ============================================================= #}
+{# AVISOS SEGÚN ESTADO                                            #}
+{# ============================================================= #}
+
+{% if is_no_enviar and is_draft %}
+<div class="notice-draft">
+  ⚠ EN BORRADOR — Este documento no ha sido enviado al sistema FEL.
+  No tiene validez tributaria hasta su certificación.
+</div>
+{% endif %}
+
+{% if is_no_enviar and not is_draft %}
+<div class="notice-interno">
+  Documento interno — Configurado como "No enviar" a FEL.
+  No genera documento tributario electrónico.
+</div>
+{% endif %}
+
+{# ============================================================= #}
+{# NOTAS DEL DOCUMENTO                                            #}
+{# ============================================================= #}
+
+{% if bdm.notes %}
+<div class="notes-box">{{ bdm.notes }}</div>
+{% endif %}
+
+{# ============================================================= #}
+{# FOOTER                                                         #}
+{# ============================================================= #}
+
+<div class="footer">
+  {% if is_certified %}
+  <div>Documento certificado electrónicamente — Régimen FEL — SAT Guatemala</div>
+  {% elif is_no_enviar and is_draft %}
+  <div>Documento en borrador — Pendiente de certificación FEL</div>
+  {% else %}
+  <div>Documento interno — No enviado al sistema FEL</div>
+  {% endif %}
+  <div class="footer-small">Generado desde ERP por Soluciones Integrales CHAPPSA</div>
+</div>
+
+{% endif %}{# fin de bloque principal #}

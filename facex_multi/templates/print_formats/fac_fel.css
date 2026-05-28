@@ -1,0 +1,453 @@
+/* ============================================================ */
+/* VARIABLES - PALETA SOLYMAR / CHAPPSA                         */
+/* ============================================================ */
+
+:root {
+  --blue:       #1a3a5c;
+  --yellow:     #c68b00;
+  --soft:       #f8f9fa;
+  --soft-blue:  #f0f4f8;
+  --border:     #dee2e6;
+  --text:       #212529;
+  --muted:      #6c757d;
+}
+
+/* ============================================================ */
+/* BASE                                                          */
+/* ============================================================ */
+
+* { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+  font-family: 'Courier New', 'Lucida Sans Typewriter', monospace;
+  font-size: 10px;
+  color: var(--text);
+  line-height: 1.4;
+  padding: 15px;
+  background: white;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+/* ============================================================ */
+/* HEADER                                                        */
+/* ============================================================ */
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 15px;
+  border-bottom: 2px solid var(--blue);
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+}
+
+.header-left {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.logo { height: 52px; width: auto; }
+
+.company-info { font-size: 9px; line-height: 1.35; }
+
+.company-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--blue);
+  margin-bottom: 3px;
+  letter-spacing: 1px;
+}
+
+.header-right { text-align: right; }
+
+.fel-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #333;
+  line-height: 1;
+  letter-spacing: 2px;
+}
+
+.fel-subtitle {
+  font-size: 8px;
+  font-weight: 600;
+  margin-top: 3px;
+  color: var(--muted);
+  letter-spacing: 0.5px;
+}
+
+.fel-badge {
+  display: inline-block;
+  margin-top: 5px;
+  padding: 2px 8px;
+  font-size: 7px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  background: var(--blue);
+  color: white;
+}
+
+.fel-badge.estado-draft    { background: #b45309; }
+.fel-badge.estado-interno  { background: #4b5563; }
+
+.invoice-ref {
+  margin-top: 5px;
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+/* ============================================================ */
+/* DIVIDER                                                       */
+/* ============================================================ */
+
+.divider {
+  border-top: 1px solid var(--blue);
+  margin: 8px 0;
+}
+
+/* ============================================================ */
+/* SECTION TITLE                                                 */
+/* ============================================================ */
+
+.section-title {
+  background: var(--soft);
+  border-left: 3px solid var(--yellow);
+  padding: 5px 8px;
+  font-weight: 700;
+  color: var(--blue);
+  margin-top: 12px;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  font-size: 9px;
+  letter-spacing: 0.5px;
+}
+
+/* ============================================================ */
+/* GRIDS DE INFORMACIÓN                                          */
+/* ============================================================ */
+
+.client-grid,
+.doc-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.info-box,
+.doc-item {
+  border: 1px solid var(--border);
+  padding: 5px 7px;
+  background: white;
+}
+
+.info-box.full,
+.doc-item.uuid-item {
+  grid-column: 1 / -1;
+}
+
+.doc-item.uuid-item {
+  background: var(--soft-blue);
+  border-color: var(--blue);
+}
+
+.label,
+.doc-label {
+  font-size: 7px;
+  font-weight: 700;
+  color: var(--muted);
+  margin-bottom: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.value,
+.doc-value {
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.uuid-value {
+  font-size: 8px;
+  color: var(--blue);
+  font-weight: 700;
+  word-break: break-all;
+  letter-spacing: 0.3px;
+}
+
+/* ============================================================ */
+/* TABLA DE ITEMS                                                */
+/* ============================================================ */
+
+.items-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 5px;
+  font-size: 9px;
+}
+
+.items-table thead th {
+  background: var(--blue);
+  color: white;
+  padding: 6px 5px;
+  font-size: 8px;
+  text-align: left;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.items-table thead th.money-col { text-align: right; }
+
+.items-table tbody td {
+  border-bottom: 1px solid var(--border);
+  padding: 5px;
+  vertical-align: top;
+}
+
+.items-table tbody tr:nth-child(even) td { background: var(--soft); }
+
+.qty-col   { width: 52px;  text-align: center; }
+.money-col { width: 105px; text-align: right;  }
+
+.item-name { font-weight: 600; }
+
+.item-description {
+  font-size: 7px;
+  color: var(--muted);
+  margin-top: 1px;
+}
+
+/* ============================================================ */
+/* TOTALES                                                       */
+/* ============================================================ */
+
+.total-wrapper {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.total-box {
+  min-width: 230px;
+  background: var(--blue);
+  padding: 8px 12px;
+  color: white;
+  text-align: right;
+}
+
+.total-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.total-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--yellow);
+  margin-top: 2px;
+}
+
+.letters-box {
+  margin-top: 8px;
+  border-left: 3px solid var(--yellow);
+  padding: 4px 8px;
+  background: var(--soft);
+}
+
+.letters-label {
+  font-weight: 700;
+  color: var(--muted);
+  font-size: 7px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-right: 4px;
+}
+
+.letters-value { font-weight: 600; font-size: 9px; }
+
+/* ============================================================ */
+/* SECCIÓN QR - SOLO DOCUMENTOS CERTIFICADOS                    */
+/* ============================================================ */
+
+.qr-section {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 2px solid var(--blue);
+  background: var(--soft-blue);
+}
+
+.qr-left { flex-shrink: 0; text-align: center; }
+
+.qr-img {
+  display: block;
+  width: 130px;
+  height: 130px;
+  border: 3px solid white;
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.qr-label {
+  font-size: 7px;
+  font-weight: 700;
+  color: var(--blue);
+  margin-top: 4px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.qr-sat-domain {
+  font-size: 6px;
+  color: var(--muted);
+  margin-top: 1px;
+}
+
+.qr-right { flex: 1; }
+
+.qr-right-title {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--blue);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.qr-row { margin-bottom: 5px; }
+
+.qr-row-label {
+  font-size: 7px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: block;
+  margin-bottom: 1px;
+}
+
+.qr-row-value {
+  font-size: 8px;
+  font-weight: 600;
+  color: var(--text);
+  word-break: break-all;
+}
+
+.qr-row-value.uuid {
+  font-size: 7.5px;
+  color: var(--blue);
+  letter-spacing: 0.2px;
+}
+
+.qr-disclaimer {
+  margin-top: 10px;
+  font-size: 7px;
+  color: var(--muted);
+  line-height: 1.45;
+  border-top: 1px dashed var(--border);
+  padding-top: 5px;
+}
+
+/* ============================================================ */
+/* AVISOS DE ESTADO                                              */
+/* ============================================================ */
+
+.notice-draft {
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: #fef3c7;
+  border: 1px solid #d97706;
+  border-left: 4px solid #b45309;
+  font-size: 9px;
+  color: #78350f;
+  font-weight: 600;
+}
+
+.notice-interno {
+  margin-top: 12px;
+  padding: 6px 10px;
+  background: var(--soft);
+  border-left: 3px solid var(--muted);
+  font-size: 8px;
+  color: var(--muted);
+}
+
+/* ============================================================ */
+/* NOTAS                                                         */
+/* ============================================================ */
+
+.notes-box {
+  margin-top: 10px;
+  font-size: 7px;
+  line-height: 1.4;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+  color: var(--muted);
+}
+
+/* ============================================================ */
+/* FOOTER                                                        */
+/* ============================================================ */
+
+.footer {
+  margin-top: 15px;
+  text-align: center;
+  font-size: 7px;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.footer-small { margin-top: 2px; font-size: 6px; }
+
+/* ============================================================ */
+/* WATERMARKS                                                    */
+/* ============================================================ */
+
+.watermark {
+  position: fixed;
+  top: 40%;
+  left: 10%;
+  width: 80%;
+  text-align: center;
+  font-size: 60px;
+  font-weight: 700;
+  opacity: 0.07;
+  z-index: 999;
+  pointer-events: none;
+  text-transform: uppercase;
+}
+
+.wm-cancelada   { color: #c62828; }
+.wm-anulada-fel { color: #111; transform: rotate(-45deg); top: 50%; opacity: 0.05; }
+.wm-borrador    { color: #b45309; font-size: 68px; }
+
+/* ============================================================ */
+/* ERROR                                                         */
+/* ============================================================ */
+
+.fel-error {
+  padding: 30px 20px;
+  text-align: center;
+  font-size: 15px;
+  color: #c62828;
+  font-weight: 700;
+  line-height: 1.6;
+}
+
+.fel-error small {
+  display: block;
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--muted);
+  margin-top: 5px;
+}

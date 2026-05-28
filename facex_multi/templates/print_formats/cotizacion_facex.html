@@ -1,0 +1,145 @@
+<script>
+    document.title = "{{ doc.name }}";
+</script>
+{% set bs = frappe.get_all("BFEL Settings", filters={"company": doc.company, "enabled": 1}, fields=["company_nit", "isr_regime", "direccionemisor", "paisemisor"], limit=1) %}
+{% set bfel = bs[0] if bs else {} %}
+{% set company_logo = frappe.db.get_value("Company", doc.company, "company_logo") %}
+
+<div class="print-format-wrapper">
+    <div class="header-container" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px;">
+        <div class="logo-and-company" style="display: flex; align-items: center; gap: 15px;">
+            {% if company_logo %}
+                <img src="{{ company_logo }}" style="max-height: 70px; max-width: 150px; object-fit: contain;" alt="Logo">
+            {% endif %}
+            <div class="company-section">
+                <h2 class="company-name" style="margin: 0; font-size: 16px; font-weight: 700; color: #1e293b;">{{ doc.company }}</h2>
+                <p class="company-detail" style="margin: 2px 0 0 0; font-size: 11px; color: #64748b;"><strong>NIT:</strong> {{ bfel.company_nit or frappe.db.get_value("Company", doc.company, "tax_id") or "—" }}</p>
+                {% if bfel.isr_regime %}
+                    <p class="company-detail" style="margin: 2px 0 0 0; font-size: 11px; color: #64748b;"><strong>Régimen:</strong> {{ bfel.isr_regime }}</p>
+                {% endif %}
+                {% if bfel.direccionemisor %}
+                    <p class="company-detail" style="margin: 2px 0 0 0; font-size: 11px; color: #64748b;"><strong>Dirección:</strong> {{ bfel.direccionemisor }}</p>
+                {% endif %}
+                {% if bfel.paisemisor or frappe.db.get_value("Company", doc.company, "country") %}
+                    <p class="company-detail" style="margin: 2px 0 0 0; font-size: 11px; color: #64748b;"><strong>País:</strong> {{ bfel.paisemisor or frappe.db.get_value("Company", doc.company, "country") }}</p>
+                {% endif %}
+            </div>
+        </div>
+        <div class="doc-section" style="text-align: right;">
+            <h1 class="doc-title" style="margin: 0; font-size: 20px; font-weight: 800; color: #4361ee; letter-spacing: 0.5px;">COTIZACIÓN</h1>
+            <p class="doc-meta" style="margin: 4px 0 0 0; font-size: 11px; color: #475569;"><strong>No. Cotización:</strong> {{ doc.name }}</p>
+            <p class="doc-meta" style="margin: 2px 0 0 0; font-size: 11px; color: #475569;"><strong>Fecha Emisión:</strong> {{ doc.get_formatted("posting_date") or doc.posting_date }}</p>
+            <p class="doc-meta" style="margin: 2px 0 0 0; font-size: 11px; color: #475569;"><strong>Válido hasta:</strong> {{ doc.get_formatted("due_date") or doc.due_date }}</p>
+        </div>
+    </div>
+
+    <div class="customer-container">
+        <h3 class="section-title">Datos del Cliente</h3>
+        <div class="customer-details">
+            <div class="detail-row"><strong>Cliente:</strong> {{ doc.bfel_nombre or doc.customer_name or doc.customer }}</div>
+            <div class="detail-row"><strong>NIT:</strong> {{ doc.bfel_nit or "C.F." }}</div>
+            <div class="detail-row"><strong>Moneda:</strong> {{ doc.currency }}</div>
+        </div>
+    </div>
+
+    <table class="items-table">
+        <thead>
+            <tr>
+                <th class="th-num">#</th>
+                <th class="th-code">Código</th>
+                <th class="th-desc">Descripción</th>
+                <th class="th-qty text-right">Cant.</th>
+                <th class="th-uom">UM</th>
+                <th class="th-rate text-right">Precio Unit.</th>
+                <th class="th-disc text-right">Desc %</th>
+                <th class="th-total text-right">Total</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in doc.items %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td>{{ item.item_code }}</td>
+                <td>
+                    <div class="item-name">{{ item.item_name }}</div>
+                    {% if item.description and item.description != item.item_name %}
+                    <div class="item-desc">{{ item.description }}</div>
+                    {% endif %}
+                </td>
+                <td class="text-right">{{ item.qty }}</td>
+                <td>{{ item.uom }}</td>
+                <td class="text-right">{{ doc.currency }} {{ "{:,.2f}".format(item.rate) }}</td>
+                <td class="text-right">{{ item.discount_percentage or 0 }}%</td>
+                <td class="text-right">{{ doc.currency }} {{ "{:,.2f}".format(item.amount) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="summary-container">
+        <div class="terms-section">
+            <div class="info-contact-box" style="margin-bottom: 15px; background-color: #f8fafc; border-left: 4px solid #4361ee; padding: 12px 16px; border-radius: 4px; border-top: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; border-bottom: 1px solid #e2e8f0;">
+                <h4 style="margin: 0 0 6px 0; font-size: 11px; font-weight: 700; color: #1e3a8a; text-transform: uppercase; letter-spacing: 0.5px; font-family: sans-serif;">Información de Contacto</h4>
+                <p style="margin: 0 0 8px 0; font-size: 11.5px; color: #475569; line-height: 1.5; font-family: sans-serif;">
+                    Cualquier duda, comentario o sugerencia respecto a la presente propuesta comercial, quedo enteramente a su servicio. Con gusto le atenderá su más atento y seguro servidor:
+                </p>
+                <div class="contacts-grid" style="display: flex; gap: 20px; flex-wrap: wrap; font-family: sans-serif;">
+                    <div style="font-size: 11px; color: #1e293b;">
+                        <strong>Kennet López</strong><br>
+                        <span style="color: #64748b;">Teléfono:</span> <span style="font-weight: 600; color: #4361ee;">4060-9567</span>
+                    </div>
+                    <div style="font-size: 11px; color: #1e293b;">
+                        <strong>Kevin Arquer</strong><br>
+                        <span style="color: #64748b;">Teléfono:</span> <span style="font-weight: 600; color: #4361ee;">4690-8633</span>
+                    </div>
+                </div>
+            </div>
+            {% if doc.terms %}
+            <h4 class="section-title">Términos y Condiciones</h4>
+            <div class="terms-content">{{ doc.terms }}</div>
+            {% endif %}
+        </div>
+        <div class="totals-section">
+            <div class="total-row">
+                <span class="total-label">Subtotal:</span>
+                <span class="total-value">{{ doc.currency }} {{ "{:,.2f}".format(doc.total) }}</span>
+            </div>
+            {% if doc.discount_amount %}
+            <div class="total-row discount">
+                <span class="total-label">Descuento:</span>
+                <span class="total-value">- {{ doc.currency }} {{ "{:,.2f}".format(doc.discount_amount) }}</span>
+            </div>
+            {% endif %}
+            {% if doc.total_taxes_and_charges %}
+            <div class="total-row">
+                <span class="total-label">Impuestos:</span>
+                <span class="total-value">{{ doc.currency }} {{ "{:,.2f}".format(doc.total_taxes_and_charges) }}</span>
+            </div>
+            {% endif %}
+            <div class="total-row grand-total">
+                <span class="total-label">TOTAL:</span>
+                <span class="total-value">{{ doc.currency }} {{ "{:,.2f}".format(doc.grand_total) }}</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="signature-container">
+        <div class="signature-line">
+            <div class="line"></div>
+            <div class="label">Emitido por</div>
+        </div>
+        <div class="signature-line">
+            <div class="line"></div>
+            <div class="label">Aceptado por (Cliente)</div>
+        </div>
+    </div>
+
+    <div class="brands-footer" style="margin-top: 30px; text-align: center; border-top: 1px dashed #e2e8f0; padding-top: 15px;">
+        <p style="font-size: 11px; font-weight: 700; color: #475569; margin: 0 0 10px 0; text-transform: uppercase; letter-spacing: 0.5px;">Marcas con las que trabajamos</p>
+        <img src="/assets/facex_multi/marcas.png" style="max-height: 45px; max-width: 100%; object-fit: contain;" alt="Marcas">
+    </div>
+
+    <div class="slogan-footer" style="margin-top: 20px; text-align: center; font-size: 10px; color: #94a3b8; border-top: 1px dashed #e2e8f0; padding-top: 10px;">
+        FacEx solución implementada por Soluciones Integrales Chapp, S.A.
+    </div>
+</div>

@@ -1,0 +1,123 @@
+<script>
+    document.title = "{{ doc.name }}";
+</script>
+{% set bs = frappe.get_all("BFEL Settings", filters={"company": doc.company, "enabled": 1}, fields=["company_nit", "isr_regime", "direccionemisor", "paisemisor"], limit=1) %}
+{% set bfel = bs[0] if bs else {} %}
+{% set company_logo = frappe.db.get_value("Company", doc.company, "company_logo") %}
+
+<div class="print-format-wrapper">
+    <div class="header-container" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px;">
+        <div class="logo-and-company" style="display: flex; align-items: center; gap: 15px;">
+            {% if company_logo %}
+                <img src="{{ company_logo }}" style="max-height: 70px; max-width: 150px; object-fit: contain;" alt="Logo">
+            {% endif %}
+            <div class="company-section">
+                <h2 class="company-name" style="margin: 0; font-size: 16px; font-weight: 700; color: #1e293b;">{{ doc.company }}</h2>
+                <p class="company-detail" style="margin: 2px 0 0 0; font-size: 11px; color: #64748b;"><strong>NIT:</strong> {{ bfel.company_nit or frappe.db.get_value("Company", doc.company, "tax_id") or "—" }}</p>
+                {% if bfel.isr_regime %}
+                    <p class="company-detail" style="margin: 2px 0 0 0; font-size: 11px; color: #64748b;"><strong>Régimen:</strong> {{ bfel.isr_regime }}</p>
+                {% endif %}
+                {% if bfel.direccionemisor %}
+                    <p class="company-detail" style="margin: 2px 0 0 0; font-size: 11px; color: #64748b;"><strong>Dirección:</strong> {{ bfel.direccionemisor }}</p>
+                {% endif %}
+                {% if bfel.paisemisor or frappe.db.get_value("Company", doc.company, "country") %}
+                    <p class="company-detail" style="margin: 2px 0 0 0; font-size: 11px; color: #64748b;"><strong>País:</strong> {{ bfel.paisemisor or frappe.db.get_value("Company", doc.company, "country") }}</p>
+                {% endif %}
+            </div>
+        </div>
+        <div class="doc-section" style="text-align: right;">
+            <h1 class="doc-title" style="margin: 0; font-size: 20px; font-weight: 800; color: #2dc653; letter-spacing: 0.5px;">RECIBO DE PAGO</h1>
+            <p class="doc-meta" style="margin: 4px 0 0 0; font-size: 11px; color: #475569;"><strong>No. Factura:</strong> {{ doc.name }}</p>
+            <p class="doc-meta" style="margin: 2px 0 0 0; font-size: 11px; color: #475569;"><strong>Fecha Recibo:</strong> {{ doc.posting_date }}</p>
+            {% if doc.bfel_uuid %}
+            <p class="doc-meta" style="margin: 2px 0 0 0; font-size: 11px; color: #475569;"><strong>UUID FEL:</strong> {{ doc.bfel_uuid }}</p>
+            {% endif %}
+            {% if doc.bfel_docto_serie %}
+            <p class="doc-meta" style="margin: 2px 0 0 0; font-size: 11px; color: #475569;"><strong>Serie DTE:</strong> {{ doc.bfel_docto_serie }}</p>
+            {% endif %}
+            {% if doc.bfel_docto_no %}
+            <p class="doc-meta" style="margin: 2px 0 0 0; font-size: 11px; color: #475569;"><strong>Número DTE:</strong> {{ doc.bfel_docto_no }}</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="customer-container">
+        <h3 class="section-title">Datos Generales</h3>
+        <div class="customer-details">
+            <div class="detail-row"><strong>Cliente:</strong> {{ doc.bfel_nombre or doc.customer_name or doc.customer }}</div>
+            <div class="detail-row"><strong>NIT:</strong> {{ doc.bfel_nit or "C.F." }}</div>
+            <div class="detail-row"><strong>Moneda:</strong> {{ doc.currency }}</div>
+            <div class="detail-row"><strong>Total Facturado:</strong> {{ doc.currency }} {{ "{:,.2f}".format(doc.grand_total) }}</div>
+        </div>
+    </div>
+
+    <h3 class="section-title">Detalle de Pagos Recibidos</h3>
+    <table class="items-table">
+        <thead>
+            <tr>
+                <th class="th-num">#</th>
+                <th class="th-date">Fecha Pago</th>
+                <th class="th-method">Método de Pago</th>
+                <th class="th-ref">Referencia</th>
+                <th class="th-amount text-right">Monto Recibido</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% set total_paid = namespace(value=0) %}
+            {% if doc.custom_efast_payments %}
+                {% for pay in doc.custom_efast_payments %}
+                {% set total_paid.value = total_paid.value + pay.amount %}
+                <tr>
+                    <td>{{ loop.index }}</td>
+                    <td>{{ pay.get_formatted("payment_date") or pay.payment_date }}</td>
+                    <td>{{ pay.payment_method }}</td>
+                    <td>{{ pay.reference or "—" }}</td>
+                    <td class="text-right">{{ doc.currency }} {{ "{:,.2f}".format(pay.amount) }}</td>
+                </tr>
+                {% endfor %}
+            {% else %}
+                <tr>
+                    <td colspan="5" class="text-center" style="text-align: center; color: #64748b;">No se encontraron pagos eFast registrados.</td>
+                </tr>
+            {% endif %}
+        </tbody>
+    </table>
+
+    <div class="summary-container">
+        <div class="terms-section">
+            <div class="receipt-note" style="font-size: 11px; color: #64748b; line-height: 1.6;">
+                <strong>Nota:</strong> Este recibo acredita los pagos efectuados para la factura referenciada en la parte superior. Agradecemos su preferencia.
+            </div>
+        </div>
+        <div class="totals-section">
+            <div class="total-row">
+                <span class="total-label">Total Invoiced:</span>
+                <span class="total-value">{{ doc.currency }} {{ "{:,.2f}".format(doc.grand_total) }}</span>
+            </div>
+            <div class="total-row paid-row" style="font-weight: 700; color: #2dc653;">
+                <span class="total-label">Total Recibido:</span>
+                <span class="total-value">{{ doc.currency }} {{ "{:,.2f}".format(total_paid.value) }}</span>
+            </div>
+            {% set balance = doc.grand_total - total_paid.value %}
+            <div class="total-row balance-row {% if balance <= 0.009 %}paid-off{% endif %}" style="font-weight: 800; border-top: 1px solid #cbd5e1; padding-top: 6px;">
+                <span class="total-label">Saldo Pendiente:</span>
+                <span class="total-value">{{ doc.currency }} {{ "{:,.2f}".format(balance if balance > 0 else 0) }}</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="signature-container">
+        <div class="signature-line">
+            <div class="line"></div>
+            <div class="label">Cajero / Recibido por</div>
+        </div>
+        <div class="signature-line">
+            <div class="line"></div>
+            <div class="label">Firma Cliente</div>
+        </div>
+    </div>
+
+    <div class="slogan-footer" style="margin-top: 30px; text-align: center; font-size: 10px; color: #94a3b8; border-top: 1px dashed #e2e8f0; padding-top: 10px;">
+        FacEx solución implementada por Soluciones Integrales Chapp, S.A.
+    </div>
+</div>
