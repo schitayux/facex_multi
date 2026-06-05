@@ -1,2 +1,3 @@
 facex_multi.patches.v1_0.create_custom_fields
 facex_multi.patches.v1_0.fix_workspace_conflict
+facex_multi.patches.v1_0.add_bfel_establishments

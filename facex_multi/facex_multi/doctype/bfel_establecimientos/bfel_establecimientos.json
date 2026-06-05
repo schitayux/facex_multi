@@ -1,0 +1,66 @@
+{
+ "autoname": "hash",
+ "creation": "2026-06-04 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "establecimiento_id",
+  "nombre_establecimiento",
+  "subnombre_establecimiento",
+  "logo",
+  "activo"
+ ],
+ "fields": [
+  {
+   "fieldname": "establecimiento_id",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "ID Establecimiento",
+   "reqd": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "nombre_establecimiento",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Nombre Establecimiento",
+   "reqd": 1,
+   "columns": 3
+  },
+  {
+   "fieldname": "subnombre_establecimiento",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Subnombre Establecimiento",
+   "columns": 3
+  },
+  {
+   "fieldname": "logo",
+   "fieldtype": "Attach",
+   "in_list_view": 1,
+   "label": "Logo",
+   "columns": 2
+  },
+  {
+   "default": "1",
+   "fieldname": "activo",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Activo",
+   "columns": 2
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-06-04 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FacEx Multi",
+ "name": "BFEL Establecimientos",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

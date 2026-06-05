@@ -7,38 +7,51 @@ from __future__ import annotations
 
 import frappe
 import json
-from facex_multi.api.invoice import has_efast_permission
+from facex_multi.api.invoice import has_efast_permission, get_effective_company
 
 
 def _get_selling_price_list():
-    return (
+    plist = (
         frappe.defaults.get_user_default("selling_price_list")
         or frappe.db.get_single_value("Selling Settings", "selling_price_list")
-        or "Standard Selling"
     )
+    if not plist:
+        if frappe.db.exists("Price List", "Standard Selling"):
+            plist = "Standard Selling"
+        else:
+            plist = frappe.db.get_value("Price List", {"selling": 1, "enabled": 1}, "name") or ""
+    return plist
 
 
 @frappe.whitelist()
-def get_price_lists():
-    """Retorna todas las listas de precios activas (compras/ventas) de ERPNext."""
+def get_price_lists(company: str = None):
+    """Retorna todas las listas de precios activas (compras/ventas) de ERPNext filtradas por compañía."""
     if not has_efast_permission():
         frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
+
+    company = get_effective_company(company)
 
     return frappe.get_all(
         "Price List",
         filters={"enabled": 1},
+        or_filters=[
+            ["bfel_company", "=", company],
+            ["bfel_company", "is", "not set"],
+            ["bfel_company", "=", ""]
+        ],
         fields=["name", "currency", "selling", "buying"],
         order_by="name asc"
     )
 
 
 @frappe.whitelist()
-def search_items(txt: str = None):
-    """Busca ítems por código o nombre de forma segura y parametrizada."""
+def search_items(txt: str = None, company: str = None):
+    """Busca ítems por código o nombre filtrados por compañía activa."""
     if not has_efast_permission():
         frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
 
-    filters = {"disabled": 0}
+    company = get_effective_company(company)
+
     if txt and len(txt.strip()) >= 2:
         q = f"%{txt.strip()}%"
         rows = frappe.db.sql(
@@ -46,18 +59,22 @@ def search_items(txt: str = None):
             SELECT name, item_code, item_name, stock_uom, description
             FROM `tabItem`
             WHERE disabled = 0
+              AND bfel_company = %(company)s
               AND (name LIKE %(q)s OR item_name LIKE %(q)s)
             ORDER BY item_name ASC
             LIMIT 50
             """,
-            {"q": q},
+            {"q": q, "company": company},
             as_dict=True,
         )
         return rows
     else:
         return frappe.db.get_all(
             "Item",
-            filters=filters,
+            filters=[
+                ["disabled", "=", 0],
+                ["bfel_company", "=", company]
+            ],
             fields=["name", "item_code", "item_name", "stock_uom", "description"],
             limit=50,
             order_by="item_name asc"
@@ -65,12 +82,17 @@ def search_items(txt: str = None):
 
 
 @frappe.whitelist()
-def get_item(name: str, price_list: str = None):
-    """Obtiene los detalles de un ítem y su precio en la lista especificada o activa."""
+def get_item(name: str, price_list: str = None, company: str = None):
+    """Obtiene los detalles de un ítem y su precio con validación de compañía."""
     if not has_efast_permission():
         frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
 
+    company = get_effective_company(company)
     doc = frappe.get_doc("Item", name)
+    
+    if doc.meta.has_field("bfel_company") and doc.bfel_company and doc.bfel_company != company:
+        frappe.throw(f"El producto '{name}' pertenece a otra compañía y no puede ser accedido.")
+
     plist = price_list or _get_selling_price_list()
     
     # Obtener el precio estándar de la lista activa
@@ -91,32 +113,82 @@ def get_item(name: str, price_list: str = None):
 
 
 @frappe.whitelist()
-def create_or_update_item(data_json: str):
-    """Crea o actualiza un producto con campos básicos."""
+def create_or_update_item(data_json: str, company: str = None):
+    """Crea o actualiza un producto asignando y protegiendo bfel_company."""
     if not has_efast_permission():
         frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
 
     data = json.loads(data_json) if isinstance(data_json, str) else data_json
     item_code = (data.get("item_code") or "").strip()
+    company = get_effective_company(company)
+    abbr = frappe.db.get_value("Company", company, "abbr") or ""
 
     is_new = True
     if item_code and frappe.db.exists("Item", item_code):
         doc = frappe.get_doc("Item", item_code)
+        if doc.meta.has_field("bfel_company") and doc.bfel_company and doc.bfel_company != company:
+            frappe.throw("No tiene permisos para modificar un producto de otra compañía.")
         is_new = False
     else:
+        auto_code = int(data.get("auto_code") or 0)
+        if auto_code:
+            # Generar código automático: AXXX-ABBR
+            # Encontrar el correlativo XXX más alto para esta compañía y abreviatura
+            like_pattern = f"A%-{abbr}"
+            latest_items = frappe.db.sql(
+                """
+                SELECT name 
+                FROM `tabItem` 
+                WHERE name LIKE %(pattern)s AND bfel_company = %(company)s
+                ORDER BY name DESC
+                """,
+                {"pattern": like_pattern, "company": company},
+                as_dict=True
+            )
+            
+            next_num = 1
+            if latest_items:
+                max_num = 0
+                for it in latest_items:
+                    code_str = it["name"]
+                    if code_str.endswith(f"-{abbr}"):
+                        num_part = code_str[:-len(f"-{abbr}")]
+                        if num_part.startswith("A") and num_part[1:].isdigit():
+                            num = int(num_part[1:])
+                            if num > max_num:
+                                max_num = num
+                next_num = max_num + 1
+            
+            item_code = f"A{next_num:03d}-{abbr}"
+        else:
+            # Código personalizado. Forzar sufijo: -.ABBR
+            if abbr and not item_code.endswith(f"-{abbr}"):
+                item_code = f"{item_code}-{abbr}"
+        
+        if not item_code:
+            frappe.throw("El código de producto es obligatorio.")
+
+        if frappe.db.exists("Item", item_code):
+            frappe.throw(f"El producto con código '{item_code}' ya existe.")
+
         doc = frappe.new_doc("Item")
         doc.item_code = item_code
-        # Valores por defecto para que sea válido en ERPNext estándar
         doc.item_group = (
             frappe.db.get_value("Item Group", {"is_group": 0}, "name", order_by="lft asc")
             or "All Item Groups"
         )
         doc.is_stock_item = 0
+        if doc.meta.has_field("bfel_company"):
+            doc.bfel_company = company
 
     doc.item_name = data.get("item_name", doc.item_name)
     doc.description = data.get("description", doc.description or doc.item_name)
     doc.stock_uom = data.get("stock_uom") or doc.stock_uom or "Nos"
     doc.item_group = data.get("item_group") or doc.item_group
+
+    # Forzar bfel_company
+    if doc.meta.has_field("bfel_company"):
+        doc.bfel_company = company
 
     doc.save(ignore_permissions=False)
     frappe.db.commit()
@@ -125,20 +197,25 @@ def create_or_update_item(data_json: str):
     price_val = data.get("standard_price")
     price_list = data.get("price_list") or _get_selling_price_list()
     if price_val is not None:
-        update_item_price(doc.name, price_val, price_list)
+        update_item_price(doc.name, price_val, price_list, company)
 
     return {"item_code": doc.name, "item_name": doc.item_name}
 
 
 @frappe.whitelist()
-def get_all_prices(price_list: str, txt: str = None):
-    """Obtiene una lista de productos con su precio en la lista seleccionada."""
+def get_all_prices(price_list: str, txt: str = None, company: str = None):
+    """Obtiene una lista de productos filtrados por compañía con sus precios."""
     if not has_efast_permission():
         frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
 
-    filters = {"disabled": 0}
+    company = get_effective_company(company)
+    
+    filters = [
+        ["disabled", "=", 0],
+        ["bfel_company", "=", company]
+    ]
     if txt:
-        filters["item_name"] = ["like", f"%{txt}%"]
+        filters.append(["item_name", "like", f"%{txt}%"])
 
     items = frappe.db.get_all("Item", filters=filters, fields=["name", "item_name", "stock_uom"], limit=50)
     
@@ -163,13 +240,17 @@ def get_all_prices(price_list: str, txt: str = None):
 
 
 @frappe.whitelist()
-def update_item_price(item_code: str, rate: float | str, price_list: str):
-    """Crea o actualiza el registro de Item Price para una lista de precios específica."""
+def update_item_price(item_code: str, rate: float | str, price_list: str, company: str = None):
+    """Crea o actualiza el registro de Item Price validando que el ítem pertenece a la compañía."""
     if not has_efast_permission():
         frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
 
+    company = get_effective_company(company)
+    item_comp = frappe.db.get_value("Item", item_code, "bfel_company")
+    if item_comp and item_comp != company:
+        frappe.throw("No se puede asignar precio a un producto de otra compañía.")
+
     rate_val = float(rate)
-    
     price_name = frappe.db.get_value(
         "Item Price",
         {"item_code": item_code, "price_list": price_list},
@@ -192,14 +273,19 @@ def update_item_price(item_code: str, rate: float | str, price_list: str):
 
 
 @frappe.whitelist()
-def get_customers_list(txt: str = None):
-    """Obtiene una lista de clientes para poblar el catálogo de mantenimiento."""
+def get_customers_list(txt: str = None, company: str = None):
+    """Obtiene una lista de clientes filtrada por compañía para el catálogo."""
     if not has_efast_permission():
         frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
 
-    filters = {"disabled": 0}
+    company = get_effective_company(company)
+    
+    filters = [
+        ["disabled", "=", 0],
+        ["bfel_company", "=", company]
+    ]
     if txt:
-        filters["customer_name"] = ["like", f"%{txt}%"]
+        filters.append(["customer_name", "like", f"%{txt}%"])
 
     res = frappe.get_all(
         "Customer",
@@ -216,10 +302,15 @@ def get_customers_list(txt: str = None):
 
 
 @frappe.whitelist()
-def delete_item(item_code: str):
-    """Elimina de forma segura un ítem de ERPNext."""
+def delete_item(item_code: str, company: str = None):
+    """Elimina de forma segura un ítem validando compañía activa."""
     if not has_efast_permission():
         frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
+
+    company = get_effective_company(company)
+    item_comp = frappe.db.get_value("Item", item_code, "bfel_company")
+    if item_comp and item_comp != company:
+        frappe.throw("No puede eliminar un producto de otra compañía.")
 
     frappe.delete_doc("Item", item_code)
     frappe.db.commit()
@@ -227,10 +318,15 @@ def delete_item(item_code: str):
 
 
 @frappe.whitelist()
-def delete_customer(customer_name: str):
-    """Elimina de forma segura un cliente de ERPNext."""
+def delete_customer(customer_name: str, company: str = None):
+    """Elimina de forma segura un cliente validando compañía activa."""
     if not has_efast_permission():
         frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
+
+    company = get_effective_company(company)
+    cust_comp = frappe.db.get_value("Customer", customer_name, "bfel_company")
+    if cust_comp and cust_comp != company:
+        frappe.throw("No puede eliminar un cliente de otra compañía.")
 
     frappe.delete_doc("Customer", customer_name)
     frappe.db.commit()

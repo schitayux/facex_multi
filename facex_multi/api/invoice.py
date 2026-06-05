@@ -23,6 +23,95 @@ def has_efast_permission():
     return bool(allowed & set(roles))
 
 
+def get_effective_company(company: str = None) -> str:
+    """
+    Resuelve la compañía efectiva. Prioridad:
+    1. Parámetro company (si es válido).
+    2. is_default en User Permission para el usuario actual (fuerza sin cache).
+    3. Default de compañía del usuario en cache.
+    4. Default global de compañía.
+    """
+    if company:
+        return company.strip()
+        
+    user_company = frappe.db.get_value(
+        "User Permission", 
+        {"user": frappe.session.user, "allow": "Company", "is_default": 1}, 
+        "for_value"
+    )
+    if user_company:
+        return user_company
+
+    return (
+        frappe.defaults.get_user_default("Company")
+        or frappe.db.get_single_value("Global Defaults", "default_company")
+        or ""
+    )
+
+
+def get_company_abbr(company: str) -> str:
+    """Retorna la abreviación de la compañía."""
+    if not company:
+        return ""
+    return frappe.db.get_value("Company", company, "abbr") or ""
+
+
+def filter_naming_series_for_company(series_list: list, company: str, establecimiento: str = None) -> list:
+    """
+    Filtra las series de numeración para que solo se muestren las compatibles
+    con la compañía activa según la asociación en BFEL Document Map.
+    Si se especifica establecimiento, también filtra por establecimiento.
+    Despliega según el orden original en que se crearon en naming_series.
+    """
+    if not company:
+        return series_list
+
+    # 1. Obtener configuraciones BFEL activas de la compañía
+    bfel_settings_list = frappe.get_all(
+        "BFEL Settings",
+        filters={"company": company, "enabled": 1},
+        fields=["name"]
+    )
+    if not bfel_settings_list:
+        return []
+
+    settings_names = [s.name for s in bfel_settings_list]
+
+    # 2. Obtener tipo de documentos (type_docdte) permitidos según BFEL Document Map
+    map_filters = {
+        "bfel_settings": ["in", settings_names],
+        "enabled": 1,
+        "erpnext_doctype": "Sales Invoice"
+    }
+    if establecimiento:
+        map_filters["establecimiento"] = str(establecimiento)
+
+    allowed_doc_maps = frappe.get_all(
+        "BFEL Document Map",
+        filters=map_filters,
+        fields=["type_docdte"]
+    )
+
+    allowed_prefixes = {d.type_docdte.upper() for d in allowed_doc_maps if d.type_docdte}
+    if not allowed_prefixes:
+        return []
+
+    # 3. Filtrar series_list manteniendo el orden original
+    import re
+    filtered = []
+    for s in series_list:
+        if not s:
+            continue
+        # Extraer el prefijo de la serie antes de cualquier delimitador (ej. de "FACT-.YYYY.-" extrae "FACT")
+        parts = re.split(r'[-._/]', s)
+        prefix = parts[0].strip().upper() if parts else ""
+        if prefix in allowed_prefixes:
+            filtered.append(s)
+
+    return filtered
+
+
+
 def create_custom_field_if_missing():
     """
     Crea el campo personalizado bfel_facex_multi en Sales Invoice si no existe.
@@ -50,26 +139,59 @@ def create_custom_field_if_missing():
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_defaults():
+def get_defaults(company: str = None):
     """
     Retorna valores por defecto para inicializar una nueva factura:
     naming_series, company, warehouse, cost_center, currency, taxes_and_charges.
     """
     create_custom_field_if_missing()
-    defaults = frappe.defaults.get_defaults()
-    company = defaults.get("company") or frappe.db.get_single_value(
-        "Global Defaults", "default_currency"
-    )
-
-    # Empresa por defecto del usuario
-    company = (
-        frappe.defaults.get_user_default("Company")
-        or frappe.db.get_single_value("Global Defaults", "default_company")
-        or ""
-    )
+    
+    # Resolver la compañía efectiva
+    company = get_effective_company(company)
 
     # Naming series disponibles para Sales Invoice
     naming_series = _get_naming_series("Sales Invoice")
+
+    # Obtener establecimientos de la compañía
+    establishments = []
+    try:
+        bfel_settings_list = frappe.get_all(
+            "BFEL Settings",
+            filters={"company": company, "enabled": 1},
+            fields=["name"]
+        )
+        if bfel_settings_list:
+            settings_name = bfel_settings_list[0].name
+            raw_est = frappe.get_all(
+                "BFEL Establecimientos",
+                filters={"parent": settings_name, "activo": 1},
+                fields=["establecimiento_id", "nombre_establecimiento", "subnombre_establecimiento", "logo", "activo"],
+                order_by="establecimiento_id asc"
+            )
+            for r in raw_est:
+                establishments.append({
+                    "establecimiento_id": r.establecimiento_id,
+                    "nombre_establecimiento": r.nombre_establecimiento,
+                    "subnombre_establecimiento": r.subnombre_establecimiento,
+                    "logo": r.logo,
+                    "activo": r.activo
+                })
+    except Exception:
+        pass
+
+    if not establishments:
+        company_logo = frappe.db.get_value("Company", company, "company_logo") or ""
+        establishments.append({
+            "establecimiento_id": 1,
+            "nombre_establecimiento": company,
+            "subnombre_establecimiento": company,
+            "logo": company_logo,
+            "activo": 1
+        })
+
+    # Filtrar por el primer establecimiento activo por defecto
+    default_est = establishments[0]["establecimiento_id"] if establishments else None
+    naming_series = filter_naming_series_for_company(naming_series, company, default_est)
 
     # Almacén por defecto
     default_warehouse = (
@@ -110,6 +232,7 @@ def get_defaults():
     return {
         "company": company,
         "naming_series": naming_series,
+        "establishments": establishments,
         "default_warehouse": default_warehouse,
         "default_cost_center": default_cost_center,
         "default_taxes_and_charges": default_taxes,
@@ -120,6 +243,16 @@ def get_defaults():
         "bfel_status_options": ["01 Enviar", "00 No enviar"],
         "bfel_status_default": "01 Enviar",
     }
+
+
+@frappe.whitelist()
+def get_compatible_series(company: str, establecimiento: str = None) -> list:
+    """
+    Retorna las series de numeración compatibles con la compañía y establecimiento especificados.
+    """
+    all_series = _get_naming_series("Sales Invoice")
+    return filter_naming_series_for_company(all_series, company, establecimiento)
+
 
 
 def _get_naming_series(doctype: str) -> list:
@@ -166,7 +299,11 @@ def get_item_details(item_code: str, company: str = "", customer: str = "",
     if not item_code:
         return {}
 
+    company = get_effective_company(company)
     item = frappe.get_cached_doc("Item", item_code)
+
+    if item.meta.has_field("bfel_company") and item.bfel_company and item.bfel_company != company:
+        frappe.throw(f"El producto '{item_code}' no pertenece a la compañía activa '{company}'.")
 
     # Buscar la lista de precios a usar
     plist = price_list
@@ -177,8 +314,15 @@ def get_item_details(item_code: str, company: str = "", customer: str = "",
         plist = (
             frappe.defaults.get_user_default("selling_price_list")
             or frappe.db.get_single_value("Selling Settings", "selling_price_list")
-            or "Standard Selling"
         )
+        if not plist:
+            if frappe.db.exists("Price List", "Standard Selling"):
+                plist = "Standard Selling"
+            else:
+                active_list = frappe.db.get_value("Price List", {"selling": 1, "enabled": 1, "bfel_company": company}, "name")
+                if not active_list:
+                    active_list = frappe.db.get_value("Price List", {"selling": 1, "enabled": 1}, "name")
+                plist = active_list or ""
 
     # Precio estándar (si existe)
     rate = 0.0
@@ -249,6 +393,41 @@ def save_draft(doc_json: str):
     Retorna el documento completo con totales calculados.
     """
     data = frappe.parse_json(doc_json)
+
+    # Resolver y validar la compañía activa
+    company = get_effective_company(data.get("company"))
+    data["company"] = company
+
+    # Validar naming series
+    if data.get("naming_series"):
+        all_series = _get_naming_series("Sales Invoice")
+        compat_series = filter_naming_series_for_company(all_series, company, data.get("bfel_establecimiento"))
+        if data["naming_series"] not in compat_series:
+            frappe.throw(f"La serie de facturación '{data['naming_series']}' no es compatible con la compañía '{company}' y el establecimiento '{data.get('bfel_establecimiento') or ''}'.")
+
+    # Validar cliente
+    customer = data.get("customer")
+    if customer:
+        cust_company = frappe.db.get_value("Customer", customer, "bfel_company")
+        if cust_company and cust_company != company:
+            frappe.throw(f"El cliente '{customer}' pertenece a otra compañía y no puede utilizarse en esta factura.")
+
+    # Validar Socio de Ventas
+    sales_partner = data.get("sales_partner")
+    if sales_partner:
+        sp_company = frappe.db.get_value("Sales Partner", sales_partner, "bfel_company")
+        if sp_company and sp_company != company:
+            frappe.throw(f"El Socio de Ventas '{sales_partner}' pertenece a otra compañía y no puede utilizarse en esta factura.")
+
+    # Validar productos
+    if "items" in data:
+        for item_row in data["items"]:
+            ic = item_row.get("item_code")
+            if ic:
+                item_comp = frappe.db.get_value("Item", ic, "bfel_company")
+                if item_comp and item_comp != company:
+                    frappe.throw(f"El producto '{ic}' pertenece a otra compañía y no puede utilizarse en esta factura.")
+
     
     # Pre-procesar items para asegurar que el descuento se aplique correctamente en ERPNext
     if "items" in data:
@@ -296,6 +475,7 @@ def save_draft(doc_json: str):
             "payment_terms_template", "terms", "taxes_and_charges",
             "bfel_nit", "bfel_nombre", "bfel_status", "bfel_escenario_exento",
             "es_fiscal", "update_stock", "company", "bfel_facex_multi",
+            "selling_price_list", "sales_partner", "bfel_establecimiento",
         ):
             if field in data:
                 setattr(doc, field, data[field])
@@ -322,6 +502,16 @@ def save_draft(doc_json: str):
     # Bug fix: force ERPNext to compute taxes from template if no taxes are provided
     if doc.get("taxes_and_charges") and not doc.get("taxes"):
         doc.append_taxes_from_master()
+
+    # Sincronizar fechas de cronograma de pagos
+    if not doc.get("payment_terms_template"):
+        doc.payment_schedule = []
+
+    if hasattr(doc, "set_payment_schedule_and_dates"):
+        try:
+            doc.set_payment_schedule_and_dates()
+        except Exception:
+            pass
 
     doc.flags.ignore_permissions = False
     doc.save()
@@ -395,6 +585,16 @@ def certify_invoice(name: str):
     Delega completamente a brainfel.api.certify_sales_invoice.
     Sin duplicar absolutamente ninguna lógica FEL aquí.
     """
+    name = (name or "").strip()
+    doc = frappe.get_doc("Sales Invoice", name)
+
+    # Validar que existe exactamente una configuración activa
+    configs = frappe.get_all("BFEL Settings", filters={"company": doc.company, "enabled": 1}, fields=["name"])
+    if not configs:
+        frappe.throw(f"No se encontró ninguna configuración activa de BFEL Settings para la compañía '{doc.company}'.")
+    if len(configs) > 1:
+        frappe.throw(f"Riesgo de Configuración FEL: Se encontraron múltiples configuraciones de BFEL Settings activas para la compañía '{doc.company}' ({', '.join(c.name for c in configs)}). Por favor desactive las configuraciones duplicadas para evitar fugas de datos.")
+
     from brainfel.api.certify_sales_invoice import certify_sales_invoice
     return certify_sales_invoice(name)
 
@@ -469,8 +669,8 @@ def _sync_custom_print_formats():
             "css": os.path.join(base_dir, "templates", "print_formats", "fac_fel.css"),
         },
         "FAC CERTIFI": {
-            "html": os.path.join(base_dir, "templates", "print_formats", "fac_fel.html"),
-            "css": os.path.join(base_dir, "templates", "print_formats", "fac_fel.css"),
+            "html": os.path.join(base_dir, "templates", "print_formats", "fac_certifi.html"),
+            "css": os.path.join(base_dir, "templates", "print_formats", "fac_certifi.css"),
         }
     }
     
@@ -484,11 +684,7 @@ def _sync_custom_print_formats():
             with open(paths["css"], "r", encoding="utf-8") as f:
                 css_content = f.read()
                 
-            if frappe.db.exists("Print Format", name):
-                # Si ya existe en la base de datos de ERPNext, NO sobreescribirlo con los archivos del repo.
-                # De esta forma, el usuario puede editar y diseñar los formatos directamente desde la UI de ERPNext.
-                pass
-            else:
+            if not frappe.db.exists("Print Format", name):
                 frappe.get_doc({
                     "doctype": "Print Format",
                     "name": name,
@@ -499,20 +695,27 @@ def _sync_custom_print_formats():
                     "standard": "No",
                     "custom_format": 1
                 }).insert(ignore_permissions=True)
-                frappe.db.commit()
+                
+            frappe.db.commit()
         except Exception:
             frappe.log_error(frappe.get_traceback(), f"FacEx Multi: sync print format {name}")
 
 
 @frappe.whitelist()
-def get_print_formats():
+def get_print_formats(company: str = None):
     """Retorna print formats disponibles para Sales Invoice."""
     # Sincronizar formatos personalizados antes de retornar la lista
-    _sync_custom_print_formats()
+    # _sync_custom_print_formats()
+    
+    company = get_effective_company(company)
     
     formats = frappe.db.get_all(
         "Print Format",
-        filters={"doc_type": "Sales Invoice", "disabled": 0},
+        filters=[
+            ["doc_type", "=", "Sales Invoice"],
+            ["disabled", "=", 0],
+            ["bfel_company", "=", company]
+        ],
         fields=["name"],
         order_by="name asc",
     )
@@ -585,15 +788,17 @@ def _safe_doc_dict(doc) -> dict:
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_dashboard_stats(start_date=None, end_date=None, customer=None, item_code=None):
+def get_dashboard_stats(start_date=None, end_date=None, customer=None, item_code=None, company=None):
     """
     Calcula métricas y reportes dinámicos para el Tablero FaEx.
     """
     if not has_efast_permission():
         frappe.throw("No tiene permisos para ver este tablero.", frappe.PermissionError)
 
+    company = get_effective_company(company)
+
     # 1. Construir filtros base para Sales Invoice (incluyendo canceladas 2)
-    filters = {"docstatus": ["in", [0, 1, 2]]}
+    filters = {"docstatus": ["in", [0, 1, 2]], "company": company}
     if start_date and end_date:
         filters["posting_date"] = ["between", [start_date, end_date]]
     if customer:
@@ -623,8 +828,8 @@ def get_dashboard_stats(start_date=None, end_date=None, customer=None, item_code
     month_invoices = [inv for inv in invoices if getdate(inv.posting_date) >= month_start_date and inv.docstatus != 2 and inv.bfel_documento_anulado != 1]
     month_total = sum(float(inv.grand_total or 0) for inv in month_invoices)
 
-    # 4. Detalle de items vendidos
-    invoice_names = [inv.name for inv in invoices]
+    # 4. Detalle de items vendidos (excluyendo canceladas y anuladas)
+    invoice_names = [inv.name for inv in invoices if inv.docstatus != 2 and inv.bfel_documento_anulado != 1]
     if invoice_names:
         item_filters = {
             "parent": ["in", invoice_names]
@@ -675,11 +880,16 @@ def get_dashboard_stats(start_date=None, end_date=None, customer=None, item_code
         if cust_doc.credit_limits:
             credit_limit = float(cust_doc.credit_limits[0].credit_limit or 0)
             
-        outstanding_balance = frappe.db.get_value(
-            "Sales Invoice",
-            {"customer": customer, "docstatus": 1},
-            {"SUM": "outstanding_amount"}
-        ) or 0.0
+        outstanding_balance_res = frappe.db.sql(
+            """
+            select sum(outstanding_amount)
+            from `tabSales Invoice`
+            where customer = %s and docstatus = 1 and company = %s
+            """,
+            (customer, company),
+        )
+        outstanding_balance = float((outstanding_balance_res and outstanding_balance_res[0][0]) or 0.0)
+
 
         customer_stats = {
             "total_sales": total_sales,
@@ -696,7 +906,7 @@ def get_dashboard_stats(start_date=None, end_date=None, customer=None, item_code
         "fel_processed": fel_processed,
         "fel_pending": fel_pending,
         "invoices": invoices[:50],  # Limitar a las últimas 50 facturas en lista rápida
-        "items_summary": items_summary_list[:20],  # Top 20 productos
+        "items_summary": items_summary_list[:30],  # Top 30 productos para mostrar top 15 en frontend
         "customer_stats": customer_stats
     }
 
@@ -794,6 +1004,13 @@ def preview_fel_pdf(invoice_name: str):
     doc = frappe.get_doc("Sales Invoice", invoice_name)
     if not doc.bfel_uuid:
         frappe.throw("La factura no ha sido certificada en FEL.")
+
+    # Validar que existe exactamente una configuración activa
+    configs = frappe.get_all("BFEL Settings", filters={"company": doc.company, "enabled": 1}, fields=["name"])
+    if not configs:
+        frappe.throw(f"No se encontró ninguna configuración activa de BFEL Settings para la compañía '{doc.company}'.")
+    if len(configs) > 1:
+        frappe.throw(f"Riesgo de Configuración FEL: Se encontraron múltiples configuraciones de BFEL Settings activas para la compañía '{doc.company}' ({', '.join(c.name for c in configs)}). Por favor desactive las configuraciones duplicadas para evitar fugas de datos.")
 
     # Obtener la URL del PDF desde la configuración de BFEL
     url_pdf = frappe.db.get_value(

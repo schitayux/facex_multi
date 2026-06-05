@@ -451,3 +451,14 @@ body {
   color: var(--muted);
   margin-top: 5px;
 }
+
+/* ============================================================ */
+/* DATE BOX HIGHLIGHTS                                           */
+/* ============================================================ */
+.date-box {
+  background: var(--soft-blue) !important;
+  border-color: var(--blue) !important;
+}
+.date-box .label {
+  color: var(--blue) !important;
+}

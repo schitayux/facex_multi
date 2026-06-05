@@ -57,6 +57,18 @@
   {% set bs = frappe.get_doc("BFEL Settings", bdm.bfel_settings) %}
 {% endif %}
 
+{% set est_logo = "" %}
+{% set est_name = bs.company %}
+{% set est_subname = "" %}
+{% if doc.bfel_establecimiento %}
+  {% set ests = frappe.get_all("BFEL Establecimientos", filters={"parent": bs.name, "establecimiento_id": doc.bfel_establecimiento, "activo": 1}, fields=["logo", "nombre_establecimiento", "subnombre_establecimiento"]) %}
+  {% if ests %}
+    {% set est_logo = ests[0].logo %}
+    {% set est_name = ests[0].nombre_establecimiento %}
+    {% set est_subname = ests[0].subnombre_establecimiento %}
+  {% endif %}
+{% endif %}
+
 {# ============================================================= #}
 {# WATERMARKS                                                     #}
 {# ============================================================= #}
@@ -81,18 +93,27 @@
 
   <div class="header-left">
 
-    {% set lh_name = frappe.db.get_value("Company", bs.company, "default_letter_head") %}
-    {% if lh_name %}
-      {% set lh = frappe.get_doc("Letter Head", lh_name) %}
-      {% if lh.image %}
-        <img src="{{ lh.image }}" class="logo" alt="Logo">
+    {% if est_logo %}
+      <img src="{{ est_logo }}" class="logo" alt="Logo">
+    {% else %}
+      {% set lh_name = frappe.db.get_value("Company", bs.company, "default_letter_head") %}
+      {% if lh_name %}
+        {% set lh = frappe.get_doc("Letter Head", lh_name) %}
+        {% if lh.image %}
+          <img src="{{ lh.image }}" class="logo" alt="Logo">
+        {% endif %}
       {% endif %}
     {% endif %}
 
     <div class="company-info">
-      <div class="company-name">{{ bs.company }}</div>
+      <div class="company-name">{{ est_name }}</div>
+      {% if bs.paisemisor or frappe.db.get_value("Company", bs.company, "country") %}
+        <div>País: {{ bs.paisemisor or frappe.db.get_value("Company", bs.company, "country") }}</div>
+      {% endif %}
+      {% if est_subname %}
+        <div class="company-subname" style="font-size: 10px; font-weight: 600; color: #555; margin-bottom: 2px;">Subnombre Establecimiento: {{ est_subname }}</div>
+      {% endif %}
       <div>NIT: {{ bs.company_nit }}</div>
-      <div>{{ frappe.db.get_value("Company", bs.company, "company_name") or '' }}</div>
       <div>{{ frappe.db.get_value("Company", bs.company, "email") or '' }}</div>
       <div>{{ frappe.db.get_value("Company", bs.company, "phone_no") or '' }}</div>
     </div>
@@ -136,6 +157,16 @@
   <div class="info-box">
     <div class="label">NIT / CUI</div>
     <div class="value">{{ si.bfel_nit or si.bfel_cui or 'CF' }}</div>
+  </div>
+
+  <div class="info-box date-box">
+    <div class="label">Fecha Factura</div>
+    <div class="value">{{ si.get_formatted("posting_date") or si.posting_date or '' }}</div>
+  </div>
+
+  <div class="info-box date-box">
+    <div class="label">Fecha Vencimiento</div>
+    <div class="value">{{ si.get_formatted("due_date") or si.due_date or '' }}</div>
   </div>
 
   <div class="info-box full">

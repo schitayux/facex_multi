@@ -1,0 +1,134 @@
+{
+ "autoname": "field:domain",
+ "creation": "2026-06-02 22:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "domain",
+  "company",
+  "enabled",
+  "allowed_email_domains",
+  "primary_color",
+  "welcome_text",
+  "notes",
+  "auto_configure",
+  "auto_configure_summary",
+  "auto_configured",
+  "section_break_advanced",
+  "custom_logo",
+  "repo_logo_path"
+ ],
+ "fields": [
+  {
+   "fieldname": "domain",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Domain",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "allowed_email_domains",
+   "fieldtype": "Small Text",
+   "label": "Allowed Email Domains",
+   "description": "Comma-separated domains, e.g., onecon.com, onecon.gt"
+  },
+  {
+   "fieldname": "primary_color",
+   "fieldtype": "Data",
+   "label": "Primary Color",
+   "description": "Hex color code, e.g., #ff0000"
+  },
+  {
+   "fieldname": "welcome_text",
+   "fieldtype": "Data",
+   "label": "Welcome Text",
+   "description": "Custom message above the login form"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  },
+  {
+   "default": "0",
+   "fieldname": "auto_configure",
+   "fieldtype": "Check",
+   "label": "Auto Configuración",
+   "description": "Al activar y guardar, se generarán automáticamente las configuraciones iniciales de Artículos, Servicios, Listas de precios, Formatos de impresión, Impuestos, Vendedores y Configuraciones BFEL para esta compañía."
+  },
+  {
+   "fieldname": "auto_configure_summary",
+   "fieldtype": "Long Text",
+   "label": "Resumen de Auto Configuración",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "auto_configured",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Auto Configured"
+  },
+  {
+   "fieldname": "section_break_advanced",
+   "fieldtype": "Section Break",
+   "label": "Advanced & Legacy Settings",
+   "collapsible": 1,
+   "collapsed": 1
+  },
+  {
+   "fieldname": "custom_logo",
+   "fieldtype": "Attach Image",
+   "label": "Custom Logo Override",
+   "description": "Overrides the Company and Letter Head logos"
+  },
+  {
+   "fieldname": "repo_logo_path",
+   "fieldtype": "Data",
+   "label": "Repo Logo Path (Legacy)",
+   "description": "Legacy fallback path in repository"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 0,
+ "links": [],
+ "modified": "2026-06-02 23:30:00.000000",
+ "modified_by": "Administrator",
+ "module": "FacEx Multi",
+ "name": "FacEx Domain Branding",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

@@ -2,13 +2,14 @@
 facex_multi.api.reports
 ----------------------
 Módulo de reportes y análisis para FacEx.
-Consultas seguras parametrizadas aisladas a Sales Invoice y eFast Invoice Payment.
+Consultas seguras parametrizadas aisladas a Sales Invoice y eFast Invoice Payment con soporte multi-compañía.
 """
 from __future__ import annotations
 
 import frappe
 from frappe.utils import today, getdate, add_days
 import datetime
+from facex_multi.api.invoice import get_effective_company
 
 
 @frappe.whitelist()
@@ -33,11 +34,12 @@ def check_permission():
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_sales_by_date(start_date: str, end_date: str, customer: str = None, warehouse: str = None) -> dict:
+def get_sales_by_date(start_date: str, end_date: str, customer: str = None, warehouse: str = None, company: str = None, establecimiento: str = None) -> dict:
     check_permission()
     
-    conditions = ["docstatus = 1"]
-    values = {"start": start_date, "end": end_date}
+    company = get_effective_company(company)
+    conditions = ["docstatus = 1", "COALESCE(bfel_documento_anulado, 0) != 1", "company = %(company)s"]
+    values = {"start": start_date, "end": end_date, "company": company}
     
     if customer:
         conditions.append("customer = %(customer)s")
@@ -46,6 +48,10 @@ def get_sales_by_date(start_date: str, end_date: str, customer: str = None, ware
     if warehouse:
         conditions.append("name IN (SELECT parent FROM `tabSales Invoice Item` WHERE warehouse = %(warehouse)s)")
         values["warehouse"] = warehouse
+        
+    if establecimiento:
+        conditions.append("bfel_establecimiento = %(establecimiento)s")
+        values["establecimiento"] = establecimiento
         
     query = f"""
         SELECT name, posting_date, customer, customer_name, total, total_taxes_and_charges, grand_total, outstanding_amount
@@ -78,11 +84,12 @@ def get_sales_by_date(start_date: str, end_date: str, customer: str = None, ware
 
 @frappe.whitelist()
 def get_sales_by_product(start_date: str, end_date: str, item_code: str = None, 
-                         item_group: str = None, customer: str = None, warehouse: str = None) -> dict:
+                         item_group: str = None, customer: str = None, warehouse: str = None, company: str = None, establecimiento: str = None) -> dict:
     check_permission()
     
-    conditions = ["p.docstatus = 1", "p.posting_date BETWEEN %(start)s AND %(end)s"]
-    values = {"start": start_date, "end": end_date}
+    company = get_effective_company(company)
+    conditions = ["p.docstatus = 1", "COALESCE(p.bfel_documento_anulado, 0) != 1", "p.posting_date BETWEEN %(start)s AND %(end)s", "p.company = %(company)s"]
+    values = {"start": start_date, "end": end_date, "company": company}
     
     if item_code:
         conditions.append("i.item_code = %(item_code)s")
@@ -99,6 +106,10 @@ def get_sales_by_product(start_date: str, end_date: str, item_code: str = None,
     if warehouse:
         conditions.append("i.warehouse = %(warehouse)s")
         values["warehouse"] = warehouse
+        
+    if establecimiento:
+        conditions.append("p.bfel_establecimiento = %(establecimiento)s")
+        values["establecimiento"] = establecimiento
         
     query = f"""
         SELECT i.item_code, i.item_name, SUM(i.qty) AS total_qty, AVG(i.rate) AS avg_rate, SUM(i.amount) AS total_amount
@@ -129,15 +140,20 @@ def get_sales_by_product(start_date: str, end_date: str, item_code: str = None,
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_cancelled_invoices(start_date: str, end_date: str, customer: str = None) -> dict:
+def get_cancelled_invoices(start_date: str, end_date: str, customer: str = None, company: str = None, establecimiento: str = None) -> dict:
     check_permission()
     
-    conditions = ["docstatus = 2", "posting_date BETWEEN %(start)s AND %(end)s"]
-    values = {"start": start_date, "end": end_date}
+    company = get_effective_company(company)
+    conditions = ["(docstatus = 2 OR COALESCE(bfel_documento_anulado, 0) = 1)", "posting_date BETWEEN %(start)s AND %(end)s", "company = %(company)s"]
+    values = {"start": start_date, "end": end_date, "company": company}
     
     if customer:
         conditions.append("customer = %(customer)s")
         values["customer"] = customer
+        
+    if establecimiento:
+        conditions.append("bfel_establecimiento = %(establecimiento)s")
+        values["establecimiento"] = establecimiento
         
     query = f"""
         SELECT name, posting_date, customer, customer_name, grand_total, modified_by, modified, bfel_documento_anulado
@@ -163,13 +179,14 @@ def get_cancelled_invoices(start_date: str, end_date: str, customer: str = None)
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_customer_statement(customer: str, start_date: str = None, end_date: str = None, doc_type_filter: str = None) -> dict:
+def get_customer_statement(customer: str, start_date: str = None, end_date: str = None, doc_type_filter: str = None, company: str = None, establecimiento: str = None) -> dict:
     check_permission()
     if not customer:
         return {"ledger": [], "summary": {}}
         
-    values = {"customer": customer}
-    conditions = ["customer = %(customer)s", "docstatus = 1"]
+    company = get_effective_company(company)
+    values = {"customer": customer, "company": company}
+    conditions = ["customer = %(customer)s", "docstatus = 1", "COALESCE(bfel_documento_anulado, 0) != 1", "company = %(company)s"]
     
     if start_date and end_date:
         conditions.append("posting_date BETWEEN %(start)s AND %(end)s")
@@ -183,13 +200,19 @@ def get_customer_statement(customer: str, start_date: str = None, end_date: str 
             conditions.append("is_return = 1")
         elif doc_type_filter == "Notas de Débito":
             conditions.append("is_debit_note = 1")
+            
+    if establecimiento:
+        conditions.append("bfel_establecimiento = %(establecimiento)s")
+        values["establecimiento"] = establecimiento
         
     query = f"""
         SELECT 
             name, 
             posting_date, 
+            due_date,
+            bfel_docto_serie,
+            bfel_docto_no,
             grand_total,
-            custom_pagado,
             is_return,
             is_debit_note,
             COALESCE((
@@ -219,7 +242,7 @@ def get_customer_statement(customer: str, start_date: str = None, end_date: str 
         total_paid += inv_paid
         running_balance += inv_balance
         
-        status = "Liquidado" if int(inv.custom_pagado or 0) == 1 or inv_balance <= 0.009 else "Pendiente"
+        status = "Liquidado" if inv_balance <= 0.009 else "Pendiente"
         
         doc_type_desc = "Factura"
         if inv.is_return == 1:
@@ -230,6 +253,8 @@ def get_customer_statement(customer: str, start_date: str = None, end_date: str 
         ledger.append({
             "name": inv.name,
             "posting_date": str(inv.posting_date),
+            "due_date": str(inv.due_date) if inv.due_date else "",
+            "serie_no": f"{inv.bfel_docto_serie or ''} - {inv.bfel_docto_no or ''}" if (inv.bfel_docto_serie or inv.bfel_docto_no) else "",
             "grand_total": inv_total,
             "paid_amount": inv_paid,
             "balance": inv_balance,
@@ -260,14 +285,20 @@ def get_customer_statement(customer: str, start_date: str = None, end_date: str 
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_aging_receivables(customer: str = None) -> dict:
+def get_aging_receivables(customer: str = None, company: str = None, establecimiento: str = None) -> dict:
     check_permission()
     
-    conditions = ["docstatus = 1", "custom_pagado = 0", "is_return = 0"]
-    values = {}
+    company = get_effective_company(company)
+    conditions = ["docstatus = 1", "is_return = 0", "COALESCE(bfel_documento_anulado, 0) != 1", "company = %(company)s"]
+    values = {"company": company}
+    
     if customer:
         conditions.append("customer = %(customer)s")
         values["customer"] = customer
+        
+    if establecimiento:
+        conditions.append("bfel_establecimiento = %(establecimiento)s")
+        values["establecimiento"] = establecimiento
         
     query = f"""
         SELECT 
@@ -276,6 +307,8 @@ def get_aging_receivables(customer: str = None) -> dict:
             customer_name,
             posting_date,
             due_date,
+            bfel_docto_serie,
+            bfel_docto_no,
             grand_total,
             COALESCE((
                 SELECT SUM(amount) 
@@ -309,23 +342,42 @@ def get_aging_receivables(customer: str = None) -> dict:
                 "range_0_30": 0.0,
                 "range_31_60": 0.0,
                 "range_61_90": 0.0,
-                "range_91_plus": 0.0
+                "range_91_plus": 0.0,
+                "invoices": []
             }
             
-        # Calcular antigüedad de días
-        post_dt = getdate(inv.posting_date)
-        days = (today_dt - post_dt).days
+        # Calcular antigüedad de días con base a la fecha de vencimiento
+        due_dt = getdate(inv.due_date or inv.posting_date)
+        days = (today_dt - due_dt).days
         
         aging_data[cust_id]["total_outstanding"] += outstanding
         
         if days <= 30:
             aging_data[cust_id]["range_0_30"] += outstanding
+            bucket = "0-30 días"
         elif days <= 60:
             aging_data[cust_id]["range_31_60"] += outstanding
+            bucket = "31-60 días"
         elif days <= 90:
             aging_data[cust_id]["range_61_90"] += outstanding
+            bucket = "61-90 días"
         else:
             aging_data[cust_id]["range_91_plus"] += outstanding
+            bucket = "91+ días"
+            
+        serie_no = f"{inv.bfel_docto_serie or ''} - {inv.bfel_docto_no or ''}" if (inv.bfel_docto_serie or inv.bfel_docto_no) else ""
+        
+        aging_data[cust_id]["invoices"].append({
+            "name": inv.name,
+            "serie_no": serie_no,
+            "posting_date": str(inv.posting_date),
+            "due_date": str(inv.due_date) if inv.due_date else "",
+            "grand_total": float(inv.grand_total or 0.0),
+            "paid_amount": paid,
+            "outstanding_amount": outstanding,
+            "days_due": days,
+            "bucket": bucket
+        })
             
     aging_list = sorted(aging_data.values(), key=lambda x: x["total_outstanding"], reverse=True)
     
@@ -353,11 +405,12 @@ def get_aging_receivables(customer: str = None) -> dict:
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_quotations_report(start_date: str = None, end_date: str = None, customer: str = None) -> dict:
+def get_quotations_report(start_date: str = None, end_date: str = None, customer: str = None, company: str = None, establecimiento: str = None) -> dict:
     check_permission()
     
-    conditions = ["docstatus = 0", "is_return = 0", "is_debit_note = 0"]
-    values = {}
+    company = get_effective_company(company)
+    conditions = ["docstatus = 0", "is_return = 0", "is_debit_note = 0", "COALESCE(bfel_documento_anulado, 0) != 1", "company = %(company)s"]
+    values = {"company": company}
     
     if start_date and end_date:
         conditions.append("posting_date BETWEEN %(start)s AND %(end)s")
@@ -366,6 +419,10 @@ def get_quotations_report(start_date: str = None, end_date: str = None, customer
     if customer:
         conditions.append("customer = %(customer)s")
         values["customer"] = customer
+        
+    if establecimiento:
+        conditions.append("bfel_establecimiento = %(establecimiento)s")
+        values["establecimiento"] = establecimiento
         
     query = f"""
         SELECT name, posting_date, customer, customer_name, grand_total, bfel_status, creation
@@ -391,15 +448,20 @@ def get_quotations_report(start_date: str = None, end_date: str = None, customer
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_payments_report(start_date: str, end_date: str, payment_method: str = None) -> dict:
+def get_payments_report(start_date: str, end_date: str, payment_method: str = None, company: str = None, establecimiento: str = None) -> dict:
     check_permission()
     
-    conditions = ["p.docstatus = 1", "ip.payment_date BETWEEN %(start)s AND %(end)s"]
-    values = {"start": start_date, "end": end_date}
+    company = get_effective_company(company)
+    conditions = ["p.docstatus = 1", "COALESCE(p.bfel_documento_anulado, 0) != 1", "ip.payment_date BETWEEN %(start)s AND %(end)s", "p.company = %(company)s"]
+    values = {"start": start_date, "end": end_date, "company": company}
     
     if payment_method:
         conditions.append("ip.payment_method = %(method)s")
         values["method"] = payment_method
+        
+    if establecimiento:
+        conditions.append("p.bfel_establecimiento = %(establecimiento)s")
+        values["establecimiento"] = establecimiento
         
     query = f"""
         SELECT ip.payment_date, ip.parent AS invoice, p.customer, p.customer_name, ip.payment_method, ip.reference, ip.amount
@@ -438,19 +500,30 @@ def get_payments_report(start_date: str, end_date: str, payment_method: str = No
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_uncertified_invoices() -> dict:
+def get_uncertified_invoices(company: str = None, establecimiento: str = None) -> dict:
     check_permission()
     
-    query = """
+    company = get_effective_company(company)
+    conditions = [
+        "docstatus = 1",
+        "company = %(company)s",
+        "bfel_status = '01 Enviar'",
+        "(bfel_uuid IS NULL OR bfel_uuid = '')"
+    ]
+    values = {"company": company}
+    
+    if establecimiento:
+        conditions.append("bfel_establecimiento = %(establecimiento)s")
+        values["establecimiento"] = establecimiento
+        
+    query = f"""
         SELECT name, posting_date, customer, customer_name, grand_total, bfel_status, bfel_error_log
         FROM `tabSales Invoice`
-        WHERE docstatus = 1 
-          AND bfel_status = '01 Enviar'
-          AND (bfel_uuid IS NULL OR bfel_uuid = '')
+        WHERE { " AND ".join(conditions) }
         ORDER BY posting_date DESC, name DESC
     """
     
-    invoices = frappe.db.sql(query, as_dict=True)
+    invoices = frappe.db.sql(query, values, as_dict=True)
     total_amount = sum(float(inv.grand_total or 0) for inv in invoices)
     
     return {
@@ -467,57 +540,74 @@ def get_uncertified_invoices() -> dict:
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_sales_growth_analysis(year: str = None) -> dict:
+def get_sales_growth_analysis(year: str = None, month: str = None, company: str = None, establecimiento: str = None) -> dict:
     check_permission()
     
+    company = get_effective_company(company)
     current_year = int(year) if year else datetime.datetime.now().year
-    prev_year = current_year - 1
+    current_month = int(month) if month else datetime.datetime.now().month
     
-    # Ventas mensuales año actual
-    curr_data = frappe.db.sql("""
-        SELECT DATE_FORMAT(posting_date, '%%m') AS month, SUM(grand_total) AS total
+    if current_month == 1:
+        prev_month = 12
+        prev_year = current_year - 1
+    else:
+        prev_month = current_month - 1
+        prev_year = current_year
+        
+    # Ventas diarias año actual/mes seleccionado
+    curr_conditions = ["docstatus = 1", "YEAR(posting_date) = %(year)s", "MONTH(posting_date) = %(month)s", "company = %(company)s", "COALESCE(bfel_documento_anulado, 0) != 1"]
+    curr_values = {"year": current_year, "month": current_month, "company": company}
+    
+    prev_conditions = ["docstatus = 1", "YEAR(posting_date) = %(year)s", "MONTH(posting_date) = %(month)s", "company = %(company)s", "COALESCE(bfel_documento_anulado, 0) != 1"]
+    prev_values = {"year": prev_year, "month": prev_month, "company": company}
+    
+    if establecimiento:
+        curr_conditions.append("bfel_establecimiento = %(establecimiento)s")
+        curr_values["establecimiento"] = establecimiento
+        prev_conditions.append("bfel_establecimiento = %(establecimiento)s")
+        prev_values["establecimiento"] = establecimiento
+        
+    curr_data = frappe.db.sql(f"""
+        SELECT DAY(posting_date) AS day, SUM(grand_total) AS total
         FROM `tabSales Invoice`
-        WHERE docstatus = 1 AND YEAR(posting_date) = %(year)s
-        GROUP BY DATE_FORMAT(posting_date, '%%m')
-    """, {"year": current_year}, as_dict=True)
+        WHERE {" AND ".join(curr_conditions)}
+        GROUP BY DAY(posting_date)
+    """, curr_values, as_dict=True)
     
-    # Ventas mensuales año anterior
-    prev_data = frappe.db.sql("""
-        SELECT DATE_FORMAT(posting_date, '%%m') AS month, SUM(grand_total) AS total
+    # Ventas diarias año anterior/mes anterior
+    prev_data = frappe.db.sql(f"""
+        SELECT DAY(posting_date) AS day, SUM(grand_total) AS total
         FROM `tabSales Invoice`
-        WHERE docstatus = 1 AND YEAR(posting_date) = %(year)s
-        GROUP BY DATE_FORMAT(posting_date, '%%m')
-    """, {"year": prev_year}, as_dict=True)
+        WHERE {" AND ".join(prev_conditions)}
+        GROUP BY DAY(posting_date)
+    """, prev_values, as_dict=True)
     
-    # Mapear a vectores de 12 meses
-    curr_dict = {r["month"]: float(r["total"] or 0) for r in curr_data}
-    prev_dict = {r["month"]: float(r["total"] or 0) for r in prev_data}
+    # Mapear a vectores de días
+    curr_dict = {r["day"]: float(r["total"] or 0) for r in curr_data}
+    prev_dict = {r["day"]: float(r["total"] or 0) for r in prev_data}
     
-    months_names = [
-        "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
-        "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
-    ]
+    import calendar
+    num_days = calendar.monthrange(current_year, current_month)[1]
     
     chart_data = []
     total_curr = 0.0
     total_prev = 0.0
     
-    for i in range(1, 13):
-        m_str = f"{i:02d}"
-        val_curr = curr_dict.get(m_str, 0.0)
-        val_prev = prev_dict.get(m_str, 0.0)
+    for d in range(1, num_days + 1):
+        val_curr = curr_dict.get(d, 0.0)
+        val_prev = prev_dict.get(d, 0.0)
         
         total_curr += val_curr
         total_prev += val_prev
         
-        # Calcular crecimiento relativo mensual
+        # Calcular crecimiento relativo diario
         growth = 0.0
         if val_prev > 0:
             growth = ((val_curr - val_prev) / val_prev) * 100.0
             
         chart_data.append({
-            "idx": i,
-            "month_name": months_names[i - 1],
+            "idx": d,
+            "month_name": f"Día {d}",
             "current_year": val_curr,
             "previous_year": val_prev,
             "growth": round(growth, 2)
@@ -527,9 +617,18 @@ def get_sales_growth_analysis(year: str = None) -> dict:
     if total_prev > 0:
         overall_growth = ((total_curr - total_prev) / total_prev) * 100.0
         
+    months_names = [
+        "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+        "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+    ]
+        
     return {
         "year": current_year,
         "prev_year": prev_year,
+        "month": current_month,
+        "prev_month": prev_month,
+        "month_name": months_names[current_month - 1],
+        "prev_month_name": months_names[prev_month - 1],
         "chart_data": chart_data,
         "summary": {
             "total_current": total_curr,

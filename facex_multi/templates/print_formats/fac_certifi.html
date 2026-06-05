@@ -1,0 +1,566 @@
+{# ============================================================= #}
+{# CONTEXTO                                                       #}
+{# ============================================================= #}
+
+{% set si=doc %}
+{% set bfel_raw=si.bfel_status or '' %}
+{% set bfel_code=bfel_raw[:2] %}
+
+{% set is_certified=
+bfel_code=="02"
+%}
+{% set is_cancelled =
+(si.bfel_documento_anulado or 0)|int == 1
+%}
+
+{% set serie_prefix=
+(si.name or '')[:4]
+%}
+
+{% set bdm_list =
+frappe.get_all(
+"BFEL Document Map",
+filters={
+"type_docdte":
+serie_prefix
+},
+limit=1
+)
+%}
+
+{% if bdm_list and bdm_list|length > 0 %}
+
+{% set bdm=
+frappe.get_doc(
+"BFEL Document Map",
+bdm_list[0].name
+)
+%}
+
+{% set bs=
+frappe.get_doc(
+"BFEL Settings",
+bdm.bfel_settings
+)
+%}
+
+{% set company=
+frappe.get_doc(
+"Company",
+bs.company
+)
+%}
+
+{% else %}
+
+{% set company=
+frappe.get_doc(
+"Company",
+si.company
+)
+%}
+
+{% set bs=namespace(
+direccionemisor="",
+paisemisor="",
+company_nit=company.tax_id or "",
+isr_regime="",
+certifier="",
+company=si.company
+)
+%}
+
+{% set bdm=namespace(
+fel_document_type="FACTURA"
+)
+%}
+
+{% endif %}
+
+{% set est_logo = "" %}
+{% set est_name = company.company_name %}
+{% set est_subname = "" %}
+{% if doc.bfel_establecimiento and bs and bs.name %}
+  {% set ests = frappe.get_all("BFEL Establecimientos", filters={"parent": bs.name, "establecimiento_id": doc.bfel_establecimiento, "activo": 1}, fields=["logo", "nombre_establecimiento", "subnombre_establecimiento"]) %}
+  {% if ests %}
+    {% set est_logo = ests[0].logo %}
+    {% set est_name = ests[0].nombre_establecimiento %}
+    {% set est_subname = ests[0].subnombre_establecimiento %}
+  {% endif %}
+{% endif %}
+
+{% set logo=
+est_logo
+or company.company_logo
+or (
+frappe.get_doc(
+"Letter Head",
+company.default_letter_head
+).image
+if company.default_letter_head
+else ""
+)
+%}
+
+{# ============================================================= #}
+{# IVA DOCUMENTO                                                  #}
+{# ============================================================= #}
+
+{% set tax_ns=namespace(rate=0) %}
+
+{% for tax in si.taxes %}
+    {% if (tax.rate or 0) > 0 and tax_ns.rate == 0 %}
+        {% set tax_ns.rate = tax.rate %}
+    {% endif %}
+{% endfor %}
+{% if is_cancelled %}
+
+<div class="watermark-anulado">
+    ANULADO FEL
+</div>
+
+{% endif %}
+<div class="header">
+
+<div class="header-left">
+
+{% if logo %}
+
+<img
+src="{{ logo }}"
+class="logo">
+
+{% endif %}
+
+<div class="company-name">
+
+{{ est_name }}
+
+</div>
+
+<div class="company-address">
+
+{{ bs.direccionemisor or "" }}
+
+<br>
+
+{{ bs.paisemisor or "" }}
+
+{% if est_subname %}
+<br>
+Subnombre Establecimiento: {{ est_subname }}
+{% endif %}
+
+</div>
+
+<div class="company-meta">
+
+NIT:
+
+{{ bs.company_nit }}
+
+<br>
+
+{{ bs.isr_regime }}
+
+</div>
+
+</div>
+
+<div class="header-right">
+
+<div class="fel-title">
+
+{{ bdm.fel_document_type|upper }}
+
+</div>
+
+<div class="fel-subtitle">
+
+DOCUMENTO TRIBUTARIO ELECTRÓNICO
+
+</div>
+
+<div class="invoice-ref">
+
+REF:
+
+{{ si.name }}
+
+</div>
+
+</div>
+
+</div>
+
+<div class="divider"></div>
+
+<div class="section-title">
+
+Datos Cliente
+
+</div>
+
+<div class="client-grid">
+
+<div class="info-box">
+
+<div class="label">
+
+Cliente
+
+</div>
+
+<div class="value">
+
+{{ si.customer_name }}
+
+</div>
+
+</div>
+
+<div class="info-box">
+
+<div class="label">
+
+NIT/CUI
+
+</div>
+
+<div class="value">
+
+{{ si.bfel_nit or 'CF' }}
+
+</div>
+
+</div>
+
+<div class="info-box">
+
+<div class="label">
+
+Fecha Factura
+
+</div>
+
+<div class="value">
+
+{{ si.get_formatted("posting_date") or si.posting_date }}
+
+</div>
+
+</div>
+
+<div class="info-box">
+
+<div class="label">
+
+Fecha Vencimiento
+
+</div>
+
+<div class="value">
+
+{{ si.get_formatted("due_date") or si.due_date }}
+
+</div>
+
+</div>
+
+<div class="info-box full">
+
+<div class="label">
+
+Dirección
+
+</div>
+
+<div class="value">
+
+{{ si.bfel_direccion or "" }}
+
+</div>
+
+</div>
+
+</div>
+
+<div class="section-title">
+
+Detalle
+
+</div>
+
+<table class="items-table">
+
+<thead>
+
+<tr>
+
+<th>
+
+Cantidad
+
+</th>
+
+<th>
+
+Descripción
+
+</th>
+
+<th>
+
+Precio
+
+</th>
+
+<th>
+
+IVA
+
+</th>
+
+<th>
+
+TOTAL
+
+</th>
+
+</tr>
+
+</thead>
+
+<tbody>
+
+{% set ns=
+namespace(total=0,total_iva=0)
+%}
+
+{% for item in si.items %}
+
+{% set ns.total=
+ns.total+
+(item.amount or 0)
+%}
+
+{# ============================================================= #}
+{# IVA POR LÍNEA                                                  #}
+{# Si la línea tiene impuesto incluido, usa amount - net_amount.  #}
+{# Si no, calcula sobre amount con la tasa del documento.          #}
+{# Si la línea trae template o configuración exenta, deja 0.       #}
+{# ============================================================= #}
+
+{% set iva_linea = 0 %}
+{% set item_tax_text = item.item_tax_rate or "" %}
+{% set has_zero_tax_override =
+item_tax_text
+and (
+": 0" in item_tax_text
+or ":0" in item_tax_text
+or "0.0" in item_tax_text
+)
+%}
+
+{% if has_zero_tax_override %}
+
+    {% set iva_linea = 0 %}
+
+{% elif (item.amount or 0) > 0 and (item.net_amount or 0) > 0 and (item.amount or 0) > (item.net_amount or 0) %}
+
+    {% set iva_linea = (item.amount or 0) - (item.net_amount or 0) %}
+
+{% elif (tax_ns.rate or 0) > 0 %}
+
+    {% set iva_linea = ((item.amount or 0) * (tax_ns.rate or 0) / 100) %}
+
+{% else %}
+
+    {% set iva_linea = 0 %}
+
+{% endif %}
+
+{% set ns.total_iva =
+ns.total_iva+
+(iva_linea or 0)
+%}
+
+<tr>
+
+<td>
+
+{{ item.qty }}
+
+</td>
+
+<td>
+
+{{ item.item_name }}
+
+</td>
+
+<td>
+
+{{ frappe.utils.fmt_money(
+item.rate,
+currency=si.currency
+)
+}}
+
+</td>
+
+<td>
+
+{{ frappe.utils.fmt_money(
+iva_linea,
+currency=si.currency
+)
+}}
+
+</td>
+
+<td>
+
+{{ frappe.utils.fmt_money(
+item.amount,
+currency=si.currency
+)
+}}
+
+</td>
+
+</tr>
+
+{% endfor %}
+
+</tbody>
+
+</table>
+
+<div class="total-wrapper">
+
+<div class="total-box">
+
+<div class="total-line">
+
+<span>
+
+IVA
+
+</span>
+
+<span>
+
+{{ frappe.utils.fmt_money(
+ns.total_iva,
+currency=si.currency
+)
+}}
+
+</span>
+
+</div>
+
+<div class="total-label">
+
+TOTAL
+
+</div>
+
+<div class="total-value">
+
+{{ frappe.utils.fmt_money(
+ns.total,
+currency=si.currency
+)
+}}
+
+</div>
+
+</div>
+
+</div>
+
+{% if is_certified %}
+
+{% set sat_emisor   = (bs.company_nit or '') | replace('-', '') %}
+{% set sat_receptor = (si.bfel_nit or 'CF') | replace('-', '') %}
+{% set sat_monto    = "%.6f"|format(si.grand_total) %}
+{% set sat_url      = 'https://felpub.c.sat.gob.gt/verificador-web/publico/vistas/verificacionDte.jsf?tipo=autorizacion&numero=' + (si.bfel_uuid or '') + '&emisor=' + sat_emisor + '&receptor=' + sat_receptor + '&monto=' + sat_monto %}
+{% set qr = get_qr_base64(sat_url) %}
+
+<div class="qr-section">
+
+<div class="qr-left">
+
+<img
+src="{{ qr }}"
+class="qr-img">
+
+</div>
+
+<div class="qr-right">
+
+<div class="qr-row">
+
+UUID
+
+<br>
+
+{{ si.bfel_uuid }}
+
+</div>
+
+<div class="qr-row">
+
+Serie:
+
+{{ si.bfel_docto_serie }}
+
+</div>
+
+<div class="qr-row">
+
+Número:
+
+{{ si.bfel_docto_no }}
+
+</div>
+
+<div class="qr-row">
+
+Fecha:
+
+{{ si.bfel_fechacertificacion }}
+
+</div>
+
+</div>
+
+</div>
+
+{% endif %}
+
+<div class="footer">
+
+<div>
+
+Documento certificado por:
+
+<b>
+
+{{ bs.certifier }}
+
+</b>
+NIT: 107902281
+</div>
+
+<div>
+
+FacEx — Solución implementada por
+
+Soluciones Integrales CHAPP, S.A.
+
+</div>
+
+</div>

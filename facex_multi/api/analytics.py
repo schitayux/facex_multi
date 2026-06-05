@@ -1,25 +1,34 @@
 """
 facex_multi.api.analytics
 ------------------------
-Análisis de ventas por cliente para la pestaña de Análisis del POS.
+Análisis de ventas por cliente para la pestaña de Análisis del POS con aislamiento multi-compañía.
 """
 from __future__ import annotations
 
 import frappe
 from frappe.utils import today, add_months
+from facex_multi.api.invoice import get_effective_company
 
 
 @frappe.whitelist()
-def get_customer_analytics(customer: str):
+def get_customer_analytics(customer: str, company: str = None):
     """
     Retorna estadísticas de ventas del cliente para los últimos 6 meses:
     - Stats agregadas (count, total, máximo, promedio)
     - Gráfica mensual de ventas
     - Últimas 5 facturas
     - Facturas con saldo pendiente
+    Todos los datos filtrados y validados estrictamente por compañía activa.
     """
     if not customer:
         return {}
+
+    company = get_effective_company(company)
+
+    # Validar que el cliente pertenece a la compañía activa (si bfel_company está seteada)
+    cust_comp = frappe.db.get_value("Customer", customer, "bfel_company")
+    if cust_comp and cust_comp != company:
+        frappe.throw("El cliente seleccionado pertenece a otra compañía y no se pueden cargar sus estadísticas.")
 
     since = add_months(today(), -6)
 
@@ -31,10 +40,10 @@ def get_customer_analytics(customer: str):
             COALESCE(MAX(grand_total), 0)  AS max_invoice,
             COALESCE(AVG(grand_total), 0)  AS avg_invoice
         FROM `tabSales Invoice`
-        WHERE customer = %(c)s AND docstatus = 1
+        WHERE customer = %(c)s AND docstatus = 1 AND company = %(company)s
           AND posting_date >= %(since)s
         """,
-        {"c": customer, "since": since},
+        {"c": customer, "since": since, "company": company},
         as_dict=True,
     )
 
@@ -45,12 +54,12 @@ def get_customer_analytics(customer: str):
             COALESCE(SUM(grand_total), 0)        AS total,
             COUNT(*)                              AS count
         FROM `tabSales Invoice`
-        WHERE customer = %(c)s AND docstatus = 1
+        WHERE customer = %(c)s AND docstatus = 1 AND company = %(company)s
           AND posting_date >= %(since)s
         GROUP BY DATE_FORMAT(posting_date, '%%Y-%%m')
         ORDER BY month ASC
         """,
-        {"c": customer, "since": since},
+        {"c": customer, "since": since, "company": company},
         as_dict=True,
     )
 
@@ -62,18 +71,17 @@ def get_customer_analytics(customer: str):
             grand_total, 
             docstatus, 
             bfel_status, 
-            custom_pagado,
             COALESCE((
                 SELECT SUM(amount) 
                 FROM `tabeFast Invoice Payment` 
                 WHERE parent = `tabSales Invoice`.name AND parenttype = 'Sales Invoice' AND parentfield = 'custom_efast_payments'
             ), 0) AS total_payments
         FROM `tabSales Invoice`
-        WHERE customer = %(c)s AND docstatus IN (0, 1)
+        WHERE customer = %(c)s AND docstatus IN (0, 1) AND company = %(company)s
         ORDER BY posting_date DESC, creation DESC
         LIMIT 5
         """,
-        {"c": customer},
+        {"c": customer, "company": company},
         as_dict=True,
     )
 
@@ -83,24 +91,21 @@ def get_customer_analytics(customer: str):
             name, 
             posting_date, 
             grand_total, 
-            custom_pagado,
             COALESCE((
                 SELECT SUM(amount) 
                 FROM `tabeFast Invoice Payment` 
                 WHERE parent = `tabSales Invoice`.name AND parenttype = 'Sales Invoice' AND parentfield = 'custom_efast_payments'
             ), 0) AS total_payments
         FROM `tabSales Invoice`
-        WHERE customer = %(c)s AND docstatus = 1
+        WHERE customer = %(c)s AND docstatus = 1 AND company = %(company)s
         ORDER BY posting_date ASC
         """,
-        {"c": customer},
+        {"c": customer, "company": company},
         as_dict=True,
     )
 
     outstanding = []
     for r in outstanding_raw:
-        if int(r.get("custom_pagado") or 0) == 1:
-            continue
         tot_paid = float(r.get("total_payments") or 0.0)
         gt = float(r.get("grand_total") or 0.0)
         bal = max(0.0, gt - tot_paid)
@@ -138,10 +143,10 @@ def get_customer_analytics(customer: str):
                 "name": r["name"],
                 "posting_date": str(r["posting_date"] or ""),
                 "grand_total": float(r["grand_total"] or 0),
-                "outstanding_amount": 0.0 if int(r.get("custom_pagado") or 0) == 1 else max(0.0, float(r["grand_total"] or 0) - float(r.get("total_payments") or 0)),
+                "outstanding_amount": max(0.0, float(r["grand_total"] or 0) - float(r.get("total_payments") or 0)),
                 "docstatus": r["docstatus"],
                 "bfel_status": r.get("bfel_status") or "",
-                "custom_pagado": int(r.get("custom_pagado") or 0),
+                "custom_pagado": 1 if max(0.0, float(r["grand_total"] or 0) - float(r.get("total_payments") or 0)) <= 0.009 else 0,
             }
             for r in last_invoices
         ],

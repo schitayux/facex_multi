@@ -21,7 +21,7 @@ app_license = "mit"
 
 doc_events = {
     "Customer": {
-        "validate": "facex_multi.api.customer.sync_customer_nit"
+        "validate": "facex_multi.api.customer.validate_customer_on_save"
     }
 }
 fixtures = [
@@ -35,6 +35,21 @@ fixtures = [
                 "FacEx Multi"
             ]
         ]
+    },
+    {
+        "dt": "Custom Field",
+        "filters": [
+            ["fieldname", "like", "bfel_%"]
+        ]
+    },
+    {
+        "dt": "Property Setter",
+        "filters": [
+            ["field_name", "like", "bfel_%"]
+        ]
     }
 
 ]
+
+web_include_js = "/assets/facex_multi/js/facex_login.js"
+

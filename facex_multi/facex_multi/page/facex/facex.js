@@ -47,6 +47,7 @@ class EFastSalePage {
 		this._loading = false;
 		this._dirty = false;
 		this._manualPayment = false;
+		this._request_pending = false;
 
 		this._inject_styles();
 		this._render_html();
@@ -65,6 +66,10 @@ class EFastSalePage {
 			callback: (r) => {
 				if (!r.exc && r.message) {
 					this.defaults = r.message;
+					if (this.defaults.company) {
+						this.$body.find("#ef-navbar-company-badge").css("display", "flex");
+						this.$body.find("#ef-active-company-name").text(this.defaults.company);
+					}
 				}
 				this._setup_header_controls();
 				this._setup_item_table();
@@ -113,6 +118,7 @@ class EFastSalePage {
 			bfel_nombre: "",
 			bfel_status: "01 Enviar",
 			bfel_escenario_exento: "",
+			bfel_establecimiento: "",
 			company: "",
 			currency: "GTQ",
 			items: [],
@@ -138,6 +144,10 @@ class EFastSalePage {
 		this.doc.bfel_status = "01 Enviar";
 		this.doc.posting_date = frappe.datetime.get_today();
 		this.doc.due_date = frappe.datetime.get_today();
+
+		// Dejar en blanco originalmente para obligar a seleccionar manualmente
+		this.doc.bfel_establecimiento = "";
+
 		this._sync_ui_from_doc();
 		this._update_action_bar_state();
 		this.$body.find("#ef-status-badge").text("NUEVO").removeClass().addClass("ef-badge ef-badge-new");
@@ -170,6 +180,12 @@ class EFastSalePage {
          <span id="ef-fullscreen-btn-text">Modo Enfoque</span>
        </button>
      </div>
+     
+     <div id="ef-navbar-company-badge" style="display: none; align-items: center; gap: 6px; background: #eef2ff; color: #4361ee; padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 700; border: 1px solid #c7d2fe; box-shadow: 0 1px 2px rgba(0,0,0,0.05); text-transform: uppercase; letter-spacing: 0.5px;">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"></path><path d="M9 8h1"></path><path d="M9 12h1"></path><path d="M9 16h1"></path><path d="M14 8h1"></path><path d="M14 12h1"></path><path d="M14 16h1"></path><path d="M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16"></path></svg>
+        <span id="ef-active-company-name"></span>
+     </div>
+
      <div class="ef-navbar-menu">
        <button class="ef-nav-btn ef-nav-active" data-view="dashboard">
          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
@@ -187,6 +203,22 @@ class EFastSalePage {
          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/><circle cx="12" cy="12" r="3"/></svg>
          <span>Mantenimiento</span>
        </button>
+
+       <div class="ef-user-dropdown" style="position: relative; margin-left: 12px; display: flex; align-items: center;">
+         <button id="ef-btn-user-profile" class="ef-nav-btn" style="padding: 6px 10px; border-radius: 20px; background: #f1f5f9; border: 1px solid #cbd5e1; display: flex; align-items: center; gap: 6px; cursor: pointer;" title="Perfil de Usuario">
+           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#475569" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+         </button>
+         <div id="ef-user-dropdown-menu" style="display: none; position: absolute; top: 120%; right: 0; background: white; border: 1px solid var(--ef-border); box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); border-radius: 10px; padding: 14px; min-width: 200px; z-index: 1001;">
+            <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #64748b; margin-bottom: 4px;">Usuario Conectado</div>
+            <div id="ef-active-user-fullname" style="font-size: 14px; font-weight: 700; color: #0f172a; line-height: 1.2;"></div>
+            <div id="ef-active-user-email" style="font-size: 12px; color: #64748b; margin-bottom: 14px; word-break: break-all;"></div>
+            <button id="ef-btn-logout" class="ef-btn" style="width: 100%; background: #fee2e2; color: #dc2626; border: 1px solid #fca5a5; display: flex; align-items: center; justify-content: center; gap: 6px; border-radius: 6px; padding: 8px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+              Cerrar Sesión
+            </button>
+         </div>
+       </div>
+
      </div>
   </div>
 
@@ -283,7 +315,7 @@ class EFastSalePage {
         
         <!-- Top Productos -->
         <div class="ef-analytics-card" style="box-shadow: var(--ef-shadow);">
-          <div class="ef-analytics-card-title">Top 5 Productos Vendidos</div>
+          <div class="ef-analytics-card-title">Top 15 Productos Vendidos</div>
           <div style="padding: 16px; display:flex; flex-direction:column; gap:14px;" id="ef-dash-top-products">
             <!-- dynamic progress bars -->
           </div>
@@ -360,29 +392,33 @@ class EFastSalePage {
           <!-- Columna 1 -->
           <div class="ef-col">
             <div class="ef-field-group">
+              <label class="ef-label">Establecimiento <span class="ef-req">*</span></label>
+              <select id="ef-establecimiento" class="ef-select" tabindex="1"></select>
+            </div>
+            <div class="ef-field-group">
               <label class="ef-label">Serie <span class="ef-req">*</span></label>
-              <select id="ef-naming-series" class="ef-select" tabindex="1"></select>
+              <select id="ef-naming-series" class="ef-select" tabindex="2"></select>
             </div>
             <div class="ef-field-group">
               <label class="ef-label">Cliente <span class="ef-req">*</span></label>
               <div style="display:flex;gap:4px">
-                <div data-ctrl="customer" class="ef-link-ctrl" style="flex:1" tabindex="2"></div>
-                <button id="ef-btn-show-analytics" class="ef-btn ef-btn-secondary" style="padding:6px 9px;" title="Ver Análisis de Ventas" tabindex="3">
+                <div data-ctrl="customer" class="ef-link-ctrl" style="flex:1" tabindex="3"></div>
+                <button id="ef-btn-show-analytics" class="ef-btn ef-btn-secondary" style="padding:6px 9px;" title="Ver Análisis de Ventas" tabindex="4">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
                 </button>
               </div>
             </div>
             <div class="ef-field-group">
               <label class="ef-label">Nombre para Factura</label>
-              <input id="ef-bfel-nombre" type="text" class="ef-input" placeholder="Nombre en factura..." maxlength="100" tabindex="4" />
+              <input id="ef-bfel-nombre" type="text" class="ef-input" placeholder="Nombre en factura..." maxlength="100" tabindex="5" />
             </div>
             <div class="ef-field-group">
               <label class="ef-label">NIT (FEL)</label>
-              <input id="ef-bfel-nit" type="text" class="ef-input" placeholder="CF" maxlength="20" tabindex="5" />
+              <input id="ef-bfel-nit" type="text" class="ef-input" placeholder="CF" maxlength="20" tabindex="6" />
             </div>
             <div class="ef-field-group">
               <label class="ef-label" style="color:var(--ef-primary); font-weight:600;">Estado FEL</label>
-              <select id="ef-bfel-status" class="ef-select" style="border-color:var(--ef-primary); font-weight:600;" tabindex="6">
+              <select id="ef-bfel-status" class="ef-select" style="border-color:var(--ef-primary); font-weight:600;" tabindex="7">
                 <option value="01 Enviar">01 Enviar</option>
                 <option value="00 No enviar">00 No enviar</option>
               </select>
@@ -393,15 +429,15 @@ class EFastSalePage {
           <div class="ef-col">
             <div class="ef-field-group">
               <label class="ef-label">Condición de Pago</label>
-              <div data-ctrl="payment_terms_template" class="ef-link-ctrl" tabindex="7"></div>
+              <div data-ctrl="payment_terms_template" class="ef-link-ctrl" tabindex="8"></div>
             </div>
             <div class="ef-field-group">
               <label class="ef-label">F. Emisión <span class="ef-req">*</span></label>
-              <input id="ef-posting-date" type="date" class="ef-input" tabindex="8" />
+              <input id="ef-posting-date" type="date" class="ef-input" tabindex="9" />
             </div>
             <div class="ef-field-group">
               <label class="ef-label">F. Vencimiento</label>
-              <input id="ef-due-date" type="date" class="ef-input" tabindex="9" />
+              <input id="ef-due-date" type="date" class="ef-input" tabindex="10" />
             </div>
             <!-- Campos informativos de FEL -->
             <div style="display:flex; gap:10px; margin-top:20px;">
@@ -673,6 +709,10 @@ class EFastSalePage {
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               <span>Exportar CSV</span>
             </button>
+            <button id="ef-report-btn-print-pdf" class="ef-btn ef-btn-primary" style="padding: 8px 14px; font-size: 12px; display: none; align-items: center; gap: 6px; background-color: #d9383a; border-color: #d9383a; color: white;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+              <span>Imprimir PDF</span>
+            </button>
           </div>
         </div>
         
@@ -686,6 +726,12 @@ class EFastSalePage {
           <div class="ef-rep-filter ef-filter-date" style="display: flex; flex-direction: column; gap: 4px;">
             <label class="ef-label" style="font-weight: 700; font-size: 10px;">Fecha Fin</label>
             <input type="date" id="ef-rep-end-date" class="ef-input" style="width: 140px; padding: 6px 10px;" />
+          </div>
+          
+          <!-- establecimiento filter -->
+          <div class="ef-rep-filter ef-filter-establecimiento" style="display: flex; flex-direction: column; gap: 4px; width: 220px;">
+            <label class="ef-label" style="font-weight: 700; font-size: 10px;">Establecimiento</label>
+            <select id="ef-rep-establecimiento" class="ef-select" style="padding: 6px 10px;"></select>
           </div>
           
           <!-- customer filter -->
@@ -742,6 +788,25 @@ class EFastSalePage {
           <div class="ef-rep-filter ef-filter-year" style="display: flex; flex-direction: column; gap: 4px; width: 100px;">
             <label class="ef-label" style="font-weight: 700; font-size: 10px;">Año</label>
             <select id="ef-rep-year" class="ef-select" style="padding: 6px 10px; font-weight: bold;"></select>
+          </div>
+          
+          <!-- month filter -->
+          <div class="ef-rep-filter ef-filter-month" style="display: flex; flex-direction: column; gap: 4px; width: 120px;">
+            <label class="ef-label" style="font-weight: 700; font-size: 10px;">Mes</label>
+            <select id="ef-rep-month" class="ef-select" style="padding: 6px 10px; font-weight: bold;">
+              <option value="1">Enero</option>
+              <option value="2">Febrero</option>
+              <option value="3">Marzo</option>
+              <option value="4">Abril</option>
+              <option value="5">Mayo</option>
+              <option value="6">Junio</option>
+              <option value="7">Julio</option>
+              <option value="8">Agosto</option>
+              <option value="9">Septiembre</option>
+              <option value="10">Octubre</option>
+              <option value="11">Noviembre</option>
+              <option value="12">Diciembre</option>
+            </select>
           </div>
           
           <!-- buttons -->
@@ -882,7 +947,7 @@ class EFastSalePage {
         Productos
       </button>
       <button class="ef-tab-btn ef-maint-tab-btn" data-maint-tab="precios">
-        Precios Standard Selling
+        Precios
       </button>
     </div>
 
@@ -909,7 +974,13 @@ class EFastSalePage {
             </div>
             <div class="ef-field-group">
               <label class="ef-label">NIT / Identificación (FEL)</label>
-              <input type="text" id="ef-maint-cust-ident" class="ef-input" style="width:100%" />
+              <select id="ef-maint-cust-ident" class="ef-input" style="width:100%">
+                <option value="">-- Seleccione --</option>
+                <option value="NIT">NIT</option>
+                <option value="CUI">CUI</option>
+                <option value="PASAPORTE">PASAPORTE</option>
+                <option value="CF">CF</option>
+              </select>
             </div>
             <div class="ef-field-group">
               <label class="ef-label">ID Receptor (FEL)</label>
@@ -961,15 +1032,21 @@ class EFastSalePage {
             <button id="ef-maint-item-btn-new" class="ef-btn ef-btn-sm ef-btn-secondary">+ Nuevo</button>
           </div>
           <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 16px;">
-            <div class="ef-field-group">
-              <label class="ef-label">Código del Ítem <span class="ef-req">*</span></label>
-              <input type="text" id="ef-maint-item-code" class="ef-input" style="width:100%" placeholder="Ej. PROD-001" />
+            <div class="ef-field-group" id="ef-maint-item-code-group">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <label class="ef-label" style="margin:0;">Código del Ítem <span class="ef-req">*</span></label>
+                <label class="ef-label" style="margin:0; display:flex; align-items:center; gap:4px; font-weight:normal; cursor:pointer;" id="ef-maint-item-auto-code-label">
+                  <input type="checkbox" id="ef-maint-item-auto-code" checked style="margin:0;" />
+                  <span>Código Automático</span>
+                </label>
+              </div>
+              <input type="text" id="ef-maint-item-code" class="ef-input" style="width:100%" placeholder="(Código Automático)" disabled />
             </div>
             <div class="ef-field-group">
               <label class="ef-label">Nombre del Ítem <span class="ef-req">*</span></label>
               <input type="text" id="ef-maint-item-name" class="ef-input" style="width:100%" />
             </div>
-            <div class="ef-field-group">
+            <div class="ef-field-group" style="display:none;">
               <label class="ef-label">Unidad de Medida (UOM)</label>
               <div id="ef-maint-item-uom-ctrl" class="ef-link-ctrl" style="min-height: 32px;"></div>
             </div>
@@ -1095,18 +1172,30 @@ class EFastSalePage {
 		// Customer search control
 		const $container = this.$body.find("#ef-dash-customer-ctrl");
 		if ($container.length && !this.dashboard_customer_ctrl) {
+			const get_query_fn = () => {
+				const comp = this.doc.company || this.defaults.company || "";
+				return {
+					filters: {
+						bfel_company: comp
+					}
+				};
+			};
 			const ctrl = frappe.ui.form.make_control({
 				parent: $container[0],
 				df: {
+					only_select: 1,
 					label: "Cliente",
 					fieldtype: "Link",
 					fieldname: "dashboard_customer",
 					options: "Customer",
 					reqd: 0,
+					only_input: 1,
+					get_query: get_query_fn
 				},
 				render_input: true,
 				only_input: false,
 			});
+			ctrl.get_query = get_query_fn;
 			ctrl.refresh();
 			this.dashboard_customer_ctrl = ctrl;
 
@@ -1156,29 +1245,6 @@ class EFastSalePage {
 				}
 			}
 		});
-
-		// Bind click events on KPI cards to open respective ERPNext list view in a new tab
-		this.$body.find("#ef-kpi-card-today").css("cursor", "pointer").off("click").on("click", () => {
-			const today = frappe.datetime.get_today();
-			const url = `/app/sales-invoice?posting_date=${today}`;
-			window.open(url, "_blank");
-		});
-
-		this.$body.find("#ef-kpi-card-month").css("cursor", "pointer").off("click").on("click", () => {
-			const today = frappe.datetime.get_today();
-			const start_of_month = frappe.datetime.month_start();
-			const filter_val = JSON.stringify(["Between", [start_of_month, today]]);
-			const url = `/app/sales-invoice?posting_date=${encodeURIComponent(filter_val)}`;
-			window.open(url, "_blank");
-		});
-
-		this.$body.find("#ef-kpi-card-fel").css("cursor", "pointer").off("click").on("click", (e) => {
-			// If clicked specifically on pending text, open pending ones
-			const isPending = $(e.target).closest("#ef-kpi-fel-pending").length > 0;
-			const status = isPending ? "01 Enviar" : "02 Procesada";
-			const url = `/app/sales-invoice?bfel_status=${encodeURIComponent(status)}`;
-			window.open(url, "_blank");
-		});
 	}
 
 	_load_dashboard_data() {
@@ -1191,7 +1257,8 @@ class EFastSalePage {
 			args: {
 				start_date: start_date,
 				end_date: end_date,
-				customer: customer
+				customer: customer,
+				company: this.doc.company || this.defaults.company || ""
 			},
 			freeze: true,
 			freeze_message: "Actualizando tablero...",
@@ -1281,7 +1348,7 @@ class EFastSalePage {
 					$products_wrap.empty();
 					if (data.items_summary && data.items_summary.length > 0) {
 						const max_amount = Math.max(...data.items_summary.map(i => i.amount)) || 1;
-						data.items_summary.slice(0, 5).forEach((item) => {
+						data.items_summary.slice(0, 15).forEach((item) => {
 							const percent = Math.min(100, Math.max(8, (item.amount / max_amount) * 100));
 							const item_html = `
 								<div class="ef-item-progress" style="display:flex; flex-direction:column; gap:4px;">
@@ -2137,12 +2204,9 @@ body.facex-fullscreen-mode .ef-main-layout {
   padding: 18px 24px;
   box-shadow: var(--ef-shadow);
   transition: transform 0.2s ease, box-shadow 0.2s ease;
-  cursor: pointer;
+  
 }
-.ef-stat-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 10px 20px rgba(0,0,0,0.05);
-}
+
 .ef-stat-label {
   font-size: 11px;
   text-transform: uppercase;
@@ -2209,6 +2273,13 @@ body.facex-fullscreen-mode .ef-main-layout {
   border-radius: 0 6px 6px 0;
   padding-left: 11px;
 }
+
+/* Fix long dropdown cut-off */
+.awesomplete > ul, .awesomplete ul, .link-select-container ul {
+  max-height: 250px !important;
+  overflow-y: auto !important;
+  z-index: 999999 !important;
+}
 		`;
 		$("<style>").attr("id", "ef-styles").html(css).appendTo("head");
 	}
@@ -2218,11 +2289,23 @@ body.facex-fullscreen-mode .ef-main-layout {
 	// -----------------------------------------------------------------------
 
 	_setup_header_controls() {
+		// Establecimiento <select>
+		const $est = this.$body.find("#ef-establecimiento");
+		$est.empty();
+		$est.append(`<option value="">-- Seleccionar Establecimiento --</option>`);
+		const establishments = this.defaults.establishments || [];
+		establishments.forEach((e) => {
+			$est.append(`<option value="${e.establecimiento_id}">${e.establecimiento_id} - ${e.nombre_establecimiento}</option>`);
+		});
+		$est.on("change", () => {
+			this.doc.bfel_establecimiento = $est.val();
+			this._mark_dirty();
+			this._load_naming_series_for_selected_establishment();
+		});
+
 		// Naming series <select>
 		const $ns = this.$body.find("#ef-naming-series");
-		const series = this.defaults.naming_series || ["SINV-.YYYY.-"];
-		series.forEach((s) => $ns.append(`<option value="${s}">${s}</option>`));
-		$ns.val(series[0] || "").on("change", () => {
+		$ns.on("change", () => {
 			this.doc.naming_series = $ns.val();
 			this._mark_dirty();
 		});
@@ -2238,13 +2321,28 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this.doc.posting_date = e.target.value;
 			if (this.doc.payment_terms_template) {
 				this._on_payment_terms_change(this.doc.payment_terms_template);
+			} else {
+				if (this.doc.due_date && this.doc.due_date < this.doc.posting_date) {
+					this.doc.due_date = this.doc.posting_date;
+					this.$body.find("#ef-due-date").val(this.doc.due_date);
+				}
 			}
 			this._mark_dirty();
 		});
 
 		// Fecha vencimiento
 		this.$body.find("#ef-due-date").on("change", (e) => {
-			this.doc.due_date = e.target.value;
+			const val = e.target.value;
+			if (val && this.doc.posting_date && val < this.doc.posting_date) {
+				frappe.show_alert({
+					message: "La fecha de vencimiento no puede ser anterior a la fecha de emisión.",
+					indicator: "orange"
+				});
+				this.doc.due_date = this.doc.posting_date;
+				this.$body.find("#ef-due-date").val(this.doc.due_date);
+			} else {
+				this.doc.due_date = val;
+			}
 			this._mark_dirty();
 		});
 
@@ -2280,23 +2378,84 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 	}
 
+	_load_naming_series_for_selected_establishment(callback) {
+		const comp = this.doc.company || this.defaults.company || "";
+		const est = this.$body.find("#ef-establecimiento").val();
+		if (!comp || !est) {
+			const $ns = this.$body.find("#ef-naming-series");
+			$ns.empty();
+			this.doc.naming_series = "";
+			if (callback) callback();
+			return;
+		}
+
+		frappe.call({
+			method: "facex_multi.api.invoice.get_compatible_series",
+			args: { company: comp, establecimiento: est },
+			callback: (r) => {
+				const series = r.message || [];
+				const $ns = this.$body.find("#ef-naming-series");
+				$ns.empty();
+				series.forEach((s) => $ns.append(`<option value="${s}">${s}</option>`));
+				
+				// Mantener la serie actual si es válida para este establecimiento, sino elegir la primera
+				if (this.doc.naming_series && series.includes(this.doc.naming_series)) {
+					$ns.val(this.doc.naming_series);
+				} else {
+					const first_val = series[0] || "";
+					$ns.val(first_val);
+					this.doc.naming_series = first_val;
+				}
+				if (callback) callback();
+			}
+		});
+	}
+
 	_make_link_ctrl(fieldname, options_doctype, required) {
 		const $container = this.$body.find(`[data-ctrl="${fieldname}"]`);
 		if (!$container.length) return;
 
+		const get_query_fn = () => {
+			const comp = this.doc.company || this.defaults.company || "";
+			if (options_doctype === "Customer" || options_doctype === "Sales Partner") {
+				return {
+					filters: {
+						bfel_company: comp
+					}
+				};
+			} else if (options_doctype === "Sales Taxes and Charges Template") {
+				return {
+					filters: {
+						company: comp
+					}
+				};
+			} else if (options_doctype === "Warehouse") {
+				return {
+					filters: {
+						company: comp
+					}
+				};
+			}
+			return {};
+		};
+
 		const ctrl = frappe.ui.form.make_control({
 			parent: $container[0],
 			df: {
+					only_select: 1,
 				label: fieldname,
 				fieldtype: "Link",
 				fieldname: fieldname,
 				options: options_doctype,
 				reqd: required ? 1 : 0,
 				in_list_view: 0,
+				only_input: options_doctype === "Customer" ? 1 : 0,
+				get_query: get_query_fn
 			},
 			render_input: true,
 			only_input: false,
 		});
+		ctrl.get_query = get_query_fn;
 		ctrl.refresh();
 		this.controls[fieldname] = ctrl;
 
@@ -2730,6 +2889,15 @@ body.facex-fullscreen-mode .ef-main-layout {
 			const txt = $input.val().trim();
 			clearTimeout(_timer);
 			if (txt.length < 1) { close(); return; }
+
+			const comp = this.doc.company || this.defaults.company || "";
+			const filters = {};
+			if (doctype === "Item") {
+				filters.bfel_company = comp;
+			} else if (doctype === "Customer") {
+				filters.bfel_company = comp;
+			}
+
 			_timer = setTimeout(() => {
 				frappe.call({
 					method: "frappe.desk.search.search_link",
@@ -2738,6 +2906,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 						doctype: doctype,
 						ignore_user_permissions: 0,
 						reference_doctype: "Sales Invoice",
+						filters: filters
 					},
 					callback: (r) => {
 						const results = r.results || r.message || [];
@@ -2833,7 +3002,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 	_lock_fields() {
 		const $b = this.$body;
 		$b.find(
-			"#ef-naming-series, #ef-posting-date, #ef-due-date, " +
+			"#ef-establecimiento, #ef-naming-series, #ef-posting-date, #ef-due-date, " +
 			"#ef-bfel-nit, #ef-bfel-nombre, #ef-bfel-status, #ef-bfel-escenario-exento, #ef-terms"
 		).prop("disabled", true);
 		Object.values(this.controls).forEach((ctrl) => {
@@ -2847,7 +3016,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 	_unlock_fields() {
 		const $b = this.$body;
 		$b.find(
-			"#ef-naming-series, #ef-posting-date, #ef-due-date, " +
+			"#ef-establecimiento, #ef-naming-series, #ef-posting-date, #ef-due-date, " +
 			"#ef-bfel-nit, #ef-bfel-nombre, #ef-bfel-status, #ef-terms"
 		).prop("disabled", false);
 		// bfel_escenario_exento solo se habilita si la plantilla de impuestos empieza con EXE
@@ -2867,7 +3036,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 	_sync_ui_from_doc() {
 		const d = this.doc;
 
-		this.$body.find("#ef-naming-series").val(d.naming_series || "");
+		// Establecer valor de establecimiento
+		this.$body.find("#ef-establecimiento").val(d.bfel_establecimiento || "");
+
+		// Cargar series compatibles en base al establecimiento
+		this._load_naming_series_for_selected_establishment();
 
 		["customer", "payment_terms_template", "taxes_and_charges", "sales_partner"].forEach((f) => {
 			if (this.controls[f]) {
@@ -3141,6 +3314,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 	// -----------------------------------------------------------------------
 
 	_action_save() {
+		if (this._request_pending) return;
 		if (!this._validate_header()) return;
 
 		// REFUERZO: Validar que si hay taxes_and_charges se hayan calculado antes de guardar
@@ -3150,12 +3324,17 @@ body.facex-fullscreen-mode .ef-main-layout {
 			return;
 		}
 
+		this._request_pending = true;
+		this.$body.find("#ef-btn-save").prop("disabled", true);
+
 		frappe.call({
 			method: "facex_multi.api.invoice.save_draft",
 			args: { doc_json: JSON.stringify(this._build_save_payload()) },
 			freeze: true,
 			freeze_message: "Guardando factura...",
 			callback: (r) => {
+				this._request_pending = false;
+				this.$body.find("#ef-btn-save").prop("disabled", false);
 				if (!r.exc && r.message) {
 					const cachedTpl = this.doc._taxes_template;
 					this._dirty = false;
@@ -3169,6 +3348,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 					});
 				}
 			},
+			error: () => {
+				this._request_pending = false;
+				this.$body.find("#ef-btn-save").prop("disabled", false);
+			}
 		});
 	}
 
@@ -3188,16 +3371,24 @@ body.facex-fullscreen-mode .ef-main-layout {
 			return;
 		}
 
+		if (this._request_pending) return;
+
 		frappe.confirm(
 			`¿Desea <strong>Validar</strong> la factura <strong>${this.doc.name}</strong>?<br>
 			 Esta acción no se puede deshacer directamente.`,
 			() => {
+				if (this._request_pending) return;
+				this._request_pending = true;
+				this.$body.find("#ef-btn-submit").prop("disabled", true);
+
 				frappe.call({
 					method: "facex_multi.api.invoice.submit_invoice",
 					args: { name: this.doc.name },
 					freeze: true,
 					freeze_message: "Validando factura...",
 					callback: (r) => {
+						this._request_pending = false;
+						this.$body.find("#ef-btn-submit").prop("disabled", false);
 						if (!r.exc && r.message) {
 							this._dirty = false;
 							this.load_invoice(this.doc.name);
@@ -3207,6 +3398,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 							});
 						}
 					},
+					error: () => {
+						this._request_pending = false;
+						this.$body.find("#ef-btn-submit").prop("disabled", false);
+					}
 				});
 			}
 		);
@@ -3221,6 +3416,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 			frappe.show_alert({ message: "Esta factura ya fue certificada en FEL.", indicator: "blue" });
 			return;
 		}
+
+		if (this._request_pending) return;
+		this._request_pending = true;
+		this.$body.find("#ef-btn-certify").prop("disabled", true);
 
 		frappe.call({
 			method: "frappe.client.get_value",
@@ -3243,6 +3442,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 							freeze: true,
 							freeze_message: "Certificando en FEL...",
 							callback: (r) => {
+								this._request_pending = false;
+								this.$body.find("#ef-btn-certify").prop("disabled", false);
 								if (!r.exc && r.message && r.message.success) {
 									const res = r.message;
 									const isTest = res.test_mode === true || res.test_mode === 1 || res.test_mode === "Y" || (res.test_mode === undefined && testMode === "Y");
@@ -3256,9 +3457,21 @@ body.facex-fullscreen-mode .ef-main-layout {
 									this.load_invoice(this.doc.name);
 								}
 							},
+							error: () => {
+								this._request_pending = false;
+								this.$body.find("#ef-btn-certify").prop("disabled", false);
+							}
 						});
+					},
+					() => {
+						this._request_pending = false;
+						this.$body.find("#ef-btn-certify").prop("disabled", false);
 					}
 				);
+			},
+			error: () => {
+				this._request_pending = false;
+				this.$body.find("#ef-btn-certify").prop("disabled", false);
 			}
 		});
 	}
@@ -3291,17 +3504,29 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 	_action_print() {
 		if (!this.doc.name || this.doc.name === "new") return;
+
+		// Si está validada (docstatus === 1) pero no ha sido certificada (y no es "00 No enviar")
+		if (this.doc.docstatus === 1 && this.doc.bfel_status !== "02 Procesada" && this.doc.bfel_status !== "00 No enviar") {
+			frappe.show_alert({
+				message: "La factura está validada pero no ha sido certificada en FEL. No se puede imprimir.",
+				indicator: "red"
+			});
+			return;
+		}
+
 		frappe.call({
 			method: "facex_multi.api.invoice.get_print_formats",
+			args: { company: this.doc.company || this.defaults.company || "" },
 			callback: (r) => {
 				const formats = r.message || [];
 				let defaultFormat = "";
+
 				if (this.doc.docstatus === 0) {
 					// Guardada sin validar (Borrador) → buscar la que contenga "COTI"
 					defaultFormat = formats.find(f => f.toUpperCase().includes("COTI")) || "";
 				} else if (this.doc.docstatus === 1) {
-					// Validada → buscar la que contenga "CERTIFI"
-					defaultFormat = formats.find(f => f.toUpperCase().includes("CERTIFI")) || "";
+					// Validada → buscar la que contenga "CERTIFI" o "FEL"
+					defaultFormat = formats.find(f => f.toUpperCase().includes("CERTIFI")) || formats.find(f => f.toUpperCase().includes("FEL")) || "";
 				}
 
 				if (defaultFormat) {
@@ -3404,6 +3629,30 @@ body.facex-fullscreen-mode .ef-main-layout {
 	// -----------------------------------------------------------------------
 
 	_bind_events() {
+		// User profile dropdown
+		this.$body.find("#ef-btn-user-profile").on("click", (e) => {
+			e.stopPropagation();
+			const $menu = this.$body.find("#ef-user-dropdown-menu");
+			if ($menu.is(":hidden")) {
+				this.$body.find("#ef-active-user-fullname").text(frappe.session.user_fullname || "Usuario");
+				this.$body.find("#ef-active-user-email").text(frappe.session.user);
+				$menu.fadeIn(150);
+			} else {
+				$menu.fadeOut(150);
+			}
+		});
+
+		this.$body.find("#ef-btn-logout").on("click", () => {
+			frappe.app.logout();
+		});
+
+		$(document).on("click.ef_user_dropdown", (e) => {
+			const $menu = this.$body.find("#ef-user-dropdown-menu");
+			if (!$(e.target).closest('.ef-user-dropdown').length) {
+				$menu.fadeOut(150);
+			}
+		});
+
 		$(document).off("keydown.efast").on("keydown.efast", (e) => {
 			// Bail if EFast page is not the active/visible page
 			if (!$(this.wrapper).is(":visible")) return;
@@ -3507,6 +3756,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 			if (this.controls.customer && this.controls.customer.$input) this.controls.customer.$input.focus();
 			return false;
 		}
+		if (!this.doc.bfel_establecimiento) {
+			frappe.show_alert({ message: "El campo <strong>Establecimiento</strong> es obligatorio.", indicator: "red" });
+			this.$body.find("#ef-establecimiento").focus();
+			return false;
+		}
 		if (!this.doc.posting_date) {
 			frappe.show_alert({ message: "La <strong>Fecha de Emisión</strong> es obligatoria.", indicator: "red" });
 			this.$body.find("#ef-posting-date").focus();
@@ -3549,6 +3803,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 			bfel_nombre: d.bfel_nombre || "",
 			bfel_status: d.bfel_status || "01 Enviar",
 			bfel_escenario_exento: d.bfel_escenario_exento || "",
+			selling_price_list: d.selling_price_list || "",
+			bfel_establecimiento: d.bfel_establecimiento || "",
 			items: (d.items || []).map((r) => ({
 				item_code: r.item_code,
 				item_name: r.item_name || "",
@@ -3878,6 +4134,14 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		this._setup_customer_dialog_search(dlg);
 
+		if (dlg.fields_dict.default_sales_partner) {
+			dlg.fields_dict.default_sales_partner.get_query = () => {
+				return {
+					filters: { bfel_company: this.doc.company || this.defaults.company || "" }
+				};
+			};
+		}
+
 		// Use setTimeout so the dialog DOM (fields, footer) is fully rendered
 		setTimeout(() => {
 			if (hasCustomer) {
@@ -3925,7 +4189,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			_timer = setTimeout(() => {
 				frappe.call({
 					method: "facex_multi.api.customer.search_customer",
-					args: { txt },
+					args: { txt, company: this.doc.company || this.defaults.company || "" },
 					callback: (r) => render(r.message || []),
 				});
 			}, 250);
@@ -3935,7 +4199,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 	_load_customer_into_dialog(dlg, name) {
 		frappe.call({
 			method: "facex_multi.api.customer.get_customer",
-			args: { name },
+			args: { name, company: this.doc.company || this.defaults.company || "" },
 			callback: (r) => {
 				if (!r.exc && r.message) {
 					const c = r.message;
@@ -3975,7 +4239,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 		};
 		frappe.call({
 			method: "facex_multi.api.customer.create_or_update_customer",
-			args: { data_json: JSON.stringify(data) },
+			args: { 
+				data_json: JSON.stringify(data),
+				company: this.doc.company || this.defaults.company || ""
+			},
 			freeze: true,
 			freeze_message: "Guardando cliente...",
 			callback: (r) => {
@@ -4331,7 +4598,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		frappe.call({
 			method: "facex_multi.api.analytics.get_customer_analytics",
-			args: { customer },
+			args: { customer, company: this.doc.company || this.defaults.company || "" },
 			callback: (r) => {
 				if (!r.exc && r.message) {
 					const html = this._generate_analytics_html(r.message);
@@ -4571,6 +4838,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-report-btn-export").off("click").on("click", () => {
 			this._export_report_csv();
 		});
+
+		this.$body.find("#ef-report-btn-print-pdf").off("click").on("click", () => {
+			this._print_report_pdf();
+		});
 	}
 
 	_setup_report_filters() {
@@ -4584,90 +4855,141 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this.$body.find("#ef-rep-end-date").val(today);
 		}
 
+		const get_company = () => this.doc.company || this.defaults.company || "";
+
 		if (!this.rep_customer_ctrl) {
+			const get_query_fn = () => {
+				const comp = get_company();
+				return {
+					filters: [
+						["Customer", "bfel_company", "=", comp]
+					]
+				};
+			};
 			this.rep_customer_ctrl = frappe.ui.form.make_control({
 				parent: this.$body.find("#ef-rep-customer-ctrl")[0],
 				df: {
+					only_select: 1,
 					label: "Cliente",
 					fieldtype: "Link",
 					fieldname: "rep_customer",
 					options: "Customer",
 					reqd: 0,
+					get_query: get_query_fn
 				},
 				render_input: true,
 				only_input: false,
 			});
+			this.rep_customer_ctrl.get_query = get_query_fn;
 			this.rep_customer_ctrl.refresh();
 		}
 
 		if (!this.rep_item_ctrl) {
+			const get_query_fn = () => {
+				const comp = get_company();
+				return {
+					filters: [
+						["Item", "bfel_company", "=", comp]
+					]
+				};
+			};
 			this.rep_item_ctrl = frappe.ui.form.make_control({
 				parent: this.$body.find("#ef-rep-item-ctrl")[0],
 				df: {
+					only_select: 1,
 					label: "Item",
 					fieldtype: "Link",
 					fieldname: "rep_item",
 					options: "Item",
 					reqd: 0,
+					get_query: get_query_fn
 				},
 				render_input: true,
 				only_input: false,
 			});
+			this.rep_item_ctrl.get_query = get_query_fn;
 			this.rep_item_ctrl.refresh();
 		}
 
 		if (!this.rep_item_group_ctrl) {
+			const get_query_fn = () => {
+				const comp = get_company();
+				return {
+					filters: [
+						["Item Group", "bfel_company", "=", comp]
+					]
+				};
+			};
 			this.rep_item_group_ctrl = frappe.ui.form.make_control({
 				parent: this.$body.find("#ef-rep-item-group-ctrl")[0],
 				df: {
+					only_select: 1,
 					label: "Grupo de Items",
 					fieldtype: "Link",
 					fieldname: "rep_item_group",
 					options: "Item Group",
 					reqd: 0,
+					get_query: get_query_fn
 				},
 				render_input: true,
 				only_input: false,
 			});
+			this.rep_item_group_ctrl.get_query = get_query_fn;
 			this.rep_item_group_ctrl.refresh();
 		}
 
 		if (!this.rep_warehouse_ctrl) {
+			const get_query_fn = () => {
+				const comp = get_company();
+				return {
+					filters: {
+						company: comp
+					}
+				};
+			};
 			this.rep_warehouse_ctrl = frappe.ui.form.make_control({
 				parent: this.$body.find("#ef-rep-warehouse-ctrl")[0],
 				df: {
+					only_select: 1,
 					label: "Bodega",
 					fieldtype: "Link",
 					fieldname: "rep_warehouse",
 					options: "Warehouse",
 					reqd: 0,
+					get_query: get_query_fn
 				},
 				render_input: true,
 				only_input: false,
 			});
+			this.rep_warehouse_ctrl.get_query = get_query_fn;
 			this.rep_warehouse_ctrl.refresh();
 		}
 
 		if (!this.rep_print_invoice_ctrl) {
+			const get_query_fn = () => {
+				const comp = get_company();
+				return {
+					filters: {
+						docstatus: 1,
+						company: comp
+					}
+				};
+			};
 			this.rep_print_invoice_ctrl = frappe.ui.form.make_control({
 				parent: this.$body.find("#ef-print-invoice-link-ctrl")[0],
 				df: {
+					only_select: 1,
 					label: "Factura",
 					fieldtype: "Link",
 					fieldname: "rep_print_invoice",
 					options: "Sales Invoice",
 					reqd: 0,
-					get_query: () => {
-						return {
-							filters: {
-								docstatus: 1
-							}
-						};
-					}
+					get_query: get_query_fn
 				},
 				render_input: true,
 				only_input: false,
 			});
+			this.rep_print_invoice_ctrl.get_query = get_query_fn;
 			this.rep_print_invoice_ctrl.refresh();
 			
 			const _onInvoiceChange = () => {
@@ -4693,6 +5015,23 @@ body.facex-fullscreen-mode .ef-main-layout {
 				$yearSelect.append(`<option value="${y}">${y}</option>`);
 			}
 		}
+		const currentMonth = new Date().getMonth() + 1;
+		this.$body.find("#ef-rep-month").val(currentMonth);
+
+		// Populate establishment selector
+		const $repEst = this.$body.find("#ef-rep-establecimiento");
+		if ($repEst.length) {
+			const prev_val = $repEst.val();
+			$repEst.empty();
+			$repEst.append(`<option value="">— Todos —</option>`);
+			const establishments = this.defaults.establishments || [];
+			establishments.forEach((e) => {
+				$repEst.append(`<option value="${e.establecimiento_id}">${e.establecimiento_id} - ${e.nombre_establecimiento}</option>`);
+			});
+			if (prev_val) {
+				$repEst.val(prev_val);
+			}
+		}
 	}
 
 	_update_filter_visibility(report_id) {
@@ -4704,24 +5043,30 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-report-chart-container").hide();
 		this.$body.find("#ef-report-print-receipt-container").hide();
 
+		if (report_id === "customer_statement" || report_id === "aging_receivables") {
+			this.$body.find("#ef-report-btn-print-pdf").css("display", "flex");
+		} else {
+			this.$body.find("#ef-report-btn-print-pdf").hide();
+		}
+
 		if (report_id === "sales_by_date") {
-			this.$body.find(".ef-filter-date, .ef-filter-customer, .ef-filter-warehouse").show();
+			this.$body.find(".ef-filter-date, .ef-filter-customer, .ef-filter-warehouse, .ef-filter-establecimiento").show();
 		} else if (report_id === "sales_by_product") {
-			this.$body.find(".ef-filter-date, .ef-filter-customer, .ef-filter-item, .ef-filter-item-group, .ef-filter-warehouse").show();
+			this.$body.find(".ef-filter-date, .ef-filter-customer, .ef-filter-item, .ef-filter-item-group, .ef-filter-warehouse, .ef-filter-establecimiento").show();
 		} else if (report_id === "cancelled_invoices") {
-			this.$body.find(".ef-filter-date, .ef-filter-customer").show();
+			this.$body.find(".ef-filter-date, .ef-filter-customer, .ef-filter-establecimiento").show();
 		} else if (report_id === "customer_statement") {
-			this.$body.find(".ef-filter-customer, .ef-filter-date, .ef-filter-doc-type").show();
+			this.$body.find(".ef-filter-customer, .ef-filter-date, .ef-filter-doc-type, .ef-filter-establecimiento").show();
 		} else if (report_id === "aging_receivables") {
-			this.$body.find(".ef-filter-customer").show();
+			this.$body.find(".ef-filter-customer, .ef-filter-establecimiento").show();
 		} else if (report_id === "quotations_report") {
-			this.$body.find(".ef-filter-date, .ef-filter-customer").show();
+			this.$body.find(".ef-filter-date, .ef-filter-customer, .ef-filter-establecimiento").show();
 		} else if (report_id === "payments_report") {
-			this.$body.find(".ef-filter-date, .ef-filter-payment-method").show();
+			this.$body.find(".ef-filter-date, .ef-filter-payment-method, .ef-filter-establecimiento").show();
 		} else if (report_id === "uncertified_invoices") {
-			this.$body.find("#ef-report-filters").hide();
+			this.$body.find(".ef-filter-establecimiento").show();
 		} else if (report_id === "sales_growth_analysis") {
-			this.$body.find(".ef-filter-year").show();
+			this.$body.find(".ef-filter-year, .ef-filter-month, .ef-filter-establecimiento").show();
 			this.$body.find("#ef-report-chart-container").show();
 		} else if (report_id === "print_receipt") {
 			this.$body.find("#ef-report-filters").hide();
@@ -4745,6 +5090,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const payment_method = this.$body.find("#ef-rep-payment-method").val();
 		const doc_type_filter = this.$body.find("#ef-rep-doc-type").val();
 		const year = this.$body.find("#ef-rep-year").val() || new Date().getFullYear();
+		const month = this.$body.find("#ef-rep-month").val() || (new Date().getMonth() + 1);
+		const establecimiento = this.$body.find("#ef-rep-establecimiento").val();
 
 		if (report_id === "customer_statement" && !customer) {
 			frappe.msgprint({
@@ -4760,32 +5107,34 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		if (report_id === "sales_by_date") {
 			method = "facex_multi.api.reports.get_sales_by_date";
-			args = { start_date, end_date, customer, warehouse };
+			args = { start_date, end_date, customer, warehouse, establecimiento };
 		} else if (report_id === "sales_by_product") {
 			method = "facex_multi.api.reports.get_sales_by_product";
-			args = { start_date, end_date, item_code, item_group, customer, warehouse };
+			args = { start_date, end_date, item_code, item_group, customer, warehouse, establecimiento };
 		} else if (report_id === "cancelled_invoices") {
 			method = "facex_multi.api.reports.get_cancelled_invoices";
-			args = { start_date, end_date, customer };
+			args = { start_date, end_date, customer, establecimiento };
 		} else if (report_id === "customer_statement") {
 			method = "facex_multi.api.reports.get_customer_statement";
-			args = { customer, start_date, end_date, doc_type_filter };
+			args = { customer, start_date, end_date, doc_type_filter, establecimiento };
 		} else if (report_id === "aging_receivables") {
 			method = "facex_multi.api.reports.get_aging_receivables";
-			args = { customer };
+			args = { customer, establecimiento };
 		} else if (report_id === "quotations_report") {
 			method = "facex_multi.api.reports.get_quotations_report";
-			args = { start_date, end_date, customer };
+			args = { start_date, end_date, customer, establecimiento };
 		} else if (report_id === "payments_report") {
 			method = "facex_multi.api.reports.get_payments_report";
-			args = { start_date, end_date, payment_method };
+			args = { start_date, end_date, payment_method, establecimiento };
 		} else if (report_id === "uncertified_invoices") {
 			method = "facex_multi.api.reports.get_uncertified_invoices";
-			args = {};
+			args = { establecimiento };
 		} else if (report_id === "sales_growth_analysis") {
 			method = "facex_multi.api.reports.get_sales_growth_analysis";
-			args = { year };
+			args = { year, month, establecimiento };
 		}
+
+		args.company = this.doc.company || this.defaults.company || "";
 
 		frappe.call({
 			method: method,
@@ -4995,7 +5344,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 			$thead.append(`
 				<tr>
 					<th class="ef-th">Factura</th>
+					<th class="ef-th">Serie - No</th>
 					<th class="ef-th">Fecha Emisión</th>
+					<th class="ef-th">Fecha Vencimiento</th>
 					<th class="ef-th">Tipo</th>
 					<th class="ef-th ef-td-num">Monto Cargo</th>
 					<th class="ef-th ef-td-num">Monto Abono</th>
@@ -5012,7 +5363,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 				$tbody.append(`
 					<tr>
 						<td class="ef-td"><a class="ef-inv-load-link" data-name="${row.name}" style="color:var(--ef-primary); font-weight:700; text-decoration:underline; cursor:pointer;">${row.name}</a></td>
+						<td class="ef-td" style="font-weight:600;">${row.serie_no || "—"}</td>
 						<td class="ef-td">${row.posting_date}</td>
+						<td class="ef-td">${row.due_date || "—"}</td>
 						<td class="ef-td"><span style="font-weight:600; color:var(--ef-text);">${row.doc_type_desc || "Factura"}</span></td>
 						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(row.grand_total, "GTQ")}</td>
 						<td class="ef-td ef-td-num" style="font-family:monospace; color:var(--ef-success);">${_fmtCurrency(row.paid_amount, "GTQ")}</td>
@@ -5052,6 +5405,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 			$thead.append(`
 				<tr>
+					<th class="ef-th" style="width: 40px;"></th>
 					<th class="ef-th">Cliente</th>
 					<th class="ef-th ef-td-num">Saldo Vencido</th>
 					<th class="ef-th ef-td-num">0 - 30 días</th>
@@ -5061,9 +5415,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 				</tr>
 			`);
 
-			aging.forEach(row => {
+			aging.forEach((row, idx) => {
+				const detailId = `aging-detail-${idx}`;
 				$tbody.append(`
-					<tr>
+					<tr class="ef-aging-summary-row" data-target="#${detailId}" style="cursor: pointer; background-color: var(--ef-card);">
+						<td class="ef-td" style="text-align: center;">
+							<span class="ef-aging-toggle-icon" style="display: inline-block; transition: transform 0.2s; font-size: 10px;">▶</span>
+						</td>
 						<td class="ef-td" style="font-weight:700;">${row.customer_name}</td>
 						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700; color:var(--ef-danger);">${_fmtCurrency(row.total_outstanding, "GTQ")}</td>
 						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(row.range_0_30, "GTQ")}</td>
@@ -5071,7 +5429,58 @@ body.facex-fullscreen-mode .ef-main-layout {
 						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(row.range_61_90, "GTQ")}</td>
 						<td class="ef-td ef-td-num" style="font-family:monospace; color:var(--ef-danger);">${_fmtCurrency(row.range_91_plus, "GTQ")}</td>
 					</tr>
+					<tr id="${detailId}" class="ef-aging-detail-row" style="display: none; background-color: #f8fafc;">
+						<td colspan="7" style="padding: 12px 12px 16px 40px; border-top: none;">
+							<div style="border-left: 3px solid var(--ef-primary); padding-left: 15px;">
+								<h5 style="margin: 0 0 10px 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--ef-text-muted);">Detalle de Facturas Vencidas</h5>
+								<table style="width: 100%; border-collapse: collapse; font-size: 12px; background: white; border: 1px solid var(--ef-border); border-radius: 6px; overflow: hidden; box-shadow: var(--ef-shadow);">
+									<thead>
+										<tr style="background: #f1f5f9; border-bottom: 1px solid var(--ef-border);">
+											<th style="padding: 8px 12px; text-align: left; font-weight: 700; font-size: 11px; border: none;">Factura</th>
+											<th style="padding: 8px 12px; text-align: left; font-weight: 700; font-size: 11px; border: none;">Serie - No</th>
+											<th style="padding: 8px 12px; text-align: left; font-weight: 700; font-size: 11px; border: none;">Fecha Contabilización</th>
+											<th style="padding: 8px 12px; text-align: left; font-weight: 700; font-size: 11px; border: none;">Fecha Vencimiento</th>
+											<th style="padding: 8px 12px; text-align: right; font-weight: 700; font-size: 11px; border: none;">Días Mora</th>
+											<th style="padding: 8px 12px; text-align: right; font-weight: 700; font-size: 11px; border: none;">Original</th>
+											<th style="padding: 8px 12px; text-align: right; font-weight: 700; font-size: 11px; border: none;">Saldo Pendiente</th>
+											<th style="padding: 8px 12px; padding-left: 15px; border: none; padding-left: 15px;">Rango</th>
+										</tr>
+									</thead>
+									<tbody>
+										${(row.invoices || []).map(inv => `
+											<tr style="border-bottom: 1px solid #f1f5f9;">
+												<td style="padding: 8px 12px; border: none;"><a class="ef-inv-load-link" data-name="${inv.name}" style="color:var(--ef-primary); font-weight:700; text-decoration:underline; cursor:pointer;">${inv.name}</a></td>
+												<td style="padding: 8px 12px; font-weight: 600; border: none;">${inv.serie_no || "—"}</td>
+												<td style="padding: 8px 12px; border: none;">${inv.posting_date}</td>
+												<td style="padding: 8px 12px; border: none;">${inv.due_date || "—"}</td>
+												<td style="padding: 8px 12px; text-align: right; font-weight: 700; color: ${inv.days_due > 0 ? "var(--ef-danger)" : "var(--ef-text-muted)"}; border: none;">${inv.days_due}</td>
+												<td style="padding: 8px 12px; text-align: right; font-family: monospace; border: none;">${_fmtCurrency(inv.grand_total, "GTQ")}</td>
+												<td style="padding: 8px 12px; text-align: right; font-family: monospace; font-weight: 700; color: var(--ef-danger); border: none;">${_fmtCurrency(inv.outstanding_amount, "GTQ")}</td>
+												<td style="padding: 8px 12px; padding-left: 15px; border: none;">
+													<span class="ef-badge" style="background-color: ${inv.days_due <= 30 ? "#e0f2fe" : inv.days_due <= 60 ? "#fef3c7" : "#fee2e2"}; color: ${inv.days_due <= 30 ? "#0369a1" : inv.days_due <= 60 ? "#b45309" : "#b91c1c"}; font-weight: 700; padding: 2px 6px; border-radius: 4px;">${inv.bucket}</span>
+												</td>
+											</tr>
+										`).join("")}
+									</tbody>
+								</table>
+							</div>
+						</td>
+					</tr>
 				`);
+			});
+
+			$tbody.off("click", ".ef-aging-summary-row").on("click", ".ef-aging-summary-row", (e) => {
+				const targetSelector = $(e.currentTarget).data("target");
+				const $detailRow = $tbody.find(targetSelector);
+				const $icon = $(e.currentTarget).find(".ef-aging-toggle-icon");
+				
+				if ($detailRow.is(":visible")) {
+					$detailRow.hide();
+					$icon.css("transform", "rotate(0deg)");
+				} else {
+					$detailRow.show();
+					$icon.css("transform", "rotate(90deg)");
+				}
 			});
 
 		} else if (report_id === "quotations_report") {
@@ -5234,11 +5643,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 			$kpis.append(`
 				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-primary); cursor: default;">
-					<div class="ef-stat-label">Ventas Año Actual (${data.year})</div>
+					<div class="ef-stat-label">Ventas Mes Seleccionado (${data.month_name} ${data.year})</div>
 					<div class="ef-stat-value" style="font-family:monospace;">${_fmtCurrency(sum.total_current, "GTQ")}</div>
 				</div>
 				<div class="ef-stat-card" style="border-left: 4px solid #153375; cursor: default;">
-					<div class="ef-stat-label">Ventas Año Anterior (${data.prev_year})</div>
+					<div class="ef-stat-label">Ventas Mes Anterior (${data.prev_month_name} ${data.prev_year})</div>
 					<div class="ef-stat-value" style="color: #153375; font-family:monospace;">${_fmtCurrency(sum.total_previous, "GTQ")}</div>
 				</div>
 				<div class="ef-stat-card" style="border-left: 4px solid ${growth_color}; cursor: default;">
@@ -5247,7 +5656,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 				</div>
 			`);
 
-			this._render_svg_growth_chart(chart_data, data.year, data.prev_year);
+			this._render_svg_growth_chart(chart_data, data.year, data.prev_year, data.month_name, data.prev_month_name);
 
 			if (chart_data.length === 0) {
 				$empty.show();
@@ -5256,9 +5665,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 			$thead.append(`
 				<tr>
-					<th class="ef-th">Mes</th>
-					<th class="ef-th ef-td-num">Año Anterior (${data.prev_year})</th>
-					<th class="ef-th ef-td-num">Año Actual (${data.year})</th>
+					<th class="ef-th">Día</th>
+					<th class="ef-th ef-td-num">Mes Anterior (${data.prev_month_name} ${data.prev_year})</th>
+					<th class="ef-th ef-td-num">Mes Seleccionado (${data.month_name} ${data.year})</th>
 					<th class="ef-th ef-td-num">Variación Monetaria</th>
 					<th class="ef-th ef-td-num">Crecimiento (%)</th>
 				</tr>
@@ -5289,7 +5698,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		});
 	}
 
-	_render_svg_growth_chart(chart_data, year, prev_year) {
+	_render_svg_growth_chart(chart_data, year, prev_year, month_name = "", prev_month_name = "") {
 		const $container = this.$body.find("#ef-report-chart-container");
 		$container.empty();
 
@@ -5315,7 +5724,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		const plotWidth = svgWidth - paddingLeft - paddingRight;
 		const plotHeight = svgHeight - paddingTop - paddingBottom;
-		const xSpacing = plotWidth / 11;
+		const xSpacing = plotWidth / (chart_data.length - 1 || 1);
 
 		const currentPoints = [];
 		const prevPoints = [];
@@ -5356,9 +5765,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		chart_data.forEach((m, idx) => {
 			const cx = paddingLeft + idx * xSpacing;
+			const isLabelVisible = chart_data.length <= 12 || (idx % 5 === 0) || (idx === chart_data.length - 1);
+			const labelText = isLabelVisible ? m.month_name.replace("Día ", "") : "";
 			svg += `
 				<line class="ef-chart-guide" id="ef-chart-guide-${idx}" x1="${cx}" y1="${paddingTop}" x2="${cx}" y2="${svgHeight - paddingBottom}" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3, 3" style="display:none;"/>
-				<text x="${cx}" y="${svgHeight - paddingBottom + 16}" fill="var(--ef-text-muted)" text-anchor="middle" font-weight="600">${m.month_name.substring(0, 3)}</text>
+				${isLabelVisible ? `<text x="${cx}" y="${svgHeight - paddingBottom + 16}" fill="var(--ef-text-muted)" text-anchor="middle" font-weight="600">${labelText}</text>` : ''}
 			`;
 		});
 
@@ -5400,16 +5811,19 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		svg += `</svg>`;
 
+		const currentLabel = month_name ? `${month_name} ${year}` : `Año Actual (${year})`;
+		const prevLabel = prev_month_name ? `${prev_month_name} ${prev_year}` : `Año Anterior (${prev_year})`;
+
 		const legend = `
 			<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; font-size:11px;">
 				<div style="display:flex; gap:16px;">
 					<span style="display:flex; align-items:center; gap:6px;">
 						<span style="width:12px; height:3px; background:var(--ef-primary); display:inline-block; border-radius:2px;"></span>
-						<strong style="color:var(--ef-text);">Año Actual (${year})</strong>
+						<strong style="color:var(--ef-text);">${currentLabel}</strong>
 					</span>
 					<span style="display:flex; align-items:center; gap:6px;">
 						<span style="width:12px; height:3px; border-top:3px dashed #94a3b8; display:inline-block;"></span>
-						<strong style="color:var(--ef-text-muted);">Año Anterior (${prev_year})</strong>
+						<strong style="color:var(--ef-text-muted);">${prevLabel}</strong>
 					</span>
 				</div>
 				<div id="ef-chart-tooltip" style="opacity:0; pointer-events:none; transition:opacity 0.15s ease; background:#1e293b; color:#ffffff; padding:8px 12px; border-radius:6px; font-size:11px; box-shadow:var(--ef-shadow-lg); font-family:var(--ef-font);">
@@ -5437,8 +5851,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 			$tooltip.html(`
 				<div style="font-weight:700; margin-bottom:4px; border-bottom:1px solid #475569; padding-bottom:3px; text-transform:uppercase;">${m.month_name}</div>
-				<div>${year}: <span style="font-family:monospace; font-weight:700; color:#4cc9f0;">${_fmtCurrency(m.current_year, "GTQ")}</span></div>
-				<div>${prev_year}: <span style="font-family:monospace; color:#cbd5e1;">${_fmtCurrency(m.previous_year, "GTQ")}</span></div>
+				<div>${month_name || year}: <span style="font-family:monospace; font-weight:700; color:#4cc9f0;">${_fmtCurrency(m.current_year, "GTQ")}</span></div>
+				<div>${prev_month_name || prev_year}: <span style="font-family:monospace; color:#cbd5e1;">${_fmtCurrency(m.previous_year, "GTQ")}</span></div>
 				<div style="margin-top:4px; font-weight:600; color:${changeColor};">${changeSymbol} Variación: ${m.growth}%</div>
 			`);
 			$tooltip.css("opacity", "1");
@@ -5454,6 +5868,249 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 			$tooltip.css("opacity", "0");
 		});
+	}
+
+	_print_report_pdf() {
+		const report_id = this._last_report_id;
+		const data = this._last_report_data;
+
+		if (!report_id || !data) return;
+
+		let title = "";
+		let htmlContent = "";
+
+		if (report_id === "customer_statement") {
+			title = "Estado de Cuenta Clientes";
+			const sum = data.summary || {};
+			const ledger = data.ledger || [];
+
+			htmlContent = `
+				<div class="print-header">
+					<h2>Estado de Cuenta de Clientes</h2>
+					<div class="meta-info">
+						<div><strong>Cliente:</strong> ${sum.customer_name || ""}</div>
+						<div><strong>Fecha Emisión:</strong> ${frappe.datetime.get_today()}</div>
+						<div><strong>Compañía:</strong> ${this.doc.company || this.defaults.company || ""}</div>
+					</div>
+				</div>
+				<div class="kpis">
+					<div class="kpi-card">
+						<div class="label">Total Cargo (Facturado)</div>
+						<div class="value">${_fmtCurrency(sum.total_invoiced, "GTQ")}</div>
+					</div>
+					<div class="kpi-card">
+						<div class="label">Total Abono (Pagado)</div>
+						<div class="value">${_fmtCurrency(sum.total_paid, "GTQ")}</div>
+					</div>
+					<div class="kpi-card">
+						<div class="label">Saldo Pendiente</div>
+						<div class="value" style="color: #f8961e;">${_fmtCurrency(sum.outstanding_balance, "GTQ")}</div>
+					</div>
+					<div class="kpi-card">
+						<div class="label">Límite de Crédito</div>
+						<div class="value">${_fmtCurrency(sum.credit_limit, "GTQ")}</div>
+					</div>
+				</div>
+				<table>
+					<thead>
+						<tr>
+							<th>Factura</th>
+							<th>Serie - No</th>
+							<th>Fecha Emisión</th>
+							<th>Fecha Vencimiento</th>
+							<th>Tipo</th>
+							<th class="num">Monto Cargo</th>
+							<th class="num">Monto Abono</th>
+							<th class="num">Saldo Restante</th>
+							<th>Estado</th>
+						</tr>
+					</thead>
+					<tbody>
+						${ledger.map(row => `
+							<tr>
+								<td>${row.name}</td>
+								<td>${row.serie_no || "—"}</td>
+								<td>${row.posting_date}</td>
+								<td>${row.due_date || "—"}</td>
+								<td>${row.doc_type_desc || "Factura"}</td>
+								<td class="num">${_fmtCurrency(row.grand_total, "GTQ")}</td>
+								<td class="num" style="color: #2dc653;">${_fmtCurrency(row.paid_amount, "GTQ")}</td>
+								<td class="num" style="font-weight: bold; color: ${row.balance > 0 ? "#f8961e" : "#2dc653"};">${_fmtCurrency(row.balance, "GTQ")}</td>
+								<td>${row.status}</td>
+							</tr>
+						`).join("")}
+					</tbody>
+				</table>
+			`;
+		} else if (report_id === "aging_receivables") {
+			title = "Antigüedad de Saldos";
+			const sum = data.summary || {};
+			const aging = data.aging || [];
+
+			htmlContent = `
+				<div class="print-header">
+					<h2>Reporte de Antigüedad de Saldos (Aging)</h2>
+					<div class="meta-info">
+						<div><strong>Fecha Emisión:</strong> ${frappe.datetime.get_today()}</div>
+						<div><strong>Compañía:</strong> ${this.doc.company || this.defaults.company || ""}</div>
+					</div>
+				</div>
+				<div class="kpis">
+					<div class="kpi-card">
+						<div class="label">Total Cartera Vencida</div>
+						<div class="value" style="color: #e63946;">${_fmtCurrency(sum.total_outstanding, "GTQ")}</div>
+					</div>
+					<div class="kpi-card">
+						<div class="label">Corriente (0-30 días)</div>
+						<div class="value">${_fmtCurrency(sum.total_0_30, "GTQ")}</div>
+					</div>
+					<div class="kpi-card">
+						<div class="label">Vencido (31-60 días)</div>
+						<div class="value">${_fmtCurrency(sum.total_31_60, "GTQ")}</div>
+					</div>
+					<div class="kpi-card">
+						<div class="label">Vencido Crítico (61+ días)</div>
+						<div class="value" style="color: #7209b7;">${_fmtCurrency(sum.total_61_90 + sum.total_91_plus, "GTQ")}</div>
+					</div>
+				</div>
+				
+				${aging.map(row => `
+					<div style="margin-top: 25px; border-bottom: 2px solid #cbd5e1; padding-bottom: 5px; page-break-inside: avoid;">
+						<div style="display: flex; justify-content: space-between; align-items: center;">
+							<h3 style="margin: 0; color: #1e293b;">${row.customer_name}</h3>
+							<span style="font-weight: bold; color: #e63946; font-size: 14px;">Total Saldo: ${_fmtCurrency(row.total_outstanding, "GTQ")}</span>
+						</div>
+						<div style="display: flex; gap: 20px; font-size: 11px; margin-top: 5px; color: #64748b;">
+							<div><strong>0-30 días:</strong> ${_fmtCurrency(row.range_0_30, "GTQ")}</div>
+							<div><strong>31-60 días:</strong> ${_fmtCurrency(row.range_31_60, "GTQ")}</div>
+							<div><strong>61-90 días:</strong> ${_fmtCurrency(row.range_61_90, "GTQ")}</div>
+							<div><strong>91+ días:</strong> ${_fmtCurrency(row.range_91_plus, "GTQ")}</div>
+						</div>
+					</div>
+					<table style="margin-top: 8px; margin-bottom: 15px; font-size: 11px; page-break-inside: avoid;">
+						<thead>
+							<tr style="background: #f8fafc;">
+								<th>Factura</th>
+								<th>Serie - No</th>
+								<th>Fecha Contabilización</th>
+								<th>Fecha Vencimiento</th>
+								<th class="num">Días Mora</th>
+								<th class="num">Original</th>
+								<th class="num">Saldo</th>
+								<th>Rango</th>
+							</tr>
+						</thead>
+						<tbody>
+							${(row.invoices || []).map(inv => `
+								<tr>
+									<td>${inv.name}</td>
+									<td>${inv.serie_no || "—"}</td>
+									<td>${inv.posting_date}</td>
+									<td>${inv.due_date || "—"}</td>
+									<td class="num" style="font-weight: bold; color: ${inv.days_due > 0 ? "#e63946" : "#64748b"};">${inv.days_due}</td>
+									<td class="num">${_fmtCurrency(inv.grand_total, "GTQ")}</td>
+									<td class="num" style="font-weight: bold; color: #e63946;">${_fmtCurrency(inv.outstanding_amount, "GTQ")}</td>
+									<td>${inv.bucket}</td>
+								</tr>
+							`).join("")}
+						</tbody>
+					</table>
+				`).join("")}
+			`;
+		}
+
+		const printWindow = window.open("", "_blank");
+		printWindow.document.write(`
+			<html>
+				<head>
+					<title>${title}</title>
+					<style>
+						body {
+							font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+							color: #1e293b;
+							margin: 30px;
+							font-size: 12px;
+							line-height: 1.4;
+						}
+						.print-header {
+							border-bottom: 2px solid #1e293b;
+							padding-bottom: 15px;
+							margin-bottom: 20px;
+						}
+						.print-header h2 {
+							margin: 0;
+							color: #153375;
+							font-size: 22px;
+						}
+						.meta-info {
+							display: flex;
+							justify-content: space-between;
+							margin-top: 10px;
+							font-size: 11px;
+							color: #64748b;
+						}
+						.kpis {
+							display: grid;
+							grid-template-columns: repeat(4, 1fr);
+							gap: 15px;
+							margin-bottom: 25px;
+						}
+						.kpi-card {
+							border: 1px solid #e2e8f0;
+							border-radius: 8px;
+							padding: 12px;
+							background: #f8fafc;
+						}
+						.kpi-card .label {
+							font-size: 10px;
+							color: #64748b;
+							text-transform: uppercase;
+							margin-bottom: 4px;
+							font-weight: 600;
+						}
+						.kpi-card .value {
+							font-size: 16px;
+							font-weight: bold;
+							font-family: monospace;
+						}
+						table {
+							width: 100%;
+							border-collapse: collapse;
+							margin-top: 15px;
+						}
+						th, td {
+							border: 1px solid #e2e8f0;
+							padding: 8px 10px;
+							text-align: left;
+						}
+						th {
+							background: #f1f5f9;
+							font-weight: 600;
+							font-size: 11px;
+						}
+						.num {
+							text-align: right;
+							font-family: monospace;
+						}
+						@media print {
+							body { margin: 15px; }
+							@page { margin: 1.5cm; }
+						}
+					</style>
+				</head>
+				<body>
+					${htmlContent}
+					<script>
+						window.onload = function() {
+							setTimeout(function() {
+								window.print();
+							}, 250);
+						}
+					</script>
+				</body>
+			</html>
+		`);
+		printWindow.document.close();
 	}
 
 	_export_report_csv() {
@@ -5585,6 +6242,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 	_print_payment_receipt(inv_name) {
 		frappe.call({
 			method: "facex_multi.api.invoice.get_print_formats",
+			args: { company: this.doc.company || this.defaults.company || "" },
 			callback: (r) => {
 				const formats = r.message || [];
 				const defaultFormat = formats.find(f => f.toUpperCase().includes("RECI")) || "Recibo de Pago FacEx";
@@ -5598,18 +6256,30 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 	_setup_maintenance() {
 		if (!this.maint_cust_price_list_ctrl) {
+			const get_query_fn = () => {
+				const comp = this.doc.company || this.defaults.company || "";
+				return {
+					filters: {
+						bfel_company: comp
+					}
+				};
+			};
 			this.maint_cust_price_list_ctrl = frappe.ui.form.make_control({
 				parent: this.$body.find("#ef-maint-cust-price-list-ctrl")[0],
 				df: {
+					only_select: 1,
 					label: "Lista de precios",
 					fieldtype: "Link",
 					fieldname: "default_price_list",
 					options: "Price List",
 					reqd: 0,
+					only_input: 1,
+					get_query: get_query_fn
 				},
 				render_input: true,
 				only_input: false,
 			});
+			this.maint_cust_price_list_ctrl.get_query = get_query_fn;
 			this.maint_cust_price_list_ctrl.refresh();
 		}
 
@@ -5617,6 +6287,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this.maint_cust_payment_terms_ctrl = frappe.ui.form.make_control({
 				parent: this.$body.find("#ef-maint-cust-payment-terms-ctrl")[0],
 				df: {
+					only_select: 1,
 					label: "Condiciones de pago",
 					fieldtype: "Link",
 					fieldname: "payment_terms",
@@ -5632,6 +6303,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this.maint_item_uom_ctrl = frappe.ui.form.make_control({
 				parent: this.$body.find("#ef-maint-item-uom-ctrl")[0],
 				df: {
+					only_select: 1,
 					label: "UOM",
 					fieldtype: "Link",
 					fieldname: "stock_uom",
@@ -5645,20 +6317,42 @@ body.facex-fullscreen-mode .ef-main-layout {
 		}
 
 		if (!this.maint_item_group_ctrl) {
+			const get_query_fn = () => {
+				const comp = this.doc.company || this.defaults.company || "";
+				return {
+					filters: {
+						bfel_company: comp
+					}
+				};
+			};
 			this.maint_item_group_ctrl = frappe.ui.form.make_control({
 				parent: this.$body.find("#ef-maint-item-group-ctrl")[0],
 				df: {
+					only_select: 1,
 					label: "Grupo de artículos",
 					fieldtype: "Link",
 					fieldname: "item_group",
 					options: "Item Group",
 					reqd: 0,
+					only_input: 1,
+					get_query: get_query_fn
 				},
 				render_input: true,
 				only_input: false,
 			});
+			this.maint_item_group_ctrl.get_query = get_query_fn;
 			this.maint_item_group_ctrl.refresh();
 		}
+
+		// Bind automatic item code checkbox logic
+		this.$body.on("change", "#ef-maint-item-auto-code", (e) => {
+			const checked = $(e.currentTarget).prop("checked");
+			if (checked) {
+				this.$body.find("#ef-maint-item-code").val("").prop("disabled", true).attr("placeholder", "(Código Automático)");
+			} else {
+				this.$body.find("#ef-maint-item-code").prop("disabled", false).attr("placeholder", "Ej. PROD-001");
+			}
+		});
 
 		// Sub-tab switching
 		this.$body.on("click", ".ef-maint-tab-btn", (e) => {
@@ -5765,6 +6459,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		frappe.call({
 			method: "facex_multi.api.item.get_price_lists",
+			args: { company: this.doc.company || this.defaults.company || "" },
 			callback: (r) => {
 				$select.empty();
 				const lists = r.message || [];
@@ -5799,7 +6494,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		frappe.call({
 			method: "facex_multi.api.item.get_customers_list",
-			args: { txt },
+			args: { txt, company: this.doc.company || this.defaults.company || "" },
 			callback: (r) => {
 				$list.empty();
 				const customers = r.message || [];
@@ -5917,7 +6612,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		frappe.call({
 			method: "facex_multi.api.item.search_items",
-			args: { txt },
+			args: { txt, company: this.doc.company || this.defaults.company || "" },
 			callback: (r) => {
 				$list.empty();
 				const items = r.message || [];
@@ -5950,12 +6645,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const plist = this.$body.find("#ef-maint-price-list-select").val() || "";
 		frappe.call({
 			method: "facex_multi.api.item.get_item",
-			args: { name, price_list: plist },
+			args: { name, price_list: plist, company: this.doc.company || this.defaults.company || "" },
 			callback: (r) => {
 				if (r.message) {
 					const it = r.message;
 					this._current_maint_item_code = it.item_code;
 					this.$body.find("#ef-maint-item-title").text(`Editar: ${it.item_name}`);
+					this.$body.find("#ef-maint-item-auto-code-label").hide();
 					this.$body.find("#ef-maint-item-code").val(it.item_code).prop("disabled", true);
 					this.$body.find("#ef-maint-item-name").val(it.item_name);
 					if (this.maint_item_uom_ctrl) {
@@ -5974,7 +6670,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 	_clear_maint_item_form() {
 		this._current_maint_item_code = null;
 		this.$body.find("#ef-maint-item-title").text("Nuevo Producto");
-		this.$body.find("#ef-maint-item-code").val("").prop("disabled", false);
+		this.$body.find("#ef-maint-item-auto-code-label").show();
+		this.$body.find("#ef-maint-item-auto-code").prop("checked", true);
+		this.$body.find("#ef-maint-item-code").val("").prop("disabled", true).attr("placeholder", "(Código Automático)");
 		this.$body.find("#ef-maint-item-name").val("");
 		if (this.maint_item_uom_ctrl) {
 			this.maint_item_uom_ctrl.set_value("Nos");
@@ -5988,17 +6686,21 @@ body.facex-fullscreen-mode .ef-main-layout {
 	}
 
 	_save_maint_item() {
+		const is_new = !this._current_maint_item_code;
+		const auto_code = is_new && this.$body.find("#ef-maint-item-auto-code").prop("checked") ? 1 : 0;
 		const item_code = this.$body.find("#ef-maint-item-code").val().trim();
 		const item_name = this.$body.find("#ef-maint-item-name").val().trim();
-		if (!item_code || !item_name) {
+
+		if (!item_name || (!auto_code && !item_code)) {
 			frappe.show_alert({ message: "Código y Nombre son campos obligatorios.", indicator: "red" });
 			return;
 		}
 
 		const plist = this.$body.find("#ef-maint-price-list-select").val() || "";
 		const data = {
-			item_code,
+			item_code: is_new ? (auto_code ? "" : item_code) : this._current_maint_item_code,
 			item_name,
+			auto_code,
 			stock_uom: this.maint_item_uom_ctrl ? this.maint_item_uom_ctrl.get_value() : "Nos",
 			item_group: this.maint_item_group_ctrl ? this.maint_item_group_ctrl.get_value() : "",
 			price_list: plist,
@@ -6007,7 +6709,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		frappe.call({
 			method: "facex_multi.api.item.create_or_update_item",
-			args: { data_json: JSON.stringify(data) },
+			args: { 
+				data_json: JSON.stringify(data),
+				company: this.doc.company || this.defaults.company || ""
+			},
 			freeze: true,
 			freeze_message: "Guardando producto...",
 			callback: (r) => {
@@ -6035,7 +6740,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		frappe.call({
 			method: "facex_multi.api.item.get_all_prices",
-			args: { price_list: plist, txt },
+			args: { price_list: plist, txt, company: this.doc.company || this.defaults.company || "" },
 			callback: (r) => {
 				$tbody.empty();
 				const items = r.message || [];
@@ -6070,7 +6775,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 							args: {
 								item_code: it.item_code,
 								rate: priceVal,
-								price_list: plist
+								price_list: plist,
+								company: this.doc.company || this.defaults.company || ""
 							},
 							freeze: true,
 							freeze_message: "Actualizando precio...",
@@ -6097,7 +6803,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			() => {
 				frappe.call({
 					method: "facex_multi.api.item.delete_customer",
-					args: { customer_name: name },
+					args: { customer_name: name, company: this.doc.company || this.defaults.company || "" },
 					freeze: true,
 					freeze_message: "Eliminando cliente...",
 					callback: (r) => {
@@ -6121,7 +6827,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			() => {
 				frappe.call({
 					method: "facex_multi.api.item.delete_item",
-					args: { item_code: code },
+					args: { item_code: code, company: this.doc.company || this.defaults.company || "" },
 					freeze: true,
 					freeze_message: "Eliminando producto...",
 					callback: (r) => {

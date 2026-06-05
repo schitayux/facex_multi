@@ -1,27 +1,44 @@
 <script>
     document.title = "{{ doc.name }}";
 </script>
-{% set bs = frappe.get_all("BFEL Settings", filters={"company": doc.company, "enabled": 1}, fields=["company_nit", "isr_regime", "direccionemisor", "paisemisor"], limit=1) %}
+{% set bs = frappe.get_all("BFEL Settings", filters={"company": doc.company, "enabled": 1}, fields=["name", "company_nit", "isr_regime", "direccionemisor", "paisemisor"], limit=1) %}
 {% set bfel = bs[0] if bs else {} %}
 {% set company_logo = frappe.db.get_value("Company", doc.company, "company_logo") %}
+
+{% set est_logo = "" %}
+{% set est_name = doc.company %}
+{% set est_subname = "" %}
+{% if doc.bfel_establecimiento and bfel.name %}
+    {% set ests = frappe.get_all("BFEL Establecimientos", filters={"parent": bfel.name, "establecimiento_id": doc.bfel_establecimiento, "activo": 1}, fields=["logo", "nombre_establecimiento", "subnombre_establecimiento"]) %}
+    {% if ests %}
+        {% set est_logo = ests[0].logo %}
+        {% set est_name = ests[0].nombre_establecimiento %}
+        {% set est_subname = ests[0].subnombre_establecimiento %}
+    {% endif %}
+{% endif %}
 
 <div class="print-format-wrapper">
     <div class="header-container" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px;">
         <div class="logo-and-company" style="display: flex; align-items: center; gap: 15px;">
-            {% if company_logo %}
+            {% if est_logo %}
+                <img src="{{ est_logo }}" style="max-height: 70px; max-width: 150px; object-fit: contain;" alt="Logo">
+            {% elif company_logo %}
                 <img src="{{ company_logo }}" style="max-height: 70px; max-width: 150px; object-fit: contain;" alt="Logo">
             {% endif %}
             <div class="company-section">
-                <h2 class="company-name" style="margin: 0; font-size: 16px; font-weight: 700; color: #1e293b;">{{ doc.company }}</h2>
+                <h2 class="company-name" style="margin: 0; font-size: 16px; font-weight: 700; color: #1e293b;">{{ est_name }}</h2>
+                {% if bfel.paisemisor or frappe.db.get_value("Company", doc.company, "country") %}
+                    <p class="company-detail" style="margin: 2px 0 0 0; font-size: 11px; color: #64748b;"><strong>País:</strong> {{ bfel.paisemisor or frappe.db.get_value("Company", doc.company, "country") }}</p>
+                {% endif %}
+                {% if est_subname %}
+                    <p class="company-detail" style="margin: 2px 0 0 0; font-size: 11px; color: #64748b;"><strong>Subnombre Establecimiento:</strong> {{ est_subname }}</p>
+                {% endif %}
                 <p class="company-detail" style="margin: 2px 0 0 0; font-size: 11px; color: #64748b;"><strong>NIT:</strong> {{ bfel.company_nit or frappe.db.get_value("Company", doc.company, "tax_id") or "—" }}</p>
                 {% if bfel.isr_regime %}
                     <p class="company-detail" style="margin: 2px 0 0 0; font-size: 11px; color: #64748b;"><strong>Régimen:</strong> {{ bfel.isr_regime }}</p>
                 {% endif %}
                 {% if bfel.direccionemisor %}
                     <p class="company-detail" style="margin: 2px 0 0 0; font-size: 11px; color: #64748b;"><strong>Dirección:</strong> {{ bfel.direccionemisor }}</p>
-                {% endif %}
-                {% if bfel.paisemisor or frappe.db.get_value("Company", doc.company, "country") %}
-                    <p class="company-detail" style="margin: 2px 0 0 0; font-size: 11px; color: #64748b;"><strong>País:</strong> {{ bfel.paisemisor or frappe.db.get_value("Company", doc.company, "country") }}</p>
                 {% endif %}
             </div>
         </div>
