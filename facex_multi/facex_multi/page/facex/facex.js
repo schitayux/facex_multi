@@ -212,6 +212,10 @@ class EFastSalePage {
             <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #64748b; margin-bottom: 4px;">Usuario Conectado</div>
             <div id="ef-active-user-fullname" style="font-size: 14px; font-weight: 700; color: #0f172a; line-height: 1.2;"></div>
             <div id="ef-active-user-email" style="font-size: 12px; color: #64748b; margin-bottom: 14px; word-break: break-all;"></div>
+            <button id="ef-btn-change-password" class="ef-btn" style="width: 100%; background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; display: flex; align-items: center; justify-content: center; gap: 6px; border-radius: 6px; padding: 8px; margin-bottom: 8px; cursor: pointer; font-size: 13px; font-weight: 500;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+              Cambiar Contraseña
+            </button>
             <button id="ef-btn-logout" class="ef-btn" style="width: 100%; background: #fee2e2; color: #dc2626; border: 1px solid #fca5a5; display: flex; align-items: center; justify-content: center; gap: 6px; border-radius: 6px; padding: 8px;">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
               Cerrar Sesión
@@ -3624,6 +3628,68 @@ body.facex-fullscreen-mode .ef-main-layout {
 		});
 	}
 
+	_show_change_password_dialog() {
+		const dlg = new frappe.ui.Dialog({
+			title: "Cambiar Contraseña",
+			fields: [
+				{
+					fieldtype: "Password",
+					fieldname: "old_password",
+					label: "Contraseña Actual",
+					reqd: 1,
+				},
+				{
+					fieldtype: "Password",
+					fieldname: "new_password",
+					label: "Nueva Contraseña",
+					reqd: 1,
+				},
+				{
+					fieldtype: "Password",
+					fieldname: "confirm_password",
+					label: "Confirmar Nueva Contraseña",
+					reqd: 1,
+				}
+			],
+			primary_action_label: "Actualizar Contraseña",
+			primary_action: (values) => {
+				if (values.new_password !== values.confirm_password) {
+					frappe.msgprint({
+						title: "Error de Validación",
+						message: "La nueva contraseña y la confirmación no coinciden.",
+						indicator: "red"
+					});
+					return;
+				}
+
+				dlg.get_primary_btn().attr("disabled", true);
+
+				frappe.call({
+					method: "frappe.core.doctype.user.user.update_password",
+					args: {
+						old_password: values.old_password,
+						new_password: values.new_password,
+						logout_all_sessions: 0
+					},
+					callback: (r) => {
+						dlg.get_primary_btn().attr("disabled", false);
+						if (!r.exc) {
+							frappe.show_alert({
+								message: "Contraseña actualizada exitosamente.",
+								indicator: "green"
+							});
+							dlg.hide();
+						}
+					},
+					error: () => {
+						dlg.get_primary_btn().attr("disabled", false);
+					}
+				});
+			}
+		});
+		dlg.show();
+	}
+
 	// -----------------------------------------------------------------------
 	// Keyboard Shortcuts
 	// -----------------------------------------------------------------------
@@ -3644,6 +3710,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		this.$body.find("#ef-btn-logout").on("click", () => {
 			frappe.app.logout();
+		});
+
+		this.$body.find("#ef-btn-change-password").on("click", (e) => {
+			e.stopPropagation();
+			this.$body.find("#ef-user-dropdown-menu").fadeOut(150);
+			this._show_change_password_dialog();
 		});
 
 		$(document).on("click.ef_user_dropdown", (e) => {
@@ -5531,8 +5603,16 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 			$tbody.off("click", ".ef-rep-print-quot").on("click", ".ef-rep-print-quot", (e) => {
 				const name = $(e.currentTarget).data("name");
-				const url = `/printview?doctype=Sales+Invoice&name=${encodeURIComponent(name)}&format=Cotización+FacEx`;
-				window.open(url, "_blank");
+				frappe.call({
+					method: "facex_multi.api.invoice.get_print_formats",
+					args: { company: this.doc.company || this.defaults.company || "" },
+					callback: (r) => {
+						const formats = r.message || [];
+						const defaultFormat = formats.find(f => f.toUpperCase().includes("COTI")) || "Cotización FacEx";
+						const url = `/printview?doctype=Sales+Invoice&name=${encodeURIComponent(name)}&format=${encodeURIComponent(defaultFormat)}`;
+						window.open(url, "_blank");
+					}
+				});
 			});
 
 		} else if (report_id === "payments_report") {
