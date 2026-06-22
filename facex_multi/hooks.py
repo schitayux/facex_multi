@@ -22,6 +22,9 @@ app_license = "mit"
 doc_events = {
     "Customer": {
         "validate": "facex_multi.api.customer.validate_customer_on_save"
+    },
+    "Item": {
+        "before_save": "facex_multi.api.item.sync_description_from_item_name"
     }
 }
 fixtures = [

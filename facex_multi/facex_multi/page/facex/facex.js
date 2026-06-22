@@ -528,7 +528,7 @@ class EFastSalePage {
               <tr>
                 <th class="ef-th ef-th-idx">#</th>
                 <th class="ef-th ef-th-item">Código Item</th>
-                <th class="ef-th ef-th-name">Nombre / Descripción</th>
+                <th class="ef-th ef-th-name">Descripción FEL</th>
                 <th class="ef-th ef-th-qty">Cantidad</th>
                 <th class="ef-th ef-th-rate">Precio Unit.</th>
                 <th class="ef-th ef-th-disc ef-col-disc">Desc %</th>
@@ -1059,8 +1059,8 @@ class EFastSalePage {
               <div id="ef-maint-item-group-ctrl" class="ef-link-ctrl" style="min-height: 32px;"></div>
             </div>
             <div class="ef-field-group" style="grid-column: span 2;">
-              <label class="ef-label">Descripción</label>
-              <textarea id="ef-maint-item-desc" class="ef-textarea" style="width:100%; height:60px;"></textarea>
+              <label class="ef-label">Descripción FEL <span style="color:#64748b; font-weight:400; font-size:11px;">(max. 500 · se llena automáticamente desde el Nombre)</span></label>
+              <textarea id="ef-maint-item-desc" class="ef-textarea" style="width:100%; height:80px;" maxlength="500" placeholder="Se completará automáticamente con el Nombre del ítem."></textarea>
             </div>
           </div>
           <div style="margin-top:20px; text-align:right;">
@@ -2652,10 +2652,11 @@ body.facex-fullscreen-mode .ef-main-layout {
     </div>
   </td>
   <td class="ef-td">
-    <input type="text" class="ef-cell-input ef-item-name"
-      data-field="item_name" data-idx="${idx}"
-      value="${_esc(item.item_name || "")}"
-      placeholder="Nombre / Descripción" />
+    <input type="text" class="ef-cell-input ef-item-desc"
+      data-field="description" data-idx="${idx}"
+      value="${_esc(item.description || item.item_name || "")}"
+      placeholder="Descripción FEL (max. 500 caracteres)"
+      maxlength="500" />
   </td>
   <td class="ef-td ef-td-num">
     <input type="number" class="ef-cell-input ef-input-num ef-qty"
@@ -2713,9 +2714,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 		});
 		$itemCode.on("input change", () => this._mark_dirty());
 
-		// item_name
-		$row.find(".ef-item-name").on("change input", (e) => {
-			this.doc.items[idx].item_name = e.target.value;
+		// description editable en FEL (sustituye item_name en la UI del Facturador)
+		$row.find(".ef-item-desc").on("change input", (e) => {
+			this.doc.items[idx].description = e.target.value;
 			this._mark_dirty();
 		});
 
@@ -6432,6 +6433,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 			} else {
 				this.$body.find("#ef-maint-item-code").prop("disabled", false).attr("placeholder", "Ej. PROD-001");
 			}
+		});
+
+		// Auto-sync: descripción siempre = item_name al escribir
+		this.$body.on("input", "#ef-maint-item-name", (e) => {
+			this.$body.find("#ef-maint-item-desc").val($(e.target).val());
 		});
 
 		// Sub-tab switching

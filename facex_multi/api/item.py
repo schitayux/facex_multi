@@ -182,7 +182,7 @@ def create_or_update_item(data_json: str, company: str = None):
             doc.bfel_company = company
 
     doc.item_name = data.get("item_name", doc.item_name)
-    doc.description = data.get("description", doc.description or doc.item_name)
+    doc.description = doc.item_name
     doc.stock_uom = data.get("stock_uom") or doc.stock_uom or "Nos"
     doc.item_group = data.get("item_group") or doc.item_group
 
@@ -331,3 +331,9 @@ def delete_customer(customer_name: str, company: str = None):
     frappe.delete_doc("Customer", customer_name)
     frappe.db.commit()
     return {"success": True}
+
+
+def sync_description_from_item_name(doc, method=None):
+    """Hook Item.before_save: mantiene description = item_name para ítems FEL."""
+    if getattr(doc, "bfel_company", None):
+        doc.description = doc.item_name or doc.description
