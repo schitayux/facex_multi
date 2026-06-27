@@ -23,6 +23,23 @@ def has_efast_permission():
     return bool(allowed & set(roles))
 
 
+def fix_abbr_in_naming_series(doc, method=None):
+    """
+    Resuelve .ABBR. en naming_series a la abreviatura real de la compañía.
+    Solo aplica en Frappe v15; en v16+ esto es nativo y se omite.
+    Se activa via doc_events Sales Invoice > before_insert.
+    """
+    if int(frappe.__version__.split(".")[0]) >= 16:
+        return
+    series = doc.naming_series or ""
+    if ".ABBR." not in series or not doc.company:
+        return
+    abbr = frappe.db.get_value("Company", doc.company, "abbr") or ""
+    if not abbr:
+        return
+    doc.naming_series = series.replace(".ABBR.", f".{abbr}.")
+
+
 def get_effective_company(company: str = None) -> str:
     """
     Resuelve la compañía efectiva. Prioridad:
@@ -139,6 +156,62 @@ def create_custom_field_if_missing():
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
+def get_user_companies():
+    """Retorna las compañías permitidas para el usuario actual según User Permission."""
+    perms = frappe.get_all(
+        "User Permission",
+        filters={"user": frappe.session.user, "allow": "Company"},
+        pluck="for_value"
+    )
+    if perms:
+        return perms
+    if "System Manager" in frappe.get_roles():
+        return frappe.get_all("Company", filters={"is_group": 0}, pluck="name", order_by="name asc")
+    return []
+
+
+@frappe.whitelist()
+def set_active_company(company: str):
+    """Establece la compañía activa para el usuario actual como is_default en User Permission."""
+    company = (company or "").strip()
+    if not company:
+        frappe.throw("Compañía inválida.")
+
+    # Validar que el usuario tiene permiso para esta compañía (o es System Manager)
+    allowed = get_user_companies()
+    if company not in allowed and "System Manager" not in frappe.get_roles():
+        frappe.throw(f"No tiene permiso para la compañía '{company}'.")
+
+    # Quitar is_default de las compañías actuales
+    existing = frappe.get_all(
+        "User Permission",
+        filters={"user": frappe.session.user, "allow": "Company"},
+        fields=["name", "for_value", "is_default"]
+    )
+    for perm in existing:
+        if perm.is_default or perm.for_value == company:
+            doc = frappe.get_doc("User Permission", perm.name)
+            doc.is_default = 1 if perm.for_value == company else 0
+            doc.save(ignore_permissions=True)
+
+    frappe.db.commit()
+    return {"success": True, "company": company}
+
+
+@frappe.whitelist()
+def get_warehouses(company: str = None):
+    """Retorna los almacenes activos de la compañía actual."""
+    company = get_effective_company(company)
+    return frappe.get_all(
+        "Warehouse",
+        filters={"company": company, "is_group": 0, "disabled": 0},
+        fields=["name"],
+        order_by="name asc",
+        pluck="name"
+    )
+
+
+@frappe.whitelist()
 def get_defaults(company: str = None):
     """
     Retorna valores por defecto para inicializar una nueva factura:
@@ -229,6 +302,10 @@ def get_defaults(company: str = None):
     # Selling Settings no tiene campo payment_terms en ERPNext v15
     default_payment_terms = ""
 
+    from facex_multi.api.permissions import get_facex_permissions_for_company, get_facex_company_config
+    permissions = get_facex_permissions_for_company(company)
+    company_config = get_facex_company_config(company)
+
     return {
         "company": company,
         "naming_series": naming_series,
@@ -242,6 +319,8 @@ def get_defaults(company: str = None):
         "due_date": today(),
         "bfel_status_options": ["01 Enviar", "00 No enviar"],
         "bfel_status_default": "01 Enviar",
+        "permissions": permissions,
+        "company_config": company_config,
     }
 
 
@@ -286,7 +365,34 @@ def _get_naming_series(doctype: str) -> list:
 
 
 # ---------------------------------------------------------------------------
-# 2. Detalles de item
+# 2. Stock por bodega (popover)
+# ---------------------------------------------------------------------------
+
+@frappe.whitelist()
+def get_item_stock(item_code: str, company: str = None):
+    """Stock actual por bodega para un ítem, usando tabBin (snapshot rápido)."""
+    company = get_effective_company(company)
+    if not item_code:
+        return []
+    return frappe.db.sql(
+        """
+        SELECT b.warehouse, b.actual_qty, b.projected_qty, i.stock_uom, i.is_stock_item
+        FROM `tabBin` b
+        JOIN `tabWarehouse` w ON w.name = b.warehouse
+        JOIN `tabItem` i      ON i.name  = b.item_code
+        WHERE b.item_code = %(item_code)s
+          AND w.company   = %(company)s
+          AND w.is_group  = 0
+          AND w.disabled  = 0
+        ORDER BY b.actual_qty DESC
+        """,
+        {"item_code": item_code, "company": company},
+        as_dict=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 3. Detalles de item
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
@@ -378,7 +484,80 @@ def get_item_details(item_code: str, company: str = "", customer: str = "",
         "warehouse": item_warehouse,
         "cost_center": item_cost_center,
         "is_stock_item": item.is_stock_item,
+        "has_serial_no": int(item.has_serial_no or 0),
+        "custom_tiene_adenda": int(getattr(item, "custom_tiene_adenda", 0) or 0),
+        "item_group": item.item_group or "",
     }
+
+
+@frappe.whitelist()
+def get_serial_nos_for_item(item_code: str, warehouse: str = "") -> list:
+    """Retorna series disponibles (status=Active) para el item en una bodega."""
+    filters = {"item_code": item_code, "status": "Active"}
+    if warehouse:
+        filters["warehouse"] = warehouse
+    return frappe.db.get_all(
+        "Serial No",
+        filters=filters,
+        fields=["name", "warehouse"],
+        order_by="name asc",
+        limit=500,
+    )
+
+
+def _build_descripcion2(item_dict: dict, correlativo: str) -> str:
+    """
+    Construye el campo descripcion_2 según el tipo de item:
+    - Arma (serial_no presente): usa oficio + campos DIGECAM de arma
+    - Munición/Accesorio (sin serial_no, tiene_adenda=1): usa autorizacion + campos munición
+    - Sin adenda: solo descripción + correlativo
+    """
+    desc = (item_dict.get("description") or item_dict.get("item_name") or "").strip()
+    tiene_adenda = int(item_dict.get("tiene_adenda") or 0)
+    serial_no = (item_dict.get("serial_no") or "").strip()
+    corr_str = f"Correlativo Interno: {correlativo}" if correlativo else ""
+
+    parts = [desc]
+
+    if tiene_adenda and serial_no:
+        # Arma serializada
+        if item_dict.get("color"):
+            parts.append(f"Color: {item_dict['color']}")
+        if item_dict.get("largo"):
+            parts.append(f"Largo Del Cañon: {item_dict['largo']}")
+        if item_dict.get("modelo"):
+            parts.append(f"Modelo: {item_dict['modelo']}")
+        if item_dict.get("tenencia_1"):
+            parts.append(f"Tenencia 1: {item_dict['tenencia_1']}")
+        if item_dict.get("tenencia_2"):
+            parts.append(f"Tenencia 2: {item_dict['tenencia_2']}")
+        if item_dict.get("codigo"):
+            parts.append(f"Codigo Cliente: {item_dict['codigo']}")
+        if item_dict.get("oficio"):
+            parts.append(f"Oficio: {item_dict['oficio']}")
+        if item_dict.get("expediente"):
+            parts.append(f"Expediente: {item_dict['expediente']}")
+        parts.append(f"Serie: {serial_no}")
+
+    elif tiene_adenda:
+        # Munición / accesorio con adenda (sin serie)
+        if item_dict.get("licencia"):
+            parts.append(f"Licencia: {item_dict['licencia']}")
+        if item_dict.get("autorizacion"):
+            parts.append(f"Autorización: {item_dict['autorizacion']}")
+        if item_dict.get("lote"):
+            parts.append(f"Lote: {item_dict['lote']}")
+        tenencia = item_dict.get("custom_tenencia_municion") or ""
+        if tenencia:
+            parts.append(f"Tenencia: {tenencia}")
+        codigo = item_dict.get("custom_codigo_cliente_municion") or ""
+        if codigo:
+            parts.append(f"Codigo Cliente: {codigo}")
+
+    if corr_str:
+        parts.append(corr_str)
+
+    return " | ".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -412,12 +591,14 @@ def save_draft(doc_json: str):
         if cust_company and cust_company != company:
             frappe.throw(f"El cliente '{customer}' pertenece a otra compañía y no puede utilizarse en esta factura.")
 
-    # Validar Socio de Ventas
+    # Validar Socio de Ventas y mapear a campo vendedor si bfel_enlace_vendedor=1
     sales_partner = data.get("sales_partner")
     if sales_partner:
-        sp_company = frappe.db.get_value("Sales Partner", sales_partner, "bfel_company")
-        if sp_company and sp_company != company:
-            frappe.throw(f"El Socio de Ventas '{sales_partner}' pertenece a otra compañía y no puede utilizarse en esta factura.")
+        from facex_multi.api.sales_partner import validate_sales_partner_company
+        validate_sales_partner_company(sales_partner, company)
+        enlace = frappe.db.get_value("Sales Partner", sales_partner, "bfel_enlace_vendedor")
+        if enlace:
+            data["vendedor"] = sales_partner
 
     # Validar productos
     if "items" in data:
@@ -450,11 +631,21 @@ def save_draft(doc_json: str):
     if is_new:
         data.pop("name", None)
         data["doctype"] = "Sales Invoice"
+        # Si selling_price_list viene vacío, eliminarlo para que ERPNext lo resuelva
+        # vía update_if_missing (party_details). update_if_missing solo aplica cuando
+        # el campo es None, no cuando es "" — de ahí los errores de lista de precios.
+        if not data.get("selling_price_list"):
+            data.pop("selling_price_list", None)
         # Bug fix: si no se envían filas de taxes pero hay plantilla, dejar que ERPNext
         # las compute desde taxes_and_charges (evita primera factura sin impuestos)
         if not data.get("taxes") and data.get("taxes_and_charges"):
             data.pop("taxes", None)
         doc = frappe.get_doc(data)
+        # Fallback: si aun así sigue vacío, tomar la lista de Selling Settings
+        if not doc.selling_price_list:
+            doc.selling_price_list = (
+                frappe.db.get_single_value("Selling Settings", "selling_price_list") or ""
+            )
     else:
         # Verificar que el doc existe y está en borrador
         docstatus = frappe.db.get_value("Sales Invoice", name, "docstatus")
@@ -475,8 +666,11 @@ def save_draft(doc_json: str):
             "payment_terms_template", "terms", "taxes_and_charges",
             "bfel_nit", "bfel_nombre", "bfel_status", "bfel_escenario_exento",
             "es_fiscal", "update_stock", "company", "bfel_facex_multi",
-            "selling_price_list", "sales_partner", "bfel_establecimiento",
+            "selling_price_list", "sales_partner", "bfel_establecimiento", "vendedor",
         ):
+            # No pisar selling_price_list con vacío si el doc ya tiene uno
+            if field == "selling_price_list" and not data.get(field) and doc.selling_price_list:
+                continue
             if field in data:
                 setattr(doc, field, data[field])
 
@@ -529,12 +723,33 @@ def submit_invoice(name: str):
     """
     Valida (submit) un Sales Invoice borrador.
     ERPNext ejecuta toda la lógica contable y de stock.
+    Si concatena_descripcion2 está activo para la compañía, genera descripcion_2 en cada item.
     """
     name = (name or "").strip()
     doc = frappe.get_doc("Sales Invoice", name)
 
     if doc.docstatus != 0:
         frappe.throw("Solo se puede validar una factura en estado Borrador.")
+
+    from facex_multi.api.permissions import get_facex_company_config
+    cfg = get_facex_company_config(doc.company)
+    if cfg.get("concatena_descripcion2"):
+        correlativo = str(doc.custom_correlativo_interno or "")
+        if not correlativo:
+            # Intentar leer desde Correlativos de factura si aún no se asignó
+            corr_row = frappe.db.get_value(
+                "Correlativos de factura", {"empresa": doc.company}, "correlativo"
+            )
+            correlativo = str(corr_row or "")
+        changed = False
+        for item in doc.items:
+            nueva = _build_descripcion2(item.as_dict(), correlativo)
+            if item.descripcion_2 != nueva:
+                item.descripcion_2 = nueva
+                changed = True
+        if changed:
+            doc.save(ignore_permissions=True)
+            frappe.db.commit()
 
     doc.submit()
     frappe.db.commit()
@@ -610,8 +825,16 @@ def get_invoice(name: str):
     """
     name = (name or "").strip()
     doc = frappe.get_doc("Sales Invoice", name)
-    # Validar permiso de lectura (frappe lo maneja via get_doc)
-    return _safe_doc_dict(doc)
+    d = _safe_doc_dict(doc)
+    all_pes   = _get_linked_payment_entries(name) if doc.docstatus == 1 else []
+    submitted = [pe for pe in all_pes if pe.get("docstatus") == 1]
+    draft     = [pe for pe in all_pes if pe.get("docstatus") == 0]
+    d["_payment_entries"] = {
+        "submitted":     submitted,
+        "draft":         draft,
+        "has_submitted": bool(submitted),
+    }
+    return d
 
 
 # ---------------------------------------------------------------------------
@@ -724,37 +947,149 @@ def get_print_formats(company: str = None):
 
 
 # ---------------------------------------------------------------------------
-# Helper interno
+# 9. Payment Entry helpers (FacEx → ERPNext nativo)
 # ---------------------------------------------------------------------------
 
+_FACEX_METHOD_MAP = {
+    "Efectivo":           "Efectivo",
+    "Tarjeta de Crédito": "Tarjetas de credito",
+    "Tarjeta de Credito": "Tarjetas de credito",
+    "Transferencia":      "Transferencia bancaria",
+    "Cheque":             "Cheque",
+}
+
+
+def _get_linked_payment_entries(invoice_name):
+    pe_names = frappe.db.get_all(
+        "Payment Entry Reference",
+        filters={"reference_doctype": "Sales Invoice", "reference_name": invoice_name},
+        pluck="parent",
+    )
+    result = []
+    for pe_name in set(pe_names):
+        pe = frappe.db.get_value(
+            "Payment Entry",
+            pe_name,
+            ["name", "docstatus", "paid_amount", "posting_date", "mode_of_payment"],
+            as_dict=True,
+        )
+        if pe:
+            result.append(pe)
+    return result
+
+
+def _delete_draft_payment_entries(invoice_name):
+    for pe in _get_linked_payment_entries(invoice_name):
+        if pe.get("docstatus") == 0:
+            frappe.delete_doc("Payment Entry", pe["name"], ignore_permissions=True, force=True)
+
+
+def _create_payment_entry(invoice_doc, payment_method, payment_date, reference, amount):
+    mode = _FACEX_METHOD_MAP.get(payment_method, "Efectivo")
+
+    paid_from = frappe.db.get_value("Company", invoice_doc.company, "default_receivable_account")
+    if not paid_from:
+        frappe.throw(f"La empresa {invoice_doc.company} no tiene cuenta por cobrar configurada.")
+
+    paid_to = frappe.db.get_value(
+        "Mode of Payment Account",
+        {"parent": mode, "company": invoice_doc.company},
+        "default_account",
+    ) or frappe.db.get_value(
+        "Mode of Payment Account",
+        {"parent": "Efectivo", "company": invoice_doc.company},
+        "default_account",
+    )
+    if not paid_to:
+        frappe.throw(f"No se encontró cuenta de pago para '{mode}' en {invoice_doc.company}.")
+
+    paid_from_currency = frappe.db.get_value("Account", paid_from, "account_currency") or "GTQ"
+    paid_to_currency   = frappe.db.get_value("Account", paid_to,   "account_currency") or "GTQ"
+
+    pe = frappe.new_doc("Payment Entry")
+    pe.payment_type               = "Receive"
+    pe.party_type                 = "Customer"
+    pe.party                      = invoice_doc.customer
+    pe.company                    = invoice_doc.company
+    pe.posting_date               = payment_date or today()
+    pe.mode_of_payment            = mode
+    pe.paid_amount                = amount
+    pe.received_amount            = amount
+    pe.paid_from                  = paid_from
+    pe.paid_to                    = paid_to
+    pe.paid_from_account_currency = paid_from_currency
+    pe.paid_to_account_currency   = paid_to_currency
+    pe.source_exchange_rate       = 1
+    pe.target_exchange_rate       = 1
+    pe.remarks                    = f"FacEx | {invoice_doc.name}"
+    if reference:
+        pe.reference_no   = reference
+        pe.reference_date = payment_date or today()
+
+    pe.append("references", {
+        "reference_doctype":  "Sales Invoice",
+        "reference_name":     invoice_doc.name,
+        "allocated_amount":   amount,
+        "total_amount":       invoice_doc.grand_total,
+        "outstanding_amount": invoice_doc.outstanding_amount,
+    })
+
+    pe.insert(ignore_permissions=True)
+    return pe.name
+
+
 # ---------------------------------------------------------------------------
-# 9. Guardar pagos eFast (custom child table)
+# 10. Guardar pagos eFast → Payment Entry borrador
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
 def save_payments(invoice_name: str, payments_json: str, pagado: str = "0"):
     """
-    Guarda los registros de pago en la tabla hija custom_efast_payments
-    y actualiza el campo custom_pagado.
-    Permite edición en cualquier estado (borrador o validada).
+    Sincroniza los pagos de FacEx con Payment Entries en borrador de ERPNext.
+    - Toggle ON: crea PE(s) en borrador por cada fila de pago.
+    - Toggle OFF: elimina todos los PE en borrador vinculados.
+    - Si ya existe un PE validado (docstatus=1): bloquea la operación.
     """
     import json as _json
 
-    name = (invoice_name or "").strip()
-    payments = _json.loads(payments_json) if isinstance(payments_json, str) else (payments_json or [])
+    name       = (invoice_name or "").strip()
+    payments   = _json.loads(payments_json) if isinstance(payments_json, str) else (payments_json or [])
     pagado_val = 1 if str(pagado) in ("1", "true", "True") else 0
 
+    # Bloquear si hay PEs ya validados
+    all_pes   = _get_linked_payment_entries(name)
+    submitted = [pe for pe in all_pes if pe.get("docstatus") == 1]
+    if submitted:
+        frappe.throw(
+            f"La factura {name} tiene {len(submitted)} pago(s) ya validado(s) en ERPNext. "
+            "No se puede modificar el estado de pago desde FacEx."
+        )
+
+    # Eliminar PEs borrador existentes y recrear
+    _delete_draft_payment_entries(name)
+
     doc = frappe.get_doc("Sales Invoice", name)
-    doc.custom_pagado = pagado_val
+    doc.custom_pagado         = pagado_val
     doc.custom_efast_payments = []
 
-    for row in payments:
-        doc.append("custom_efast_payments", {
-            "payment_method": row.get("payment_method") or "Efectivo",
-            "payment_date": row.get("payment_date") or today(),
-            "reference": row.get("reference") or "",
-            "amount": float(row.get("amount") or 0),
-        })
+    created_pes = []
+    if pagado_val:
+        for row in payments:
+            amount = float(row.get("amount") or 0)
+            if amount <= 0:
+                continue
+            method = row.get("payment_method") or "Efectivo"
+            date   = row.get("payment_date") or today()
+            ref    = row.get("reference") or ""
+            doc.append("custom_efast_payments", {
+                "payment_method": method,
+                "payment_date":   date,
+                "reference":      ref,
+                "amount":         amount,
+            })
+            created_pes.append(
+                _create_payment_entry(doc, method, date, ref, amount)
+            )
 
     doc.flags.ignore_validate_update_after_submit = True
     doc.save(ignore_permissions=False)
@@ -762,9 +1097,10 @@ def save_payments(invoice_name: str, payments_json: str, pagado: str = "0"):
 
     total_paid = sum(float(r.get("amount") or 0) for r in payments)
     return {
-        "success": True,
-        "total_paid": total_paid,
-        "pagado": pagado_val,
+        "success":         True,
+        "total_paid":      total_paid,
+        "pagado":          pagado_val,
+        "payment_entries": created_pes,
     }
 
 

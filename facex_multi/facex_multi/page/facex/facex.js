@@ -43,6 +43,8 @@ class EFastSalePage {
 		this.$body = $(page.body);
 		this.doc = this._empty_doc();
 		this.defaults = {};
+		this.perms = this._full_perms();
+		this.company_config = {};
 		this.controls = {};
 		this._loading = false;
 		this._dirty = false;
@@ -66,6 +68,8 @@ class EFastSalePage {
 			callback: (r) => {
 				if (!r.exc && r.message) {
 					this.defaults = r.message;
+					this.perms = r.message.permissions || this._full_perms();
+					this.company_config = r.message.company_config || {};
 					if (this.defaults.company) {
 						this.$body.find("#ef-navbar-company-badge").css("display", "flex");
 						this.$body.find("#ef-active-company-name").text(this.defaults.company);
@@ -78,7 +82,7 @@ class EFastSalePage {
 				this._bind_events();
 				this._setup_invoice_search();
 				this._setup_collapse_btn();
-				
+
 				// Bind analytics button
 				this.$body.find("#ef-btn-show-analytics").on("click", () => {
 					this._show_customer_analytics_dialog();
@@ -86,15 +90,28 @@ class EFastSalePage {
 
 				this._setup_dashboard_controls();
 				this._setup_maintenance();
+				this._apply_perms();
+				this._apply_column_visibility();
 
 				const params = frappe.utils.get_url_to_dict();
 				if (params.invoice) {
 					this.load_invoice(params.invoice);
 				} else {
 					this._new_invoice();
-					this._switch_view("dashboard");
+					this._switch_view(this.perms.puede_ver_tablero ? "dashboard" : "billing");
 				}
 			},
+		});
+
+		// Load warehouses for item grid dropdown
+		this.warehouses = [];
+		frappe.call({
+			method: "facex_multi.api.invoice.get_warehouses",
+			callback: (r) => {
+				if (!r.exc && r.message) {
+					this.warehouses = r.message;
+				}
+			}
 		});
 	}
 
@@ -212,6 +229,15 @@ class EFastSalePage {
             <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #64748b; margin-bottom: 4px;">Usuario Conectado</div>
             <div id="ef-active-user-fullname" style="font-size: 14px; font-weight: 700; color: #0f172a; line-height: 1.2;"></div>
             <div id="ef-active-user-email" style="font-size: 12px; color: #64748b; margin-bottom: 14px; word-break: break-all;"></div>
+            <div id="ef-company-switcher-section" style="display:none; margin-bottom: 12px;">
+              <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #64748b; margin-bottom: 6px;">Cambiar Compañía</div>
+              <select id="ef-company-select" style="width: 100%; padding: 6px 8px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px; margin-bottom: 8px; color: #0f172a; background: #f8fafc;"></select>
+              <button id="ef-btn-switch-company" class="ef-btn" style="width: 100%; background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; display: flex; align-items: center; justify-content: center; gap: 6px; border-radius: 6px; padding: 8px; margin-bottom: 8px; cursor: pointer; font-size: 13px; font-weight: 500;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"></path><path d="M9 8h1"></path><path d="M9 12h1"></path><path d="M9 16h1"></path><path d="M14 8h1"></path><path d="M14 12h1"></path><path d="M14 16h1"></path><path d="M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16"></path></svg>
+                Aplicar Compañía
+              </button>
+              <hr style="border: none; border-top: 1px solid #e2e8f0; margin-bottom: 10px;">
+            </div>
             <button id="ef-btn-change-password" class="ef-btn" style="width: 100%; background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; display: flex; align-items: center; justify-content: center; gap: 6px; border-radius: 6px; padding: 8px; margin-bottom: 8px; cursor: pointer; font-size: 13px; font-weight: 500;">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
               Cambiar Contraseña
@@ -227,7 +253,7 @@ class EFastSalePage {
   </div>
 
   <!-- ── VIEW 1: DASHBOARD / TABLERO ──────────────────────────────── -->
-  <div id="ef-dashboard-view" class="ef-view-content" style="padding: 24px; max-width: 1200px; margin: 0 auto; font-family: var(--ef-font);">
+  <div id="ef-dashboard-view" class="ef-view-content" style="display:none; padding: 24px; max-width: 1200px; margin: 0 auto; font-family: var(--ef-font);">
     
     <!-- Encabezado de Bienvenida -->
     <div class="ef-dashboard-welcome" style="background: linear-gradient(135deg, #153375, #4361ee); color: white; padding: 26px 30px; border-radius: 12px; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 10px 15px -3px rgba(21,51,117,0.2);">
@@ -529,10 +555,13 @@ class EFastSalePage {
                 <th class="ef-th ef-th-idx">#</th>
                 <th class="ef-th ef-th-item">Código Item</th>
                 <th class="ef-th ef-th-name">Descripción FEL</th>
+                <th class="ef-th ef-th-wh ef-col-wh">Almacén</th>
                 <th class="ef-th ef-th-qty">Cantidad</th>
                 <th class="ef-th ef-th-rate">Precio Unit.</th>
                 <th class="ef-th ef-th-disc ef-col-disc">Desc %</th>
                 <th class="ef-th ef-th-amount">Importe</th>
+                <th class="ef-th ef-th-adenda ef-col-adenda">Adenda</th>
+                <th class="ef-th ef-th-tipo ef-col-tipo">Tipo</th>
                 <th class="ef-th ef-th-del"></th>
               </tr>
             </thead>
@@ -1179,9 +1208,10 @@ class EFastSalePage {
 			const get_query_fn = () => {
 				const comp = this.doc.company || this.defaults.company || "";
 				return {
-					filters: {
-						bfel_company: comp
-					}
+					or_filters: [
+						["bfel_company", "=", comp],
+						["bfel_company_null", "=", 0],
+					],
 				};
 			};
 			const ctrl = frappe.ui.form.make_control({
@@ -1704,7 +1734,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 .ef-th-rate  { width: 100px; text-align: right; }
 .ef-th-disc  { width: 70px; text-align: right; }
 .ef-th-amount{ width: 110px; text-align: right; }
+.ef-th-adenda{ width: 80px; text-align: center; }
+.ef-th-tipo  { width: 58px; text-align: center; }
 .ef-th-del   { width: 36px; }
+.ef-td-tipo  { text-align: center; padding: 3px 4px; }
 
 .ef-tr {
   border-bottom: 1px solid #f1f5f9;
@@ -1798,6 +1831,71 @@ body.facex-fullscreen-mode .ef-main-layout {
   line-height: 1;
 }
 .ef-btn-del:hover { color: var(--ef-danger); background: #fee2e2; }
+
+/* Stock popover button */
+.ef-btn-stock {
+  position: absolute; right: 2px; top: 50%; transform: translateY(-50%);
+  background: none; border: none; color: #94a3b8; cursor: pointer;
+  font-size: 12px; padding: 1px 4px; border-radius: 3px; line-height: 1;
+  transition: color .15s, background .15s; z-index: 1; tabindex: -1;
+}
+.ef-btn-stock:hover { color: var(--ef-primary); background: #eff6ff; }
+.ef-item-code { padding-right: 22px !important; }
+
+/* Adenda DIGECAM button */
+.ef-th-adenda { width: 80px; text-align: center; }
+.ef-td-adenda { text-align: center; padding: 3px 4px; }
+.ef-btn-adenda {
+  font-size: 10px; font-weight: 600; padding: 2px 6px;
+  border-radius: 10px; border: 1px solid; cursor: pointer;
+  white-space: nowrap; transition: opacity .15s;
+}
+.ef-btn-adenda:hover { opacity: .8; }
+.ef-adenda-ok {
+  background: #dcfce7; color: #16a34a; border-color: #86efac;
+}
+.ef-adenda-pending {
+  background: #fff7ed; color: #c2410c; border-color: #fdba74;
+}
+
+/* Stock popover panel */
+.ef-stock-popover {
+  position: fixed; z-index: 9999;
+  background: #fff; border: 1px solid #e2e8f0; border-radius: 8px;
+  box-shadow: 0 4px 24px rgba(0,0,0,.15);
+  min-width: 280px; max-width: 420px; font-size: 12px;
+}
+.ef-stock-popover-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 12px; border-bottom: 1px solid #f1f5f9;
+  font-weight: 600; font-size: 13px; color: #334155;
+}
+.ef-stock-popover-title { display: flex; flex-direction: column; gap: 1px; }
+.ef-stock-popover-title small { font-weight: 400; color: #64748b; font-size: 11px; }
+.ef-stock-close {
+  background: none; border: none; color: #94a3b8;
+  cursor: pointer; font-size: 18px; line-height: 1; padding: 0 2px;
+}
+.ef-stock-close:hover { color: #ef4444; }
+.ef-stock-popover-body { padding: 8px 4px; }
+.ef-stock-loading, .ef-stock-empty {
+  padding: 16px; text-align: center; color: #94a3b8; font-size: 12px;
+}
+.ef-stock-table { width: 100%; border-collapse: collapse; }
+.ef-stock-table th {
+  text-align: left; padding: 4px 10px;
+  border-bottom: 1px solid #e2e8f0; color: #64748b;
+  font-weight: 600; font-size: 11px; text-transform: uppercase;
+}
+.ef-stock-table th.ef-stock-qty-h { text-align: right; }
+.ef-stock-table td { padding: 5px 10px; border-bottom: 1px solid #f8fafc; }
+.ef-stock-qty-v { text-align: right; font-family: monospace; font-weight: 700; }
+.ef-stock-row-sel td { background: #f0fdf4; color: #166534; }
+.ef-stock-row-sel .ef-stock-qty-v { color: #16a34a; }
+.ef-stock-row-warn td { background: #fef2f2; }
+.ef-stock-row-warn .ef-stock-qty-v { color: #dc2626; }
+.ef-stock-row-low .ef-stock-qty-v { color: #d97706; }
+.ef-stock-svc { padding: 14px; text-align: center; color: #64748b; font-style: italic; }
 
 /* Empty state */
 .ef-empty-state {
@@ -2423,9 +2521,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 			const comp = this.doc.company || this.defaults.company || "";
 			if (options_doctype === "Customer" || options_doctype === "Sales Partner") {
 				return {
-					filters: {
-						bfel_company: comp
-					}
+					or_filters: [
+						["bfel_company", "=", comp],
+						["bfel_company_null", "=", 0],
+					],
 				};
 			} else if (options_doctype === "Sales Taxes and Charges Template") {
 				return {
@@ -2635,11 +2734,34 @@ body.facex-fullscreen-mode .ef-main-layout {
 			$tbody.append(this._item_row_html(idx, item));
 			this._bind_row_events(idx);
 		});
+		this._apply_column_visibility();
 	}
 
 	_item_row_html(idx, item) {
 		const base_rate = item.price_list_rate !== undefined && item.price_list_rate !== null && parseFloat(item.price_list_rate) > 0 ? parseFloat(item.price_list_rate) : (parseFloat(item.rate) || 0);
 		const amount = this._calc_amount(item.qty, base_rate, item.discount_percentage);
+
+		// Botón adenda DIGECAM — solo para ARMAS y MUNICIÓN
+		const _grupo = item._item_group || item.item_group || "";
+		let _adenda_td = '<td class="ef-td ef-td-adenda ef-col-adenda"></td>';
+		if (_grupo === "ARMAS" || _grupo === "MUNICIÓN") {
+			const _ok = _grupo === "ARMAS"
+				? !!(item.tenencia_1 && item.tenencia_2 && item.codigo && item.oficio && item.expediente && item.serial_no)
+				: !!(item.custom_tenencia_municion && item.custom_codigo_cliente_municion && item.lote && item.licencia && item.autorizacion);
+			const _cls   = _ok ? "ef-adenda-ok" : "ef-adenda-pending";
+			const _lbl   = _ok ? "&#10003;&nbsp;Adenda" : "&#9888;&nbsp;Adenda";
+			const _title = _ok ? "Editar adenda DIGECAM" : "Completar adenda DIGECAM (obligatorio)";
+			_adenda_td = `<td class="ef-td ef-td-adenda ef-col-adenda"><button class="ef-btn-adenda ${_cls}" data-idx="${idx}" title="${_title}">${_lbl}</button></td>`;
+		}
+		const _tipo_val = item.bfel_tipo || "";
+		const _tipo_td = `<td class="ef-td ef-td-tipo ef-col-tipo">
+  <select class="ef-cell-input ef-tipo" data-idx="${idx}" style="width:100%; font-size:12px; text-align:center;">
+    <option value=""  ${_tipo_val === ""  ? "selected" : ""}>-</option>
+    <option value="B" ${_tipo_val === "B" ? "selected" : ""}>B</option>
+    <option value="S" ${_tipo_val === "S" ? "selected" : ""}>S</option>
+  </select>
+</td>`;
+
 		return `
 <tr class="ef-tr" data-idx="${idx}" id="ef-row-${idx}">
   <td class="ef-td ef-td-idx">${idx + 1}</td>
@@ -2649,6 +2771,7 @@ body.facex-fullscreen-mode .ef-main-layout {
         data-field="item_code" data-idx="${idx}"
         value="${_esc(item.item_code || "")}"
         placeholder="Código..." autocomplete="off" />
+      <button class="ef-btn-stock" data-idx="${idx}" tabindex="-1" title="Ver saldos por bodega">≡</button>
     </div>
   </td>
   <td class="ef-td">
@@ -2657,6 +2780,12 @@ body.facex-fullscreen-mode .ef-main-layout {
       value="${_esc(item.description || item.item_name || "")}"
       placeholder="Descripción FEL (max. 500 caracteres)"
       maxlength="500" />
+  </td>
+  <td class="ef-td ef-col-wh">
+    <select class="ef-cell-input ef-warehouse" data-field="warehouse" data-idx="${idx}" style="width:100%; font-size:12px;">
+      <option value="">(Almacén)</option>
+      ${(this.warehouses || []).map(w => `<option value="${_esc(w)}"${item.warehouse === w ? ' selected' : ''}>${_esc(w)}</option>`).join('')}
+    </select>
   </td>
   <td class="ef-td ef-td-num">
     <input type="number" class="ef-cell-input ef-input-num ef-qty"
@@ -2678,6 +2807,8 @@ body.facex-fullscreen-mode .ef-main-layout {
       data-field="amount" data-idx="${idx}"
       value="${_fmt(amount)}" readonly />
   </td>
+  ${_adenda_td}
+  ${_tipo_td}
   <td class="ef-td">
     <button class="ef-btn-del ef-del-row" data-idx="${idx}" title="Eliminar fila">×</button>
   </td>
@@ -2720,6 +2851,18 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this._mark_dirty();
 		});
 
+		// warehouse select
+		$row.find(".ef-warehouse").on("change", (e) => {
+			this.doc.items[idx].warehouse = e.target.value;
+			this._mark_dirty();
+		});
+
+		// tipo FEL select
+		$row.find(".ef-tipo").on("change", (e) => {
+			this.doc.items[idx].bfel_tipo = e.target.value;
+			this._mark_dirty();
+		});
+
 		// qty / rate / discount → recalcular amount local
 		["qty", "rate", "discount_percentage"].forEach((field) => {
 			$row.find(`[data-field="${field}"]`).on("input change", (e) => {
@@ -2731,6 +2874,31 @@ body.facex-fullscreen-mode .ef-main-layout {
 				this._update_row_amount(idx);
 				this._mark_dirty();
 			});
+		});
+
+		// Adenda DIGECAM button (editar o completar)
+		$row.find(".ef-btn-adenda").on("click", (e) => {
+			e.stopPropagation();
+			const row = this.doc.items[idx];
+			const grupo = row._item_group || row.item_group || "";
+			if (grupo === "ARMAS") {
+				this._show_adenda_dialog(idx, "arma");
+			} else if (grupo === "MUNICIÓN") {
+				this._show_adenda_dialog(idx, "municion");
+			}
+		});
+
+		// Stock popover button
+		$row.find(".ef-btn-stock").on("click", (e) => {
+			e.stopPropagation();
+			const item_code = this.doc.items[idx].item_code;
+			if (!item_code) {
+				frappe.show_alert({ message: "Seleccione un producto primero.", indicator: "orange" });
+				return;
+			}
+			const warehouse = this.doc.items[idx].warehouse || "";
+			const qty       = parseFloat(this.doc.items[idx].qty) || 0;
+			this._show_stock_popover(e.currentTarget, item_code, warehouse, qty);
 		});
 
 		// Delete row
@@ -2807,15 +2975,466 @@ body.facex-fullscreen-mode .ef-main-layout {
 						row.description = d.description || "";
 						if (d.warehouse) row.warehouse = d.warehouse;
 						if (d.cost_center) row.cost_center = d.cost_center;
+						// Guardar flags de serie/adenda en el row
+						row._has_serial_no = d.has_serial_no || 0;
+						row._custom_tiene_adenda = d.custom_tiene_adenda || 0;
+						row._item_group = d.item_group || "";
+						row.is_stock_item = d.is_stock_item || 0;
+						// Pre-llenar tipo FEL con default de configuración si no tiene valor
+						if (!row.bfel_tipo) {
+							row.bfel_tipo = (this.company_config || {}).tipo_x_defecto || "";
+						}
 						row.amount = this._calc_amount(row.qty, row.rate, row.discount_percentage);
 						this._render_items();
 						this._update_local_footer();
-						this.$body.find(`#ef-row-${idx} .ef-qty`).focus().select();
+						this._handle_item_serial_adenda(idx, d);
 					}
 				}
 			},
 		});
 	}
+
+	_show_stock_popover(btn, item_code, selected_warehouse, requested_qty) {
+		$(".ef-stock-popover").remove();
+		$(document).off("click.ef-stock-popover");
+
+		const $pop = $(`
+			<div class="ef-stock-popover">
+				<div class="ef-stock-popover-header">
+					<div class="ef-stock-popover-title">
+						<span>${_esc(item_code)}</span>
+						<small>Saldos por bodega</small>
+					</div>
+					<button class="ef-stock-close" title="Cerrar">×</button>
+				</div>
+				<div class="ef-stock-popover-body">
+					<div class="ef-stock-loading">Consultando inventario…</div>
+				</div>
+			</div>`);
+
+		$("body").append($pop);
+
+		// Posicionar junto al botón (debajo o arriba según espacio)
+		const rect = btn.getBoundingClientRect();
+		const popH = 220;
+		const top  = (rect.bottom + popH > window.innerHeight)
+			? rect.top - popH - 4
+			: rect.bottom + 4;
+		$pop.css({ top: Math.max(4, top), left: Math.max(4, rect.left) });
+
+		$pop.find(".ef-stock-close").on("click", () => {
+			$pop.remove();
+			$(document).off("click.ef-stock-popover");
+		});
+		setTimeout(() => {
+			$(document).on("click.ef-stock-popover", (ev) => {
+				if (!$pop.is(ev.target) && $pop.has(ev.target).length === 0) {
+					$pop.remove();
+					$(document).off("click.ef-stock-popover");
+				}
+			});
+		}, 50);
+
+		frappe.call({
+			method: "facex_multi.api.invoice.get_item_stock",
+			args: { item_code, company: this.doc.company || this.defaults.company || "" },
+			callback: (r) => {
+				const $body = $pop.find(".ef-stock-popover-body");
+				const rows  = r.message || [];
+
+				if (!rows.length) {
+					$body.html('<div class="ef-stock-empty">Sin registros de inventario para este producto.</div>');
+					return;
+				}
+
+				// Producto de servicio (is_stock_item = 0)
+				if (!rows[0].is_stock_item) {
+					$body.html('<div class="ef-stock-svc">Producto de servicio — no maneja inventario.</div>');
+					return;
+				}
+
+				const uom = rows[0].stock_uom || "";
+				const fmt = (n) => parseFloat(n || 0).toLocaleString("es-GT", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+
+				let html = `<table class="ef-stock-table">
+					<thead><tr>
+						<th>Bodega</th>
+						<th class="ef-stock-qty-h">Disponible</th>
+						<th class="ef-stock-qty-h">Proyectado</th>
+					</tr></thead><tbody>`;
+
+				rows.forEach(row => {
+					const qty     = parseFloat(row.actual_qty || 0);
+					const proj    = parseFloat(row.projected_qty || 0);
+					const isSel   = row.warehouse === selected_warehouse;
+					const isShort = requested_qty > 0 && qty < requested_qty;
+					const cls     = isSel ? (isShort ? "ef-stock-row-warn" : "ef-stock-row-sel")
+					                      : (isShort ? "ef-stock-row-low"  : "");
+					const arrow   = isSel ? "▶ " : "";
+					html += `<tr class="${cls}">
+						<td>${arrow}${_esc(row.warehouse)}</td>
+						<td class="ef-stock-qty-v">${fmt(qty)} ${_esc(uom)}</td>
+						<td class="ef-stock-qty-v" style="color:#94a3b8;">${fmt(proj)}</td>
+					</tr>`;
+				});
+
+				html += `</tbody></table>`;
+				$body.html(html);
+
+				// Ajustar posición real ahora que tenemos contenido
+				const popRect = $pop[0].getBoundingClientRect();
+				if (popRect.right > window.innerWidth - 4) {
+					$pop.css("left", Math.max(4, window.innerWidth - popRect.width - 8));
+				}
+			},
+		});
+	}
+
+	// -----------------------------------------------------------------------
+	// Series y Adendas DIGECAM
+	// -----------------------------------------------------------------------
+
+	_handle_item_serial_adenda(idx, details) {
+		const cfg = this.company_config || {};
+		const has_serial = details.has_serial_no;
+		const tiene_adenda = details.custom_tiene_adenda;
+
+		if (has_serial && cfg.maneja_series) {
+			this._show_serial_picker(idx, () => {
+				if (tiene_adenda && cfg.maneja_adendas) {
+					this._show_adenda_dialog(idx, "arma");
+				} else {
+					this.$body.find(`#ef-row-${idx} .ef-qty`).focus().select();
+				}
+			});
+		} else if (tiene_adenda && cfg.maneja_adendas) {
+			this._show_adenda_dialog(idx, "municion");
+		} else {
+			this.$body.find(`#ef-row-${idx} .ef-qty`).focus().select();
+		}
+	}
+
+	_show_serial_picker(idx, callback) {
+		const row = this.doc.items[idx];
+		const warehouse = row.warehouse || this.defaults.default_warehouse || "";
+		const item_code = row.item_code;
+
+		const dlg = new frappe.ui.Dialog({
+			title: __("Seleccionar Serie — {0}", [item_code]),
+			fields: [
+				{
+					fieldname: "buscar",
+					fieldtype: "Data",
+					label: __("Buscar"),
+					placeholder: __("Filtrar por número de serie…"),
+				},
+			],
+		});
+
+		// Panel de lista debajo del campo de búsqueda
+		const $list = $(`
+			<div id="ef-serial-list" style="
+				margin-top:8px; max-height:320px; overflow-y:auto;
+				border:1px solid #e0e0e0; border-radius:4px; background:#fff;
+			">
+				<div class="ef-serial-loading" style="padding:16px; color:#888; text-align:center;">
+					Cargando series…
+				</div>
+			</div>`);
+		dlg.$body.append($list);
+
+		let all_series = [];
+
+		const render = (filter) => {
+			const q = (filter || "").toLowerCase();
+			const visible = q ? all_series.filter(s => s.name.toLowerCase().includes(q)) : all_series;
+			if (!visible.length) {
+				$list.html(`<div style="padding:16px; color:#888; text-align:center;">Sin series disponibles en la bodega seleccionada.</div>`);
+				return;
+			}
+			const html = visible.map(s => `
+				<div class="ef-serial-row" data-serial="${frappe.utils.escape_html(s.name)}" style="
+					padding:10px 14px; cursor:pointer; border-bottom:1px solid #f0f0f0;
+					display:flex; justify-content:space-between; align-items:center;
+				">
+					<span style="font-weight:600; font-size:13px; font-family:monospace;">${frappe.utils.escape_html(s.name)}</span>
+					<span style="color:#888; font-size:11px;">${frappe.utils.escape_html(s.warehouse || "")}</span>
+				</div>`).join("");
+			$list.html(html);
+
+			$list.find(".ef-serial-row").on("mouseenter", function() {
+				$(this).css("background", "#f0f7ff");
+			}).on("mouseleave", function() {
+				$(this).css("background", "");
+			}).on("click", (ev) => {
+				const serial = $(ev.currentTarget).data("serial");
+				row.serial_no = serial;
+				row.qty = 1;
+				this._render_items();
+				this._update_local_footer();
+				this._mark_dirty();
+				dlg.hide();
+				if (callback) callback();
+			});
+		};
+
+		frappe.call({
+			method: "facex_multi.api.invoice.get_serial_nos_for_item",
+			args: { item_code, warehouse },
+			callback: (r) => {
+				all_series = r.message || [];
+				render("");
+			},
+		});
+
+		dlg.fields_dict.buscar.$input.on("input", function() {
+			render($(this).val().trim());
+		});
+
+		dlg.show();
+	}
+
+	_show_adenda_dialog(idx, tipo, on_success, on_cancel) {
+		const row = this.doc.items[idx];
+		const es_arma = tipo === "arma";
+		let resolved = false;
+
+		let fields;
+		if (es_arma) {
+			fields = [
+				{
+					fieldname: "serie_digecam", fieldtype: "Link", label: "Serie", reqd: 1,
+					options: "Serial No",
+					get_query: () => ({ filters: { item_code: row.item_code, status: "Active" } }),
+				},
+				{ fieldname: "sb0",        fieldtype: "Section Break" },
+				{ fieldname: "color",      fieldtype: "Data", label: "Color" },
+				{ fieldname: "cb1",        fieldtype: "Column Break" },
+				{ fieldname: "largo",      fieldtype: "Data", label: "Largo del Cañón" },
+				{ fieldname: "sb2",        fieldtype: "Section Break" },
+				{ fieldname: "modelo",     fieldtype: "Data", label: "Modelo" },
+				{ fieldname: "cb2",        fieldtype: "Column Break" },
+				{ fieldname: "oficio",     fieldtype: "Data", label: "Oficio (Autorización DIGECAM)" },
+				{ fieldname: "sb3",        fieldtype: "Section Break" },
+				{ fieldname: "tenencia_1", fieldtype: "Data", label: "Tenencia 1", reqd: 1 },
+				{ fieldname: "cb3",        fieldtype: "Column Break" },
+				{ fieldname: "tenencia_2", fieldtype: "Data", label: "Tenencia 2", reqd: 1 },
+				{ fieldname: "sb4",        fieldtype: "Section Break" },
+				{ fieldname: "codigo",     fieldtype: "Data", label: "Código Cliente DIGECAM" },
+				{ fieldname: "cb4",        fieldtype: "Column Break" },
+				{ fieldname: "expediente", fieldtype: "Data", label: "Expediente" },
+			];
+		} else {
+			fields = [
+				{ fieldname: "licencia",                       fieldtype: "Data", label: "Licencia" },
+				{ fieldname: "cb1",                            fieldtype: "Column Break" },
+				{ fieldname: "autorizacion",                   fieldtype: "Data", label: "Autorización" },
+				{ fieldname: "sb2",                            fieldtype: "Section Break" },
+				{ fieldname: "lote",                           fieldtype: "Data", label: "Lote" },
+				{ fieldname: "cb2",                            fieldtype: "Column Break" },
+				{ fieldname: "custom_tenencia_municion",       fieldtype: "Data", label: "Tenencia", reqd: 1 },
+				{ fieldname: "sb3",                            fieldtype: "Section Break" },
+				{ fieldname: "custom_codigo_cliente_municion", fieldtype: "Data", label: "Código Cliente", reqd: 1 },
+			];
+		}
+
+		const title = es_arma
+			? __("Adenda DIGECAM — {0}", [row.item_name || row.item_code])
+			: __("Adenda DIGECAM — {0}", [row.item_name || row.item_code]);
+
+		const dlg = new frappe.ui.Dialog({
+			title,
+			fields,
+			primary_action_label: __("Guardar Adenda"),
+			primary_action: (values) => {
+				Object.assign(row, values);
+				// Para ARMA: mapear serie_digecam → serial_no real del item
+				if (es_arma) {
+					if (values.serie_digecam) {
+						row.serial_no = values.serie_digecam;
+						row.qty = 1;
+					}
+					delete row.serie_digecam;
+				}
+				row.tiene_adenda = 1;
+				resolved = true;
+				this._render_items();
+				this._update_local_footer();
+				this._mark_dirty();
+				dlg.hide();
+				if (on_success) {
+					on_success();
+				} else {
+					this.$body.find(`#ef-row-${idx} .ef-qty`).focus().select();
+				}
+			},
+			secondary_action_label: __("Cancelar"),
+			secondary_action: () => { dlg.hide(); },
+		});
+
+		// Detectar cierre sin guardar (X, Escape, secondary_action)
+		const _orig_hide = dlg.hide.bind(dlg);
+		dlg.hide = () => {
+			_orig_hide();
+			if (!resolved && on_cancel) on_cancel();
+		};
+
+		// Pre-poblar con valores existentes en el row
+		const SKIP = new Set(["cb1","cb2","cb3","cb4","sb0","sb2","sb3","sb4"]);
+		const pre = {};
+		fields.forEach(f => {
+			if (f.fieldname && !SKIP.has(f.fieldname)) {
+				// serie_digecam es el campo proxy para serial_no en el dialog
+				pre[f.fieldname] = (f.fieldname === "serie_digecam")
+					? (row.serial_no || "")
+					: (row[f.fieldname] || "");
+			}
+		});
+		dlg.set_values(pre);
+		dlg.show();
+	}
+
+	// -----------------------------------------------------------------------
+	// Adenda helpers y validación pre-submit
+	// -----------------------------------------------------------------------
+
+	_arma_completa(row) {
+		return !!(row.tenencia_1 && row.tenencia_2 && row.codigo &&
+		          row.oficio && row.expediente && row.serial_no);
+	}
+
+	_municion_completa(row) {
+		return !!(row.custom_tenencia_municion && row.custom_codigo_cliente_municion &&
+		          row.lote && row.licencia && row.autorizacion);
+	}
+
+	_adendas_pendientes() {
+		return (this.doc.items || [])
+			.map((row, idx) => ({ row, idx }))
+			.filter(({ row }) => {
+				const g = row._item_group || row.item_group || "";
+				if (g === "ARMAS")    return !this._arma_completa(row);
+				if (g === "MUNICIÓN") return !this._municion_completa(row);
+				return false;
+			});
+	}
+
+	_adenda_como_promise(idx, tipo) {
+		return new Promise((resolve, reject) => {
+			this._show_adenda_dialog(idx, tipo, resolve, reject);
+		});
+	}
+
+	_guardar_antes_de_submit() {
+		return new Promise((resolve, reject) => {
+			frappe.call({
+				method: "facex_multi.api.invoice.save_draft",
+				args: { doc_json: JSON.stringify(this._build_save_payload()) },
+				freeze: true,
+				freeze_message: __("Guardando adendas..."),
+				callback: (r) => {
+					if (!r.exc && r.message) {
+						const cachedTpl = this.doc._taxes_template;
+						this._dirty = false;
+						this.doc = r.message;
+						this.doc._taxes_template = cachedTpl;
+						this._sync_ui_from_doc();
+						this._update_action_bar_state();
+						resolve();
+					} else {
+						reject();
+					}
+				},
+				error: () => reject(),
+			});
+		});
+	}
+
+	async _validar_adendas_pendientes() {
+		const pendientes = this._adendas_pendientes();
+		for (const { row, idx } of pendientes) {
+			const tipo  = (row._item_group || row.item_group) === "ARMAS" ? "arma" : "municion";
+			const label = row.item_name || row.item_code;
+			frappe.show_alert({
+				message: __("Complete la adenda para: {0}", [label]),
+				indicator: "orange",
+			}, 5);
+			await this._adenda_como_promise(idx, tipo);
+		}
+	}
+
+	// Permissions
+	// -----------------------------------------------------------------------
+
+	_full_perms() {
+		return {
+			puede_ver_tablero: 1, puede_facturar: 1,
+			puede_guardar: 1, puede_validar: 1, puede_certificar: 1,
+			crea_clientes: 1, modifica_clientes: 1,
+			crea_items: 1, modifica_items: 1, actualiza_precios: 1,
+			reporte_ventas_fecha: 1, reporte_ventas_producto: 1,
+			reporte_facturas_canceladas: 1, reporte_estados_cuenta: 1,
+			reporte_antiguedad_saldos: 1, reporte_cotizaciones: 1,
+			reporte_recibos_pagos: 1, reporte_crecimiento_ventas: 1,
+			reporte_imprimir_recibo: 1,
+		};
+	}
+
+	_apply_perms() {
+		const p = this.perms;
+
+		// --- Navegación principal ---
+		if (!p.puede_ver_tablero) this.$body.find(".ef-nav-btn[data-view='dashboard']").hide();
+		if (!p.puede_facturar)    this.$body.find(".ef-nav-btn[data-view='billing']").hide();
+
+		// --- Reportes: ocultar tabs no permitidos ---
+		const REPORT_PERM = {
+			sales_by_date:         "reporte_ventas_fecha",
+			sales_by_product:      "reporte_ventas_producto",
+			cancelled_invoices:    "reporte_facturas_canceladas",
+			customer_statement:    "reporte_estados_cuenta",
+			aging_receivables:     "reporte_antiguedad_saldos",
+			quotations_report:     "reporte_cotizaciones",
+			payments_report:       "reporte_recibos_pagos",
+			sales_growth_analysis: "reporte_crecimiento_ventas",
+			print_receipt:         "reporte_imprimir_recibo",
+		};
+		this.$body.find(".ef-report-nav-btn").each((_, el) => {
+			const report = $(el).data("report");
+			const field  = REPORT_PERM[report];
+			if (field && !p[field]) $(el).hide();
+		});
+		// Si ningún reporte visible, ocultar tab Reportes del nav
+		const anyReport = Object.values(REPORT_PERM).some(f => p[f]);
+		if (!anyReport) this.$body.find(".ef-nav-btn[data-view='reports']").hide();
+
+		// --- Mantenimiento ---
+		if (!p.crea_clientes)    this.$body.find("#ef-maint-cust-btn-new").hide();
+		if (!p.modifica_clientes) {
+			this.$body.find("#ef-maint-cust-btn-save").hide();
+			this.$body.find("#ef-maint-cust-btn-delete").hide();
+			// Campo de formulario de cliente en modo sólo lectura
+			this.$body.find("#ef-maint-tab-clientes .ef-input, #ef-maint-tab-clientes .ef-link-ctrl input")
+				.prop("readonly", true).css("background", "#f8fafc");
+		}
+		if (!p.crea_items)    this.$body.find("#ef-maint-item-btn-new").hide();
+		if (!p.modifica_items) {
+			this.$body.find("#ef-maint-item-btn-save").hide();
+			this.$body.find("#ef-maint-item-btn-delete").hide();
+			this.$body.find("#ef-maint-tab-productos .ef-input, #ef-maint-tab-productos .ef-link-ctrl input")
+				.prop("readonly", true).css("background", "#f8fafc");
+		}
+		if (!p.actualiza_precios) {
+			// Ocultar tab Precios del mantenimiento completo
+			this.$body.find(".ef-maint-tab-btn[data-maint-tab='precios']").hide();
+		}
+
+		// Acciones del Facturador se aplican en _update_action_bar_state
+		// (llamado por el estado de la factura actual)
+		this._update_action_bar_state();
+	}
+
+	// -----------------------------------------------------------------------
 
 	_update_row_amount(idx) {
 		const row = this.doc.items[idx];
@@ -2896,28 +3515,50 @@ body.facex-fullscreen-mode .ef-main-layout {
 			if (txt.length < 1) { close(); return; }
 
 			const comp = this.doc.company || this.defaults.company || "";
-			const filters = {};
-			if (doctype === "Item") {
-				filters.bfel_company = comp;
-			} else if (doctype === "Customer") {
-				filters.bfel_company = comp;
-			}
 
 			_timer = setTimeout(() => {
-				frappe.call({
-					method: "frappe.desk.search.search_link",
-					args: {
-						txt: txt,
-						doctype: doctype,
-						ignore_user_permissions: 0,
-						reference_doctype: "Sales Invoice",
-						filters: filters
-					},
-					callback: (r) => {
-						const results = r.results || r.message || [];
-						open(Array.isArray(results) ? results : []);
-					},
-				});
+				if (doctype === "Item") {
+					frappe.call({
+						method: "facex_multi.api.item.search_items",
+						args: { txt, company: comp },
+						callback: (r) => {
+							const rows = r.message || [];
+							const results = rows.map((it) => ({
+								value: it.name,
+								description: it.item_name || "",
+							}));
+							open(results);
+						},
+					});
+				} else if (doctype === "Customer") {
+					frappe.call({
+						method: "facex_multi.api.item.get_customers_list",
+						args: { txt, company: comp },
+						callback: (r) => {
+							const rows = r.message || [];
+							const results = rows.map((c) => ({
+								value: c.name,
+								description: c.customer_name || "",
+							}));
+							open(results);
+						},
+					});
+				} else {
+					frappe.call({
+						method: "frappe.desk.search.search_link",
+						args: {
+							txt,
+							doctype,
+							ignore_user_permissions: 0,
+							reference_doctype: "Sales Invoice",
+							filters: {},
+						},
+						callback: (r) => {
+							const results = r.results || r.message || [];
+							open(Array.isArray(results) ? results : []);
+						},
+					});
+				}
 			}, 180);
 		});
 
@@ -3311,6 +3952,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 			hide("#ef-btn-pdf");
 		}
 
+		// Permisos FacEx Settings — prevalecen sobre estado del documento
+		const p = this.perms;
+		if (!p.puede_guardar)    hide("#ef-btn-save");
+		if (!p.puede_validar)    hide("#ef-btn-submit");
+		if (!p.puede_certificar) hide("#ef-btn-certify");
+
 		this._update_tabs_state();
 	}
 
@@ -3370,14 +4017,58 @@ body.facex-fullscreen-mode .ef-main-layout {
 		);
 	}
 
-	_action_submit() {
+	async _action_submit() {
 		if (!this.doc.name || this.doc.name === "new") {
 			frappe.show_alert({ message: "Primero guarde la factura.", indicator: "orange" });
 			return;
 		}
-
 		if (this._request_pending) return;
 
+		// ── Pre-check 1: cliente genérico no puede comprar ARMAS ni MUNICIÓN ──
+		const GRUPOS_RESTRINGIDOS = ["ARMAS", "MUNICIÓN"];
+		const tiene_restringidos = (this.doc.items || [])
+			.some(i => GRUPOS_RESTRINGIDOS.includes(i._item_group || i.item_group || ""));
+
+		if (tiene_restringidos && this.doc.customer) {
+			try {
+				const cdata = await frappe.xcall("frappe.client.get_value", {
+					doctype: "Customer",
+					filters: { name: this.doc.customer },
+					fieldname: ["custom_cliente_generico"],
+				});
+				if (cdata && cdata.custom_cliente_generico) {
+					frappe.msgprint({
+						title: __("Venta no permitida"),
+						indicator: "red",
+						message: __("No se puede facturar Armas o Munición a un cliente genérico."),
+					});
+					return;
+				}
+			} catch (_) { /* si falla la consulta, continuar — el servidor valida también */ }
+		}
+
+		// ── Pre-check 2: completar adendas DIGECAM pendientes ──
+		try {
+			await this._validar_adendas_pendientes();
+		} catch (_) {
+			frappe.show_alert({
+				message: __("Complete todas las adendas DIGECAM antes de validar."),
+				indicator: "orange",
+			});
+			return;
+		}
+
+		// ── Guardar adendas en BD antes de someter ──
+		if (this._dirty) {
+			try {
+				await this._guardar_antes_de_submit();
+			} catch (_) {
+				frappe.show_alert({ message: __("Error al guardar adendas. Intente de nuevo."), indicator: "red" });
+				return;
+			}
+		}
+
+		// ── Confirmación y submit ──
 		frappe.confirm(
 			`¿Desea <strong>Validar</strong> la factura <strong>${this.doc.name}</strong>?<br>
 			 Esta acción no se puede deshacer directamente.`,
@@ -3406,7 +4097,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					error: () => {
 						this._request_pending = false;
 						this.$body.find("#ef-btn-submit").prop("disabled", false);
-					}
+					},
 				});
 			}
 		);
@@ -3703,10 +4394,44 @@ body.facex-fullscreen-mode .ef-main-layout {
 			if ($menu.is(":hidden")) {
 				this.$body.find("#ef-active-user-fullname").text(frappe.session.user_fullname || "Usuario");
 				this.$body.find("#ef-active-user-email").text(frappe.session.user);
+				// Load companies for switcher
+				frappe.call({
+					method: "facex_multi.api.invoice.get_user_companies",
+					callback: (r) => {
+						if (!r.exc && r.message && r.message.length > 1) {
+							const $sel = this.$body.find("#ef-company-select");
+							const $sec = this.$body.find("#ef-company-switcher-section");
+							const currentCompany = this.defaults.company || "";
+							$sel.empty();
+							r.message.forEach(c => {
+								$sel.append(`<option value="${_esc(c)}"${c === currentCompany ? ' selected' : ''}>${_esc(c)}</option>`);
+							});
+							$sec.show();
+						}
+					}
+				});
 				$menu.fadeIn(150);
 			} else {
 				$menu.fadeOut(150);
 			}
+		});
+
+		this.$body.find("#ef-btn-switch-company").on("click", (e) => {
+			e.stopPropagation();
+			const company = this.$body.find("#ef-company-select").val();
+			if (!company) return;
+			frappe.call({
+				method: "facex_multi.api.invoice.set_active_company",
+				args: { company },
+				freeze: true,
+				freeze_message: `Cambiando a ${company}...`,
+				callback: (r) => {
+					if (!r.exc) {
+						frappe.show_alert({ message: `Compañía cambiada a <b>${company}</b>. Recargando...`, indicator: "green" });
+						setTimeout(() => window.location.reload(), 1200);
+					}
+				}
+			});
 		});
 
 		this.$body.find("#ef-btn-logout").on("click", () => {
@@ -3851,6 +4576,19 @@ body.facex-fullscreen-mode .ef-main-layout {
 	// Build payload for save
 	// -----------------------------------------------------------------------
 
+	_apply_column_visibility() {
+		const cfg = this.company_config || {};
+		const map = [
+			[".ef-col-wh",     cfg.mostrar_almacen  !== undefined ? cfg.mostrar_almacen  : 1],
+			[".ef-col-disc",   cfg.mostrar_desc_pct !== undefined ? cfg.mostrar_desc_pct : 1],
+			[".ef-col-adenda", cfg.mostrar_adenda   !== undefined ? cfg.mostrar_adenda   : 1],
+			[".ef-col-tipo",   cfg.mostrar_tipo     !== undefined ? cfg.mostrar_tipo     : 1],
+		];
+		map.forEach(([sel, show]) => {
+			this.$body.find(sel).css("display", show ? "" : "none");
+		});
+	}
+
 	_build_save_payload() {
 		const d = this.doc;
 		if (this.controls.customer) d.customer = this.controls.customer.get_value() || d.customer;
@@ -3858,12 +4596,15 @@ body.facex-fullscreen-mode .ef-main-layout {
 		if (this.controls.taxes_and_charges) d.taxes_and_charges = this.controls.taxes_and_charges.get_value() || d.taxes_and_charges;
 		if (this.controls.sales_partner) d.sales_partner = this.controls.sales_partner.get_value() || d.sales_partner;
 
+		const _cfg = this.company_config || {};
+		const _update_stock = (_cfg.maneja_inventario && (d.items || []).some(r => r.is_stock_item)) ? 1 : 0;
+
 		const payload = {
 			doctype: "Sales Invoice",
 			name: d.name !== "new" ? d.name : undefined,
 			es_fiscal: 1,
-			update_stock: 0,
-			naming_series: d.naming_series,
+			update_stock: _update_stock,
+			naming_series: (!d.name || d.name === "new") ? d.naming_series : undefined,
 			customer: d.customer,
 			company: d.company || this.defaults.company || "",
 			posting_date: d.posting_date,
@@ -3888,6 +4629,23 @@ body.facex-fullscreen-mode .ef-main-layout {
 				rate: parseFloat(r.rate) || 0,
 				discount_percentage: parseFloat(r.discount_percentage) || 0,
 				cost_center: r.cost_center || this.defaults.default_cost_center || "",
+				// Campos DIGECAM / adenda
+				serial_no:                      r.serial_no || "",
+				tiene_adenda:                   r.tiene_adenda || 0,
+				tenencia_1:                     r.tenencia_1 || "",
+				tenencia_2:                     r.tenencia_2 || "",
+				codigo:                         r.codigo || "",
+				oficio:                         r.oficio || "",
+				expediente:                     r.expediente || "",
+				color:                          r.color || "",
+				largo:                          r.largo || "",
+				modelo:                         r.modelo || "",
+				licencia:                       r.licencia || "",
+				autorizacion:                   r.autorizacion || "",
+				lote:                           r.lote || "",
+				custom_tenencia_municion:        r.custom_tenencia_municion || "",
+				custom_codigo_cliente_municion:  r.custom_codigo_cliente_municion || "",
+				bfel_tipo:                       r.bfel_tipo || "",
 			})).filter((r) => r.item_code),
 		};
 
@@ -4209,8 +4967,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		if (dlg.fields_dict.default_sales_partner) {
 			dlg.fields_dict.default_sales_partner.get_query = () => {
+				const comp = this.doc.company || this.defaults.company || "";
 				return {
-					filters: { bfel_company: this.doc.company || this.defaults.company || "" }
+					or_filters: [
+						["bfel_company", "=", comp],
+						["bfel_company_null", "=", 0],
+					],
 				};
 			};
 		}
@@ -4430,18 +5192,20 @@ body.facex-fullscreen-mode .ef-main-layout {
 	}
 
 	_sync_pagado_ui() {
-		const checked = !!this.doc.custom_pagado;
-		const isSubmitted = this.doc.docstatus === 1;
+		const checked         = !!this.doc.custom_pagado;
+		const isSubmitted     = this.doc.docstatus === 1;
+		const hasSubmittedPEs = !!(this.doc._payment_entries && this.doc._payment_entries.has_submitted);
+		const canToggle       = isSubmitted && !hasSubmittedPEs;
 		const $chk = this.$body.find("#ef-pagado");
-		$chk.prop("checked", checked).prop("disabled", !isSubmitted);
-		$chk.closest(".ef-toggle").css("opacity", isSubmitted ? "" : "0.5");
+		$chk.prop("checked", checked).prop("disabled", !canToggle);
+		$chk.closest(".ef-toggle").css("opacity", canToggle ? "" : "0.5");
 		this.$body.find("#ef-pagado-label")
 			.text(checked ? "Pagado" : "Pendiente")
 			.removeClass("ef-pagado-pending ef-pagado-done")
 			.addClass(checked ? "ef-pagado-done" : "ef-pagado-pending");
 		const $manualBtn = this.$body.find("#ef-btn-manual-payment");
 		const $autoLbl   = this.$body.find("#ef-auto-pay-label");
-		if (checked) {
+		if (checked && !hasSubmittedPEs) {
 			$manualBtn.show();
 			$autoLbl.toggle(!this._manualPayment);
 		} else {
@@ -4452,27 +5216,58 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 	_render_payments_tab() {
 		if (!this.doc.custom_efast_payments) this.doc.custom_efast_payments = [];
-		const payments = this.doc.custom_efast_payments;
-		const $tbody = this.$body.find("#ef-payments-body");
+		const pes             = this.doc._payment_entries || { submitted: [], draft: [], has_submitted: false };
+		const hasSubmittedPEs = pes.has_submitted;
+		const $tbody          = this.$body.find("#ef-payments-body");
+		const $empty          = this.$body.find("#ef-payments-empty");
+		const $addBtn         = this.$body.find("#ef-add-payment");
+		const $saveBtn        = this.$body.find("#ef-btn-save-payments");
 		$tbody.empty();
 
-		if (!payments.length) {
-			this.$body.find("#ef-payments-empty").show();
+		if (hasSubmittedPEs) {
+			// Mostrar PEs validados como filas de solo lectura
+			$empty.hide();
+			$addBtn.hide();
+			$saveBtn.hide();
+			// Aviso en la parte superior de la tabla
+			const $notice = $(`<tr><td colspan="6" style="padding:8px 10px;background:#f0fdf4;border-bottom:1px solid #bbf7d0;font-size:11px;color:#166534;">
+				<strong>✓ Pagos validados en ERPNext.</strong> Para modificarlos gestione el Comprobante de Pago directamente en ERPNext.
+			</td></tr>`);
+			$tbody.append($notice);
+			pes.submitted.forEach((pe) => {
+				const link = `/app/payment-entry/${encodeURIComponent(pe.name)}`;
+				const row = `<tr class="ef-tr">
+					<td class="ef-td ef-td-idx" style="color:#166534">✓</td>
+					<td class="ef-td">${pe.mode_of_payment || ""}</td>
+					<td class="ef-td">${pe.posting_date || ""}</td>
+					<td class="ef-td"><a href="${link}" target="_blank" style="color:#2563eb;text-decoration:underline;font-size:11px">${pe.name}</a></td>
+					<td class="ef-td ef-td-num">${_fmtCurrency(pe.paid_amount, this.doc.currency || "GTQ")}</td>
+					<td class="ef-td"></td>
+				</tr>`;
+				$tbody.append(row);
+			});
 		} else {
-			this.$body.find("#ef-payments-empty").hide();
-			payments.forEach((p, idx) => $tbody.append(this._payment_row_html(idx, p)));
-			this._bind_payment_row_events();
-		}
-		this._update_payments_total();
+			const payments = this.doc.custom_efast_payments;
+			$addBtn.show();
+			$saveBtn.show();
+			if (!payments.length) {
+				$empty.show();
+			} else {
+				$empty.hide();
+				payments.forEach((p, idx) => $tbody.append(this._payment_row_html(idx, p)));
+				this._bind_payment_row_events();
+			}
+			this._update_payments_total();
 
-		// Detect manual vs auto mode from existing payments
-		const _prows = this.doc.custom_efast_payments || [];
-		const _isAuto = _prows.length === 1 && _prows[0].reference === "Automático x FacEx";
-		if (this.doc.custom_pagado && _prows.length > 0 && !_isAuto) {
-			this._manualPayment = true;
-		} else if (!this.doc.custom_pagado) {
-			this._manualPayment = false;
+			// Detect manual vs auto mode from existing payments
+			const _isAuto = payments.length === 1 && payments[0].reference === "Automático x FacEx";
+			if (this.doc.custom_pagado && payments.length > 0 && !_isAuto) {
+				this._manualPayment = true;
+			} else if (!this.doc.custom_pagado) {
+				this._manualPayment = false;
+			}
 		}
+
 		// Sync footer pagado UI
 		this._sync_pagado_ui();
 	}
@@ -4591,7 +5386,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 			frappe.show_alert({ message: "Ingrese al menos una línea de pago en el desglose manual.", indicator: "red" });
 			return;
 		}
-		const pagado     = this.doc.custom_pagado || 0;
+		// Si hay filas de pago, la factura se marca como pagada independientemente del toggle
+		const pagado     = payments.length > 0 ? 1 : 0;
 		const grandTotal = parseFloat(this.doc.grand_total) || 0;
 		const totalPaid  = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
 		const diff       = Math.abs(grandTotal - totalPaid);
@@ -4615,9 +5411,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 			freeze_message: "Guardando pagos...",
 			callback: (r) => {
 				if (!r.exc && r.message) {
-					this.doc.custom_pagado = r.message.pagado;
 					frappe.show_alert({ message: "Pagos guardados correctamente.", indicator: "green" });
-					this._render_payments_tab();
+					this.load_invoice(this.doc.name);
 				}
 			},
 		});
@@ -4934,9 +5729,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 			const get_query_fn = () => {
 				const comp = get_company();
 				return {
-					filters: [
-						["Customer", "bfel_company", "=", comp]
-					]
+					or_filters: [
+						["Customer", "bfel_company", "=", comp],
+						["Customer", "bfel_company_null", "=", 0],
+					],
 				};
 			};
 			this.rep_customer_ctrl = frappe.ui.form.make_control({
@@ -4961,9 +5757,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 			const get_query_fn = () => {
 				const comp = get_company();
 				return {
-					filters: [
-						["Item", "bfel_company", "=", comp]
-					]
+					or_filters: [
+						["Item", "bfel_company", "=", comp],
+						["Item", "bfel_company_null", "=", 0],
+					],
 				};
 			};
 			this.rep_item_ctrl = frappe.ui.form.make_control({
@@ -4988,9 +5785,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 			const get_query_fn = () => {
 				const comp = get_company();
 				return {
-					filters: [
-						["Item Group", "bfel_company", "=", comp]
-					]
+					or_filters: [
+						["Item Group", "bfel_company", "=", comp],
+						["Item Group", "bfel_company_null", "=", 0],
+					],
 				};
 			};
 			this.rep_item_group_ctrl = frappe.ui.form.make_control({
@@ -6340,9 +7138,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 			const get_query_fn = () => {
 				const comp = this.doc.company || this.defaults.company || "";
 				return {
-					filters: {
-						bfel_company: comp
-					}
+					or_filters: [
+						["bfel_company", "=", comp],
+						["bfel_company_null", "=", 0],
+					],
 				};
 			};
 			this.maint_cust_price_list_ctrl = frappe.ui.form.make_control({
@@ -6401,9 +7200,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 			const get_query_fn = () => {
 				const comp = this.doc.company || this.defaults.company || "";
 				return {
-					filters: {
-						bfel_company: comp
-					}
+					or_filters: [
+						["bfel_company", "=", comp],
+						["bfel_company_null", "=", 0],
+					],
 				};
 			};
 			this.maint_item_group_ctrl = frappe.ui.form.make_control({
@@ -6630,7 +7430,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					if (this.maint_cust_payment_terms_ctrl) {
 						this.maint_cust_payment_terms_ctrl.set_value(c.payment_terms || "");
 					}
-					this.$body.find("#ef-maint-cust-btn-delete").show();
+					if (this.perms.modifica_clientes) this.$body.find("#ef-maint-cust-btn-delete").show();
 				}
 			}
 		});
@@ -6747,7 +7547,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 						this.maint_item_group_ctrl.set_value(it.item_group || "");
 					}
 					this.$body.find("#ef-maint-item-desc").val(it.description);
-					this.$body.find("#ef-maint-item-btn-delete").show();
+					if (this.perms.modifica_items) this.$body.find("#ef-maint-item-btn-delete").show();
 				}
 			}
 		});
