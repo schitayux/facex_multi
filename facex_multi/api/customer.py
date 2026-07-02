@@ -11,6 +11,52 @@ from facex_multi.api.invoice import get_effective_company
 
 
 @frappe.whitelist()
+def lookup_identificacion_name(identificacion: str, tipo: str = "NIT", company: str = None):
+    """
+    Consulta el nombre registrado para un NIT o CUI en el certificador configurado
+    (Grupo CDS/Total Doc) vía BFEL Settings -> url_retorna_cliente (NIT) o
+    url_retorna_cui (CUI). PASAPORTE y CF no tienen consulta automática.
+
+    Retorna {"found": False} sin lanzar error si BFEL Settings no está
+    habilitado, no es Grupo CDS, el tipo no aplica, o no tiene la URL
+    correspondiente configurada, para no interrumpir el flujo del Facturador
+    ni el de Mantenimiento cuando la función no aplica.
+    """
+    identificacion = (identificacion or "").strip()
+    tipo = (tipo or "").strip().upper()
+    if not identificacion or tipo not in ("NIT", "CUI"):
+        return {"found": False}
+
+    company = get_effective_company(company)
+
+    from brainfel.utils.company_utils import get_bfel_settings_for_company_safe
+
+    settings = get_bfel_settings_for_company_safe(company)
+    if not settings or settings.certifier != "Grupo CDS":
+        return {"found": False}
+
+    url_field = "url_retorna_cliente" if tipo == "NIT" else "url_retorna_cui"
+    if not (settings.get(url_field) or "").strip():
+        return {"found": False}
+
+    from brainfel.services.totaldoc_client import consultar_cliente, consultar_cliente_cui
+
+    try:
+        if tipo == "NIT":
+            result = consultar_cliente(settings, identificacion)
+        else:
+            result = consultar_cliente_cui(settings, identificacion)
+    except Exception as e:
+        frappe.log_error(title="FEL lookup_identificacion_name", message=str(e))
+        return {"found": False, "message": str(e)}
+
+    if not result.get("success"):
+        return {"found": False, "message": result.get("message")}
+
+    return {"found": True, "customer_name": result.get("customer_name")}
+
+
+@frappe.whitelist()
 def search_customer(txt: str, company: str = None):
     """Busca clientes por nombre, NIT o código filtrados por compañía activa."""
     if not txt or len(txt.strip()) < 2:
@@ -22,7 +68,10 @@ def search_customer(txt: str, company: str = None):
         SELECT name, customer_name, tax_id, bfel_id_receptor
         FROM `tabCustomer`
         WHERE disabled = 0
-          AND bfel_company = %(company)s
+          AND (
+              bfel_company = %(company)s
+              OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
+          )
           AND (name LIKE %(q)s OR customer_name LIKE %(q)s OR tax_id LIKE %(q)s OR bfel_id_receptor LIKE %(q)s)
         ORDER BY customer_name ASC
         LIMIT 20
@@ -126,10 +175,17 @@ def validate_customer_on_save(doc, method=None):
 
         # Si no tiene lista de precios, intentar auto-asignar o requerirla
         if not doc.default_price_list:
-            plists = frappe.get_all(
-                "Price List",
-                filters={"selling": 1, "enabled": 1, "bfel_company": company},
-                fields=["name"]
+            plists = frappe.db.sql(
+                """
+                SELECT name FROM `tabPrice List`
+                WHERE selling=1 AND enabled=1
+                  AND (
+                      bfel_company = %(company)s
+                      OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null,0) = 0)
+                  )
+                """,
+                {"company": company},
+                as_dict=True,
             )
             if len(plists) == 1:
                 doc.default_price_list = plists[0].name
@@ -144,6 +200,5 @@ def validate_customer_on_save(doc, method=None):
 
         # Validar que el socio de ventas asignado pertenece a su compañía
         if doc.default_sales_partner:
-            sp_company = frappe.db.get_value("Sales Partner", doc.default_sales_partner, "bfel_company")
-            if sp_company and sp_company != company:
-                frappe.throw(f"El Socio de Ventas '{doc.default_sales_partner}' pertenece a {sp_company} y no puede asignarse a un cliente de {company}.")
+            from facex_multi.api.sales_partner import validate_sales_partner_company
+            validate_sales_partner_company(doc.default_sales_partner, company)

@@ -664,7 +664,7 @@ def save_draft(doc_json: str):
         for field in (
             "naming_series", "customer", "posting_date", "due_date",
             "payment_terms_template", "terms", "taxes_and_charges",
-            "bfel_nit", "bfel_nombre", "bfel_status", "bfel_escenario_exento",
+            "bfel_nit", "bfel_identificacion", "bfel_nombre", "bfel_status", "bfel_escenario_exento",
             "es_fiscal", "update_stock", "company", "bfel_facex_multi",
             "selling_price_list", "sales_partner", "bfel_establecimiento", "vendedor",
         ):

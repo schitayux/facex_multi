@@ -1,0 +1,365 @@
+{
+ "autoname": "format:FS-{bfel_company}-{user}",
+ "creation": "2026-06-24 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "user",
+  "bfel_company",
+  "sb_facturador",
+  "puede_ver_tablero",
+  "puede_facturar",
+  "cb_facturador",
+  "puede_guardar",
+  "puede_validar",
+  "puede_certificar",
+  "sb_mantenimiento",
+  "crea_clientes",
+  "modifica_clientes",
+  "cb_maint",
+  "crea_items",
+  "modifica_items",
+  "actualiza_precios",
+  "sb_reportes",
+  "reporte_ventas_fecha",
+  "reporte_ventas_producto",
+  "cb_rep1",
+  "reporte_facturas_canceladas",
+  "reporte_estados_cuenta",
+  "cb_rep2",
+  "reporte_antiguedad_saldos",
+  "reporte_cotizaciones",
+  "cb_rep3",
+  "reporte_recibos_pagos",
+  "reporte_crecimiento_ventas",
+  "cb_rep4",
+  "reporte_imprimir_recibo",
+  "sb_compras",
+  "puede_compras",
+  "puede_validar_compras",
+  "cb_compras",
+  "puede_cancelar_compras",
+  "sb_digecam",
+  "maneja_series",
+  "maneja_adendas",
+  "cb_digecam",
+  "concatena_descripcion2",
+  "sb_inventario",
+  "maneja_inventario",
+  "tipo_x_defecto",
+  "cb_inventario",
+  "sb_columnas",
+  "mostrar_almacen",
+  "mostrar_desc_pct",
+  "cb_columnas",
+  "mostrar_adenda",
+  "mostrar_tipo"
+ ],
+ "fields": [
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Usuario",
+   "options": "User",
+   "reqd": 0,
+   "search_index": 1
+  },
+  {
+   "fieldname": "bfel_company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Compañía",
+   "options": "Company",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "sb_facturador",
+   "fieldtype": "Section Break",
+   "label": "Acceso General"
+  },
+  {
+   "default": "1",
+   "fieldname": "puede_ver_tablero",
+   "fieldtype": "Check",
+   "label": "Ver Tablero"
+  },
+  {
+   "default": "1",
+   "fieldname": "puede_facturar",
+   "fieldtype": "Check",
+   "label": "Acceder a Facturador"
+  },
+  {
+   "fieldname": "cb_facturador",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "puede_guardar",
+   "fieldtype": "Check",
+   "label": "Guardar Borrador"
+  },
+  {
+   "default": "1",
+   "fieldname": "puede_validar",
+   "fieldtype": "Check",
+   "label": "Validar Factura"
+  },
+  {
+   "default": "1",
+   "fieldname": "puede_certificar",
+   "fieldtype": "Check",
+   "label": "Certificar FEL"
+  },
+  {
+   "fieldname": "sb_mantenimiento",
+   "fieldtype": "Section Break",
+   "label": "Mantenimiento"
+  },
+  {
+   "default": "1",
+   "fieldname": "crea_clientes",
+   "fieldtype": "Check",
+   "label": "Crear Clientes"
+  },
+  {
+   "default": "1",
+   "fieldname": "modifica_clientes",
+   "fieldtype": "Check",
+   "label": "Modificar / Eliminar Clientes"
+  },
+  {
+   "fieldname": "cb_maint",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "crea_items",
+   "fieldtype": "Check",
+   "label": "Crear Productos"
+  },
+  {
+   "default": "1",
+   "fieldname": "modifica_items",
+   "fieldtype": "Check",
+   "label": "Modificar / Eliminar Productos"
+  },
+  {
+   "default": "1",
+   "fieldname": "actualiza_precios",
+   "fieldtype": "Check",
+   "label": "Actualizar Precios"
+  },
+  {
+   "fieldname": "sb_reportes",
+   "fieldtype": "Section Break",
+   "label": "Reportes"
+  },
+  {
+   "default": "1",
+   "fieldname": "reporte_ventas_fecha",
+   "fieldtype": "Check",
+   "label": "Ventas por Fecha"
+  },
+  {
+   "default": "1",
+   "fieldname": "reporte_ventas_producto",
+   "fieldtype": "Check",
+   "label": "Ventas por Producto"
+  },
+  {
+   "fieldname": "cb_rep1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "reporte_facturas_canceladas",
+   "fieldtype": "Check",
+   "label": "Facturas Canceladas"
+  },
+  {
+   "default": "1",
+   "fieldname": "reporte_estados_cuenta",
+   "fieldtype": "Check",
+   "label": "Estados de Cuenta"
+  },
+  {
+   "fieldname": "cb_rep2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "reporte_antiguedad_saldos",
+   "fieldtype": "Check",
+   "label": "Antigüedad de Saldos"
+  },
+  {
+   "default": "1",
+   "fieldname": "reporte_cotizaciones",
+   "fieldtype": "Check",
+   "label": "Cotizaciones"
+  },
+  {
+   "fieldname": "cb_rep3",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "reporte_recibos_pagos",
+   "fieldtype": "Check",
+   "label": "Recibos y Pagos"
+  },
+  {
+   "default": "1",
+   "fieldname": "reporte_crecimiento_ventas",
+   "fieldtype": "Check",
+   "label": "Crecimiento de Ventas"
+  },
+  {
+   "fieldname": "cb_rep4",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "reporte_imprimir_recibo",
+   "fieldtype": "Check",
+   "label": "Imprimir Recibo"
+  },
+  {
+   "fieldname": "sb_compras",
+   "fieldtype": "Section Break",
+   "label": "Módulo de Compras"
+  },
+  {
+   "default": "1",
+   "fieldname": "puede_compras",
+   "fieldtype": "Check",
+   "label": "Acceder al Módulo de Compras"
+  },
+  {
+   "default": "1",
+   "fieldname": "puede_validar_compras",
+   "fieldtype": "Check",
+   "label": "Validar Facturas de Compra"
+  },
+  {
+   "fieldname": "cb_compras",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "puede_cancelar_compras",
+   "fieldtype": "Check",
+   "label": "Cancelar Facturas de Compra"
+  },
+  {
+   "fieldname": "sb_digecam",
+   "fieldtype": "Section Break",
+   "label": "Configuración DIGECAM / Series y Adendas"
+  },
+  {
+   "default": "0",
+   "fieldname": "maneja_series",
+   "fieldtype": "Check",
+   "label": "Maneja Series de Items"
+  },
+  {
+   "default": "0",
+   "fieldname": "maneja_adendas",
+   "fieldtype": "Check",
+   "label": "Maneja Adendas por Línea"
+  },
+  {
+   "fieldname": "cb_digecam",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "concatena_descripcion2",
+   "fieldtype": "Check",
+   "label": "Concatenar Descripción 2 automáticamente"
+  },
+  {
+   "fieldname": "sb_inventario",
+   "fieldtype": "Section Break",
+   "label": "Inventario y Tipo FEL"
+  },
+  {
+   "default": "0",
+   "fieldname": "maneja_inventario",
+   "fieldtype": "Check",
+   "label": "Manejar Inventario (update_stock)"
+  },
+  {
+   "fieldname": "tipo_x_defecto",
+   "fieldtype": "Select",
+   "label": "Tipo por Defecto (FEL)",
+   "options": "\nB\nS"
+  },
+  {
+   "fieldname": "cb_inventario",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sb_columnas",
+   "fieldtype": "Section Break",
+   "label": "Columnas Visibles en Facturador"
+  },
+  {
+   "default": "1",
+   "fieldname": "mostrar_almacen",
+   "fieldtype": "Check",
+   "label": "Mostrar Almacén"
+  },
+  {
+   "default": "1",
+   "fieldname": "mostrar_desc_pct",
+   "fieldtype": "Check",
+   "label": "Mostrar Desc %"
+  },
+  {
+   "fieldname": "cb_columnas",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "mostrar_adenda",
+   "fieldtype": "Check",
+   "label": "Mostrar Adenda"
+  },
+  {
+   "default": "1",
+   "fieldname": "mostrar_tipo",
+   "fieldtype": "Check",
+   "label": "Mostrar Tipo FEL"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-06-24 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FacEx Multi",
+ "name": "FacEx Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 0,
+   "export": 1,
+   "print": 0,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 0,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

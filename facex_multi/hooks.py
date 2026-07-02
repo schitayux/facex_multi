@@ -25,6 +25,9 @@ doc_events = {
     },
     "Item": {
         "before_save": "facex_multi.api.item.sync_description_from_item_name"
+    },
+    "Sales Invoice": {
+        "before_insert": "facex_multi.api.invoice.fix_abbr_in_naming_series"
     }
 }
 fixtures = [
@@ -49,6 +52,12 @@ fixtures = [
         "dt": "Property Setter",
         "filters": [
             ["field_name", "like", "bfel_%"]
+        ]
+    },
+    {
+        "dt": "Client Script",
+        "filters": [
+            ["name", "like", "bfel-company-null-%"]
         ]
     }
 

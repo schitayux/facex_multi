@@ -132,6 +132,7 @@ class EFastSalePage {
 			taxes_and_charges: "",
 			sales_partner: "",
 			bfel_nit: "",
+			bfel_identificacion: "",
 			bfel_nombre: "",
 			bfel_status: "01 Enviar",
 			bfel_escenario_exento: "",
@@ -219,6 +220,10 @@ class EFastSalePage {
        <button class="ef-nav-btn" data-view="maintenance">
          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/><circle cx="12" cy="12" r="3"/></svg>
          <span>Mantenimiento</span>
+       </button>
+       <button class="ef-nav-btn" data-view="purchase">
+         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+         <span>Compras</span>
        </button>
 
        <div class="ef-user-dropdown" style="position: relative; margin-left: 12px; display: flex; align-items: center;">
@@ -443,12 +448,22 @@ class EFastSalePage {
               <input id="ef-bfel-nombre" type="text" class="ef-input" placeholder="Nombre en factura..." maxlength="100" tabindex="5" />
             </div>
             <div class="ef-field-group">
-              <label class="ef-label">NIT (FEL)</label>
-              <input id="ef-bfel-nit" type="text" class="ef-input" placeholder="CF" maxlength="20" tabindex="6" />
+              <label class="ef-label">NIT / Identificación (FEL)</label>
+              <select id="ef-bfel-identificacion" class="ef-input" tabindex="6">
+                <option value="">-- Seleccione --</option>
+                <option value="NIT">NIT</option>
+                <option value="CUI">CUI</option>
+                <option value="PASAPORTE">PASAPORTE</option>
+                <option value="CF">CF</option>
+              </select>
+            </div>
+            <div class="ef-field-group">
+              <label class="ef-label">ID Receptor (FEL)</label>
+              <input id="ef-bfel-nit" type="text" class="ef-input" placeholder="CF" maxlength="20" tabindex="7" />
             </div>
             <div class="ef-field-group">
               <label class="ef-label" style="color:var(--ef-primary); font-weight:600;">Estado FEL</label>
-              <select id="ef-bfel-status" class="ef-select" style="border-color:var(--ef-primary); font-weight:600;" tabindex="7">
+              <select id="ef-bfel-status" class="ef-select" style="border-color:var(--ef-primary); font-weight:600;" tabindex="8">
                 <option value="01 Enviar">01 Enviar</option>
                 <option value="00 No enviar">00 No enviar</option>
               </select>
@@ -459,15 +474,15 @@ class EFastSalePage {
           <div class="ef-col">
             <div class="ef-field-group">
               <label class="ef-label">Condición de Pago</label>
-              <div data-ctrl="payment_terms_template" class="ef-link-ctrl" tabindex="8"></div>
+              <div data-ctrl="payment_terms_template" class="ef-link-ctrl" tabindex="9"></div>
             </div>
             <div class="ef-field-group">
               <label class="ef-label">F. Emisión <span class="ef-req">*</span></label>
-              <input id="ef-posting-date" type="date" class="ef-input" tabindex="9" />
+              <input id="ef-posting-date" type="date" class="ef-input" tabindex="10" />
             </div>
             <div class="ef-field-group">
               <label class="ef-label">F. Vencimiento</label>
-              <input id="ef-due-date" type="date" class="ef-input" tabindex="10" />
+              <input id="ef-due-date" type="date" class="ef-input" tabindex="11" />
             </div>
             <!-- Campos informativos de FEL -->
             <div style="display:flex; gap:10px; margin-top:20px;">
@@ -486,15 +501,15 @@ class EFastSalePage {
           <div class="ef-col">
             <div class="ef-field-group">
               <label class="ef-label">Plantilla Impuestos</label>
-              <div data-ctrl="taxes_and_charges" class="ef-link-ctrl" tabindex="10"></div>
+              <div data-ctrl="taxes_and_charges" class="ef-link-ctrl" tabindex="11"></div>
             </div>
             <div class="ef-field-group">
               <label class="ef-label">Vendedor</label>
-              <div data-ctrl="sales_partner" class="ef-link-ctrl" tabindex="11"></div>
+              <div data-ctrl="sales_partner" class="ef-link-ctrl" tabindex="12"></div>
             </div>
             <div class="ef-field-group">
               <label class="ef-label">Términos y Condiciones</label>
-              <textarea id="ef-terms" class="ef-textarea ef-textarea-sm" rows="3" placeholder="Términos..." tabindex="12"></textarea>
+              <textarea id="ef-terms" class="ef-textarea ef-textarea-sm" rows="3" placeholder="Términos..." tabindex="13"></textarea>
             </div>
           </div>
         </div>
@@ -1131,6 +1146,219 @@ class EFastSalePage {
 
   </div>
 
+  <!-- ── VIEW 5: COMPRAS ────────────────────────────────────────────── -->
+  <div id="ef-purchase-view" class="ef-view-content" style="display:none; padding: 24px; max-width: 1300px; margin: 0 auto; font-family: var(--ef-font);">
+    <!-- Banner -->
+    <div style="background:linear-gradient(135deg,#1e3a5f,#2563eb);color:#fff;padding:20px 24px;border-radius:12px;margin-bottom:20px;box-shadow:0 10px 15px -3px rgba(30,58,95,.2);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+      <div>
+        <h1 style="margin:0;font-size:20px;font-weight:800;color:#fff;">Módulo de Compras</h1>
+        <p style="margin:4px 0 0;opacity:.9;font-size:12px;color:#fff;">Registro de facturas de proveedores con control de inventario y series.</p>
+      </div>
+      <div style="display:flex;gap:10px;">
+        <button id="ef-purch-btn-excel" class="ef-btn" style="background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          Subir Excel
+        </button>
+        <button id="ef-purch-btn-new" class="ef-btn" style="background:#fff;color:#1e3a5f;border:none;font-weight:700;">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Nueva Compra
+        </button>
+      </div>
+    </div>
+
+    <!-- LIST SECTION -->
+    <div id="ef-purch-list-section">
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin-bottom:14px;display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
+        <div><div class="ef-label">Desde</div><input type="date" id="ef-purch-f-start" class="ef-cell-input" style="width:130px"/></div>
+        <div><div class="ef-label">Hasta</div><input type="date" id="ef-purch-f-end" class="ef-cell-input" style="width:130px"/></div>
+        <div><div class="ef-label">Proveedor</div><input type="text" id="ef-purch-f-supplier" class="ef-cell-input" placeholder="Todos" style="width:200px"/></div>
+        <div><div class="ef-label">Estado</div>
+          <select id="ef-purch-f-status" class="ef-cell-input" style="width:120px">
+            <option value="">Todos</option><option value="0">Borrador</option>
+            <option value="1">Validado</option><option value="2">Cancelado</option>
+          </select>
+        </div>
+        <button id="ef-purch-btn-filter" class="ef-btn ef-btn-secondary" style="height:32px">Filtrar</button>
+      </div>
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;">
+        <table class="ef-table" style="width:100%">
+          <thead><tr>
+            <th class="ef-th">No. Factura ERPNext</th>
+            <th class="ef-th">Proveedor</th>
+            <th class="ef-th">Fecha</th>
+            <th class="ef-th">No. Factura Proveedor</th>
+            <th class="ef-th ef-td-num">Total</th>
+            <th class="ef-th">Estado</th>
+            <th class="ef-th"></th>
+          </tr></thead>
+          <tbody id="ef-purch-list-body"></tbody>
+        </table>
+        <div id="ef-purch-list-empty" style="display:none;padding:32px;text-align:center;color:#94a3b8;font-size:13px">Sin facturas de compra en el período.</div>
+      </div>
+    </div>
+
+    <!-- STAGING SECTION (previsualización estilo DTW/Odoo) -->
+    <div id="ef-purch-staging-section" style="display:none">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
+        <button id="ef-purch-stg-back" class="ef-btn ef-btn-secondary" style="gap:4px">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg> Cancelar
+        </button>
+        <span style="font-size:16px;font-weight:700;color:#1e3a5f">Previsualización de Importación</span>
+        <span style="font-size:12px;color:#64748b;margin-left:4px">Revisa y corrige antes de confirmar</span>
+      </div>
+
+      <!-- Header editable -->
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:18px;margin-bottom:14px">
+        <div style="font-size:11px;font-weight:700;color:#1e3a5f;text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">Datos del Encabezado</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px">
+          <div><label class="ef-label">Proveedor *</label><input type="text" id="ef-stg-supplier" class="ef-cell-input" style="width:100%"/></div>
+          <div><label class="ef-label">No. Factura *</label><input type="text" id="ef-stg-bill-no" class="ef-cell-input" style="width:100%"/></div>
+          <div><label class="ef-label">Fecha Factura</label><input type="date" id="ef-stg-bill-date" class="ef-cell-input" style="width:100%"/></div>
+          <div><label class="ef-label">Fecha Registro</label><input type="date" id="ef-stg-posting-date" class="ef-cell-input" style="width:100%"/></div>
+          <div><label class="ef-label">Moneda</label>
+            <select id="ef-stg-currency" class="ef-cell-input" style="width:100%">
+              <option value="GTQ">GTQ – Quetzal</option><option value="USD">USD – Dólar</option>
+            </select></div>
+          <div><label class="ef-label">Tipo de Compra</label>
+            <select id="ef-stg-tax-type" class="ef-cell-input" style="width:100%">
+              <option value="normal">Normal (con IVA)</option>
+              <option value="exento">Exento de IVA</option>
+              <option value="importacion">Importación</option>
+            </select></div>
+        </div>
+      </div>
+
+      <!-- Resumen de validación -->
+      <div id="ef-stg-summary" style="display:none;margin-bottom:12px;padding:10px 16px;border-radius:8px;font-size:13px;font-weight:600"></div>
+
+      <!-- Grid editable (DTW style) -->
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:16px;margin-bottom:14px">
+        <div style="font-size:11px;font-weight:700;color:#1e3a5f;text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">
+          Líneas de Detalle
+          <span id="ef-stg-line-count" style="font-weight:400;color:#64748b;margin-left:8px"></span>
+        </div>
+        <div style="overflow-x:auto">
+          <table class="ef-table" style="min-width:920px;width:100%;table-layout:fixed">
+            <thead><tr>
+              <th class="ef-th" style="width:32px">#</th>
+              <th class="ef-th" style="width:30px;text-align:center" title="Estado">✓</th>
+              <th class="ef-th" style="width:120px">Código</th>
+              <th class="ef-th" style="min-width:140px">Descripción</th>
+              <th class="ef-th" style="width:65px">Cant.</th>
+              <th class="ef-th" style="width:105px">Precio Unit.</th>
+              <th class="ef-th" style="width:100px">Total</th>
+              <th class="ef-th" style="width:145px">Bodega</th>
+              <th class="ef-th" style="width:48px;text-align:center" title="Actualizar inventario">Stock</th>
+              <th class="ef-th" style="width:28px"></th>
+            </tr></thead>
+            <tbody id="ef-stg-items-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Errores globales -->
+      <div id="ef-stg-errors" style="display:none;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:12px;color:#991b1b"></div>
+
+      <!-- Botones de acción -->
+      <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;align-items:center">
+        <span id="ef-stg-ok-count" style="font-size:12px;color:#64748b;margin-right:auto"></span>
+        <button id="ef-purch-stg-revalidate" class="ef-btn ef-btn-secondary">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          Revalidar
+        </button>
+        <button id="ef-purch-stg-confirm" class="ef-btn ef-btn-primary">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+          Confirmar e Importar
+        </button>
+      </div>
+    </div>
+
+    <!-- FORM SECTION -->
+    <div id="ef-purch-form-section" style="display:none">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
+        <button id="ef-purch-btn-back" class="ef-btn ef-btn-secondary" style="gap:4px">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg> Lista
+        </button>
+        <span id="ef-purch-form-title" style="font-size:16px;font-weight:700;color:#1e3a5f">Nueva Factura de Compra</span>
+        <span id="ef-purch-status-badge" class="ef-badge ef-badge-new"></span>
+      </div>
+
+      <!-- Header -->
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:20px;margin-bottom:14px;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px;">
+          <div><label class="ef-label">Proveedor *</label>
+            <input type="text" id="ef-purch-supplier" class="ef-cell-input" style="width:100%" placeholder="Buscar proveedor..."/></div>
+          <div><label class="ef-label">No. Factura Proveedor *</label>
+            <input type="text" id="ef-purch-bill-no" class="ef-cell-input" style="width:100%" placeholder="Ej: 0BFA0640 - 1939096728"/></div>
+          <div><label class="ef-label">Fecha Factura Proveedor *</label>
+            <input type="date" id="ef-purch-bill-date" class="ef-cell-input" style="width:100%"/></div>
+          <div><label class="ef-label">Fecha de Registro</label>
+            <input type="date" id="ef-purch-posting-date" class="ef-cell-input" style="width:100%"/></div>
+          <div><label class="ef-label">Moneda</label>
+            <select id="ef-purch-currency" class="ef-cell-input" style="width:100%">
+              <option value="GTQ">GTQ – Quetzal</option><option value="USD">USD – Dólar</option>
+            </select></div>
+          <div><label class="ef-label">Tipo de Compra</label>
+            <select id="ef-purch-tax-type" class="ef-cell-input" style="width:100%">
+              <option value="normal">Normal (con IVA)</option>
+              <option value="exento">Exento de IVA</option>
+              <option value="importacion">Importación</option>
+            </select></div>
+        </div>
+      </div>
+
+      <!-- Items grid -->
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:16px;margin-bottom:14px;">
+        <div class="ef-items-header" style="margin-bottom:12px;">
+          <span class="ef-section-title">Productos Comprados</span>
+          <button id="ef-purch-btn-add-item" class="ef-btn ef-btn-sm ef-btn-secondary">+ Agregar Ítem</button>
+        </div>
+        <div style="overflow-x:auto">
+          <table class="ef-table" style="min-width:960px;width:100%">
+            <thead><tr>
+              <th class="ef-th" style="width:36px">#</th>
+              <th class="ef-th" style="width:120px">Código</th>
+              <th class="ef-th">Descripción / Series</th>
+              <th class="ef-th" style="width:70px">Cant.</th>
+              <th class="ef-th" style="width:110px">Precio Unit.</th>
+              <th class="ef-th" style="width:110px">Total</th>
+              <th class="ef-th" style="width:155px">Bodega</th>
+              <th class="ef-th" style="width:44px;text-align:center" title="Actualizar Inventario">Stock</th>
+              <th class="ef-th" style="width:30px"></th>
+            </tr></thead>
+            <tbody id="ef-purch-items-body"></tbody>
+          </table>
+        </div>
+        <div id="ef-purch-items-empty" style="padding:24px;text-align:center;color:#94a3b8;font-size:13px">Haz clic en <strong>+ Agregar Ítem</strong> para comenzar.</div>
+      </div>
+
+      <!-- Totals -->
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:16px;margin-bottom:14px;display:flex;justify-content:flex-end;">
+        <div style="min-width:260px;">
+          <div class="ef-total-row"><span class="ef-total-label">Subtotal</span><span id="ef-purch-subtotal" class="ef-total-value">Q 0.00</span></div>
+          <div class="ef-total-row"><span class="ef-total-label">IVA (12%)</span><span id="ef-purch-tax" class="ef-total-value">Q 0.00</span></div>
+          <div class="ef-total-row ef-total-row--grand"><span class="ef-total-label">TOTAL</span><span id="ef-purch-grand" class="ef-total-value ef-grand">Q 0.00</span></div>
+        </div>
+      </div>
+
+      <!-- Action buttons -->
+      <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;">
+        <button id="ef-purch-btn-cancel-doc" class="ef-btn" style="background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;display:none;">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+          Cancelar Factura
+        </button>
+        <button id="ef-purch-btn-save" class="ef-btn ef-btn-secondary">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/></svg>
+          Guardar Borrador
+        </button>
+        <button id="ef-purch-btn-submit" class="ef-btn ef-btn-primary">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+          Validar Compra
+        </button>
+      </div>
+    </div>
+  </div>
+
 </div><!-- ef-main-layout -->
 		`);
 
@@ -1190,8 +1418,17 @@ class EFastSalePage {
 			this.$body.find("#ef-billing-view").hide();
 			this.$body.find("#ef-reports-view").hide();
 			this.$body.find("#ef-maintenance-view").show();
+			this.$body.find("#ef-purchase-view").hide();
 			frappe.set_route("facex", "", { view: "maintenance" });
 			this._load_maintenance_view();
+		} else if (view === "purchase") {
+			this.$body.find("#ef-dashboard-view").hide();
+			this.$body.find("#ef-billing-view").hide();
+			this.$body.find("#ef-reports-view").hide();
+			this.$body.find("#ef-maintenance-view").hide();
+			this.$body.find("#ef-purchase-view").show();
+			frappe.set_route("facex", "", { view: "purchase" });
+			this._init_purchase_view();
 		}
 	}
 
@@ -2448,10 +2685,20 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this._mark_dirty();
 		});
 
-		// NIT
+		// Identificación (FEL): NIT / CUI / PASAPORTE / CF
+		this.$body.find("#ef-bfel-identificacion").on("change", (e) => {
+			this.doc.bfel_identificacion = e.target.value;
+			this._mark_dirty();
+			this._lookup_bfel_identificacion_name(this.$body.find("#ef-bfel-nit").val());
+		});
+
+		// ID Receptor (FEL)
 		this.$body.find("#ef-bfel-nit").on("change input", (e) => {
 			this.doc.bfel_nit = e.target.value;
 			this._mark_dirty();
+		});
+		this.$body.find("#ef-bfel-nit").on("change", (e) => {
+			this._lookup_bfel_identificacion_name(e.target.value);
 		});
 
 		// Nombre para factura
@@ -2579,14 +2826,39 @@ body.facex-fullscreen-mode .ef-main-layout {
 		ctrl.df.change = _onCtrlChange;
 	}
 
+	// Consulta el nombre registrado para el ID Receptor ingresado (BFEL Settings ->
+	// url_retorna_cliente para NIT, url_retorna_cui para CUI; solo aplica si el
+	// certificador es Grupo CDS) y lo asigna automáticamente en "Nombre para Factura".
+	// PASAPORTE y CF no tienen consulta automática.
+	_lookup_bfel_identificacion_name(identificacion) {
+		identificacion = (identificacion || "").trim();
+		const tipo = this.$body.find("#ef-bfel-identificacion").val();
+		if (!identificacion || (tipo !== "NIT" && tipo !== "CUI")) return;
+
+		frappe.call({
+			method: "facex_multi.api.customer.lookup_identificacion_name",
+			args: { identificacion, tipo, company: this.doc.company || this.defaults.company || "" },
+			callback: (r) => {
+				const res = r.message || {};
+				if (res.found && res.customer_name) {
+					this.doc.bfel_nombre = res.customer_name;
+					this.$body.find("#ef-bfel-nombre").val(res.customer_name);
+					this._mark_dirty();
+				}
+			}
+		});
+	}
+
 	_on_customer_change(customer) {
 
 		if (!customer) {
 			this.doc.customer_name = "";
 			this.doc.bfel_nombre = "";
 			this.doc.sales_partner = "";
+			this.doc.bfel_identificacion = "";
 			this.$body.find("#ef-customer-name").val("");
 			this.$body.find("#ef-bfel-nombre").val("");
+			this.$body.find("#ef-bfel-identificacion").val("");
 			if (this.controls.sales_partner) this.controls.sales_partner.set_value("");
 			return;
 		}
@@ -2595,7 +2867,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			args: {
 				doctype: "Customer",
 				filters: { name: customer },
-				fieldname: ["tax_id", "bfel_id_receptor", "payment_terms", "customer_name", "default_sales_partner", "default_price_list"],
+				fieldname: ["tax_id", "bfel_id_receptor", "bfel_identificacion", "payment_terms", "customer_name", "default_sales_partner", "default_price_list"],
 			},
 			callback: (r) => {
 				if (!r.exc && r.message) {
@@ -2610,6 +2882,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 					if (r.message.default_price_list) {
 						this.doc.selling_price_list = r.message.default_price_list;
 					}
+
+					this.doc.bfel_identificacion = r.message.bfel_identificacion || "";
+					this.$body.find("#ef-bfel-identificacion").val(this.doc.bfel_identificacion);
 
 					const nit = r.message.bfel_id_receptor || r.message.tax_id;
 					if (nit) {
@@ -3370,6 +3645,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		return {
 			puede_ver_tablero: 1, puede_facturar: 1,
 			puede_guardar: 1, puede_validar: 1, puede_certificar: 1,
+			puede_compras: 1, puede_validar_compras: 1, puede_cancelar_compras: 1,
 			crea_clientes: 1, modifica_clientes: 1,
 			crea_items: 1, modifica_items: 1, actualiza_precios: 1,
 			reporte_ventas_fecha: 1, reporte_ventas_producto: 1,
@@ -3386,6 +3662,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		// --- Navegación principal ---
 		if (!p.puede_ver_tablero) this.$body.find(".ef-nav-btn[data-view='dashboard']").hide();
 		if (!p.puede_facturar)    this.$body.find(".ef-nav-btn[data-view='billing']").hide();
+		if (!p.puede_compras)     this.$body.find(".ef-nav-btn[data-view='purchase']").hide();
 
 		// --- Reportes: ocultar tabs no permitidos ---
 		const REPORT_PERM = {
@@ -3649,7 +3926,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const $b = this.$body;
 		$b.find(
 			"#ef-establecimiento, #ef-naming-series, #ef-posting-date, #ef-due-date, " +
-			"#ef-bfel-nit, #ef-bfel-nombre, #ef-bfel-status, #ef-bfel-escenario-exento, #ef-terms"
+			"#ef-bfel-identificacion, #ef-bfel-nit, #ef-bfel-nombre, #ef-bfel-status, #ef-bfel-escenario-exento, #ef-terms"
 		).prop("disabled", true);
 		Object.values(this.controls).forEach((ctrl) => {
 			if (ctrl && ctrl.$input) ctrl.$input.prop("disabled", true);
@@ -3663,7 +3940,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const $b = this.$body;
 		$b.find(
 			"#ef-establecimiento, #ef-naming-series, #ef-posting-date, #ef-due-date, " +
-			"#ef-bfel-nit, #ef-bfel-nombre, #ef-bfel-status, #ef-terms"
+			"#ef-bfel-identificacion, #ef-bfel-nit, #ef-bfel-nombre, #ef-bfel-status, #ef-terms"
 		).prop("disabled", false);
 		// bfel_escenario_exento solo se habilita si la plantilla de impuestos empieza con EXE
 		this._toggle_escenario_exento(this.doc.taxes_and_charges);
@@ -3697,6 +3974,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-posting-date").val(d.posting_date || "");
 		this.$body.find("#ef-due-date").val(d.due_date || "");
 		this.$body.find("#ef-bfel-nombre").val(d.bfel_nombre || "");
+		this.$body.find("#ef-bfel-identificacion").val(d.bfel_identificacion || "");
 		this.$body.find("#ef-bfel-nit").val(d.bfel_nit || "");
 		this.$body.find("#ef-bfel-status").val(d.bfel_status || "01 Enviar");
 		this.$body.find("#ef-terms").val(d.terms || "");
@@ -4614,6 +4892,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			taxes_and_charges: d.taxes_and_charges || "",
 			sales_partner: d.sales_partner || "",
 			bfel_nit: d.bfel_nit || "",
+			bfel_identificacion: d.bfel_identificacion || "",
 			bfel_nombre: d.bfel_nombre || "",
 			bfel_status: d.bfel_status || "01 Enviar",
 			bfel_escenario_exento: d.bfel_escenario_exento || "",
@@ -7272,6 +7551,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this._save_maint_customer();
 		});
 
+		this.$body.find("#ef-maint-cust-receptor").on("change", (e) => {
+			this._lookup_maint_cust_name(e.target.value);
+		});
+
 		// ── Products ──
 		let itemTimer = null;
 		this.$body.find("#ef-maint-item-search").on("input", (e) => {
@@ -7405,6 +7688,23 @@ body.facex-fullscreen-mode .ef-main-layout {
 					});
 					$list.append($item);
 				});
+			}
+		});
+	}
+
+	_lookup_maint_cust_name(idReceptor) {
+		idReceptor = (idReceptor || "").trim();
+		const tipo = this.$body.find("#ef-maint-cust-ident").val();
+		if ((tipo !== "NIT" && tipo !== "CUI") || !idReceptor) return;
+
+		frappe.call({
+			method: "facex_multi.api.customer.lookup_identificacion_name",
+			args: { identificacion: idReceptor, tipo, company: this.doc.company || this.defaults.company || "" },
+			callback: (r) => {
+				const res = r.message || {};
+				if (res.found && res.customer_name) {
+					this.$body.find("#ef-maint-cust-name").val(res.customer_name);
+				}
 			}
 		});
 	}
@@ -7726,6 +8026,940 @@ body.facex-fullscreen-mode .ef-main-layout {
 				});
 			}
 		);
+	}
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// MÓDULO DE COMPRAS
+	// ═══════════════════════════════════════════════════════════════════════
+
+	_init_purchase_view() {
+		// Solo inicializar eventos una vez
+		if (this._purch_events_bound) {
+			this._show_purch_list();
+			return;
+		}
+		this._purch_events_bound = true;
+		this._purch_doc          = this._empty_purch_doc();
+		this._purch_defaults     = null;
+
+		// Cargar defaults de compra
+		frappe.call({
+			method: "facex_multi.api.purchase.get_purchase_defaults",
+			args:   { company: this.doc.company || this.defaults.company || "" },
+			callback: (r) => {
+				if (!r.exc && r.message) {
+					this._purch_defaults = r.message;
+					// Set default dates
+					const today = frappe.datetime.get_today();
+					this.$body.find("#ef-purch-posting-date").val(today);
+					this.$body.find("#ef-purch-bill-date").val(today);
+					this.$body.find("#ef-purch-f-start").val(frappe.datetime.month_start());
+					this.$body.find("#ef-purch-f-end").val(today);
+				}
+			},
+		});
+
+		// Set default dates on first open
+		const today = frappe.datetime.get_today();
+		this.$body.find("#ef-purch-f-start").val(frappe.datetime.month_start());
+		this.$body.find("#ef-purch-f-end").val(today);
+		this.$body.find("#ef-purch-posting-date").val(today);
+		this.$body.find("#ef-purch-bill-date").val(today);
+
+		// Eventos lista
+		this.$body.on("click", "#ef-purch-btn-new",    () => this._new_purch());
+		this.$body.on("click", "#ef-purch-btn-excel",  () => this._show_excel_dialog());
+		this.$body.on("click", "#ef-purch-btn-filter", () => this._load_purch_list());
+		this.$body.on("click", "#ef-purch-btn-back",         () => this._show_purch_list());
+		this.$body.on("click", "#ef-purch-stg-back",         () => this._show_purch_list());
+		this.$body.on("click", "#ef-purch-stg-revalidate",   () => this._stg_revalidate());
+		this.$body.on("click", "#ef-purch-stg-confirm",      () => this._stg_confirm());
+
+		// Eventos formulario
+		this.$body.on("click",  "#ef-purch-btn-add-item",  () => this._add_purch_item());
+		this.$body.on("click",  "#ef-purch-btn-save",      () => this._save_purch());
+		this.$body.on("click",  "#ef-purch-btn-submit",    () => this._submit_purch());
+		this.$body.on("click",  "#ef-purch-btn-cancel-doc",() => this._cancel_purch());
+
+		// Supplier autocomplete
+		this.$body.on("input", "#ef-purch-supplier", (e) => {
+			const txt = e.target.value;
+			clearTimeout(this._purch_supplier_timer);
+			this._purch_supplier_timer = setTimeout(() => {
+				if (txt.length < 1) return;
+				frappe.call({
+					method: "facex_multi.api.purchase.search_suppliers",
+					args:   { txt },
+					callback: (r) => {
+						if (!r.exc && r.message) this._show_supplier_suggestions(r.message);
+					},
+				});
+			}, 300);
+		});
+
+		this._show_purch_list();
+	}
+
+	_empty_purch_doc() {
+		return {
+			name: null, docstatus: 0,
+			supplier: "", posting_date: frappe.datetime.get_today(),
+			bill_no: "", bill_date: frappe.datetime.get_today(),
+			currency: "GTQ", tax_type: "normal",
+			items: [],
+		};
+	}
+
+	_show_purch_list() {
+		this.$body.find("#ef-purch-list-section").show();
+		this.$body.find("#ef-purch-form-section").hide();
+		this.$body.find("#ef-purch-staging-section").hide();
+		this._load_purch_list();
+	}
+
+	_show_purch_form() {
+		this.$body.find("#ef-purch-list-section").hide();
+		this.$body.find("#ef-purch-staging-section").hide();
+		this.$body.find("#ef-purch-form-section").show();
+	}
+
+	_show_purch_staging() {
+		this.$body.find("#ef-purch-list-section").hide();
+		this.$body.find("#ef-purch-form-section").hide();
+		this.$body.find("#ef-purch-staging-section").show();
+	}
+
+	_load_purch_list() {
+		const company    = this.doc.company || this.defaults.company || "";
+		const start_date = this.$body.find("#ef-purch-f-start").val();
+		const end_date   = this.$body.find("#ef-purch-f-end").val();
+		const supplier   = this.$body.find("#ef-purch-f-supplier").val();
+		const docstatus  = this.$body.find("#ef-purch-f-status").val();
+
+		frappe.call({
+			method: "facex_multi.api.purchase.get_purchase_list",
+			args:   { company, start_date, end_date, supplier, docstatus },
+			freeze: true, freeze_message: "Cargando compras...",
+			callback: (r) => {
+				if (!r.exc) this._render_purch_list(r.message || []);
+			},
+		});
+	}
+
+	_render_purch_list(rows) {
+		const $body  = this.$body.find("#ef-purch-list-body");
+		const $empty = this.$body.find("#ef-purch-list-empty");
+		$body.empty();
+		if (!rows.length) { $empty.show(); return; }
+		$empty.hide();
+
+		const STATUS = { 0: ["Borrador","#f59e0b"], 1: ["Validado","#10b981"], 2: ["Cancelado","#ef4444"] };
+		rows.forEach(inv => {
+			const [label, color] = STATUS[inv.docstatus] || ["?", "#888"];
+			const currency = inv.currency || "GTQ";
+			$body.append(`<tr class="ef-tr" style="cursor:pointer" data-pi="${_esc(inv.name)}">
+				<td class="ef-td" style="font-weight:600;color:#1e3a5f">${_esc(inv.name)}</td>
+				<td class="ef-td">${_esc(inv.supplier)}</td>
+				<td class="ef-td">${inv.posting_date || ""}</td>
+				<td class="ef-td">${_esc(inv.bill_no || "")}</td>
+				<td class="ef-td ef-td-num">${_fmtCurrency(inv.grand_total, currency)}</td>
+				<td class="ef-td"><span style="background:${color}22;color:${color};border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600">${label}</span></td>
+				<td class="ef-td"><button class="ef-btn ef-btn-sm ef-btn-secondary ef-purch-open" data-pi="${_esc(inv.name)}">Abrir</button></td>
+			</tr>`);
+		});
+
+		$body.off("click", ".ef-purch-open").on("click", ".ef-purch-open", (e) => {
+			e.stopPropagation();
+			this._load_purch_form($(e.currentTarget).data("pi"));
+		});
+		$body.off("click", "tr[data-pi]").on("click", "tr[data-pi]", (e) => {
+			if (!$(e.target).hasClass("ef-purch-open")) {
+				this._load_purch_form($(e.currentTarget).data("pi"));
+			}
+		});
+	}
+
+	_new_purch() {
+		this._purch_doc = this._empty_purch_doc();
+		const today = frappe.datetime.get_today();
+		this.$body.find("#ef-purch-supplier").val("");
+		this.$body.find("#ef-purch-bill-no").val("");
+		this.$body.find("#ef-purch-bill-date").val(today);
+		this.$body.find("#ef-purch-posting-date").val(today);
+		this.$body.find("#ef-purch-currency").val("GTQ");
+		this.$body.find("#ef-purch-tax-type").val("normal");
+		this.$body.find("#ef-purch-form-title").text("Nueva Factura de Compra");
+		this.$body.find("#ef-purch-status-badge").text("NUEVO").attr("class","ef-badge ef-badge-new");
+		this.$body.find("#ef-purch-btn-cancel-doc").hide();
+		this.$body.find("#ef-purch-btn-save,#ef-purch-btn-submit").show().prop("disabled", false);
+		this._render_purch_items();
+		this._show_purch_form();
+	}
+
+	_load_purch_form(name) {
+		frappe.call({
+			method: "facex_multi.api.purchase.get_purchase_invoice",
+			args:   { name },
+			freeze: true, freeze_message: "Cargando factura de compra...",
+			callback: (r) => {
+				if (r.exc || !r.message) return;
+				const d = r.message;
+				this._purch_doc = {
+					name:         d.name,
+					docstatus:    d.docstatus,
+					supplier:     d.supplier,
+					posting_date: d.posting_date,
+					bill_no:      d.bill_no,
+					bill_date:    d.bill_date,
+					currency:     d.currency || "GTQ",
+					tax_type:     "normal",
+					items: (d.items || []).map(it => ({
+						item_code:    it.item_code,
+						item_name:    it.item_name || it.item_code,
+						has_serial_no: it.has_serial_no || 0,
+						is_stock_item: it.is_stock_item || 1,
+						qty:          it.qty,
+						rate:         it.rate,
+						amount:       it.amount,
+						warehouse:    it.warehouse || "",
+						serial_no:    it.serial_no || "",
+						update_stock: it.is_stock_item !== 0 ? 1 : 0,
+						_fetched:     true,
+					})),
+				};
+
+				const STATUS_LABELS = { 0:["BORRADOR","ef-badge-draft"], 1:["VALIDADO","ef-badge-submitted"], 2:["CANCELADO","ef-badge-cancelled"] };
+				const [lbl, cls] = STATUS_LABELS[d.docstatus] || ["?",""];
+				this.$body.find("#ef-purch-form-title").text(`Factura de Compra: ${d.name}`);
+				this.$body.find("#ef-purch-status-badge").text(lbl).attr("class",`ef-badge ${cls}`);
+				this.$body.find("#ef-purch-supplier").val(d.supplier);
+				this.$body.find("#ef-purch-bill-no").val(d.bill_no || "");
+				this.$body.find("#ef-purch-bill-date").val(d.bill_date || "");
+				this.$body.find("#ef-purch-posting-date").val(d.posting_date || "");
+				this.$body.find("#ef-purch-currency").val(d.currency || "GTQ");
+
+				const isEditable = d.docstatus === 0;
+				this.$body.find("#ef-purch-btn-save,#ef-purch-btn-add-item").toggle(isEditable);
+				this.$body.find("#ef-purch-btn-submit").toggle(isEditable && !!this.perms.puede_validar_compras);
+				this.$body.find("#ef-purch-btn-cancel-doc").toggle(d.docstatus === 1 && !!this.perms.puede_cancelar_compras);
+				this.$body.find("#ef-purch-supplier,#ef-purch-bill-no,#ef-purch-bill-date,#ef-purch-posting-date,#ef-purch-currency,#ef-purch-tax-type")
+					.prop("disabled", !isEditable);
+
+				this._render_purch_items();
+				this._show_purch_form();
+			},
+		});
+	}
+
+	_render_purch_items() {
+		const items  = this._purch_doc.items || [];
+		const $tbody = this.$body.find("#ef-purch-items-body");
+		const $empty = this.$body.find("#ef-purch-items-empty");
+		$tbody.empty();
+
+		if (!items.length) { $empty.show(); } else { $empty.hide(); }
+
+		const isEditable = this._purch_doc.docstatus === 0;
+		const currency   = this._purch_doc.currency || "GTQ";
+
+		// 9 columns: # | Código | Descripción/Series | Cant | Precio | Total | Bodega | Stock | Del
+		items.forEach((it, idx) => {
+			const serialBlock = it.has_serial_no
+				? `<div style="margin-top:5px;border-top:1px dashed #e2e8f0;padding-top:4px">
+					<div style="font-size:10px;font-weight:600;color:#64748b;margin-bottom:3px;text-transform:uppercase;letter-spacing:.04em">
+						Nos. de Serie <span style="font-weight:400;color:#94a3b8">(una por línea)</span>
+					</div>
+					<textarea id="ef-pi-serial-${idx}" class="ef-pi-serial" data-idx="${idx}" rows="3"
+						style="width:100%;font-size:11px;font-family:monospace;resize:vertical;border:1px solid #cbd5e1;border-radius:4px;padding:4px 6px;box-sizing:border-box;background:${isEditable ? "#f8fafc" : "#f1f5f9"}"
+						placeholder="Escribe un serial por línea..."
+						${!isEditable ? "disabled" : ""}>${_esc(it.serial_no || "")}</textarea>
+				  </div>`
+				: "";
+
+			const qtyCell = it.has_serial_no
+				? `<div style="text-align:center">
+					<span id="ef-pi-qty-${idx}" style="font-size:18px;font-weight:800;color:#1e3a5f;display:block;line-height:1">${it.qty || 0}</span>
+					<span style="font-size:9px;color:#94a3b8;text-transform:uppercase">series</span>
+				   </div>`
+				: `<input type="number" class="ef-cell-input ef-input-num ef-pi-qty" data-idx="${idx}"
+					value="${it.qty || 1}" min="1" step="1"
+					style="width:56px;text-align:right;font-weight:700"
+					${!isEditable ? "disabled" : ""}>`;
+
+			const stockCell = it.has_serial_no
+				? `<div style="text-align:center;font-size:10px;color:#94a3b8">auto</div>`
+				: `<div style="text-align:center">
+					<input type="checkbox" class="ef-pi-stock" data-idx="${idx}"
+						title="${it.is_stock_item ? "Actualizar inventario" : "No es ítem de inventario"}"
+						${it.update_stock ? "checked" : ""}
+						${(!isEditable || !it.is_stock_item) ? "disabled" : ""}
+						style="cursor:${isEditable && it.is_stock_item ? "pointer" : "default"};width:15px;height:15px">
+				   </div>`;
+
+			const $tr = $(`<tr class="ef-tr" style="vertical-align:top">
+				<td class="ef-td ef-td-idx" style="padding-top:10px">${idx + 1}</td>
+				<td class="ef-td" style="font-weight:700;font-size:12px;color:#1e3a5f;padding-top:10px">${_esc(it.item_code)}</td>
+				<td class="ef-td" style="font-size:12px">
+					<div style="color:#334155;font-weight:500">${_esc(it.item_name || it.item_code)}</div>
+					${serialBlock}
+				</td>
+				<td class="ef-td" style="padding-top:10px">${qtyCell}</td>
+				<td class="ef-td" style="padding-top:8px">
+					<input type="number" class="ef-cell-input ef-input-num ef-pi-rate" data-idx="${idx}"
+						value="${parseFloat(it.rate || 0).toFixed(2)}" min="0" step="any"
+						style="width:96px;text-align:right" ${!isEditable ? "disabled" : ""}>
+				</td>
+				<td class="ef-td ef-td-num" id="ef-pi-amount-${idx}" style="padding-top:10px;font-weight:700">
+					${_fmtCurrency((it.qty || 0) * (it.rate || 0), currency)}
+				</td>
+				<td class="ef-td" style="padding-top:8px">
+					<input type="text" class="ef-cell-input ef-pi-wh" data-idx="${idx}"
+						value="${_esc(it.warehouse || "")}" placeholder="Bodega"
+						style="width:138px;font-size:11px" ${!isEditable ? "disabled" : ""}>
+				</td>
+				<td class="ef-td" style="padding-top:10px">${stockCell}</td>
+				<td class="ef-td" style="padding-top:8px">
+					${isEditable ? `<button class="ef-btn-del ef-pi-del" data-idx="${idx}" title="Eliminar">×</button>` : ""}
+				</td>
+			</tr>`);
+
+			$tbody.append($tr);
+		});
+
+		this._bind_purch_item_events();
+		this._update_purch_totals();
+	}
+
+	_bind_purch_item_events() {
+		// Usar delegación desde $tbody para no perder eventos tras re-renders parciales
+		const $tbody = this.$body.find("#ef-purch-items-body");
+
+		$tbody.off("input change click").on("input change", ".ef-pi-qty", (e) => {
+			const idx = parseInt($(e.target).data("idx"));
+			const it  = this._purch_doc.items[idx];
+			if (!it) return;
+			it.qty    = parseFloat(e.target.value) || 1;
+			it.amount = it.qty * it.rate;
+			this.$body.find(`#ef-pi-amount-${idx}`).text(_fmtCurrency(it.amount, this._purch_doc.currency));
+			this._update_purch_totals();
+		}).on("input change", ".ef-pi-rate", (e) => {
+			const idx = parseInt($(e.target).data("idx"));
+			const it  = this._purch_doc.items[idx];
+			if (!it) return;
+			it.rate   = parseFloat(e.target.value) || 0;
+			it.amount = it.qty * it.rate;
+			this.$body.find(`#ef-pi-amount-${idx}`).text(_fmtCurrency(it.amount, this._purch_doc.currency));
+			this._update_purch_totals();
+		}).on("input change", ".ef-pi-wh", (e) => {
+			const idx = parseInt($(e.target).data("idx"));
+			const it  = this._purch_doc.items[idx];
+			if (it) it.warehouse = e.target.value;
+		}).on("change", ".ef-pi-stock", (e) => {
+			const idx = parseInt($(e.target).data("idx"));
+			const it  = this._purch_doc.items[idx];
+			if (it) it.update_stock = e.target.checked ? 1 : 0;
+		}).on("input", ".ef-pi-serial", (e) => {
+			const idx     = parseInt($(e.target).data("idx"));
+			const it      = this._purch_doc.items[idx];
+			if (!it) return;
+			const serials = e.target.value.split("\n").map(s => s.trim()).filter(Boolean);
+			it.serial_no  = serials.join("\n");
+			it.qty        = serials.length || 1;
+			this.$body.find(`#ef-pi-qty-${idx}`).text(it.qty);
+			it.amount = it.qty * it.rate;
+			this.$body.find(`#ef-pi-amount-${idx}`).text(_fmtCurrency(it.amount, this._purch_doc.currency));
+			this._update_purch_totals();
+		}).on("click", ".ef-pi-del", (e) => {
+			const idx = parseInt($(e.currentTarget).data("idx"));
+			this._purch_doc.items.splice(idx, 1);
+			this._render_purch_items();
+		});
+	}
+
+	_update_purch_totals() {
+		const items    = this._purch_doc.items || [];
+		const currency = this._purch_doc.currency || "GTQ";
+		const subtotal = items.reduce((s, it) => s + (parseFloat(it.amount) || 0), 0);
+		const taxRate  = 0.12;  // IVA Guatemala
+		const tax      = subtotal * taxRate;
+		const grand    = subtotal + tax;
+		// Si es exento, no hay IVA ya incluido en los precios
+		this.$body.find("#ef-purch-subtotal").text(_fmtCurrency(subtotal, currency));
+		this.$body.find("#ef-purch-tax").text(_fmtCurrency(tax, currency));
+		this.$body.find("#ef-purch-grand").text(_fmtCurrency(grand, currency));
+	}
+
+	_add_purch_item() {
+		const company = this.doc.company || this.defaults.company || "";
+		let _selectedItem = null;
+
+		const dlg = new frappe.ui.Dialog({
+			title: "Agregar Producto",
+			fields: [
+				{
+					fieldtype: "HTML",
+					options: `<div style="margin-bottom:8px">
+						<label class="ef-label" style="display:block;margin-bottom:4px">Buscar Producto *</label>
+						<input id="ef-pi-add-search" type="text" class="ef-cell-input" style="width:100%" placeholder="Escribe código o nombre del producto..."/>
+						<div id="ef-pi-add-results" style="border:1px solid #e2e8f0;border-radius:6px;max-height:200px;overflow-y:auto;display:none;background:#fff;box-shadow:0 4px 12px rgba(0,0,0,.08);margin-top:2px"></div>
+						<div id="ef-pi-add-selected" style="display:none;margin-top:6px;padding:8px 10px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;font-size:12px;color:#0369a1"></div>
+					</div>`,
+				},
+				{ fieldtype: "Float",    fieldname: "rate", label: "Precio Unitario *", reqd: 1, default: 0 },
+				{ fieldtype: "Int",      fieldname: "qty",  label: "Cantidad (para ítems sin serie)",  default: 1 },
+			],
+			primary_action_label: "Agregar",
+			primary_action: (vals) => {
+				if (!_selectedItem) {
+					frappe.msgprint({ message: "Selecciona un producto de la lista.", indicator: "orange" });
+					return;
+				}
+				const info = _selectedItem;
+				const qty  = info.has_serial_no ? 0 : (parseInt(vals.qty) || 1);
+				const rate = parseFloat(vals.rate) || 0;
+				this._purch_doc.items.push({
+					item_code:     info.item_code,
+					item_name:     info.item_name,
+					item_group:    info.item_group,
+					has_serial_no: info.has_serial_no,
+					is_stock_item: info.is_stock_item,
+					qty,
+					rate,
+					amount:       qty * rate,
+					warehouse:    info.warehouse,
+					serial_no:    "",
+					update_stock: info.is_stock_item ? 1 : 0,
+					_fetched:     true,
+				});
+				this._render_purch_items();
+				dlg.hide();
+			},
+		});
+
+		dlg.show();
+
+		// Activar búsqueda con debounce
+		const $search  = dlg.$wrapper.find("#ef-pi-add-search");
+		const $results = dlg.$wrapper.find("#ef-pi-add-results");
+		const $sel     = dlg.$wrapper.find("#ef-pi-add-selected");
+
+		$search.on("input", () => {
+			const txt = $search.val().trim();
+			clearTimeout(this._pi_search_timer);
+			if (txt.length < 1) { $results.hide().empty(); return; }
+
+			this._pi_search_timer = setTimeout(() => {
+				frappe.call({
+					method: "facex_multi.api.purchase.search_items",
+					args:   { txt, company },
+					callback: (r) => {
+						$results.empty();
+						if (r.exc || !r.message || !r.message.length) {
+							$results.hide();
+							return;
+						}
+						r.message.forEach(it => {
+							const badge = it.has_serial_no
+								? `<span style="background:#fef3c7;color:#92400e;border-radius:4px;padding:1px 5px;font-size:10px;margin-left:4px">Serie</span>`
+								: it.is_stock_item
+									? `<span style="background:#dcfce7;color:#15803d;border-radius:4px;padding:1px 5px;font-size:10px;margin-left:4px">Stock</span>`
+									: `<span style="background:#f1f5f9;color:#64748b;border-radius:4px;padding:1px 5px;font-size:10px;margin-left:4px">Servicio</span>`;
+							const $row = $(`<div class="ef-pi-add-res-row" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:12px;display:flex;justify-content:space-between;align-items:center">
+								<div>
+									<strong style="color:#1e3a5f">${_esc(it.item_code)}</strong>${badge}<br>
+									<span style="color:#64748b">${_esc(it.item_name)}</span>
+								</div>
+								<span style="font-size:11px;color:#94a3b8">${_esc(it.item_group || "")}</span>
+							</div>`);
+							$row.on("mouseenter", () => $row.css("background","#f8fafc"));
+							$row.on("mouseleave", () => $row.css("background",""));
+							$row.on("click", () => {
+								_selectedItem = it;
+								$search.val(it.item_code);
+								$results.hide().empty();
+								$sel.html(`<strong>${_esc(it.item_code)}</strong> – ${_esc(it.item_name)}
+									${it.has_serial_no ? " <em>(maneja series)</em>" : ""}
+									${it.warehouse ? ` · Bodega: <strong>${_esc(it.warehouse)}</strong>` : ""}`)
+									.show();
+								// Si es serial, ocultamos el campo qty
+								dlg.set_df_property("qty", "hidden", !!it.has_serial_no);
+								$search.trigger("blur");
+							});
+							$results.append($row);
+						});
+						$results.show();
+					},
+				});
+			}, 280);
+		});
+
+		$(document).on("click.piadddlg", (e) => {
+			if (!$(e.target).closest("#ef-pi-add-results, #ef-pi-add-search").length) {
+				$results.hide();
+				$(document).off("click.piadddlg");
+			}
+		});
+	}
+
+	_validate_purch() {
+		const d      = this._purch_doc;
+		const errors = [];
+		if (!d.supplier)    errors.push("Proveedor es obligatorio.");
+		if (!d.bill_no)     errors.push("Número de factura del proveedor es obligatorio.");
+		if (!d.bill_date)   errors.push("Fecha de factura del proveedor es obligatoria.");
+		if (!d.items.length) errors.push("Agregue al menos un producto.");
+
+		d.items.forEach((it, i) => {
+			const n = i + 1;
+			if (!it.rate || it.rate <= 0)
+				errors.push(`Línea ${n} (${it.item_code}): el precio debe ser mayor a 0.`);
+			if (it.has_serial_no) {
+				const serials = (it.serial_no || "").split("\n").map(s => s.trim()).filter(Boolean);
+				if (!serials.length)
+					errors.push(`Línea ${n} (${it.item_code}): ingrese al menos un número de serie.`);
+				else if (serials.length !== it.qty && it.qty > 0)
+					errors.push(`Línea ${n} (${it.item_code}): la cantidad (${it.qty}) no coincide con los seriales ingresados (${serials.length}).`);
+			} else if (!it.qty || it.qty <= 0) {
+				errors.push(`Línea ${n} (${it.item_code}): la cantidad debe ser mayor a 0.`);
+			}
+			if (it.is_stock_item && it.update_stock && !it.warehouse)
+				errors.push(`Línea ${n} (${it.item_code}): bodega requerida para ítem de inventario.`);
+		});
+		return errors;
+	}
+
+	_read_purch_form_to_doc() {
+		this._purch_doc.supplier     = this.$body.find("#ef-purch-supplier").val().trim();
+		this._purch_doc.bill_no      = this.$body.find("#ef-purch-bill-no").val().trim();
+		this._purch_doc.bill_date    = this.$body.find("#ef-purch-bill-date").val();
+		this._purch_doc.posting_date = this.$body.find("#ef-purch-posting-date").val();
+		this._purch_doc.currency     = this.$body.find("#ef-purch-currency").val();
+		this._purch_doc.tax_type     = this.$body.find("#ef-purch-tax-type").val();
+	}
+
+	_save_purch() {
+		this._read_purch_form_to_doc();
+		const errors = this._validate_purch();
+		if (errors.length) {
+			frappe.msgprint({ title: "Errores de validación", message: errors.map(e => `• ${e}`).join("<br>"), indicator: "red" });
+			return;
+		}
+		const company = this.doc.company || this.defaults.company || "";
+		const payload = Object.assign({}, this._purch_doc, { company });
+		frappe.call({
+			method: "facex_multi.api.purchase.save_purchase_invoice",
+			args:   { data_json: JSON.stringify(payload) },
+			freeze: true, freeze_message: "Guardando factura de compra...",
+			callback: (r) => {
+				if (!r.exc && r.message && r.message.name) {
+					frappe.show_alert({ message: `Guardado: <strong>${r.message.name}</strong>`, indicator: "green" });
+					this._load_purch_form(r.message.name);
+				}
+			},
+		});
+	}
+
+	_submit_purch() {
+		this._read_purch_form_to_doc();
+		const errors = this._validate_purch();
+		if (errors.length) {
+			frappe.msgprint({ title: "Errores de validación", message: errors.map(e => `• ${e}`).join("<br>"), indicator: "red" });
+			return;
+		}
+		frappe.confirm("¿Validar esta factura de compra? Esta acción actualizará el inventario y no se puede deshacer fácilmente.", () => {
+			this._save_purch_then_submit();
+		});
+	}
+
+	_save_purch_then_submit() {
+		const company = this.doc.company || this.defaults.company || "";
+		const payload = Object.assign({}, this._purch_doc, { company });
+		frappe.call({
+			method: "facex_multi.api.purchase.save_purchase_invoice",
+			args:   { data_json: JSON.stringify(payload) },
+			freeze: true, freeze_message: "Guardando...",
+			callback: (r) => {
+				if (r.exc || !r.message) return;
+				frappe.call({
+					method: "facex_multi.api.purchase.submit_purchase_invoice",
+					args:   { name: r.message.name },
+					freeze: true, freeze_message: "Validando factura de compra...",
+					callback: (r2) => {
+						if (!r2.exc && r2.message) {
+							frappe.show_alert({ message: `Factura <strong>${r2.message.name}</strong> validada correctamente.`, indicator: "green" });
+							this._load_purch_form(r2.message.name);
+						}
+					},
+				});
+			},
+		});
+	}
+
+	_cancel_purch() {
+		frappe.confirm("¿Cancelar esta factura de compra? Se revertirán los movimientos de inventario.", () => {
+			frappe.call({
+				method: "facex_multi.api.purchase.cancel_purchase_invoice",
+				args:   { name: this._purch_doc.name },
+				freeze: true, freeze_message: "Cancelando...",
+				callback: (r) => {
+					if (!r.exc && r.message) {
+						frappe.show_alert({ message: "Factura cancelada.", indicator: "blue" });
+						this._load_purch_form(r.message.name);
+					}
+				},
+			});
+		});
+	}
+
+	_show_supplier_suggestions(list) {
+		const $inp  = this.$body.find("#ef-purch-supplier");
+		const $wrap = $inp.closest("div");
+		$wrap.find(".ef-sugg-dropdown").remove();
+		if (!list.length) return;
+		const $dd = $(`<div class="ef-sugg-dropdown" style="position:absolute;z-index:9999;background:#fff;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:200px;overflow-y:auto;width:300px"></div>`);
+		list.forEach(s => {
+			$dd.append(`<div class="ef-sugg-item" data-value="${_esc(s.value)}" style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid #f1f5f9">${_esc(s.label)}</div>`);
+		});
+		$wrap.css("position", "relative").append($dd);
+		$dd.on("click", ".ef-sugg-item", (e) => {
+			$inp.val($(e.currentTarget).data("value"));
+			$dd.remove();
+		});
+		$(document).one("click", () => $dd.remove());
+	}
+
+	_show_excel_dialog() {
+		const company = this.doc.company || this.defaults.company || "";
+		const dlg = new frappe.ui.Dialog({
+			title: "Cargar Compra desde Excel",
+			fields: [
+				{
+					fieldtype: "HTML",
+					options: `<div style="margin-bottom:12px;font-size:12px;color:#475569;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:12px">
+						<strong>Estructura del archivo Excel:</strong><br>
+						<strong>Hoja 1 – ENCABEZADO</strong> (fila 2): Proveedor | Fecha Registro | No. Factura | Fecha Factura | Moneda<br>
+						<strong>Hoja 2 – DETALLE</strong> (desde fila 2): Código Ítem | Precio Unitario | Serie<br>
+						<em>Para ítems con serie: una fila por unidad. Para ítems sin serie: una fila por ítem (la columna Serie va vacía).</em>
+					</div>`,
+				},
+				{ fieldtype: "Attach", fieldname: "excel_file", label: "Archivo Excel (.xlsx)", reqd: 1 },
+			],
+			primary_action_label: "Procesar",
+			primary_action: (vals) => {
+				if (!vals.excel_file) return;
+				dlg.hide();
+				frappe.call({
+					method: "facex_multi.api.purchase.process_purchase_excel",
+					args:   { file_url: vals.excel_file, company },
+					freeze: true, freeze_message: "Procesando Excel...",
+					callback: (r) => {
+						if (r.exc || !r.message) return;
+						this._load_excel_result(r.message);
+					},
+				});
+			},
+		});
+		dlg.show();
+	}
+
+	// ── STAGING (DTW / Odoo style) ──────────────────────────────────────
+
+	_load_excel_result(result) {
+		// Construir staging rows a partir del resultado del parser
+		this._stg_header = {
+			supplier:     result.header.supplier     || "",
+			bill_no:      result.header.bill_no      || "",
+			bill_date:    result.header.bill_date    || frappe.datetime.get_today(),
+			posting_date: result.header.posting_date || frappe.datetime.get_today(),
+			currency:     result.header.currency     || "GTQ",
+			tax_type:     "normal",
+		};
+
+		this._stg_rows = result.items.map((it, i) => ({
+			_idx:         i,
+			item_code:    it.item_code,
+			item_name:    it.item_name  || it.item_code,
+			item_group:   it.item_group || "",
+			has_serial_no: it.has_serial_no || 0,
+			is_stock_item: 1,
+			qty:           it.qty,
+			rate:          it.rate,
+			amount:        it.qty * it.rate,
+			warehouse:     it.warehouse || "",
+			serial_no:     it.serial_no || "",
+			update_stock:  1,
+			_errors:       [],  // se llena en revalidar
+		}));
+
+		// Advertencias del parser (ítems no encontrados, etc.)
+		if (result.errors && result.errors.length) {
+			this.$body.find("#ef-stg-errors")
+				.html("<strong>Advertencias del archivo:</strong><br>" + result.errors.map(e => `• ${_esc(e)}`).join("<br>"))
+				.show();
+		} else {
+			this.$body.find("#ef-stg-errors").hide();
+		}
+
+		if (!this._stg_rows.length) {
+			frappe.msgprint({ title: "Sin datos", message: "El archivo no contiene líneas de detalle válidas.", indicator: "orange" });
+			return;
+		}
+
+		this._stg_populate_header();
+		this._stg_revalidate();
+		this._show_purch_staging();
+	}
+
+	_stg_populate_header() {
+		const h = this._stg_header;
+		this.$body.find("#ef-stg-supplier").val(h.supplier);
+		this.$body.find("#ef-stg-bill-no").val(h.bill_no);
+		this.$body.find("#ef-stg-bill-date").val(h.bill_date);
+		this.$body.find("#ef-stg-posting-date").val(h.posting_date);
+		this.$body.find("#ef-stg-currency").val(h.currency);
+		this.$body.find("#ef-stg-tax-type").val(h.tax_type || "normal");
+	}
+
+	_stg_read_header() {
+		this._stg_header.supplier     = this.$body.find("#ef-stg-supplier").val().trim();
+		this._stg_header.bill_no      = this.$body.find("#ef-stg-bill-no").val().trim();
+		this._stg_header.bill_date    = this.$body.find("#ef-stg-bill-date").val();
+		this._stg_header.posting_date = this.$body.find("#ef-stg-posting-date").val();
+		this._stg_header.currency     = this.$body.find("#ef-stg-currency").val();
+		this._stg_header.tax_type     = this.$body.find("#ef-stg-tax-type").val();
+	}
+
+	_stg_validate_rows() {
+		(this._stg_rows || []).forEach(row => {
+			const errs = [];
+			if (!row.item_code) errs.push("Código de ítem vacío.");
+			if (!row.rate || row.rate <= 0) errs.push("Precio debe ser > 0.");
+			if (row.has_serial_no) {
+				const serials = (row.serial_no || "").split("\n").map(s => s.trim()).filter(Boolean);
+				if (!serials.length) errs.push("Requiere número(s) de serie.");
+				else if (serials.length !== row.qty) errs.push(`Series (${serials.length}) ≠ Cant. (${row.qty}).`);
+			} else if (!row.qty || row.qty <= 0) {
+				errs.push("Cantidad debe ser > 0.");
+			}
+			if (row.is_stock_item && row.update_stock && !row.warehouse) errs.push("Bodega requerida.");
+			row._errors = errs;
+		});
+	}
+
+	_stg_revalidate() {
+		// Leer cambios del grid antes de revalidar
+		this._stg_read_header();
+		this._stg_read_grid_changes();
+		this._stg_validate_rows();
+		this._stg_render_grid();
+		this._stg_update_summary();
+	}
+
+	_stg_read_grid_changes() {
+		// Leer valores editados inline en el grid actual
+		(this._stg_rows || []).forEach((row, i) => {
+			const $qty  = this.$body.find(`.ef-stg-qty[data-sidx="${i}"]`);
+			const $rate = this.$body.find(`.ef-stg-rate[data-sidx="${i}"]`);
+			const $wh   = this.$body.find(`.ef-stg-wh[data-sidx="${i}"]`);
+			const $ser  = this.$body.find(`.ef-stg-serial[data-sidx="${i}"]`);
+			const $stk  = this.$body.find(`.ef-stg-stock[data-sidx="${i}"]`);
+
+			if ($qty.length)  row.qty          = parseFloat($qty.val())  || row.qty;
+			if ($rate.length) row.rate         = parseFloat($rate.val()) || row.rate;
+			if ($wh.length)   row.warehouse    = $wh.val();
+			if ($stk.length)  row.update_stock = $stk.is(":checked") ? 1 : 0;
+			if ($ser.length) {
+				const serials = $ser.val().split("\n").map(s => s.trim()).filter(Boolean);
+				row.serial_no = serials.join("\n");
+				row.qty       = serials.length || row.qty;
+			}
+			row.amount = row.qty * row.rate;
+		});
+	}
+
+	_stg_render_grid() {
+		const $tbody = this.$body.find("#ef-stg-items-body");
+		const currency = this._stg_header.currency || "GTQ";
+		$tbody.empty();
+
+		(this._stg_rows || []).forEach((row, i) => {
+			const ok      = row._errors.length === 0;
+			const rowBg   = ok ? "" : "background:#fef2f2;";
+			const statusIco = ok
+				? `<span title="OK" style="color:#10b981;font-size:15px;font-weight:700;display:block;text-align:center">✓</span>`
+				: `<span title="${_esc(row._errors.join(' / '))}" style="color:#ef4444;font-size:15px;font-weight:700;display:block;text-align:center;cursor:help">✗</span>`;
+			const errTip = !ok
+				? `<tr class="ef-stg-err-row"><td colspan="10" style="padding:3px 8px 6px 48px;font-size:11px;color:#b91c1c;background:#fff0f0">
+					${row._errors.map(e => `⚠ ${_esc(e)}`).join(" &nbsp;·&nbsp; ")}
+				  </td></tr>`
+				: "";
+
+			const serialCell = row.has_serial_no
+				? `<textarea class="ef-cell-input ef-stg-serial" data-sidx="${i}" rows="2"
+					style="width:100%;font-size:10px;font-family:monospace;resize:vertical;border:none">${_esc(row.serial_no || "")}</textarea>`
+				: "";
+
+			const stockCell = row.has_serial_no
+				? `<span style="display:block;text-align:center;color:#94a3b8;font-size:11px">auto</span>`
+				: `<input type="checkbox" class="ef-stg-stock" data-sidx="${i}" ${row.update_stock ? "checked" : ""}
+					style="display:block;margin:0 auto;cursor:pointer">`;
+
+			$tbody.append(`
+			<tr class="ef-tr ef-stg-main-row" style="${rowBg}">
+				<td class="ef-td ef-td-idx">${i + 1}</td>
+				<td class="ef-td" style="padding:4px 6px">${statusIco}</td>
+				<td class="ef-td" style="font-weight:600;font-size:12px;color:#1e3a5f">${_esc(row.item_code)}</td>
+				<td class="ef-td" style="font-size:11px;color:#475569">${_esc(row.item_name)}
+					${serialCell}</td>
+				<td class="ef-td">
+					${row.has_serial_no
+						? `<span class="ef-stg-qty-display" data-sidx="${i}" style="display:block;text-align:center;font-weight:700;color:#1e3a5f">${row.qty}</span>`
+						: `<input type="number" class="ef-cell-input ef-stg-qty" data-sidx="${i}" value="${row.qty}"
+							min="1" step="1" style="width:54px;border:none;text-align:right">`}
+				</td>
+				<td class="ef-td">
+					<input type="number" class="ef-cell-input ef-stg-rate" data-sidx="${i}" value="${parseFloat(row.rate||0).toFixed(2)}"
+						min="0" step="any" style="width:88px;border:none;text-align:right">
+				</td>
+				<td class="ef-td ef-td-num" id="ef-stg-amount-${i}">${_fmtCurrency(row.amount, currency)}</td>
+				<td class="ef-td">
+					<input type="text" class="ef-cell-input ef-stg-wh" data-sidx="${i}" value="${_esc(row.warehouse||"")}"
+						placeholder="Bodega" style="width:130px;font-size:11px;border:none">
+				</td>
+				<td class="ef-td" style="padding:4px 6px">${stockCell}</td>
+				<td class="ef-td" style="padding:4px 6px">
+					<button class="ef-btn-del ef-stg-del" data-sidx="${i}" title="Eliminar línea">×</button>
+				</td>
+			</tr>
+			${errTip}`);
+		});
+
+		// Eventos inline (live recalculo)
+		$tbody.find(".ef-stg-rate,.ef-stg-qty").off("input").on("input", (e) => {
+			const i    = parseInt($(e.target).data("sidx"));
+			const row  = this._stg_rows[i];
+			if (!row) return;
+			if ($(e.target).hasClass("ef-stg-qty")) row.qty = parseFloat(e.target.value) || 1;
+			else row.rate = parseFloat(e.target.value) || 0;
+			row.amount = row.qty * row.rate;
+			this.$body.find(`#ef-stg-amount-${i}`).text(_fmtCurrency(row.amount, currency));
+		});
+
+		$tbody.find(".ef-stg-serial").off("input").on("input", (e) => {
+			const i   = parseInt($(e.target).data("sidx"));
+			const row = this._stg_rows[i];
+			if (!row) return;
+			const serials = e.target.value.split("\n").map(s => s.trim()).filter(Boolean);
+			row.serial_no = serials.join("\n");
+			row.qty       = serials.length || 1;
+			row.amount    = row.qty * row.rate;
+			this.$body.find(`.ef-stg-qty-display[data-sidx="${i}"]`).text(row.qty);
+			this.$body.find(`#ef-stg-amount-${i}`).text(_fmtCurrency(row.amount, currency));
+		});
+
+		$tbody.find(".ef-stg-wh").off("change").on("change", (e) => {
+			const i = parseInt($(e.target).data("sidx"));
+			if (this._stg_rows[i]) this._stg_rows[i].warehouse = e.target.value;
+		});
+
+		$tbody.find(".ef-stg-stock").off("change").on("change", (e) => {
+			const i = parseInt($(e.target).data("sidx"));
+			if (this._stg_rows[i]) this._stg_rows[i].update_stock = e.target.checked ? 1 : 0;
+		});
+
+		$tbody.find(".ef-stg-del").off("click").on("click", (e) => {
+			const i = parseInt($(e.currentTarget).data("sidx"));
+			this._stg_rows.splice(i, 1);
+			this._stg_rows.forEach((r, ni) => { r._idx = ni; });
+			this._stg_validate_rows();
+			this._stg_render_grid();
+			this._stg_update_summary();
+		});
+	}
+
+	_stg_update_summary() {
+		const rows   = this._stg_rows || [];
+		const total  = rows.length;
+		const ok     = rows.filter(r => r._errors.length === 0).length;
+		const bad    = total - ok;
+		const h      = this._stg_header;
+		const hErrs  = [];
+		if (!h.supplier)  hErrs.push("Proveedor vacío");
+		if (!h.bill_no)   hErrs.push("No. Factura vacío");
+		if (!h.bill_date) hErrs.push("Fecha Factura vacía");
+
+		this.$body.find("#ef-stg-line-count").text(`${total} línea(s)`);
+		this.$body.find("#ef-stg-ok-count").text(
+			`${ok} OK${bad ? ` · ${bad} con error` : ""}${hErrs.length ? ` · Encabezado: ${hErrs.join(", ")}` : ""}`
+		);
+
+		const $sum = this.$body.find("#ef-stg-summary");
+		const allOk = ok === total && total > 0 && !hErrs.length;
+		if (allOk) {
+			$sum.css({ background: "#f0fdf4", border: "1px solid #86efac", color: "#166534" })
+				.html(`✓ Todos los datos son válidos. Listo para importar (${total} línea(s)).`).show();
+		} else {
+			const parts = [];
+			if (hErrs.length) parts.push(`Encabezado: ${hErrs.join(", ")}`);
+			if (bad)          parts.push(`${bad} línea(s) con errores`);
+			$sum.css({ background: "#fef9c3", border: "1px solid #fde047", color: "#713f12" })
+				.html(`⚠ ${parts.join(" · ")}. Corrige antes de importar.`).show();
+		}
+
+		this.$body.find("#ef-purch-stg-confirm").prop("disabled", !allOk);
+	}
+
+	_stg_confirm() {
+		this._stg_read_header();
+		this._stg_read_grid_changes();
+		this._stg_validate_rows();
+
+		const bad = (this._stg_rows || []).filter(r => r._errors.length > 0);
+		if (bad.length) {
+			frappe.msgprint({ title: "Errores pendientes", message: `Hay ${bad.length} línea(s) con errores. Corrígelas antes de importar.`, indicator: "red" });
+			this._stg_render_grid();
+			this._stg_update_summary();
+			return;
+		}
+		const h = this._stg_header;
+		if (!h.supplier || !h.bill_no) {
+			frappe.msgprint({ title: "Encabezado incompleto", message: "Proveedor y Número de Factura son obligatorios.", indicator: "red" });
+			return;
+		}
+
+		// Pasar a formulario normal con los datos corregidos
+		this._purch_doc = this._empty_purch_doc();
+		Object.assign(this._purch_doc, h);
+		this._purch_doc.items = (this._stg_rows || []).map(row => ({
+			item_code:     row.item_code,
+			item_name:     row.item_name,
+			item_group:    row.item_group,
+			has_serial_no: row.has_serial_no,
+			is_stock_item: row.is_stock_item,
+			qty:           row.qty,
+			rate:          row.rate,
+			amount:        row.amount,
+			warehouse:     row.warehouse,
+			serial_no:     row.serial_no || "",
+			update_stock:  row.update_stock,
+			_fetched:      true,
+		}));
+
+		// Poblar form header
+		this.$body.find("#ef-purch-supplier").val(h.supplier);
+		this.$body.find("#ef-purch-bill-no").val(h.bill_no);
+		this.$body.find("#ef-purch-bill-date").val(h.bill_date);
+		this.$body.find("#ef-purch-posting-date").val(h.posting_date);
+		this.$body.find("#ef-purch-currency").val(h.currency);
+		this.$body.find("#ef-purch-tax-type").val(h.tax_type || "normal");
+		this.$body.find("#ef-purch-form-title").text("Nueva Factura de Compra (desde Excel)");
+		this.$body.find("#ef-purch-status-badge").text("NUEVO").attr("class","ef-badge ef-badge-new");
+		this.$body.find("#ef-purch-btn-cancel-doc").hide();
+		this.$body.find("#ef-purch-btn-save,#ef-purch-btn-submit,#ef-purch-btn-add-item").show().prop("disabled", false);
+
+		this._render_purch_items();
+		this._show_purch_form();
+		frappe.show_alert({ message: `${this._purch_doc.items.length} línea(s) importada(s) correctamente.`, indicator: "green" });
 	}
 }
 

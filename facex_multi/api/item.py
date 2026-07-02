@@ -31,16 +31,19 @@ def get_price_lists(company: str = None):
 
     company = get_effective_company(company)
 
-    return frappe.get_all(
-        "Price List",
-        filters={"enabled": 1},
-        or_filters=[
-            ["bfel_company", "=", company],
-            ["bfel_company", "is", "not set"],
-            ["bfel_company", "=", ""]
-        ],
-        fields=["name", "currency", "selling", "buying"],
-        order_by="name asc"
+    return frappe.db.sql(
+        """
+        SELECT name, currency, selling, buying
+        FROM `tabPrice List`
+        WHERE enabled = 1
+          AND (
+              bfel_company = %(company)s
+              OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
+          )
+        ORDER BY name ASC
+        """,
+        {"company": company},
+        as_dict=True,
     )
 
 
@@ -59,7 +62,10 @@ def search_items(txt: str = None, company: str = None):
             SELECT name, item_code, item_name, stock_uom, description
             FROM `tabItem`
             WHERE disabled = 0
-              AND bfel_company = %(company)s
+              AND (
+                  bfel_company = %(company)s
+                  OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
+              )
               AND (name LIKE %(q)s OR item_name LIKE %(q)s)
             ORDER BY item_name ASC
             LIMIT 50
@@ -69,15 +75,20 @@ def search_items(txt: str = None, company: str = None):
         )
         return rows
     else:
-        return frappe.db.get_all(
-            "Item",
-            filters=[
-                ["disabled", "=", 0],
-                ["bfel_company", "=", company]
-            ],
-            fields=["name", "item_code", "item_name", "stock_uom", "description"],
-            limit=50,
-            order_by="item_name asc"
+        return frappe.db.sql(
+            """
+            SELECT name, item_code, item_name, stock_uom, description
+            FROM `tabItem`
+            WHERE disabled = 0
+              AND (
+                  bfel_company = %(company)s
+                  OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
+              )
+            ORDER BY item_name ASC
+            LIMIT 50
+            """,
+            {"company": company},
+            as_dict=True,
         )
 
 
@@ -210,14 +221,22 @@ def get_all_prices(price_list: str, txt: str = None, company: str = None):
 
     company = get_effective_company(company)
     
-    filters = [
-        ["disabled", "=", 0],
-        ["bfel_company", "=", company]
-    ]
-    if txt:
-        filters.append(["item_name", "like", f"%{txt}%"])
-
-    items = frappe.db.get_all("Item", filters=filters, fields=["name", "item_name", "stock_uom"], limit=50)
+    txt_filter = f"AND item_name LIKE %(txt)s" if txt else ""
+    items = frappe.db.sql(
+        f"""
+        SELECT name, item_name, stock_uom
+        FROM `tabItem`
+        WHERE disabled = 0
+          AND (
+              bfel_company = %(company)s
+              OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
+          )
+          {txt_filter}
+        LIMIT 50
+        """,
+        {"company": company, "txt": f"%{txt}%" if txt else ""},
+        as_dict=True,
+    )
     
     # Obtener moneda de la lista de precios
     currency = frappe.db.get_value("Price List", price_list, "currency") or "GTQ"
@@ -280,19 +299,22 @@ def get_customers_list(txt: str = None, company: str = None):
 
     company = get_effective_company(company)
     
-    filters = [
-        ["disabled", "=", 0],
-        ["bfel_company", "=", company]
-    ]
-    if txt:
-        filters.append(["customer_name", "like", f"%{txt}%"])
-
-    res = frappe.get_all(
-        "Customer",
-        filters=filters,
-        fields=["name", "customer_name", "tax_id", "bfel_id_receptor"],
-        limit=50,
-        order_by="customer_name asc"
+    txt_filter = "AND customer_name LIKE %(txt)s" if txt else ""
+    res = frappe.db.sql(
+        f"""
+        SELECT name, customer_name, tax_id, bfel_id_receptor
+        FROM `tabCustomer`
+        WHERE disabled = 0
+          AND (
+              bfel_company = %(company)s
+              OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
+          )
+          {txt_filter}
+        ORDER BY customer_name ASC
+        LIMIT 50
+        """,
+        {"company": company, "txt": f"%{txt}%" if txt else ""},
+        as_dict=True,
     )
     for r in res:
         nit = r.get("bfel_id_receptor") or r.get("tax_id") or ""
