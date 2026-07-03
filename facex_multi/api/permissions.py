@@ -13,6 +13,7 @@ _ALL_PERM_FIELDS = [
     "puede_guardar", "puede_validar", "puede_certificar",
     "puede_compras", "puede_validar_compras", "puede_cancelar_compras",
     "crea_clientes", "modifica_clientes",
+    "crea_proveedores", "modifica_proveedores",
     "crea_items", "modifica_items", "actualiza_precios",
     "reporte_ventas_fecha", "reporte_ventas_producto",
     "reporte_facturas_canceladas", "reporte_estados_cuenta",

@@ -114,11 +114,14 @@ def get_item(name: str, price_list: str = None, company: str = None):
     ) or 0.0
 
     return {
-        "item_code": doc.name,
-        "item_name": doc.item_name or "",
-        "description": doc.description or "",
-        "stock_uom": doc.stock_uom or "Nos",
-        "item_group": doc.item_group or "",
+        "item_code":    doc.name,
+        "item_name":    doc.item_name or "",
+        "description":  doc.description or "",
+        "stock_uom":    doc.stock_uom or "Nos",
+        "item_group":   doc.item_group or "",
+        "has_serial_no":  int(doc.has_serial_no or 0),
+        "has_batch_no":   int(doc.has_batch_no or 0),
+        "is_stock_item":  int(doc.is_stock_item or 0),
         "standard_price": float(price)
     }
 
@@ -196,6 +199,21 @@ def create_or_update_item(data_json: str, company: str = None):
     doc.description = doc.item_name
     doc.stock_uom = data.get("stock_uom") or doc.stock_uom or "Nos"
     doc.item_group = data.get("item_group") or doc.item_group
+
+    gestionado_por = (data.get("gestionado_por") or "General").strip()
+    if gestionado_por == "Serie":
+        doc.has_serial_no = 1
+        doc.has_batch_no  = 0
+        doc.is_stock_item = 1
+    elif gestionado_por == "Lote":
+        doc.has_serial_no = 0
+        doc.has_batch_no  = 1
+        doc.is_stock_item = 1
+    else:
+        doc.has_serial_no = 0
+        doc.has_batch_no  = 0
+        if "is_stock_item" in data:
+            doc.is_stock_item = int(data.get("is_stock_item") or 0)
 
     # Forzar bfel_company
     if doc.meta.has_field("bfel_company"):

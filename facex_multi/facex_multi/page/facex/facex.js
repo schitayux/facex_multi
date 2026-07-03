@@ -698,47 +698,80 @@ class EFastSalePage {
     <div style="display: grid; grid-template-columns: 280px 1fr; gap: 24px; min-height: 750px;">
       
       <!-- Left Sidebar Menu -->
-      <div style="background: var(--ef-card); border: 1px solid var(--ef-border); border-radius: 12px; padding: 18px; box-shadow: var(--ef-shadow); display: flex; flex-direction: column; gap: 6px; align-self: start;">
-        <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.8px; color: var(--ef-text-muted); margin-bottom: 12px; padding-left: 8px;">
+      <div style="background: var(--ef-card); border: 1px solid var(--ef-border); border-radius: 12px; padding: 14px; box-shadow: var(--ef-shadow); display: flex; flex-direction: column; gap: 2px; align-self: start;">
+        <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.8px; color: var(--ef-text-muted); margin-bottom: 10px; padding-left: 8px;">
           Portal de Reportes
         </div>
-        <button class="ef-report-nav-btn ef-report-nav-active" data-report="sales_by_date">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-          <span>Ventas por Fecha</span>
-        </button>
-        <button class="ef-report-nav-btn" data-report="sales_by_product">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
-          <span>Ventas por Producto</span>
-        </button>
-        <button class="ef-report-nav-btn" data-report="cancelled_invoices">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-          <span>Facturas Canceladas</span>
-        </button>
-        <button class="ef-report-nav-btn" data-report="customer_statement">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-          <span>Estado de Cuenta</span>
-        </button>
-        <button class="ef-report-nav-btn" data-report="aging_receivables">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-          <span>Antigüedad de Saldos</span>
-        </button>
-        <button class="ef-report-nav-btn" data-report="quotations_report">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-          <span>Cotizaciones (Pre-Facturas)</span>
-        </button>
-        <button class="ef-report-nav-btn" data-report="payments_report">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
-          <span>Recibos y Pagos</span>
-        </button>
-        <button class="ef-report-nav-btn" data-report="sales_growth_analysis">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
-          <span>Crecimiento de Ventas</span>
-        </button>
-        
-        <div style="border-top: 1px solid var(--ef-border); margin: 12px 0;"></div>
-        
+
+        <!-- Group: Ventas -->
+        <div class="ef-report-group" data-group="ventas">
+          <button class="ef-report-group-header" data-group="ventas">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+            <span>Ventas</span>
+            <svg class="ef-group-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ef-report-group-items" data-group-items="ventas">
+            <button class="ef-report-nav-btn ef-report-nav-active" data-report="sales_by_date">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              <span>Ventas por Fecha</span>
+            </button>
+            <button class="ef-report-nav-btn" data-report="sales_by_product">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+              <span>Ventas por Producto</span>
+            </button>
+            <button class="ef-report-nav-btn" data-report="cancelled_invoices">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+              <span>Facturas Canceladas</span>
+            </button>
+            <button class="ef-report-nav-btn" data-report="quotations_report">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+              <span>Cotizaciones</span>
+            </button>
+            <button class="ef-report-nav-btn" data-report="sales_growth_analysis">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+              <span>Crecimiento de Ventas</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Group: Clientes -->
+        <div class="ef-report-group" data-group="clientes">
+          <button class="ef-report-group-header" data-group="clientes">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            <span>Clientes</span>
+            <svg class="ef-group-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ef-report-group-items" data-group-items="clientes">
+            <button class="ef-report-nav-btn" data-report="customer_statement">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="11" y1="9" x2="8" y2="9"/></svg>
+              <span>Estado de Cuenta</span>
+            </button>
+            <button class="ef-report-nav-btn" data-report="aging_receivables">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              <span>Antigüedad de Saldos</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Group: Bancos -->
+        <div class="ef-report-group" data-group="bancos">
+          <button class="ef-report-group-header" data-group="bancos">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+            <span>Bancos</span>
+            <svg class="ef-group-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ef-report-group-items" data-group-items="bancos">
+            <button class="ef-report-nav-btn" data-report="payments_report">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+              <span>Recibos y Pagos</span>
+            </button>
+          </div>
+        </div>
+
+        <div style="border-top: 1px solid var(--ef-border); margin: 8px 0;"></div>
+
         <button class="ef-report-nav-btn" data-report="print_receipt" style="color: var(--ef-warning);">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
           <span>Imprimir Recibo</span>
         </button>
       </div>
@@ -776,6 +809,12 @@ class EFastSalePage {
             <input type="date" id="ef-rep-end-date" class="ef-input" style="width: 140px; padding: 6px 10px;" />
           </div>
           
+          <!-- company filter -->
+          <div class="ef-rep-filter ef-filter-company" style="display: flex; flex-direction: column; gap: 4px; width: 200px;">
+            <label class="ef-label" style="font-weight: 700; font-size: 10px;">Compañía</label>
+            <select id="ef-rep-company" class="ef-select" style="padding: 6px 10px;"></select>
+          </div>
+
           <!-- establecimiento filter -->
           <div class="ef-rep-filter ef-filter-establecimiento" style="display: flex; flex-direction: column; gap: 4px; width: 220px;">
             <label class="ef-label" style="font-weight: 700; font-size: 10px;">Establecimiento</label>
@@ -997,6 +1036,9 @@ class EFastSalePage {
       <button class="ef-tab-btn ef-maint-tab-btn" data-maint-tab="precios">
         Precios
       </button>
+      <button class="ef-tab-btn ef-maint-tab-btn" data-maint-tab="proveedores">
+        Proveedores
+      </button>
     </div>
 
     <!-- Maint Tab Content: Clientes -->
@@ -1034,17 +1076,43 @@ class EFastSalePage {
               <label class="ef-label">ID Receptor (FEL)</label>
               <input type="text" id="ef-maint-cust-receptor" class="ef-input" style="width:100%" />
             </div>
-            <div class="ef-field-group">
-              <label class="ef-label">Teléfono</label>
-              <input type="text" id="ef-maint-cust-phone" class="ef-input" style="width:100%" />
+            <div class="ef-field-group" style="grid-column: span 2;">
+              <details id="ef-maint-cust-contacto-section" style="border:1px solid var(--ef-border); border-radius:8px; padding:10px 14px;">
+                <summary style="cursor:pointer; font-weight:700; color:var(--ef-primary); font-size:13px;">Contacto</summary>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-top:14px;">
+                  <div class="ef-field-group">
+                    <label class="ef-label">Nombre</label>
+                    <input type="text" id="ef-maint-cust-contact-nombre" class="ef-input" style="width:100%" />
+                  </div>
+                  <div class="ef-field-group">
+                    <label class="ef-label">Apellido</label>
+                    <input type="text" id="ef-maint-cust-contact-apellido" class="ef-input" style="width:100%" />
+                  </div>
+                  <div class="ef-field-group">
+                    <label class="ef-label">Email</label>
+                    <input type="email" id="ef-maint-cust-contact-email" class="ef-input" style="width:100%" />
+                  </div>
+                  <div class="ef-field-group">
+                    <label class="ef-label">Teléfono</label>
+                    <input type="text" id="ef-maint-cust-contact-telefono" class="ef-input" style="width:100%" />
+                  </div>
+                </div>
+              </details>
             </div>
             <div class="ef-field-group" style="grid-column: span 2;">
-              <label class="ef-label">Dirección</label>
-              <input type="text" id="ef-maint-cust-addr" class="ef-input" style="width:100%" />
-            </div>
-            <div class="ef-field-group">
-              <label class="ef-label">Departamento</label>
-              <input type="text" id="ef-maint-cust-dept" class="ef-input" style="width:100%" />
+              <details id="ef-maint-cust-direccion-section" style="border:1px solid var(--ef-border); border-radius:8px; padding:10px 14px;">
+                <summary style="cursor:pointer; font-weight:700; color:var(--ef-primary); font-size:13px;">Dirección</summary>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-top:14px;">
+                  <div class="ef-field-group" style="grid-column: span 2;">
+                    <label class="ef-label">Dirección</label>
+                    <input type="text" id="ef-maint-cust-addr" class="ef-input" style="width:100%" />
+                  </div>
+                  <div class="ef-field-group">
+                    <label class="ef-label">Departamento</label>
+                    <input type="text" id="ef-maint-cust-dept" class="ef-input" style="width:100%" />
+                  </div>
+                </div>
+              </details>
             </div>
             <div class="ef-field-group">
               <label class="ef-label">Lista de precios</label>
@@ -1102,6 +1170,20 @@ class EFastSalePage {
               <label class="ef-label">Grupo de Artículos</label>
               <div id="ef-maint-item-group-ctrl" class="ef-link-ctrl" style="min-height: 32px;"></div>
             </div>
+            <div class="ef-field-group">
+              <label class="ef-label">Gestionado por</label>
+              <select id="ef-maint-item-gestionado-por" class="ef-input" style="width:100%">
+                <option value="General">General</option>
+                <option value="Serie">Serie (No. Serie)</option>
+                <option value="Lote">Lote (Batch)</option>
+              </select>
+            </div>
+            <div class="ef-field-group" style="display:flex; align-items:flex-end; padding-bottom:4px;">
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13px; color:var(--ef-text); user-select:none;">
+                <input type="checkbox" id="ef-maint-item-is-stock" style="width:16px; height:16px; margin:0; accent-color:var(--ef-primary);" />
+                <span>Inventariable</span>
+              </label>
+            </div>
             <div class="ef-field-group" style="grid-column: span 2;">
               <label class="ef-label">Descripción FEL <span style="color:#64748b; font-weight:400; font-size:11px;">(max. 500 · se llena automáticamente desde el Nombre)</span></label>
               <textarea id="ef-maint-item-desc" class="ef-textarea" style="width:100%; height:80px;" maxlength="500" placeholder="Se completará automáticamente con el Nombre del ítem."></textarea>
@@ -1111,6 +1193,51 @@ class EFastSalePage {
             <button id="ef-maint-item-btn-delete" class="ef-btn" style="background:#ef4444; color:white; padding:8px 24px; display:none; margin-right:8px;">Eliminar Producto</button>
             <button id="ef-maint-item-btn-save" class="ef-btn ef-btn-primary" style="padding:8px 24px;">Guardar Producto</button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Maint Tab Content: Proveedores -->
+    <div class="ef-maint-tab-content" id="ef-maint-tab-proveedores" style="display:none;">
+      <div style="display: grid; grid-template-columns: 320px 1fr; gap: 24px; align-items: start;">
+        <div class="ef-analytics-card" style="box-shadow: var(--ef-shadow); padding:16px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <span class="ef-analytics-card-title" style="margin:0;">Listado de Proveedores</span>
+            <button id="ef-maint-supp-btn-load" class="ef-btn ef-btn-sm ef-btn-secondary" style="padding:2px 8px; font-size:10px;">Cargar Lista</button>
+          </div>
+          <input type="text" id="ef-maint-supp-search" class="ef-input" placeholder="Buscar proveedor..." style="width:100%; margin-bottom:12px;" />
+          <div id="ef-maint-supp-list" style="max-height: 400px; overflow-y:auto; display:flex; flex-direction:column; gap:6px;"></div>
+        </div>
+        <div class="ef-analytics-card" style="box-shadow: var(--ef-shadow); padding:20px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; border-bottom:1px solid var(--ef-border); padding-bottom:10px;">
+            <span id="ef-maint-supp-form-title" style="font-weight:700; color:var(--ef-primary); font-size:16px;">Selecciona o crea un proveedor</span>
+            <div style="display:flex; gap:8px;">
+              <button id="ef-maint-supp-btn-new" class="ef-btn ef-btn-sm" style="background:#10b981;color:#fff;">+ Nuevo</button>
+              <button id="ef-maint-supp-btn-save" class="ef-btn ef-btn-sm ef-btn-primary" style="display:none;">Guardar</button>
+              <button id="ef-maint-supp-btn-delete" class="ef-btn ef-btn-sm" style="display:none;background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;">Eliminar</button>
+            </div>
+          </div>
+          <div id="ef-maint-supp-form" style="display:none;">
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
+              <div style="grid-column:1/-1;">
+                <label class="ef-label">Nombre del Proveedor <span class="ef-req">*</span></label>
+                <input type="text" id="ef-maint-supp-name" class="ef-input" style="width:100%" placeholder="Nombre comercial o razón social"/>
+              </div>
+              <div>
+                <label class="ef-label">NIT / ID Fiscal</label>
+                <input type="text" id="ef-maint-supp-nit" class="ef-input" style="width:100%" placeholder="Ej: 12345678-9"/>
+              </div>
+              <div>
+                <label class="ef-label">Teléfono</label>
+                <input type="text" id="ef-maint-supp-phone" class="ef-input" style="width:100%" placeholder="Ej: 2222-3333"/>
+              </div>
+              <div style="grid-column:1/-1;">
+                <label class="ef-label">Dirección</label>
+                <input type="text" id="ef-maint-supp-address" class="ef-input" style="width:100%" placeholder="Dirección fiscal"/>
+              </div>
+            </div>
+          </div>
+          <div id="ef-maint-supp-empty" style="color:#94a3b8; font-size:13px; padding:20px 0;">Selecciona un proveedor de la lista o haz clic en <strong>+ Nuevo</strong>.</div>
         </div>
       </div>
     </div>
@@ -1336,13 +1463,17 @@ class EFastSalePage {
       <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:16px;margin-bottom:14px;display:flex;justify-content:flex-end;">
         <div style="min-width:260px;">
           <div class="ef-total-row"><span class="ef-total-label">Subtotal</span><span id="ef-purch-subtotal" class="ef-total-value">Q 0.00</span></div>
-          <div class="ef-total-row"><span class="ef-total-label">IVA (12%)</span><span id="ef-purch-tax" class="ef-total-value">Q 0.00</span></div>
+          <div class="ef-total-row"><span id="ef-purch-tax-label" class="ef-total-label">IVA (12%)</span><span id="ef-purch-tax" class="ef-total-value">Q 0.00</span></div>
           <div class="ef-total-row ef-total-row--grand"><span class="ef-total-label">TOTAL</span><span id="ef-purch-grand" class="ef-total-value ef-grand">Q 0.00</span></div>
         </div>
       </div>
 
       <!-- Action buttons -->
-      <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;">
+      <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;align-items:center;">
+        <a id="ef-purch-btn-open-erp" href="#" target="_blank" class="ef-btn ef-btn-secondary" style="display:none;text-decoration:none;">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          Abrir ERP
+        </a>
         <button id="ef-purch-btn-cancel-doc" class="ef-btn" style="background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;display:none;">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
           Cancelar Factura
@@ -1392,6 +1523,7 @@ class EFastSalePage {
 			this.$body.find("#ef-billing-view").hide();
 			this.$body.find("#ef-reports-view").hide();
 			this.$body.find("#ef-maintenance-view").hide();
+			this.$body.find("#ef-purchase-view").hide();
 			// Clear URL query params
 			frappe.set_route("facex");
 			this._load_dashboard_data();
@@ -1400,6 +1532,7 @@ class EFastSalePage {
 			this.$body.find("#ef-billing-view").show();
 			this.$body.find("#ef-reports-view").hide();
 			this.$body.find("#ef-maintenance-view").hide();
+			this.$body.find("#ef-purchase-view").hide();
 			if (this.doc && this.doc.name && this.doc.name !== "new") {
 				frappe.set_route("facex", "", { invoice: this.doc.name });
 			} else {
@@ -1411,6 +1544,7 @@ class EFastSalePage {
 			this.$body.find("#ef-billing-view").hide();
 			this.$body.find("#ef-reports-view").show();
 			this.$body.find("#ef-maintenance-view").hide();
+			this.$body.find("#ef-purchase-view").hide();
 			frappe.set_route("facex", "", { view: "reports" });
 			this._load_reports_view();
 		} else if (view === "maintenance") {
@@ -2612,6 +2746,54 @@ body.facex-fullscreen-mode .ef-main-layout {
   border-radius: 0 6px 6px 0;
   padding-left: 11px;
 }
+.ef-report-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.ef-report-group-header {
+  background: transparent;
+  border: none;
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--ef-text-muted);
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  transition: background 0.15s ease, color 0.15s ease;
+  margin-top: 4px;
+}
+.ef-report-group-header:hover {
+  background: #f1f5f9;
+  color: var(--ef-primary);
+}
+.ef-report-group-header .ef-group-chevron {
+  margin-left: auto;
+  transition: transform 0.2s ease;
+}
+.ef-report-group-header.ef-group-collapsed .ef-group-chevron {
+  transform: rotate(-90deg);
+}
+.ef-report-group-items {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+  transition: max-height 0.2s ease;
+}
+.ef-report-group-items.ef-group-hidden {
+  display: none;
+}
+.ef-report-group-items .ef-report-nav-btn {
+  padding-left: 28px;
+  font-size: 12px;
+}
 
 /* Fix long dropdown cut-off */
 .awesomplete > ul, .awesomplete ul, .link-select-container ul {
@@ -3647,6 +3829,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			puede_guardar: 1, puede_validar: 1, puede_certificar: 1,
 			puede_compras: 1, puede_validar_compras: 1, puede_cancelar_compras: 1,
 			crea_clientes: 1, modifica_clientes: 1,
+			crea_proveedores: 1, modifica_proveedores: 1,
 			crea_items: 1, modifica_items: 1, actualiza_precios: 1,
 			reporte_ventas_fecha: 1, reporte_ventas_producto: 1,
 			reporte_facturas_canceladas: 1, reporte_estados_cuenta: 1,
@@ -3681,6 +3864,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 			const field  = REPORT_PERM[report];
 			if (field && !p[field]) $(el).hide();
 		});
+		// Ocultar cabecera de grupo si todos sus reportes fueron ocultados explícitamente
+		this.$body.find(".ef-report-group").each((_, grpEl) => {
+			const $grp = $(grpEl);
+			const allHidden = $grp.find(".ef-report-nav-btn").toArray().every(btn => btn.style.display === 'none');
+			if (allHidden) $grp.hide();
+		});
 		// Si ningún reporte visible, ocultar tab Reportes del nav
 		const anyReport = Object.values(REPORT_PERM).some(f => p[f]);
 		if (!anyReport) this.$body.find(".ef-nav-btn[data-view='reports']").hide();
@@ -3702,8 +3891,19 @@ body.facex-fullscreen-mode .ef-main-layout {
 				.prop("readonly", true).css("background", "#f8fafc");
 		}
 		if (!p.actualiza_precios) {
-			// Ocultar tab Precios del mantenimiento completo
 			this.$body.find(".ef-maint-tab-btn[data-maint-tab='precios']").hide();
+		}
+		if (!p.crea_proveedores && !p.modifica_proveedores) {
+			this.$body.find(".ef-maint-tab-btn[data-maint-tab='proveedores']").hide();
+		}
+		if (!p.crea_proveedores) {
+			this.$body.find("#ef-maint-supp-btn-new").hide();
+		}
+		if (!p.modifica_proveedores) {
+			this.$body.find("#ef-maint-supp-btn-save").hide();
+			this.$body.find("#ef-maint-supp-btn-delete").hide();
+			this.$body.find("#ef-maint-tab-proveedores .ef-input")
+				.prop("readonly", true).css("background", "#f8fafc");
 		}
 
 		// Acciones del Facturador se aplican en _update_action_bar_state
@@ -5978,6 +6178,20 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this._switch_report(report_id);
 		});
 
+		// Group header toggle
+		this.$body.find(".ef-report-group-header").off("click").on("click", (e) => {
+			const group = $(e.currentTarget).data("group");
+			const $header = $(e.currentTarget);
+			const $items = this.$body.find(`.ef-report-group-items[data-group-items="${group}"]`);
+			$header.toggleClass("ef-group-collapsed");
+			$items.toggleClass("ef-group-hidden");
+		});
+
+		// Company change reloads the report
+		this.$body.find("#ef-rep-company").off("change").on("change", () => {
+			this._run_active_report();
+		});
+
 		this.$body.find("#ef-rep-btn-apply").off("click").on("click", () => {
 			this._run_active_report();
 		});
@@ -6168,6 +6382,28 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const currentMonth = new Date().getMonth() + 1;
 		this.$body.find("#ef-rep-month").val(currentMonth);
 
+		// Populate company selector
+		const $repCo = this.$body.find("#ef-rep-company");
+		if ($repCo.length && !$repCo.data("populated")) {
+			$repCo.data("populated", true);
+			$repCo.append(`<option value="">— Todas —</option>`);
+			frappe.call({
+				method: "facex_multi.api.invoice.get_user_companies",
+				callback: (r) => {
+					const companies = r.message || [];
+					const current = this.doc.company || this.defaults.company || "";
+					companies.forEach((c) => {
+						const sel = c === current ? ' selected' : '';
+						$repCo.append(`<option value="${_esc(c)}"${sel}>${_esc(c)}</option>`);
+					});
+					// Si solo hay una compañía, seleccionarla por defecto
+					if (companies.length === 1) {
+						$repCo.val(companies[0]);
+					}
+				}
+			});
+		}
+
 		// Populate establishment selector
 		const $repEst = this.$body.find("#ef-rep-establecimiento");
 		if ($repEst.length) {
@@ -6200,23 +6436,23 @@ body.facex-fullscreen-mode .ef-main-layout {
 		}
 
 		if (report_id === "sales_by_date") {
-			this.$body.find(".ef-filter-date, .ef-filter-customer, .ef-filter-warehouse, .ef-filter-establecimiento").show();
+			this.$body.find(".ef-filter-company, .ef-filter-date, .ef-filter-customer, .ef-filter-warehouse, .ef-filter-establecimiento").show();
 		} else if (report_id === "sales_by_product") {
-			this.$body.find(".ef-filter-date, .ef-filter-customer, .ef-filter-item, .ef-filter-item-group, .ef-filter-warehouse, .ef-filter-establecimiento").show();
+			this.$body.find(".ef-filter-company, .ef-filter-date, .ef-filter-customer, .ef-filter-item, .ef-filter-item-group, .ef-filter-warehouse, .ef-filter-establecimiento").show();
 		} else if (report_id === "cancelled_invoices") {
-			this.$body.find(".ef-filter-date, .ef-filter-customer, .ef-filter-establecimiento").show();
+			this.$body.find(".ef-filter-company, .ef-filter-date, .ef-filter-customer, .ef-filter-establecimiento").show();
 		} else if (report_id === "customer_statement") {
-			this.$body.find(".ef-filter-customer, .ef-filter-date, .ef-filter-doc-type, .ef-filter-establecimiento").show();
+			this.$body.find(".ef-filter-company, .ef-filter-customer, .ef-filter-date, .ef-filter-doc-type, .ef-filter-establecimiento").show();
 		} else if (report_id === "aging_receivables") {
-			this.$body.find(".ef-filter-customer, .ef-filter-establecimiento").show();
+			this.$body.find(".ef-filter-company, .ef-filter-customer, .ef-filter-establecimiento").show();
 		} else if (report_id === "quotations_report") {
-			this.$body.find(".ef-filter-date, .ef-filter-customer, .ef-filter-establecimiento").show();
+			this.$body.find(".ef-filter-company, .ef-filter-date, .ef-filter-customer, .ef-filter-establecimiento").show();
 		} else if (report_id === "payments_report") {
-			this.$body.find(".ef-filter-date, .ef-filter-payment-method, .ef-filter-establecimiento").show();
+			this.$body.find(".ef-filter-company, .ef-filter-date, .ef-filter-payment-method, .ef-filter-establecimiento").show();
 		} else if (report_id === "uncertified_invoices") {
-			this.$body.find(".ef-filter-establecimiento").show();
+			this.$body.find(".ef-filter-company, .ef-filter-establecimiento").show();
 		} else if (report_id === "sales_growth_analysis") {
-			this.$body.find(".ef-filter-year, .ef-filter-month, .ef-filter-establecimiento").show();
+			this.$body.find(".ef-filter-company, .ef-filter-year, .ef-filter-month, .ef-filter-establecimiento").show();
 			this.$body.find("#ef-report-chart-container").show();
 		} else if (report_id === "print_receipt") {
 			this.$body.find("#ef-report-filters").hide();
@@ -6284,7 +6520,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 			args = { year, month, establecimiento };
 		}
 
-		args.company = this.doc.company || this.defaults.company || "";
+		// Si el filtro de compañía está en "Todas" (vacío), el backend resolverá por permisos del usuario
+		const selectedCompany = this.$body.find("#ef-rep-company").val();
+		args.company = selectedCompany !== undefined ? selectedCompany : (this.doc.company || this.defaults.company || "");
 
 		frappe.call({
 			method: method,
@@ -7514,6 +7752,16 @@ body.facex-fullscreen-mode .ef-main-layout {
 			}
 		});
 
+		// Gestionado por → sincronizar checkbox ¿Inventariable?
+		this.$body.on("change", "#ef-maint-item-gestionado-por", (e) => {
+			const val = $(e.currentTarget).val();
+			const forced = val === "Serie" || val === "Lote";
+			this.$body.find("#ef-maint-item-is-stock")
+				.prop("checked", forced || this.$body.find("#ef-maint-item-is-stock").prop("checked"))
+				.prop("disabled", forced);
+			if (forced) this.$body.find("#ef-maint-item-is-stock").prop("checked", true);
+		});
+
 		// Auto-sync: descripción siempre = item_name al escribir
 		this.$body.on("input", "#ef-maint-item-name", (e) => {
 			this.$body.find("#ef-maint-item-desc").val($(e.target).val());
@@ -7597,6 +7845,31 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-maint-item-btn-delete").on("click", () => {
 			this._delete_maint_item();
 		});
+
+		// ── Suppliers ──
+		let suppTimer = null;
+		this.$body.find("#ef-maint-supp-search").on("input", (e) => {
+			clearTimeout(suppTimer);
+			suppTimer = setTimeout(() => {
+				this._load_maint_suppliers($(e.target).val());
+			}, 250);
+		});
+
+		this.$body.find("#ef-maint-supp-btn-load").on("click", () => {
+			this._load_maint_suppliers(this.$body.find("#ef-maint-supp-search").val());
+		});
+
+		this.$body.find("#ef-maint-supp-btn-new").on("click", () => {
+			this._clear_maint_supp_form();
+		});
+
+		this.$body.find("#ef-maint-supp-btn-save").on("click", () => {
+			this._save_maint_supplier();
+		});
+
+		this.$body.find("#ef-maint-supp-btn-delete").on("click", () => {
+			this._delete_maint_supplier();
+		});
 	}
 
 	_load_maintenance_view() {
@@ -7617,6 +7890,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this._clear_maint_item_form();
 		} else if (tab === "precios") {
 			this._load_price_lists_dropdown_then_load_prices();
+		} else if (tab === "proveedores") {
+			this._load_maint_suppliers();
+			this._clear_maint_supp_form();
 		}
 	}
 
@@ -7721,9 +7997,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 					this.$body.find("#ef-maint-cust-name").val(c.customer_name);
 					this.$body.find("#ef-maint-cust-ident").val(c.bfel_identificacion);
 					this.$body.find("#ef-maint-cust-receptor").val(c.bfel_id_receptor);
-					this.$body.find("#ef-maint-cust-phone").val(c.custom_telefono);
-					this.$body.find("#ef-maint-cust-addr").val(c.custom_direccion);
-					this.$body.find("#ef-maint-cust-dept").val(c.custom_departamento);
+					this.$body.find("#ef-maint-cust-addr").val(c.direccion);
+					this.$body.find("#ef-maint-cust-dept").val(c.departamento);
+					this.$body.find("#ef-maint-cust-contact-nombre").val(c.contacto_nombre);
+					this.$body.find("#ef-maint-cust-contact-apellido").val(c.contacto_apellido);
+					this.$body.find("#ef-maint-cust-contact-email").val(c.contacto_email);
+					this.$body.find("#ef-maint-cust-contact-telefono").val(c.contacto_telefono);
 					if (this.maint_cust_price_list_ctrl) {
 						this.maint_cust_price_list_ctrl.set_value(c.default_price_list || "");
 					}
@@ -7742,9 +8021,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-maint-cust-name").val("");
 		this.$body.find("#ef-maint-cust-ident").val("");
 		this.$body.find("#ef-maint-cust-receptor").val("");
-		this.$body.find("#ef-maint-cust-phone").val("");
 		this.$body.find("#ef-maint-cust-addr").val("");
 		this.$body.find("#ef-maint-cust-dept").val("");
+		this.$body.find("#ef-maint-cust-contact-nombre").val("");
+		this.$body.find("#ef-maint-cust-contact-apellido").val("");
+		this.$body.find("#ef-maint-cust-contact-email").val("");
+		this.$body.find("#ef-maint-cust-contact-telefono").val("");
 		if (this.maint_cust_price_list_ctrl) {
 			this.maint_cust_price_list_ctrl.set_value("");
 		}
@@ -7768,9 +8050,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 			customer_name,
 			bfel_identificacion: this.$body.find("#ef-maint-cust-ident").val(),
 			bfel_id_receptor: this.$body.find("#ef-maint-cust-receptor").val(),
-			custom_telefono: this.$body.find("#ef-maint-cust-phone").val(),
-			custom_direccion: this.$body.find("#ef-maint-cust-addr").val(),
-			custom_departamento: this.$body.find("#ef-maint-cust-dept").val(),
+			direccion: this.$body.find("#ef-maint-cust-addr").val(),
+			departamento: this.$body.find("#ef-maint-cust-dept").val(),
+			contacto_nombre: this.$body.find("#ef-maint-cust-contact-nombre").val(),
+			contacto_apellido: this.$body.find("#ef-maint-cust-contact-apellido").val(),
+			contacto_email: this.$body.find("#ef-maint-cust-contact-email").val(),
+			contacto_telefono: this.$body.find("#ef-maint-cust-contact-telefono").val(),
 			default_price_list: this.maint_cust_price_list_ctrl ? this.maint_cust_price_list_ctrl.get_value() : "",
 			payment_terms: this.maint_cust_payment_terms_ctrl ? this.maint_cust_payment_terms_ctrl.get_value() : ""
 		};
@@ -7847,6 +8132,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 						this.maint_item_group_ctrl.set_value(it.item_group || "");
 					}
 					this.$body.find("#ef-maint-item-desc").val(it.description);
+					const gestionado = it.has_serial_no ? "Serie" : (it.has_batch_no ? "Lote" : "General");
+					this.$body.find("#ef-maint-item-gestionado-por").val(gestionado);
+					const isStockForced = gestionado === "Serie" || gestionado === "Lote";
+					this.$body.find("#ef-maint-item-is-stock")
+						.prop("checked", isStockForced || !!it.is_stock_item)
+						.prop("disabled", isStockForced);
 					if (this.perms.modifica_items) this.$body.find("#ef-maint-item-btn-delete").show();
 				}
 			}
@@ -7867,6 +8158,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this.maint_item_group_ctrl.set_value("");
 		}
 		this.$body.find("#ef-maint-item-desc").val("");
+		this.$body.find("#ef-maint-item-gestionado-por").val("General");
+		this.$body.find("#ef-maint-item-is-stock").prop("checked", false).prop("disabled", false);
 		this.$body.find("#ef-maint-item-btn-delete").hide();
 		this.$body.find("#ef-maint-item-list .ef-cust-result").css("background", "#ffffff");
 	}
@@ -7890,7 +8183,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 			stock_uom: this.maint_item_uom_ctrl ? this.maint_item_uom_ctrl.get_value() : "Nos",
 			item_group: this.maint_item_group_ctrl ? this.maint_item_group_ctrl.get_value() : "",
 			price_list: plist,
-			description: this.$body.find("#ef-maint-item-desc").val()
+			description: this.$body.find("#ef-maint-item-desc").val(),
+			gestionado_por: this.$body.find("#ef-maint-item-gestionado-por").val() || "General",
+			is_stock_item:  this.$body.find("#ef-maint-item-is-stock").prop("checked") ? 1 : 0,
 		};
 
 		frappe.call({
@@ -8028,6 +8323,119 @@ body.facex-fullscreen-mode .ef-main-layout {
 		);
 	}
 
+	// ─── Supplier maintenance ───────────────────────────────────────────────
+
+	_load_maint_suppliers(txt = "") {
+		const company = this.doc.company || this.defaults.company || "";
+		frappe.call({
+			method: "facex_multi.api.purchase.search_suppliers_maint",
+			args:   { txt, company },
+			callback: (r) => {
+				if (r.exc) return;
+				const $list = this.$body.find("#ef-maint-supp-list");
+				$list.empty();
+				const rows = r.message || [];
+				if (!rows.length) {
+					$list.html('<div style="color:#94a3b8;font-size:12px;padding:8px 0;">Sin proveedores.</div>');
+					return;
+				}
+				rows.forEach(s => {
+					const $item = $(`<div style="padding:8px 10px;border:1px solid var(--ef-border);border-radius:6px;cursor:pointer;background:#fff;">
+						<div style="font-weight:600;color:#1e3a5f;font-size:13px;">${_esc(s.supplier_name)}</div>
+						<div style="font-size:11px;color:#64748b;">${_esc(s.name)}${s.tax_id ? ` · NIT: ${_esc(s.tax_id)}` : ""}</div>
+					</div>`);
+					$item.on("click", () => this._load_maint_supp_form(s.name));
+					$list.append($item);
+				});
+			},
+		});
+	}
+
+	_clear_maint_supp_form(suppName = "") {
+		this._current_maint_supp = "";
+		this.$body.find("#ef-maint-supp-form-title").text("Nuevo Proveedor");
+		this.$body.find("#ef-maint-supp-name").val("");
+		this.$body.find("#ef-maint-supp-nit").val("");
+		this.$body.find("#ef-maint-supp-phone").val("");
+		this.$body.find("#ef-maint-supp-address").val("");
+		this.$body.find("#ef-maint-supp-form").show();
+		this.$body.find("#ef-maint-supp-empty").hide();
+		this.$body.find("#ef-maint-supp-btn-save").show();
+		this.$body.find("#ef-maint-supp-btn-delete").hide();
+	}
+
+	_load_maint_supp_form(name) {
+		const company = this.doc.company || this.defaults.company || "";
+		frappe.call({
+			method: "facex_multi.api.purchase.get_supplier",
+			args:   { name, company },
+			callback: (r) => {
+				if (r.exc || !r.message) return;
+				const d = r.message;
+				this._current_maint_supp = d.name;
+				this.$body.find("#ef-maint-supp-form-title").text(d.supplier_name);
+				this.$body.find("#ef-maint-supp-name").val(d.supplier_name);
+				this.$body.find("#ef-maint-supp-nit").val(d.tax_id || "");
+				this.$body.find("#ef-maint-supp-phone").val(d.custom_telefono || "");
+				this.$body.find("#ef-maint-supp-address").val(d.custom_direccion || "");
+				this.$body.find("#ef-maint-supp-form").show();
+				this.$body.find("#ef-maint-supp-empty").hide();
+				this.$body.find("#ef-maint-supp-btn-save").show();
+				this.$body.find("#ef-maint-supp-btn-delete").show();
+			},
+		});
+	}
+
+	_save_maint_supplier() {
+		const supplier_name = this.$body.find("#ef-maint-supp-name").val().trim();
+		if (!supplier_name) {
+			frappe.msgprint({ message: "El nombre del proveedor es obligatorio.", indicator: "orange" });
+			return;
+		}
+		const company = this.doc.company || this.defaults.company || "";
+		const data = {
+			name:             this._current_maint_supp || "",
+			supplier_name,
+			tax_id:           this.$body.find("#ef-maint-supp-nit").val().trim(),
+			custom_telefono:  this.$body.find("#ef-maint-supp-phone").val().trim(),
+			custom_direccion: this.$body.find("#ef-maint-supp-address").val().trim(),
+		};
+		frappe.call({
+			method: "facex_multi.api.purchase.create_or_update_supplier",
+			args:   { data_json: JSON.stringify(data), company },
+			freeze: true, freeze_message: "Guardando proveedor...",
+			callback: (r) => {
+				if (!r.exc && r.message) {
+					frappe.show_alert({ message: `Proveedor <strong>${r.message.supplier_name}</strong> guardado.`, indicator: "green" });
+					this._load_maint_suppliers();
+					this._load_maint_supp_form(r.message.name);
+				}
+			},
+		});
+	}
+
+	_delete_maint_supplier() {
+		const name = this._current_maint_supp;
+		if (!name) return;
+		frappe.confirm(
+			`¿Eliminar el proveedor <strong>${_esc(name)}</strong>? Esta acción no se puede deshacer.`,
+			() => {
+				frappe.call({
+					method: "frappe.client.delete",
+					args:   { doctype: "Supplier", name },
+					freeze: true, freeze_message: "Eliminando proveedor...",
+					callback: (r) => {
+						if (!r.exc) {
+							frappe.show_alert({ message: "Proveedor eliminado.", indicator: "green" });
+							this._load_maint_suppliers();
+							this._clear_maint_supp_form();
+						}
+					},
+				});
+			}
+		);
+	}
+
 	// ═══════════════════════════════════════════════════════════════════════
 	// MÓDULO DE COMPRAS
 	// ═══════════════════════════════════════════════════════════════════════
@@ -8087,9 +8495,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 			clearTimeout(this._purch_supplier_timer);
 			this._purch_supplier_timer = setTimeout(() => {
 				if (txt.length < 1) return;
+				const company = this.doc.company || this.defaults.company || "";
 				frappe.call({
 					method: "facex_multi.api.purchase.search_suppliers",
-					args:   { txt },
+					args:   { txt, company },
 					callback: (r) => {
 						if (!r.exc && r.message) this._show_supplier_suggestions(r.message);
 					},
@@ -8188,10 +8597,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-purch-posting-date").val(today);
 		this.$body.find("#ef-purch-currency").val("GTQ");
 		this.$body.find("#ef-purch-tax-type").val("normal");
+		this.$body.find("#ef-purch-supplier,#ef-purch-bill-no,#ef-purch-bill-date,#ef-purch-posting-date,#ef-purch-currency,#ef-purch-tax-type")
+			.prop("disabled", false);
 		this.$body.find("#ef-purch-form-title").text("Nueva Factura de Compra");
 		this.$body.find("#ef-purch-status-badge").text("NUEVO").attr("class","ef-badge ef-badge-new");
 		this.$body.find("#ef-purch-btn-cancel-doc").hide();
-		this.$body.find("#ef-purch-btn-save,#ef-purch-btn-submit").show().prop("disabled", false);
+		this.$body.find("#ef-purch-btn-save,#ef-purch-btn-submit,#ef-purch-btn-add-item").show().prop("disabled", false);
+		this.$body.find("#ef-purch-btn-open-erp").hide();
 		this._render_purch_items();
 		this._show_purch_form();
 	}
@@ -8220,7 +8632,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 						is_stock_item: it.is_stock_item || 1,
 						qty:          it.qty,
 						rate:         it.rate,
-						amount:       it.amount,
+						amount:       it.amount || (parseFloat(it.qty || 0) * parseFloat(it.rate || 0)),
 						warehouse:    it.warehouse || "",
 						serial_no:    it.serial_no || "",
 						update_stock: it.is_stock_item !== 0 ? 1 : 0,
@@ -8242,6 +8654,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 				this.$body.find("#ef-purch-btn-save,#ef-purch-btn-add-item").toggle(isEditable);
 				this.$body.find("#ef-purch-btn-submit").toggle(isEditable && !!this.perms.puede_validar_compras);
 				this.$body.find("#ef-purch-btn-cancel-doc").toggle(d.docstatus === 1 && !!this.perms.puede_cancelar_compras);
+				this.$body.find("#ef-purch-btn-open-erp").toggle(!!d.name).attr("href", `/app/purchase-invoice/${encodeURIComponent(d.name)}`);
 				this.$body.find("#ef-purch-supplier,#ef-purch-bill-no,#ef-purch-bill-date,#ef-purch-posting-date,#ef-purch-currency,#ef-purch-tax-type")
 					.prop("disabled", !isEditable);
 
@@ -8379,11 +8792,15 @@ body.facex-fullscreen-mode .ef-main-layout {
 	_update_purch_totals() {
 		const items    = this._purch_doc.items || [];
 		const currency = this._purch_doc.currency || "GTQ";
+		const taxType  = this._purch_doc.tax_type || "normal";
 		const subtotal = items.reduce((s, it) => s + (parseFloat(it.amount) || 0), 0);
-		const taxRate  = 0.12;  // IVA Guatemala
+		// Tasa desde la plantilla configurada; fallback 12% para tipo normal
+		const rates    = this._purch_defaults && this._purch_defaults.taxes_rates;
+		const taxRate  = rates ? (parseFloat(rates[taxType]) || 0) / 100 : (taxType === "normal" ? 0.12 : 0);
 		const tax      = subtotal * taxRate;
 		const grand    = subtotal + tax;
-		// Si es exento, no hay IVA ya incluido en los precios
+		const taxPct   = Math.round(taxRate * 100);
+		this.$body.find("#ef-purch-tax-label").text(taxPct > 0 ? `IVA (${taxPct}%)` : "IVA (Exento)");
 		this.$body.find("#ef-purch-subtotal").text(_fmtCurrency(subtotal, currency));
 		this.$body.find("#ef-purch-tax").text(_fmtCurrency(tax, currency));
 		this.$body.find("#ef-purch-grand").text(_fmtCurrency(grand, currency));

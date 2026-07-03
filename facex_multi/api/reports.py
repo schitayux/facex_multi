@@ -12,6 +12,49 @@ import datetime
 from facex_multi.api.invoice import get_effective_company
 
 
+def _build_company_condition(company: str) -> tuple:
+    """
+    Retorna (condicion_sql, valores_dict) para filtrar por compañía.
+    - Si company está especificada: filtra por esa compañía exacta.
+    - Si company está vacía ("Todas"): filtra por TODAS las compañías
+      que el usuario tiene asignadas en User Permission.
+    """
+    company = (company or "").strip()
+
+    if company:
+        return "company = %(company)s", {"company": company}
+
+    # "Todas": obtener compañías permitidas del usuario
+    user_cos = frappe.get_all(
+        "User Permission",
+        filters={"user": frappe.session.user, "allow": "Company"},
+        pluck="for_value"
+    )
+
+    if not user_cos:
+        # Sin restricciones de User Permission → usar compañía efectiva por defecto
+        eff = get_effective_company()
+        if eff:
+            return "company = %(company)s", {"company": eff}
+        # System Manager sin default: sin restricción de compañía (todos los datos)
+        return "1=1", {}
+
+    if len(user_cos) == 1:
+        return "company = %(company)s", {"company": user_cos[0]}
+
+    return "company IN %(companies)s", {"companies": tuple(user_cos)}
+
+
+def _build_company_condition_alias(company: str, alias: str = "p") -> tuple:
+    """Igual que _build_company_condition pero para consultas con alias de tabla."""
+    cond, vals = _build_company_condition(company)
+    if "company = " in cond:
+        cond = cond.replace("company = ", f"{alias}.company = ")
+    elif "company IN " in cond:
+        cond = cond.replace("company IN ", f"{alias}.company IN ")
+    return cond, vals
+
+
 @frappe.whitelist()
 def has_reports_permission() -> bool:
     """
@@ -36,10 +79,10 @@ def check_permission():
 @frappe.whitelist()
 def get_sales_by_date(start_date: str, end_date: str, customer: str = None, warehouse: str = None, company: str = None, establecimiento: str = None) -> dict:
     check_permission()
-    
-    company = get_effective_company(company)
-    conditions = ["docstatus = 1", "COALESCE(bfel_documento_anulado, 0) != 1", "company = %(company)s"]
-    values = {"start": start_date, "end": end_date, "company": company}
+
+    company_cond, company_vals = _build_company_condition(company)
+    conditions = ["docstatus = 1", "COALESCE(bfel_documento_anulado, 0) != 1", company_cond]
+    values = {"start": start_date, "end": end_date, **company_vals}
     
     if customer:
         conditions.append("customer = %(customer)s")
@@ -83,13 +126,13 @@ def get_sales_by_date(start_date: str, end_date: str, customer: str = None, ware
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_sales_by_product(start_date: str, end_date: str, item_code: str = None, 
+def get_sales_by_product(start_date: str, end_date: str, item_code: str = None,
                          item_group: str = None, customer: str = None, warehouse: str = None, company: str = None, establecimiento: str = None) -> dict:
     check_permission()
-    
-    company = get_effective_company(company)
-    conditions = ["p.docstatus = 1", "COALESCE(p.bfel_documento_anulado, 0) != 1", "p.posting_date BETWEEN %(start)s AND %(end)s", "p.company = %(company)s"]
-    values = {"start": start_date, "end": end_date, "company": company}
+
+    company_cond, company_vals = _build_company_condition_alias(company, "p")
+    conditions = ["p.docstatus = 1", "COALESCE(p.bfel_documento_anulado, 0) != 1", "p.posting_date BETWEEN %(start)s AND %(end)s", company_cond]
+    values = {"start": start_date, "end": end_date, **company_vals}
     
     if item_code:
         conditions.append("i.item_code = %(item_code)s")
@@ -142,10 +185,10 @@ def get_sales_by_product(start_date: str, end_date: str, item_code: str = None,
 @frappe.whitelist()
 def get_cancelled_invoices(start_date: str, end_date: str, customer: str = None, company: str = None, establecimiento: str = None) -> dict:
     check_permission()
-    
-    company = get_effective_company(company)
-    conditions = ["(docstatus = 2 OR COALESCE(bfel_documento_anulado, 0) = 1)", "posting_date BETWEEN %(start)s AND %(end)s", "company = %(company)s"]
-    values = {"start": start_date, "end": end_date, "company": company}
+
+    company_cond, company_vals = _build_company_condition(company)
+    conditions = ["(docstatus = 2 OR COALESCE(bfel_documento_anulado, 0) = 1)", "posting_date BETWEEN %(start)s AND %(end)s", company_cond]
+    values = {"start": start_date, "end": end_date, **company_vals}
     
     if customer:
         conditions.append("customer = %(customer)s")
@@ -184,9 +227,9 @@ def get_customer_statement(customer: str, start_date: str = None, end_date: str 
     if not customer:
         return {"ledger": [], "summary": {}}
         
-    company = get_effective_company(company)
-    values = {"customer": customer, "company": company}
-    conditions = ["customer = %(customer)s", "docstatus = 1", "COALESCE(bfel_documento_anulado, 0) != 1", "company = %(company)s"]
+    company_cond, company_vals = _build_company_condition(company)
+    values = {"customer": customer, **company_vals}
+    conditions = ["customer = %(customer)s", "docstatus = 1", "COALESCE(bfel_documento_anulado, 0) != 1", company_cond]
     
     if start_date and end_date:
         conditions.append("posting_date BETWEEN %(start)s AND %(end)s")
@@ -287,10 +330,10 @@ def get_customer_statement(customer: str, start_date: str = None, end_date: str 
 @frappe.whitelist()
 def get_aging_receivables(customer: str = None, company: str = None, establecimiento: str = None) -> dict:
     check_permission()
-    
-    company = get_effective_company(company)
-    conditions = ["docstatus = 1", "is_return = 0", "COALESCE(bfel_documento_anulado, 0) != 1", "company = %(company)s"]
-    values = {"company": company}
+
+    company_cond, company_vals = _build_company_condition(company)
+    conditions = ["docstatus = 1", "is_return = 0", "COALESCE(bfel_documento_anulado, 0) != 1", company_cond]
+    values = {**company_vals}
     
     if customer:
         conditions.append("customer = %(customer)s")
@@ -407,10 +450,10 @@ def get_aging_receivables(customer: str = None, company: str = None, establecimi
 @frappe.whitelist()
 def get_quotations_report(start_date: str = None, end_date: str = None, customer: str = None, company: str = None, establecimiento: str = None) -> dict:
     check_permission()
-    
-    company = get_effective_company(company)
-    conditions = ["docstatus = 0", "is_return = 0", "is_debit_note = 0", "COALESCE(bfel_documento_anulado, 0) != 1", "company = %(company)s"]
-    values = {"company": company}
+
+    company_cond, company_vals = _build_company_condition(company)
+    conditions = ["docstatus = 0", "is_return = 0", "is_debit_note = 0", "COALESCE(bfel_documento_anulado, 0) != 1", company_cond]
+    values = {**company_vals}
     
     if start_date and end_date:
         conditions.append("posting_date BETWEEN %(start)s AND %(end)s")
@@ -450,10 +493,10 @@ def get_quotations_report(start_date: str = None, end_date: str = None, customer
 @frappe.whitelist()
 def get_payments_report(start_date: str, end_date: str, payment_method: str = None, company: str = None, establecimiento: str = None) -> dict:
     check_permission()
-    
-    company = get_effective_company(company)
-    conditions = ["p.docstatus = 1", "COALESCE(p.bfel_documento_anulado, 0) != 1", "ip.payment_date BETWEEN %(start)s AND %(end)s", "p.company = %(company)s"]
-    values = {"start": start_date, "end": end_date, "company": company}
+
+    company_cond, company_vals = _build_company_condition_alias(company, "p")
+    conditions = ["p.docstatus = 1", "COALESCE(p.bfel_documento_anulado, 0) != 1", "ip.payment_date BETWEEN %(start)s AND %(end)s", company_cond]
+    values = {"start": start_date, "end": end_date, **company_vals}
     
     if payment_method:
         conditions.append("ip.payment_method = %(method)s")
@@ -502,15 +545,15 @@ def get_payments_report(start_date: str, end_date: str, payment_method: str = No
 @frappe.whitelist()
 def get_uncertified_invoices(company: str = None, establecimiento: str = None) -> dict:
     check_permission()
-    
-    company = get_effective_company(company)
+
+    company_cond, company_vals = _build_company_condition(company)
     conditions = [
         "docstatus = 1",
-        "company = %(company)s",
+        company_cond,
         "bfel_status = '01 Enviar'",
         "(bfel_uuid IS NULL OR bfel_uuid = '')"
     ]
-    values = {"company": company}
+    values = {**company_vals}
     
     if establecimiento:
         conditions.append("bfel_establecimiento = %(establecimiento)s")
@@ -542,24 +585,24 @@ def get_uncertified_invoices(company: str = None, establecimiento: str = None) -
 @frappe.whitelist()
 def get_sales_growth_analysis(year: str = None, month: str = None, company: str = None, establecimiento: str = None) -> dict:
     check_permission()
-    
-    company = get_effective_company(company)
+
+    company_cond, company_vals = _build_company_condition(company)
     current_year = int(year) if year else datetime.datetime.now().year
     current_month = int(month) if month else datetime.datetime.now().month
-    
+
     if current_month == 1:
         prev_month = 12
         prev_year = current_year - 1
     else:
         prev_month = current_month - 1
         prev_year = current_year
-        
+
     # Ventas diarias año actual/mes seleccionado
-    curr_conditions = ["docstatus = 1", "YEAR(posting_date) = %(year)s", "MONTH(posting_date) = %(month)s", "company = %(company)s", "COALESCE(bfel_documento_anulado, 0) != 1"]
-    curr_values = {"year": current_year, "month": current_month, "company": company}
-    
-    prev_conditions = ["docstatus = 1", "YEAR(posting_date) = %(year)s", "MONTH(posting_date) = %(month)s", "company = %(company)s", "COALESCE(bfel_documento_anulado, 0) != 1"]
-    prev_values = {"year": prev_year, "month": prev_month, "company": company}
+    curr_conditions = ["docstatus = 1", "YEAR(posting_date) = %(year)s", "MONTH(posting_date) = %(month)s", company_cond, "COALESCE(bfel_documento_anulado, 0) != 1"]
+    curr_values = {"year": current_year, "month": current_month, **company_vals}
+
+    prev_conditions = ["docstatus = 1", "YEAR(posting_date) = %(year)s", "MONTH(posting_date) = %(month)s", company_cond, "COALESCE(bfel_documento_anulado, 0) != 1"]
+    prev_values = {"year": prev_year, "month": prev_month, **company_vals}
     
     if establecimiento:
         curr_conditions.append("bfel_establecimiento = %(establecimiento)s")

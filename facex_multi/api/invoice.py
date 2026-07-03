@@ -697,15 +697,11 @@ def save_draft(doc_json: str):
     if doc.get("taxes_and_charges") and not doc.get("taxes"):
         doc.append_taxes_from_master()
 
-    # Sincronizar fechas de cronograma de pagos
-    if not doc.get("payment_terms_template"):
-        doc.payment_schedule = []
-
-    if hasattr(doc, "set_payment_schedule_and_dates"):
-        try:
-            doc.set_payment_schedule_and_dates()
-        except Exception:
-            pass
+    # Sincronizar cronograma de pagos: siempre limpiar payment_schedule para que
+    # ERPNext lo reconstruya en doc.save() con las fechas nuevas (posting_date/due_date
+    # editados por el usuario), en vez de arrastrar filas viejas con due_date obsoletos
+    # que pisan el due_date editado (ver accounts_controller.set_due_date()).
+    doc.payment_schedule = []
 
     doc.flags.ignore_permissions = False
     doc.save()

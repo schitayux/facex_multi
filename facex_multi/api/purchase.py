@@ -36,22 +36,24 @@ def _resolve_item_warehouse(item_code: str, company: str) -> str:
 
 
 def _get_purchase_taxes(company: str, tax_type: str = "normal") -> str:
-    """Plantilla de impuestos de compra según tipo solicitado."""
+    """Plantilla de impuestos de compra según tipo solicitado (solo activas)."""
     abbr = _get_abbr(company)
     hints = {
-        "normal":     f"COMPRAS - {abbr}",
-        "exento":     f"EXENTO IVA - {abbr}",
+        "normal":      f"COMPRAS - {abbr}",
+        "exento":      f"EXENTO IVA - {abbr}",
         "importacion": f"IMPORTACION - {abbr}",
     }
     hint = hints.get(tax_type, hints["normal"])
-    # Buscar por nombre exacto primero
+    # Buscar por nombre exacto sólo si está activa
     if frappe.db.exists("Purchase Taxes and Charges Template", hint):
-        return hint
-    # Fallback: cualquiera activa de la empresa
+        disabled = frappe.db.get_value("Purchase Taxes and Charges Template", hint, "disabled")
+        if not disabled:
+            return hint
+    # Fallback: activa por defecto o la primera activa de la empresa
     return (
         frappe.db.get_value(
             "Purchase Taxes and Charges Template",
-            {"company": company, "is_default": 1},
+            {"company": company, "is_default": 1, "disabled": 0},
             "name",
         )
         or frappe.db.get_value(
@@ -62,6 +64,18 @@ def _get_purchase_taxes(company: str, tax_type: str = "normal") -> str:
         )
         or ""
     )
+
+
+def _get_purchase_tax_rate(template_name: str) -> float:
+    """Suma de porcentajes de impuesto de la plantilla indicada."""
+    if not template_name:
+        return 0.0
+    rows = frappe.get_all(
+        "Purchase Taxes and Charges",
+        filters={"parent": template_name},
+        fields=["rate"],
+    )
+    return sum(flt(r.rate) for r in rows)
 
 
 def _get_naming_series_pi(company: str) -> list:
@@ -105,15 +119,19 @@ def get_purchase_defaults(company: str = None) -> dict:
     abbr     = _get_abbr(company)
     currency = frappe.db.get_value("Company", company, "default_currency") or "GTQ"
 
-    taxes_map = {}
+    taxes_map   = {}
+    taxes_rates = {}
     for t in ["normal", "exento", "importacion"]:
-        taxes_map[t] = _get_purchase_taxes(company, t)
+        tpl = _get_purchase_taxes(company, t)
+        taxes_map[t]   = tpl
+        taxes_rates[t] = _get_purchase_tax_rate(tpl)
 
     return {
         "company":           company,
         "abbr":              abbr,
         "currency":          currency,
         "taxes_map":         taxes_map,
+        "taxes_rates":       taxes_rates,
         "credit_to_gtq":     _get_credit_to(company, "GTQ"),
         "credit_to_usd":     _get_credit_to(company, "USD"),
         "buying_price_list": "Compra estandar",
@@ -188,15 +206,103 @@ def search_items(txt: str = "", company: str = None) -> list:
 
 @frappe.whitelist()
 def search_suppliers(txt: str = "", company: str = None) -> list:
-    results = frappe.db.get_all(
-        "Supplier",
-        filters=[["disabled", "=", 0],
-                 ["supplier_name", "like", f"%{txt}%"]],
-        fields=["name", "supplier_name"],
-        order_by="supplier_name asc",
-        limit=20,
+    from facex_multi.api.invoice import get_effective_company
+    company = get_effective_company(company)
+    results = frappe.db.sql(
+        """
+        SELECT name, supplier_name
+        FROM `tabSupplier`
+        WHERE disabled = 0
+          AND supplier_name LIKE %(q)s
+          AND (
+              bfel_company = %(company)s
+              OR (bfel_company IS NULL OR bfel_company = '')
+          )
+        ORDER BY supplier_name ASC
+        LIMIT 20
+        """,
+        {"q": f"%{txt}%", "company": company},
+        as_dict=True,
     )
     return [{"value": r.name, "label": r.supplier_name} for r in results]
+
+
+@frappe.whitelist()
+def search_suppliers_maint(txt: str = "", company: str = None) -> list:
+    """Para el módulo de mantenimiento: retorna listado con tax_id."""
+    from facex_multi.api.invoice import get_effective_company
+    company = get_effective_company(company)
+    results = frappe.db.sql(
+        """
+        SELECT name, supplier_name, tax_id
+        FROM `tabSupplier`
+        WHERE disabled = 0
+          AND (name LIKE %(q)s OR supplier_name LIKE %(q)s OR tax_id LIKE %(q)s)
+          AND (
+              bfel_company = %(company)s
+              OR (bfel_company IS NULL OR bfel_company = '')
+          )
+        ORDER BY supplier_name ASC
+        LIMIT 30
+        """,
+        {"q": f"%{txt}%", "company": company},
+        as_dict=True,
+    )
+    return [{"name": r.name, "supplier_name": r.supplier_name, "tax_id": r.tax_id or ""} for r in results]
+
+
+@frappe.whitelist()
+def get_supplier(name: str, company: str = None) -> dict:
+    """Retorna los campos relevantes del proveedor para el formulario de mantenimiento."""
+    from facex_multi.api.invoice import get_effective_company
+    company = get_effective_company(company)
+    doc = frappe.get_doc("Supplier", name)
+    if doc.get("bfel_company") and doc.bfel_company != company:
+        frappe.throw(f"El proveedor '{name}' pertenece a otra compañía.")
+    return {
+        "name":          doc.name,
+        "supplier_name": doc.supplier_name or "",
+        "tax_id":        doc.tax_id or "",
+        "custom_direccion": doc.get("custom_direccion") or "",
+        "custom_telefono":  doc.get("custom_telefono") or "",
+    }
+
+
+@frappe.whitelist()
+def create_or_update_supplier(data_json: str, company: str = None) -> dict:
+    """Crea o actualiza un proveedor desde el mantenimiento FacEx."""
+    from facex_multi.api.invoice import get_effective_company
+    data    = json.loads(data_json) if isinstance(data_json, str) else data_json
+    name    = (data.get("name") or "").strip()
+    company = get_effective_company(company)
+
+    if name:
+        doc = frappe.get_doc("Supplier", name)
+        if doc.get("bfel_company") and doc.bfel_company != company:
+            frappe.throw("No tiene permisos para modificar un proveedor de otra compañía.")
+    else:
+        doc = frappe.new_doc("Supplier")
+        doc.supplier_type  = "Company"
+        doc.supplier_group = (
+            frappe.db.get_value("Supplier Group", {"is_group": 0}, "name", order_by="lft asc")
+            or "All Supplier Groups"
+        )
+        if doc.meta.has_field("bfel_company"):
+            doc.bfel_company = company
+
+    for field in ("supplier_name", "tax_id", "custom_direccion", "custom_telefono"):
+        if field in data:
+            try:
+                setattr(doc, field, data[field])
+            except Exception:
+                pass
+
+    if doc.meta.has_field("bfel_company"):
+        doc.bfel_company = company
+
+    doc.save(ignore_permissions=False)
+    frappe.db.commit()
+    return {"name": doc.name, "supplier_name": doc.supplier_name}
 
 
 @frappe.whitelist()
@@ -234,9 +340,13 @@ def get_purchase_list(
 
 
 @frappe.whitelist()
-def get_purchase_invoice(name: str) -> dict:
+def get_purchase_invoice(name: str, company: str = None) -> dict:
+    from facex_multi.api.invoice import get_effective_company
+    company = get_effective_company(company)
     doc = frappe.get_doc("Purchase Invoice", name.strip())
-    d   = doc.as_dict()
+    if doc.company != company and frappe.session.user != "Administrator":
+        frappe.throw("No tiene permisos para ver esta factura de compra.")
+    d = doc.as_dict()
     for item in d.get("items", []):
         item["has_serial_no"] = int(
             frappe.db.get_value("Item", item.get("item_code"), "has_serial_no") or 0
@@ -302,6 +412,7 @@ def save_purchase_invoice(data_json: str) -> dict:
             "item_code": item_code,
             "qty":       qty,
             "rate":      rate,
+            "amount":    qty * rate,
             "uom":       row.get("uom") or "Unidad(es)",
             "warehouse": wh if is_stock else "",
         }

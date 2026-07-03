@@ -10,6 +10,81 @@ import json
 from facex_multi.api.invoice import get_effective_company
 
 
+def _get_linked_address(customer_name: str):
+    """Retorna el nombre del Address vinculado al cliente (primary o el primero enlazado)."""
+    addr = frappe.db.get_value("Customer", customer_name, "customer_primary_address")
+    return addr or frappe.db.get_value(
+        "Dynamic Link",
+        {"link_doctype": "Customer", "link_name": customer_name, "parenttype": "Address"},
+        "parent",
+    )
+
+
+def _get_linked_contact(customer_name: str):
+    """Retorna el nombre del Contact vinculado al cliente (primary o el primero enlazado)."""
+    contact = frappe.db.get_value("Customer", customer_name, "customer_primary_contact")
+    return contact or frappe.db.get_value(
+        "Dynamic Link",
+        {"link_doctype": "Customer", "link_name": customer_name, "parenttype": "Contact"},
+        "parent",
+    )
+
+
+def _sync_customer_address(customer_doc, data: dict):
+    """Crea o actualiza el Address del cliente (address_line1/city) y lo marca como primary."""
+    direccion = (data.get("direccion") or "").strip()
+    departamento = (data.get("departamento") or "").strip()
+    if not direccion and not departamento:
+        return
+    if not direccion or not departamento:
+        frappe.throw("Debe completar tanto 'Dirección' como 'Departamento' para guardar la sección Dirección.")
+
+    address_name = _get_linked_address(customer_doc.name)
+    addr = frappe.get_doc("Address", address_name) if address_name else frappe.new_doc("Address")
+    if not address_name:
+        addr.address_type = "Billing"
+        addr.country = "Guatemala"
+        addr.append("links", {"link_doctype": "Customer", "link_name": customer_doc.name})
+
+    addr.address_title = f"{customer_doc.name}-FacEx"
+    addr.address_line1 = direccion
+    addr.city = departamento
+    addr.save(ignore_permissions=True)
+
+    if customer_doc.customer_primary_address != addr.name:
+        frappe.db.set_value("Customer", customer_doc.name, "customer_primary_address", addr.name)
+
+
+def _sync_customer_contact(customer_doc, data: dict):
+    """Crea o actualiza el Contact del cliente (first_name/last_name/email_ids/phone_nos) y lo marca como primary."""
+    nombre = (data.get("contacto_nombre") or "").strip()
+    apellido = (data.get("contacto_apellido") or "").strip()
+    email = (data.get("contacto_email") or "").strip()
+    telefono = (data.get("contacto_telefono") or "").strip()
+    if not any([nombre, apellido, email, telefono]):
+        return
+    if not nombre:
+        frappe.throw("El 'Nombre' del contacto es obligatorio para guardar la sección Contacto.")
+
+    contact_name = _get_linked_contact(customer_doc.name)
+    contact = frappe.get_doc("Contact", contact_name) if contact_name else frappe.new_doc("Contact")
+    if not contact_name:
+        contact.append("links", {"link_doctype": "Customer", "link_name": customer_doc.name})
+
+    contact.first_name = nombre
+    contact.last_name = apellido
+    contact.email_ids = []
+    if email:
+        contact.append("email_ids", {"email_id": email, "is_primary": 1})
+    contact.phone_nos = []
+    if telefono:
+        contact.append("phone_nos", {"phone": telefono, "is_primary_phone": 1})
+    contact.save(ignore_permissions=True)
+
+    if customer_doc.customer_primary_contact != contact.name:
+        frappe.db.set_value("Customer", customer_doc.name, "customer_primary_contact", contact.name)
+
+
 @frappe.whitelist()
 def lookup_identificacion_name(identificacion: str, tipo: str = "NIT", company: str = None):
     """
@@ -96,14 +171,24 @@ def get_customer(name: str, company: str = None):
         frappe.throw(f"El cliente '{name}' pertenece a otra compañía y no puede ser accedido.")
 
     nit = doc.get("bfel_id_receptor") or doc.get("tax_id") or ""
+
+    address_name = _get_linked_address(doc.name)
+    addr = frappe.get_doc("Address", address_name) if address_name else None
+
+    contact_name = _get_linked_contact(doc.name)
+    contact = frappe.get_doc("Contact", contact_name) if contact_name else None
+
     return {
         "name": doc.name,
         "customer_name": doc.customer_name or "",
         "bfel_identificacion": doc.get("bfel_identificacion") or "",
         "bfel_id_receptor": nit,
-        "custom_direccion": doc.get("custom_direccion") or "",
-        "custom_departamento": doc.get("custom_departamento") or "",
-        "custom_telefono": doc.get("custom_telefono") or "",
+        "direccion": addr.address_line1 if addr else "",
+        "departamento": addr.city if addr else "",
+        "contacto_nombre": contact.first_name if contact else "",
+        "contacto_apellido": contact.last_name if contact else "",
+        "contacto_email": contact.email_ids[0].email_id if contact and contact.email_ids else "",
+        "contacto_telefono": contact.phone_nos[0].phone if contact and contact.phone_nos else "",
         "naming_series": doc.get("naming_series") or "",
         "payment_terms": doc.get("payment_terms") or "",
         "default_price_list": doc.get("default_price_list") or "",
@@ -139,7 +224,6 @@ def create_or_update_customer(data_json: str, company: str = None):
 
     editable = [
         "customer_name", "bfel_identificacion", "bfel_id_receptor",
-        "custom_direccion", "custom_departamento", "custom_telefono",
         "payment_terms", "default_price_list", "default_sales_partner",
     ]
     for field in editable:
@@ -158,6 +242,10 @@ def create_or_update_customer(data_json: str, company: str = None):
             doc.tax_id = nit
 
     doc.save(ignore_permissions=False)
+
+    _sync_customer_address(doc, data)
+    _sync_customer_contact(doc, data)
+
     frappe.db.commit()
     return {"name": doc.name, "customer_name": doc.customer_name}
 

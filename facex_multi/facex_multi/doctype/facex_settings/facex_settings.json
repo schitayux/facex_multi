@@ -16,6 +16,8 @@
   "sb_mantenimiento",
   "crea_clientes",
   "modifica_clientes",
+  "crea_proveedores",
+  "modifica_proveedores",
   "cb_maint",
   "crea_items",
   "modifica_items",
@@ -131,6 +133,18 @@
    "fieldname": "modifica_clientes",
    "fieldtype": "Check",
    "label": "Modificar / Eliminar Clientes"
+  },
+  {
+   "default": "1",
+   "fieldname": "crea_proveedores",
+   "fieldtype": "Check",
+   "label": "Crear Proveedores"
+  },
+  {
+   "default": "1",
+   "fieldname": "modifica_proveedores",
+   "fieldtype": "Check",
+   "label": "Modificar / Eliminar Proveedores"
   },
   {
    "fieldname": "cb_maint",
