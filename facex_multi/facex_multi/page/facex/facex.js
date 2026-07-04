@@ -3056,10 +3056,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 					const cname = r.message.customer_name || customer;
 					this.doc.customer_name = cname;
 
-					if (!this.doc.bfel_nombre) {
-						this.doc.bfel_nombre = cname;
-						this.$body.find("#ef-bfel-nombre").val(cname);
-					}
+					// Actualizar siempre "Nombre para Factura" al cambiar/seleccionar cliente
+					this.doc.bfel_nombre = cname;
+					this.$body.find("#ef-bfel-nombre").val(cname);
 
 					if (r.message.default_price_list) {
 						this.doc.selling_price_list = r.message.default_price_list;
@@ -3210,7 +3209,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			const _title = _ok ? "Editar adenda DIGECAM" : "Completar adenda DIGECAM (obligatorio)";
 			_adenda_td = `<td class="ef-td ef-td-adenda ef-col-adenda"><button class="ef-btn-adenda ${_cls}" data-idx="${idx}" title="${_title}">${_lbl}</button></td>`;
 		}
-		const _tipo_val = item.bfel_tipo || "";
+		const _tipo_val = item.bfel_multi_tipo || "";
 		const _tipo_td = `<td class="ef-td ef-td-tipo ef-col-tipo">
   <select class="ef-cell-input ef-tipo" data-idx="${idx}" style="width:100%; font-size:12px; text-align:center;">
     <option value=""  ${_tipo_val === ""  ? "selected" : ""}>-</option>
@@ -3316,7 +3315,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		// tipo FEL select
 		$row.find(".ef-tipo").on("change", (e) => {
-			this.doc.items[idx].bfel_tipo = e.target.value;
+			this.doc.items[idx].bfel_multi_tipo = e.target.value;
 			this._mark_dirty();
 		});
 
@@ -3438,8 +3437,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 						row._item_group = d.item_group || "";
 						row.is_stock_item = d.is_stock_item || 0;
 						// Pre-llenar tipo FEL con default de configuración si no tiene valor
-						if (!row.bfel_tipo) {
-							row.bfel_tipo = (this.company_config || {}).tipo_x_defecto || "";
+						if (!row.bfel_multi_tipo) {
+							row.bfel_multi_tipo = (this.company_config || {}).tipo_x_defecto || "";
 						}
 						row.amount = this._calc_amount(row.qty, row.rate, row.discount_percentage);
 						this._render_items();
@@ -4286,6 +4285,10 @@ body.facex-fullscreen-mode .ef-main-layout {
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
     <span class="ef-btn-label">Anular</span>
   </button>
+  <button id="ef-btn-duplicate" class="ef-btn ef-btn-secondary" title="Duplicar como nueva pre-factura" style="display:none">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+    <span class="ef-btn-label">Duplicar</span>
+  </button>
   <button id="ef-btn-print" class="ef-btn ef-btn-info" title="Imprimir (F4)">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
     <span class="ef-btn-label">Imprimir</span>
@@ -4319,6 +4322,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		$bar.find("#ef-btn-certify").on("click", () => this._action_certify());
 		$bar.find("#ef-btn-cancel-doc").on("click", () => this._action_cancel_doc());
 		$bar.find("#ef-btn-cancel-fel").on("click", () => this._action_cancel_fel());
+		$bar.find("#ef-btn-duplicate").on("click", () => this._action_duplicate());
 		$bar.find("#ef-btn-print").on("click", () => this._action_print());
 		$bar.find("#ef-btn-pdf").on("click", () => this._action_pdf());
 		$bar.find("#ef-btn-new").on("click", () => this._action_new());
@@ -4346,7 +4350,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		// Ocultar todo primero, luego mostrar solo lo necesario
 		["#ef-btn-save", "#ef-btn-cancel-changes", "#ef-btn-submit",
-		 "#ef-btn-certify", "#ef-btn-cancel-doc", "#ef-btn-cancel-fel", "#ef-btn-print", "#ef-btn-open-erp", "#ef-btn-customer", "#ef-btn-pdf"].forEach(hide);
+		 "#ef-btn-certify", "#ef-btn-cancel-doc", "#ef-btn-cancel-fel", "#ef-btn-print", "#ef-btn-open-erp", "#ef-btn-customer", "#ef-btn-pdf",
+		 "#ef-btn-duplicate"].forEach(hide);
 		btn("#ef-btn-save").removeClass("ef-btn-save-dirty");
 
 		// Siempre visibles: Nueva Fac
@@ -4373,6 +4378,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		} else if (isSubmitted) {
 			show("#ef-btn-print"); enable("#ef-btn-print");
 			show("#ef-btn-open-erp"); enable("#ef-btn-open-erp");
+			show("#ef-btn-duplicate"); enable("#ef-btn-duplicate");
 			// caso 3: pendiente de certificar FEL
 			if (!isCertified && d.bfel_status !== "00 No enviar") {
 				show("#ef-btn-certify"); enable("#ef-btn-certify");
@@ -4386,11 +4392,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 		} else if (isCancelled) {
 			show("#ef-btn-print"); enable("#ef-btn-print");
 			show("#ef-btn-open-erp"); enable("#ef-btn-open-erp");
+			show("#ef-btn-duplicate"); enable("#ef-btn-duplicate");
 		}
 
 		// Factura no creada desde FacEx — vista limitada
 		if (!isNew && d.es_fiscal === 0) {
-			["#ef-btn-save", "#ef-btn-cancel-changes", "#ef-btn-submit", "#ef-btn-certify"].forEach(hide);
+			["#ef-btn-save", "#ef-btn-cancel-changes", "#ef-btn-submit", "#ef-btn-certify", "#ef-btn-duplicate"].forEach(hide);
 			show("#ef-btn-print"); enable("#ef-btn-print");
 			show("#ef-btn-open-erp"); enable("#ef-btn-open-erp");
 		}
@@ -4435,6 +4442,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		if (!p.puede_guardar)    hide("#ef-btn-save");
 		if (!p.puede_validar)    hide("#ef-btn-submit");
 		if (!p.puede_certificar) hide("#ef-btn-certify");
+		if (!p.puede_guardar)    hide("#ef-btn-duplicate");
 
 		this._update_tabs_state();
 	}
@@ -4760,6 +4768,45 @@ body.facex-fullscreen-mode .ef-main-layout {
 		} else {
 			this._new_invoice();
 		}
+	}
+
+	_action_duplicate() {
+		if (this._request_pending) return;
+		if (!this.doc || !this.doc.name || this.doc.name === "new") return;
+
+		frappe.confirm(
+			`¿Duplicar la factura <strong>${this.doc.name}</strong> como una nueva pre-factura? ` +
+			`No se copiarán los datos de certificación FEL (UUID, serie, número, fecha) ni los pagos ya aplicados; ` +
+			`la copia quedará en estado "01 Enviar".`,
+			() => {
+				this._request_pending = true;
+				frappe.call({
+					method: "facex_multi.api.invoice.duplicate_invoice",
+					args: { name: this.doc.name },
+					freeze: true,
+					freeze_message: "Duplicando factura...",
+					callback: (r) => {
+						this._request_pending = false;
+						if (!r.exc && r.message) {
+							this._dirty = false;
+							this.doc = r.message;
+							this.doc._taxes_template = null;
+							this._sync_ui_from_doc();
+							this._update_action_bar_state();
+							if (this.doc.taxes_and_charges) {
+								this._fetch_tax_template(this.doc.taxes_and_charges);
+							}
+							this._switch_view("billing");
+							frappe.show_alert({
+								message: "Factura duplicada. Revise los datos y presione Guardar.",
+								indicator: "blue",
+							});
+						}
+					},
+					error: () => { this._request_pending = false; }
+				});
+			}
+		);
 	}
 
 	_action_open_erp() {
@@ -5124,7 +5171,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 				lote:                           r.lote || "",
 				custom_tenencia_municion:        r.custom_tenencia_municion || "",
 				custom_codigo_cliente_municion:  r.custom_codigo_cliente_municion || "",
-				bfel_tipo:                       r.bfel_tipo || "",
+				bfel_multi_tipo:                 r.bfel_multi_tipo || "",
 			})).filter((r) => r.item_code),
 		};
 

@@ -834,6 +834,104 @@ def get_invoice(name: str):
 
 
 # ---------------------------------------------------------------------------
+# 6b. Duplicar factura (Validada/Vigente o Cancelada) → nuevo borrador limpio
+# ---------------------------------------------------------------------------
+
+# Campos de encabezado que representan datos de negocio/insumo y sí se copian.
+# Deliberadamente NO incluye ningún campo de respuesta del certificador FEL.
+_DUPLICATE_HEADER_FIELDS = (
+    "company", "customer", "naming_series", "currency", "conversion_rate",
+    "selling_price_list", "price_list_currency", "plc_conversion_rate",
+    "taxes_and_charges", "terms", "tc_name", "payment_terms_template",
+    "sales_partner", "vendedor", "update_stock", "es_fiscal", "cost_center",
+    "letter_head",
+    # Datos FEL de *insumo* (identificación del cliente / configuración del
+    # documento), distintos de los datos de *retorno* de la certificación.
+    "bfel_establecimiento", "bfel_escenario_exento", "bfel_concepto", "bfel_moneda",
+    "bfel_nit", "bfel_identificacion", "bfel_nombre", "bfel_tipo_id", "bfel_cui",
+    "bfel_direccion",
+    "bfel_es_exportacion", "bfel_incoterm", "bfel_nombre_consignatario",
+    "bfel_direccion_consignatario", "bfel_codigo_consignatario",
+    "bfel_codigo_exportador", "bfel_nombre_exportador", "bfel_otra_referencia",
+)
+
+# Campos de retorno/estado de certificación FEL: nunca se copian de la factura origen.
+_FEL_RETURN_FIELDS_CLEAR_EMPTY = (
+    "bfel_uuid", "bfel_docto_serie", "bfel_docto_no", "bfel_fechacertificacion",
+    "bfel_mensaje", "bfel_request_id", "bfel_numero_acceso",
+    "bfel_numero_anterior", "bfel_serie_anterior", "bfel_doc_vinculado",
+)
+_FEL_RETURN_FIELDS_CLEAR_ZERO = ("bfel_documento_anulado", "bfel_contingencia")
+
+_DUPLICATE_ITEM_FIELDS = (
+    "item_code", "item_name", "description", "qty", "uom", "conversion_factor",
+    "rate", "price_list_rate", "discount_percentage", "discount_amount",
+    "warehouse", "income_account", "expense_account", "cost_center",
+    "item_tax_template", "descripcion_2", "bfel_multi_tipo",
+)
+
+_DUPLICATE_TAX_FIELDS = (
+    "charge_type", "account_head", "description", "rate",
+    "included_in_print_rate", "cost_center",
+)
+
+
+@frappe.whitelist()
+def duplicate_invoice(name: str):
+    """
+    Duplica una Sales Invoice ya Validada (vigente) o Cancelada, generando un
+    nuevo borrador en memoria (no se inserta hasta que el usuario presione
+    Guardar). Conserva cliente, items, impuestos y datos fiscales de insumo,
+    pero NUNCA copia datos de retorno de la certificación FEL (uuid, serie,
+    número, fecha, mensaje, request id, etc.) ni pagos ya aplicados
+    (los Payment Entry no se enlazan a la factura nueva). El estado FEL de
+    la copia siempre queda en "01 Enviar".
+    """
+    name = (name or "").strip()
+    src = frappe.get_doc("Sales Invoice", name)
+
+    if src.docstatus == 0:
+        frappe.throw(
+            "Solo se pueden duplicar facturas Validadas (vigentes) o Canceladas. "
+            "Un borrador ya se puede editar directamente."
+        )
+
+    data = {"doctype": "Sales Invoice", "name": "new", "docstatus": 0}
+    for f in _DUPLICATE_HEADER_FIELDS:
+        if src.meta.has_field(f):
+            data[f] = src.get(f)
+
+    data["posting_date"] = today()
+    data["due_date"] = None
+    data["bfel_facex_multi"] = 1
+
+    # Limpiar explícitamente todo dato de retorno / estado de certificación FEL
+    for f in _FEL_RETURN_FIELDS_CLEAR_EMPTY:
+        data[f] = None
+    for f in _FEL_RETURN_FIELDS_CLEAR_ZERO:
+        data[f] = 0
+    data["bfel_status"] = "01 Enviar"
+
+    # Items: solo datos comerciales, sin ligas a stock/documentos de origen
+    # (no se copian serial_no, batch_no, sales_order, delivery_note, etc.)
+    data["items"] = [
+        {f: item.get(f) for f in _DUPLICATE_ITEM_FIELDS}
+        for item in src.items
+    ]
+
+    # Taxes: si hay plantilla, se recalculan solas en save_draft(); si no,
+    # se copian las filas manuales para no perder impuestos ad-hoc.
+    if not data.get("taxes_and_charges") and src.taxes:
+        data["taxes"] = [
+            {f: tax.get(f) for f in _DUPLICATE_TAX_FIELDS}
+            for tax in src.taxes
+        ]
+
+    new_doc = frappe.get_doc(data)
+    return _safe_doc_dict(new_doc)
+
+
+# ---------------------------------------------------------------------------
 # 7. Enviar email
 # ---------------------------------------------------------------------------
 
@@ -947,12 +1045,32 @@ def get_print_formats(company: str = None):
 # ---------------------------------------------------------------------------
 
 _FACEX_METHOD_MAP = {
-    "Efectivo":           "Efectivo",
-    "Tarjeta de Crédito": "Tarjetas de credito",
-    "Tarjeta de Credito": "Tarjetas de credito",
-    "Transferencia":      "Transferencia bancaria",
-    "Cheque":             "Cheque",
+    "Efectivo":           ["Efectivo", "Cash"],
+    "Tarjeta de Crédito": ["Tarjetas de credito", "Tarjeta de Crédito", "Credit Card"],
+    "Tarjeta de Credito": ["Tarjetas de credito", "Tarjeta de Crédito", "Credit Card"],
+    "Transferencia":      ["Transferencia bancaria", "Transferencia", "Wire Transfer"],
+    "Cheque":             ["Cheque", "Check"],
 }
+_FACEX_FALLBACK_CANDIDATES = ["Efectivo", "Cash"]
+
+
+def _resolve_mode_of_payment_account(payment_method, company):
+    """Prueba los nombres candidatos (español e inglés) del Mode of Payment
+    hasta encontrar uno con cuenta configurada para la empresa dada."""
+    candidates = _FACEX_METHOD_MAP.get(payment_method, []) + _FACEX_FALLBACK_CANDIDATES
+    seen = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        account = frappe.db.get_value(
+            "Mode of Payment Account",
+            {"parent": candidate, "company": company},
+            "default_account",
+        )
+        if account:
+            return candidate, account
+    return candidates[0] if candidates else "Efectivo", None
 
 
 def _get_linked_payment_entries(invoice_name):
@@ -981,23 +1099,14 @@ def _delete_draft_payment_entries(invoice_name):
 
 
 def _create_payment_entry(invoice_doc, payment_method, payment_date, reference, amount):
-    mode = _FACEX_METHOD_MAP.get(payment_method, "Efectivo")
+    mode, paid_to = _resolve_mode_of_payment_account(payment_method, invoice_doc.company)
 
     paid_from = frappe.db.get_value("Company", invoice_doc.company, "default_receivable_account")
     if not paid_from:
         frappe.throw(f"La empresa {invoice_doc.company} no tiene cuenta por cobrar configurada.")
 
-    paid_to = frappe.db.get_value(
-        "Mode of Payment Account",
-        {"parent": mode, "company": invoice_doc.company},
-        "default_account",
-    ) or frappe.db.get_value(
-        "Mode of Payment Account",
-        {"parent": "Efectivo", "company": invoice_doc.company},
-        "default_account",
-    )
     if not paid_to:
-        frappe.throw(f"No se encontró cuenta de pago para '{mode}' en {invoice_doc.company}.")
+        frappe.throw(f"No se encontró cuenta de pago para '{payment_method}' en {invoice_doc.company}.")
 
     paid_from_currency = frappe.db.get_value("Account", paid_from, "account_currency") or "GTQ"
     paid_to_currency   = frappe.db.get_value("Account", paid_to,   "account_currency") or "GTQ"
