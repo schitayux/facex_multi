@@ -17,16 +17,31 @@ bfel_code=="02"
 (si.name or '')[:4]
 %}
 
-{% set bdm_list =
+{% set bs_list=
 frappe.get_all(
-"BFEL Document Map",
+"BFEL Settings",
 filters={
-"type_docdte":
-serie_prefix
+"company": si.company,
+"enabled": 1
 },
 limit=1
 )
 %}
+
+{% set bdm_list=[] %}
+
+{% if bs_list and bs_list|length > 0 %}
+{% set bdm_list=
+frappe.get_all(
+"BFEL Document Map",
+filters={
+"type_docdte": serie_prefix,
+"bfel_settings": bs_list[0].name
+},
+limit=1
+)
+%}
+{% endif %}
 
 {% if bdm_list and bdm_list|length > 0 %}
 
@@ -40,7 +55,7 @@ bdm_list[0].name
 {% set bs=
 frappe.get_doc(
 "BFEL Settings",
-bdm.bfel_settings
+bs_list[0].name
 )
 %}
 

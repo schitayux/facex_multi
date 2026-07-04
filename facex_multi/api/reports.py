@@ -468,12 +468,12 @@ def get_quotations_report(start_date: str = None, end_date: str = None, customer
         values["establecimiento"] = establecimiento
         
     query = f"""
-        SELECT name, posting_date, customer, customer_name, grand_total, bfel_status, creation
+        SELECT name, company, posting_date, customer, customer_name, grand_total, bfel_status, creation
         FROM `tabSales Invoice`
         WHERE { " AND ".join(conditions) }
         ORDER BY posting_date DESC, creation DESC
     """
-    
+
     invoices = frappe.db.sql(query, values, as_dict=True)
     total_amount = sum(float(inv.grand_total or 0) for inv in invoices)
     
@@ -507,7 +507,7 @@ def get_payments_report(start_date: str, end_date: str, payment_method: str = No
         values["establecimiento"] = establecimiento
         
     query = f"""
-        SELECT ip.payment_date, ip.parent AS invoice, p.customer, p.customer_name, ip.payment_method, ip.reference, ip.amount
+        SELECT ip.payment_date, ip.parent AS invoice, p.company, p.customer, p.customer_name, ip.payment_method, ip.reference, ip.amount
         FROM `tabeFast Invoice Payment` ip
         JOIN `tabSales Invoice` p ON ip.parent = p.name AND ip.parenttype = 'Sales Invoice' AND ip.parentfield = 'custom_efast_payments'
         WHERE { " AND ".join(conditions) }

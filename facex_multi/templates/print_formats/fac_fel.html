@@ -15,12 +15,17 @@
 
 {% set serie_prefix = (si.name or '')[:4] %}
 
-{% set bdm_list = frappe.get_all(
-    "BFEL Document Map",
-    filters={"type_docdte": serie_prefix},
-    fields=["name","fel_document_type","bfel_settings","notes"],
-    limit=1
-) %}
+{% set bs_list = frappe.get_all("BFEL Settings", filters={"company": doc.company, "enabled": 1}, limit=1) %}
+
+{% set bdm_list = [] %}
+{% if bs_list %}
+  {% set bdm_list = frappe.get_all(
+      "BFEL Document Map",
+      filters={"type_docdte": serie_prefix, "bfel_settings": bs_list[0].name},
+      fields=["name","fel_document_type","bfel_settings","notes"],
+      limit=1
+  ) %}
+{% endif %}
 
 {# ============================================================= #}
 {# GUARDIA: sin configuración FEL                                #}
@@ -47,15 +52,7 @@
 {% else %}
 
 {% set bdm = frappe.get_doc("BFEL Document Map", bdm_list[0].name) %}
-{% set bs_list = frappe.get_all("BFEL Settings", filters={"company": doc.company, "enabled": 1}, limit=1) %}
-{% if not bs_list %}
-  {% set bs_list = frappe.get_all("BFEL Settings", filters={"enabled": 1}, limit=1) %}
-{% endif %}
-{% if bs_list %}
-  {% set bs = frappe.get_doc("BFEL Settings", bs_list[0].name) %}
-{% else %}
-  {% set bs = frappe.get_doc("BFEL Settings", bdm.bfel_settings) %}
-{% endif %}
+{% set bs = frappe.get_doc("BFEL Settings", bs_list[0].name) %}
 
 {% set est_logo = "" %}
 {% set est_name = bs.company %}

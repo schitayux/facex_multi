@@ -6911,7 +6911,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700;">${_fmtCurrency(inv.grand_total, "GTQ")}</td>
 						<td class="ef-td"><span class="ef-badge ef-badge-draft">${inv.bfel_status}</span></td>
 						<td class="ef-td">
-							<button class="ef-btn ef-btn-sm ef-btn-secondary ef-rep-print-quot" data-name="${inv.name}" style="padding:2px 8px; font-size:10px;">Imprimir F4</button>
+							<button class="ef-btn ef-btn-sm ef-btn-secondary ef-rep-print-quot" data-name="${inv.name}" data-company="${inv.company || ""}" style="padding:2px 8px; font-size:10px;">Imprimir F4</button>
 						</td>
 					</tr>
 				`);
@@ -6919,9 +6919,14 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 			$tbody.off("click", ".ef-rep-print-quot").on("click", ".ef-rep-print-quot", (e) => {
 				const name = $(e.currentTarget).data("name");
+				// Usar SIEMPRE la compañía real de la factura de la fila, no la compañía
+				// activa de sesión/editor: el reporte puede listar facturas de varias
+				// compañías a la vez (filtro "Todas"), y mezclar formatos entre
+				// compañías imprimiría membretes/datos fiscales equivocados.
+				const company = $(e.currentTarget).data("company");
 				frappe.call({
 					method: "facex_multi.api.invoice.get_print_formats",
-					args: { company: this.doc.company || this.defaults.company || "" },
+					args: { company: company || this.doc.company || this.defaults.company || "" },
 					callback: (r) => {
 						const formats = r.message || [];
 						const defaultFormat = formats.find(f => f.toUpperCase().includes("COTI")) || "Cotización FacEx";
@@ -6973,7 +6978,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 						<td class="ef-td" style="font-family:monospace; font-size:11px;">${pay.reference || '—'}</td>
 						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700; color:var(--ef-success);">${_fmtCurrency(pay.amount, "GTQ")}</td>
 						<td class="ef-td" style="text-align:center;">
-							<button class="ef-btn ef-btn-sm ef-btn-secondary ef-rep-print-receipt" data-name="${pay.invoice}" style="padding:2px 8px; font-size:10px; font-weight:600;">Imprimir Recibo</button>
+							<button class="ef-btn ef-btn-sm ef-btn-secondary ef-rep-print-receipt" data-name="${pay.invoice}" data-company="${pay.company || ""}" style="padding:2px 8px; font-size:10px; font-weight:600;">Imprimir Recibo</button>
 						</td>
 					</tr>
 				`);
@@ -6981,7 +6986,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 			$tbody.off("click", ".ef-rep-print-receipt").on("click", ".ef-rep-print-receipt", (e) => {
 				const name = $(e.currentTarget).data("name");
-				this._print_payment_receipt(name);
+				const company = $(e.currentTarget).data("company");
+				this._print_payment_receipt(name, company);
 			});
 
 		} else if (report_id === "uncertified_invoices") {
@@ -7582,7 +7588,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 	_load_invoice_payment_receipt_details(inv_name) {
 		if (!inv_name) return;
 
-		frappe.db.get_value("Sales Invoice", inv_name, ["customer_name", "grand_total", "outstanding_amount", "custom_pagado"], (res) => {
+		frappe.db.get_value("Sales Invoice", inv_name, ["company", "customer_name", "grand_total", "outstanding_amount", "custom_pagado"], (res) => {
 			if (!res) {
 				frappe.show_alert({ message: __("Factura no encontrada"), indicator: "red" });
 				this.$body.find("#ef-print-receipt-details").hide();
@@ -7626,7 +7632,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					}
 
 					this.$body.find("#ef-btn-print-receipt-format").off("click").on("click", () => {
-						this._print_payment_receipt(inv_name);
+						this._print_payment_receipt(inv_name, res.company);
 					});
 
 					this.$body.find("#ef-print-receipt-details").show();
@@ -7635,10 +7641,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 		});
 	}
 
-	_print_payment_receipt(inv_name) {
+	_print_payment_receipt(inv_name, company) {
+		// Usar SIEMPRE la compañía real de la factura (pasada por el llamador o
+		// resuelta aquí), no la compañía activa de sesión/editor: imprimir con el
+		// formato de otra compañía mezclaría membretes/datos fiscales equivocados.
 		frappe.call({
 			method: "facex_multi.api.invoice.get_print_formats",
-			args: { company: this.doc.company || this.defaults.company || "" },
+			args: { company: company || this.doc.company || this.defaults.company || "" },
 			callback: (r) => {
 				const formats = r.message || [];
 				const defaultFormat = formats.find(f => f.toUpperCase().includes("RECI")) || "Recibo de Pago FacEx";

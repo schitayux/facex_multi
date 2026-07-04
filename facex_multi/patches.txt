@@ -2,3 +2,5 @@ facex_multi.patches.v1_0.create_custom_fields
 facex_multi.patches.v1_0.fix_workspace_conflict
 facex_multi.patches.v1_0.add_bfel_establishments
 facex_multi.patches.v1_0.backfill_item_description
+facex_multi.patches.v1_0.add_descripcion_2_field
+facex_multi.patches.v1_0.fix_bfel_document_map_company_leak

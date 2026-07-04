@@ -33,12 +33,21 @@ doc_events = {
 fixtures = [
 
     {
+        # Solo los formatos base de FACEX (compañía de pruebas) se versionan
+        # como fixture. Los clones "- ABBR" de las demás compañías son
+        # ambientes productivos y se editan en vivo; si se incluyeran aquí,
+        # cada "bench migrate" los revertiría al contenido del repo.
         "dt": "Print Format",
         "filters": [
             [
                 "module",
                 "=",
                 "FacEx Multi"
+            ],
+            [
+                "bfel_company",
+                "=",
+                "FACEX"
             ]
         ]
     },
