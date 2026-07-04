@@ -730,8 +730,8 @@ def submit_invoice(name: str):
     from facex_multi.api.permissions import get_facex_company_config
     cfg = get_facex_company_config(doc.company)
     if cfg.get("concatena_descripcion2"):
-        correlativo = str(doc.custom_correlativo_interno or "")
-        if not correlativo:
+        correlativo = str(doc.get("custom_correlativo_interno") or "")
+        if not correlativo and frappe.db.exists("DocType", "Correlativos de factura"):
             # Intentar leer desde Correlativos de factura si aún no se asignó
             corr_row = frappe.db.get_value(
                 "Correlativos de factura", {"empresa": doc.company}, "correlativo"
@@ -740,7 +740,7 @@ def submit_invoice(name: str):
         changed = False
         for item in doc.items:
             nueva = _build_descripcion2(item.as_dict(), correlativo)
-            if item.descripcion_2 != nueva:
+            if item.get("descripcion_2") != nueva:
                 item.descripcion_2 = nueva
                 changed = True
         if changed:
