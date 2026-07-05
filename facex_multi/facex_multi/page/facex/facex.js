@@ -1347,11 +1347,9 @@ class EFastSalePage {
               <option value="GTQ">GTQ – Quetzal</option><option value="USD">USD – Dólar</option>
             </select></div>
           <div><label class="ef-label">Tipo de Compra</label>
-            <select id="ef-stg-tax-type" class="ef-cell-input" style="width:100%">
-              <option value="normal">Normal (con IVA)</option>
-              <option value="exento">Exento de IVA</option>
-              <option value="importacion">Importación</option>
-            </select></div>
+            <select id="ef-stg-tax-type" class="ef-cell-input" style="width:100%"></select></div>
+          <div><label class="ef-label">Tipo FEL</label>
+            <select id="ef-stg-tipo" class="ef-cell-input" style="width:100%"></select></div>
         </div>
       </div>
 
@@ -1426,11 +1424,9 @@ class EFastSalePage {
               <option value="GTQ">GTQ – Quetzal</option><option value="USD">USD – Dólar</option>
             </select></div>
           <div><label class="ef-label">Tipo de Compra</label>
-            <select id="ef-purch-tax-type" class="ef-cell-input" style="width:100%">
-              <option value="normal">Normal (con IVA)</option>
-              <option value="exento">Exento de IVA</option>
-              <option value="importacion">Importación</option>
-            </select></div>
+            <select id="ef-purch-tax-type" class="ef-cell-input" style="width:100%"></select></div>
+          <div><label class="ef-label">Tipo FEL</label>
+            <select id="ef-purch-tipo" class="ef-cell-input" style="width:100%"></select></div>
         </div>
       </div>
 
@@ -1447,9 +1443,11 @@ class EFastSalePage {
               <th class="ef-th" style="width:120px">Código</th>
               <th class="ef-th">Descripción / Series</th>
               <th class="ef-th" style="width:70px">Cant.</th>
+              <th class="ef-th" style="width:70px">UdM</th>
               <th class="ef-th" style="width:110px">Precio Unit.</th>
               <th class="ef-th" style="width:110px">Total</th>
               <th class="ef-th" style="width:155px">Bodega</th>
+              <th class="ef-th" style="width:150px">Tipo FEL</th>
               <th class="ef-th" style="width:44px;text-align:center" title="Actualizar Inventario">Stock</th>
               <th class="ef-th" style="width:30px"></th>
             </tr></thead>
@@ -8505,6 +8503,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this._purch_events_bound = true;
 		this._purch_doc          = this._empty_purch_doc();
 		this._purch_defaults     = null;
+		this._purch_warehouses   = [];
 
 		// Cargar defaults de compra
 		frappe.call({
@@ -8519,6 +8518,21 @@ body.facex-fullscreen-mode .ef-main-layout {
 					this.$body.find("#ef-purch-bill-date").val(today);
 					this.$body.find("#ef-purch-f-start").val(frappe.datetime.month_start());
 					this.$body.find("#ef-purch-f-end").val(today);
+					this._populate_purch_tax_selects();
+					this._populate_purch_tipo_selects();
+					if (this._purch_doc) this._purch_doc.tax_type = r.message.default_tax_template || "";
+				}
+			},
+		});
+
+		// Cargar almacenes de la compañía conectada para el grid de líneas
+		frappe.call({
+			method: "facex_multi.api.invoice.get_warehouses",
+			args:   { company: this.doc.company || this.defaults.company || "" },
+			callback: (r) => {
+				if (!r.exc && r.message) {
+					this._purch_warehouses = r.message;
+					this._render_purch_items();
 				}
 			},
 		});
@@ -8570,7 +8584,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 			name: null, docstatus: 0,
 			supplier: "", posting_date: frappe.datetime.get_today(),
 			bill_no: "", bill_date: frappe.datetime.get_today(),
-			currency: "GTQ", tax_type: "normal",
+			currency: "GTQ",
+			tax_type: (this._purch_defaults && this._purch_defaults.default_tax_template) || "",
+			bfel_multi_tipo: "",
 			items: [],
 		};
 	}
@@ -8652,8 +8668,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-purch-bill-date").val(today);
 		this.$body.find("#ef-purch-posting-date").val(today);
 		this.$body.find("#ef-purch-currency").val("GTQ");
-		this.$body.find("#ef-purch-tax-type").val("normal");
-		this.$body.find("#ef-purch-supplier,#ef-purch-bill-no,#ef-purch-bill-date,#ef-purch-posting-date,#ef-purch-currency,#ef-purch-tax-type")
+		this._populate_purch_tax_selects();
+		this._populate_purch_tipo_selects();
+		this.$body.find("#ef-purch-tax-type").val(this._purch_doc.tax_type || "");
+		this.$body.find("#ef-purch-tipo").val(this._purch_doc.bfel_multi_tipo || "");
+		this.$body.find("#ef-purch-supplier,#ef-purch-bill-no,#ef-purch-bill-date,#ef-purch-posting-date,#ef-purch-currency,#ef-purch-tax-type,#ef-purch-tipo")
 			.prop("disabled", false);
 		this.$body.find("#ef-purch-form-title").text("Nueva Factura de Compra");
 		this.$body.find("#ef-purch-status-badge").text("NUEVO").attr("class","ef-badge ef-badge-new");
@@ -8680,7 +8699,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 					bill_no:      d.bill_no,
 					bill_date:    d.bill_date,
 					currency:     d.currency || "GTQ",
-					tax_type:     "normal",
+					tax_type:     d.taxes_and_charges || "",
+					bfel_multi_tipo: d.bfel_multi_tipo || "",
 					items: (d.items || []).map(it => ({
 						item_code:    it.item_code,
 						item_name:    it.item_name || it.item_code,
@@ -8690,6 +8710,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 						rate:         it.rate,
 						amount:       it.amount || (parseFloat(it.qty || 0) * parseFloat(it.rate || 0)),
 						warehouse:    it.warehouse || "",
+						bfel_multi_tipo: it.bfel_multi_tipo || "",
 						serial_no:    it.serial_no || "",
 						update_stock: it.is_stock_item !== 0 ? 1 : 0,
 						_fetched:     true,
@@ -8705,13 +8726,17 @@ body.facex-fullscreen-mode .ef-main-layout {
 				this.$body.find("#ef-purch-bill-date").val(d.bill_date || "");
 				this.$body.find("#ef-purch-posting-date").val(d.posting_date || "");
 				this.$body.find("#ef-purch-currency").val(d.currency || "GTQ");
+				this._populate_purch_tax_selects();
+				this._populate_purch_tipo_selects();
+				this.$body.find("#ef-purch-tax-type").val(this._purch_doc.tax_type || "");
+				this.$body.find("#ef-purch-tipo").val(this._purch_doc.bfel_multi_tipo || "");
 
 				const isEditable = d.docstatus === 0;
 				this.$body.find("#ef-purch-btn-save,#ef-purch-btn-add-item").toggle(isEditable);
 				this.$body.find("#ef-purch-btn-submit").toggle(isEditable && !!this.perms.puede_validar_compras);
 				this.$body.find("#ef-purch-btn-cancel-doc").toggle(d.docstatus === 1 && !!this.perms.puede_cancelar_compras);
 				this.$body.find("#ef-purch-btn-open-erp").toggle(!!d.name).attr("href", `/app/purchase-invoice/${encodeURIComponent(d.name)}`);
-				this.$body.find("#ef-purch-supplier,#ef-purch-bill-no,#ef-purch-bill-date,#ef-purch-posting-date,#ef-purch-currency,#ef-purch-tax-type")
+				this.$body.find("#ef-purch-supplier,#ef-purch-bill-no,#ef-purch-bill-date,#ef-purch-posting-date,#ef-purch-currency,#ef-purch-tax-type,#ef-purch-tipo")
 					.prop("disabled", !isEditable);
 
 				this._render_purch_items();
@@ -8731,7 +8756,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const isEditable = this._purch_doc.docstatus === 0;
 		const currency   = this._purch_doc.currency || "GTQ";
 
-		// 9 columns: # | Código | Descripción/Series | Cant | Precio | Total | Bodega | Stock | Del
+		// 11 columns: # | Código | Descripción/Series | Cant | UdM | Precio | Total | Bodega | Tipo FEL | Stock | Del
 		items.forEach((it, idx) => {
 			const serialBlock = it.has_serial_no
 				? `<div style="margin-top:5px;border-top:1px dashed #e2e8f0;padding-top:4px">
@@ -8773,6 +8798,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					${serialBlock}
 				</td>
 				<td class="ef-td" style="padding-top:10px">${qtyCell}</td>
+				<td class="ef-td" style="padding-top:10px;font-size:12px;color:#64748b">${_esc(it.uom || "")}</td>
 				<td class="ef-td" style="padding-top:8px">
 					<input type="number" class="ef-cell-input ef-input-num ef-pi-rate" data-idx="${idx}"
 						value="${parseFloat(it.rate || 0).toFixed(2)}" min="0" step="any"
@@ -8782,9 +8808,20 @@ body.facex-fullscreen-mode .ef-main-layout {
 					${_fmtCurrency((it.qty || 0) * (it.rate || 0), currency)}
 				</td>
 				<td class="ef-td" style="padding-top:8px">
-					<input type="text" class="ef-cell-input ef-pi-wh" data-idx="${idx}"
-						value="${_esc(it.warehouse || "")}" placeholder="Bodega"
+					<select class="ef-cell-input ef-pi-wh" data-idx="${idx}"
 						style="width:138px;font-size:11px" ${!isEditable ? "disabled" : ""}>
+						<option value="">Bodega...</option>
+						${(this._purch_warehouses || []).map(w => `<option value="${_esc(w)}"${it.warehouse === w ? ' selected' : ''}>${_esc(w)}</option>`).join('')}
+						${(it.warehouse && !(this._purch_warehouses || []).includes(it.warehouse))
+							? `<option value="${_esc(it.warehouse)}" selected>${_esc(it.warehouse)}</option>`
+							: ''}
+					</select>
+				</td>
+				<td class="ef-td" style="padding-top:8px">
+					<select class="ef-cell-input ef-pi-tipo" data-idx="${idx}"
+						style="width:145px;font-size:11px" ${!isEditable ? "disabled" : ""}>
+						${_purchTipoOptionsHtml(it.bfel_multi_tipo || "")}
+					</select>
 				</td>
 				<td class="ef-td" style="padding-top:10px">${stockCell}</td>
 				<td class="ef-td" style="padding-top:8px">
@@ -8823,6 +8860,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 			const idx = parseInt($(e.target).data("idx"));
 			const it  = this._purch_doc.items[idx];
 			if (it) it.warehouse = e.target.value;
+		}).on("change", ".ef-pi-tipo", (e) => {
+			const idx = parseInt($(e.target).data("idx"));
+			const it  = this._purch_doc.items[idx];
+			if (it) it.bfel_multi_tipo = e.target.value;
 		}).on("change", ".ef-pi-stock", (e) => {
 			const idx = parseInt($(e.target).data("idx"));
 			const it  = this._purch_doc.items[idx];
@@ -8845,18 +8886,43 @@ body.facex-fullscreen-mode .ef-main-layout {
 		});
 	}
 
+	// Puebla los selects de "Tipo de Compra" con las plantillas de impuestos
+	// reales y activas de la compañía conectada (en vez de categorías fijas
+	// normal/exento/importación que no siempre existen como plantilla real).
+	_populate_purch_tax_selects() {
+		const templates = (this._purch_defaults && this._purch_defaults.tax_templates) || [];
+		const options = templates.length
+			? templates.map(t => `<option value="${_esc(t.name)}">${_esc(t.name)} (${t.rate}%)</option>`).join('')
+			: `<option value="">Sin plantilla de impuestos configurada</option>`;
+		["#ef-purch-tax-type", "#ef-stg-tax-type"].forEach(sel => {
+			const $sel = this.$body.find(sel);
+			const current = $sel.val();
+			$sel.html(options);
+			if (current && templates.some(t => t.name === current)) $sel.val(current);
+		});
+	}
+
+	// Puebla los selects de "Tipo FEL" (bfel_multi_tipo) de encabezado, tanto
+	// en el formulario normal como en el de staging (importación desde Excel).
+	_populate_purch_tipo_selects() {
+		["#ef-purch-tipo", "#ef-stg-tipo"].forEach(sel => {
+			const $sel = this.$body.find(sel);
+			const current = $sel.val();
+			$sel.html(_purchTipoOptionsHtml(current || ""));
+		});
+	}
+
 	_update_purch_totals() {
-		const items    = this._purch_doc.items || [];
-		const currency = this._purch_doc.currency || "GTQ";
-		const taxType  = this._purch_doc.tax_type || "normal";
-		const subtotal = items.reduce((s, it) => s + (parseFloat(it.amount) || 0), 0);
-		// Tasa desde la plantilla configurada; fallback 12% para tipo normal
-		const rates    = this._purch_defaults && this._purch_defaults.taxes_rates;
-		const taxRate  = rates ? (parseFloat(rates[taxType]) || 0) / 100 : (taxType === "normal" ? 0.12 : 0);
-		const tax      = subtotal * taxRate;
-		const grand    = subtotal + tax;
-		const taxPct   = Math.round(taxRate * 100);
-		this.$body.find("#ef-purch-tax-label").text(taxPct > 0 ? `IVA (${taxPct}%)` : "IVA (Exento)");
+		const items     = this._purch_doc.items || [];
+		const currency  = this._purch_doc.currency || "GTQ";
+		const templates = (this._purch_defaults && this._purch_defaults.tax_templates) || [];
+		const selected  = templates.find(t => t.name === this._purch_doc.tax_type);
+		const subtotal  = items.reduce((s, it) => s + (parseFloat(it.amount) || 0), 0);
+		const taxRate   = selected ? (parseFloat(selected.rate) || 0) / 100 : 0;
+		const tax       = subtotal * taxRate;
+		const grand     = subtotal + tax;
+		const taxPct    = Math.round(taxRate * 100);
+		this.$body.find("#ef-purch-tax-label").text(taxPct > 0 ? `Impuesto (${taxPct}%)` : "Impuesto (0%)");
 		this.$body.find("#ef-purch-subtotal").text(_fmtCurrency(subtotal, currency));
 		this.$body.find("#ef-purch-tax").text(_fmtCurrency(tax, currency));
 		this.$body.find("#ef-purch-grand").text(_fmtCurrency(grand, currency));
@@ -8899,7 +8965,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 					qty,
 					rate,
 					amount:       qty * rate,
+					uom:          info.uom,
 					warehouse:    info.warehouse,
+					bfel_multi_tipo: this._purch_doc.bfel_multi_tipo || "",
 					serial_no:    "",
 					update_stock: info.is_stock_item ? 1 : 0,
 					_fetched:     true,
@@ -9008,6 +9076,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this._purch_doc.posting_date = this.$body.find("#ef-purch-posting-date").val();
 		this._purch_doc.currency     = this.$body.find("#ef-purch-currency").val();
 		this._purch_doc.tax_type     = this.$body.find("#ef-purch-tax-type").val();
+		this._purch_doc.bfel_multi_tipo = this.$body.find("#ef-purch-tipo").val();
 	}
 
 	_save_purch() {
@@ -9145,7 +9214,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 			bill_date:    result.header.bill_date    || frappe.datetime.get_today(),
 			posting_date: result.header.posting_date || frappe.datetime.get_today(),
 			currency:     result.header.currency     || "GTQ",
-			tax_type:     "normal",
+			tax_type:     (this._purch_defaults && this._purch_defaults.default_tax_template) || "",
+			bfel_multi_tipo: "",
 		};
 
 		this._stg_rows = result.items.map((it, i) => ({
@@ -9159,6 +9229,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			rate:          it.rate,
 			amount:        it.qty * it.rate,
 			warehouse:     it.warehouse || "",
+			bfel_multi_tipo: it.bfel_multi_tipo || "",
 			serial_no:     it.serial_no || "",
 			update_stock:  1,
 			_errors:       [],  // se llena en revalidar
@@ -9190,7 +9261,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-stg-bill-date").val(h.bill_date);
 		this.$body.find("#ef-stg-posting-date").val(h.posting_date);
 		this.$body.find("#ef-stg-currency").val(h.currency);
-		this.$body.find("#ef-stg-tax-type").val(h.tax_type || "normal");
+		this._populate_purch_tax_selects();
+		this._populate_purch_tipo_selects();
+		this.$body.find("#ef-stg-tax-type").val(h.tax_type || "");
+		this.$body.find("#ef-stg-tipo").val(h.bfel_multi_tipo || "");
 	}
 
 	_stg_read_header() {
@@ -9200,6 +9274,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this._stg_header.posting_date = this.$body.find("#ef-stg-posting-date").val();
 		this._stg_header.currency     = this.$body.find("#ef-stg-currency").val();
 		this._stg_header.tax_type     = this.$body.find("#ef-stg-tax-type").val();
+		this._stg_header.bfel_multi_tipo = this.$body.find("#ef-stg-tipo").val();
 	}
 
 	_stg_validate_rows() {
@@ -9413,6 +9488,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			rate:          row.rate,
 			amount:        row.amount,
 			warehouse:     row.warehouse,
+			bfel_multi_tipo: row.bfel_multi_tipo || "",
 			serial_no:     row.serial_no || "",
 			update_stock:  row.update_stock,
 			_fetched:      true,
@@ -9424,7 +9500,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-purch-bill-date").val(h.bill_date);
 		this.$body.find("#ef-purch-posting-date").val(h.posting_date);
 		this.$body.find("#ef-purch-currency").val(h.currency);
-		this.$body.find("#ef-purch-tax-type").val(h.tax_type || "normal");
+		this._populate_purch_tax_selects();
+		this._populate_purch_tipo_selects();
+		this.$body.find("#ef-purch-tax-type").val(h.tax_type || "");
+		this.$body.find("#ef-purch-tipo").val(h.bfel_multi_tipo || "");
 		this.$body.find("#ef-purch-form-title").text("Nueva Factura de Compra (desde Excel)");
 		this.$body.find("#ef-purch-status-badge").text("NUEVO").attr("class","ef-badge ef-badge-new");
 		this.$body.find("#ef-purch-btn-cancel-doc").hide();
@@ -9440,6 +9519,27 @@ body.facex-fullscreen-mode .ef-main-layout {
 // ---------------------------------------------------------------------------
 // Utility functions
 // ---------------------------------------------------------------------------
+
+// Catálogo de Tipo FEL para compras (bfel_multi_tipo en Purchase Invoice /
+// Purchase Invoice Item). Ver facex_multi.patches.v1_0.add_purchase_bfel_multi_tipo.
+const PURCH_TIPO_OPTIONS = [
+	{ value: "B", label: "B - Bien" },
+	{ value: "S", label: "S - Servicio" },
+	{ value: "C", label: "C - Combustible" },
+	{ value: "I", label: "I - Importación" },
+	{ value: "E", label: "E - Exportación" },
+	{ value: "P", label: "P - Pequeño Contribuyente" },
+	{ value: "L", label: "L - Exención Local" },
+	{ value: "N", label: "N - No Aplica" },
+	{ value: "X", label: "X - Sin Asignación" },
+];
+
+function _purchTipoOptionsHtml(selected) {
+	const blank = `<option value=""${!selected ? ' selected' : ''}>-</option>`;
+	return blank + PURCH_TIPO_OPTIONS.map(o =>
+		`<option value="${o.value}"${selected === o.value ? ' selected' : ''}>${_esc(o.label)}</option>`
+	).join('');
+}
 
 function _esc(str) {
 	return String(str || "")

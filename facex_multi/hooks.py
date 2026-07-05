@@ -8,6 +8,10 @@ app_license = "mit"
 # La Page se auto-descubre desde facex_multi/facex_multi/page/facex/
 # DocType eFast Invoice Payment (tabla hija para pagos) se auto-descubre desde doctype/
 
+override_doctype_class = {
+    "Supplier": "facex_multi.overrides.supplier.FacexSupplier"
+}
+
 # Roles que aparecerán en el menú de la app (opcional)
 # add_to_apps_screen = [
 #     {

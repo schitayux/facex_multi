@@ -35,35 +35,40 @@ def _resolve_item_warehouse(item_code: str, company: str) -> str:
     return f"{base} {idx} - {abbr}" if idx else ""
 
 
-def _get_purchase_taxes(company: str, tax_type: str = "normal") -> str:
-    """Plantilla de impuestos de compra según tipo solicitado (solo activas)."""
-    abbr = _get_abbr(company)
-    hints = {
-        "normal":      f"COMPRAS - {abbr}",
-        "exento":      f"EXENTO IVA - {abbr}",
-        "importacion": f"IMPORTACION - {abbr}",
-    }
-    hint = hints.get(tax_type, hints["normal"])
-    # Buscar por nombre exacto sólo si está activa
-    if frappe.db.exists("Purchase Taxes and Charges Template", hint):
-        disabled = frappe.db.get_value("Purchase Taxes and Charges Template", hint, "disabled")
-        if not disabled:
-            return hint
-    # Fallback: activa por defecto o la primera activa de la empresa
-    return (
-        frappe.db.get_value(
-            "Purchase Taxes and Charges Template",
-            {"company": company, "is_default": 1, "disabled": 0},
-            "name",
-        )
-        or frappe.db.get_value(
-            "Purchase Taxes and Charges Template",
-            {"company": company, "disabled": 0},
-            "name",
-            order_by="creation asc",
-        )
-        or ""
+def _list_company_tax_templates(company: str) -> list:
+    """Plantillas de impuestos de compra realmente activas y ligadas a la compañía."""
+    rows = frappe.get_all(
+        "Purchase Taxes and Charges Template",
+        filters={"company": company, "disabled": 0},
+        fields=["name", "is_default"],
+        order_by="is_default desc, name asc",
     )
+    return rows
+
+
+def _resolve_purchase_tax_template(company: str, template_name: str = None) -> str:
+    """Resuelve la plantilla de impuestos de compra a usar.
+
+    Si template_name es una plantilla activa y ligada a la compañía, se respeta
+    tal cual (selección explícita del usuario desde la lista real). Si no, se
+    usa la marcada is_default=1, o la primera activa de la compañía.
+    """
+    if template_name and frappe.db.exists(
+        "Purchase Taxes and Charges Template",
+        {"name": template_name, "company": company, "disabled": 0},
+    ):
+        return template_name
+
+    templates = _list_company_tax_templates(company)
+    return templates[0].name if templates else ""
+
+
+def _get_tax_rows(template_name: str) -> list:
+    """Filas reales de la plantilla de impuestos, listas para doc.append('taxes', ...)."""
+    if not template_name:
+        return []
+    from erpnext.controllers.accounts_controller import get_taxes_and_charges
+    return get_taxes_and_charges("Purchase Taxes and Charges Template", template_name) or []
 
 
 def _get_purchase_tax_rate(template_name: str) -> float:
@@ -93,6 +98,16 @@ def _get_naming_series_pi(company: str) -> list:
     return filtered or all_s
 
 
+def _get_buying_price_list() -> str:
+    """Lista de precios de compra configurada en Buying Settings (fallback: 'Standard Buying')."""
+    return frappe.db.get_single_value("Buying Settings", "buying_price_list") or "Standard Buying"
+
+
+def _default_uom() -> str:
+    """UdM de respaldo cuando el ítem no tiene stock_uom (caso excepcional)."""
+    return frappe.db.get_single_value("Stock Settings", "stock_uom") or "Unit"
+
+
 def _get_credit_to(company: str, currency: str = "GTQ") -> str:
     return (
         frappe.db.get_value(
@@ -112,6 +127,21 @@ def _get_credit_to(company: str, currency: str = "GTQ") -> str:
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
+def get_purchase_tax_templates(company: str = None) -> list:
+    """Plantillas de impuestos de compra realmente activas y ligadas a la compañía conectada."""
+    from facex_multi.api.invoice import get_effective_company
+    company = get_effective_company(company)
+    return [
+        {
+            "name":       t.name,
+            "is_default": int(t.is_default or 0),
+            "rate":       _get_purchase_tax_rate(t.name),
+        }
+        for t in _list_company_tax_templates(company)
+    ]
+
+
+@frappe.whitelist()
 def get_purchase_defaults(company: str = None) -> dict:
     """Valores por defecto para inicializar el formulario de compra."""
     from facex_multi.api.invoice import get_effective_company
@@ -119,22 +149,17 @@ def get_purchase_defaults(company: str = None) -> dict:
     abbr     = _get_abbr(company)
     currency = frappe.db.get_value("Company", company, "default_currency") or "GTQ"
 
-    taxes_map   = {}
-    taxes_rates = {}
-    for t in ["normal", "exento", "importacion"]:
-        tpl = _get_purchase_taxes(company, t)
-        taxes_map[t]   = tpl
-        taxes_rates[t] = _get_purchase_tax_rate(tpl)
+    tax_templates = get_purchase_tax_templates(company)
 
     return {
-        "company":           company,
-        "abbr":              abbr,
-        "currency":          currency,
-        "taxes_map":         taxes_map,
-        "taxes_rates":       taxes_rates,
+        "company":             company,
+        "abbr":                abbr,
+        "currency":            currency,
+        "tax_templates":       tax_templates,
+        "default_tax_template": tax_templates[0]["name"] if tax_templates else "",
         "credit_to_gtq":     _get_credit_to(company, "GTQ"),
         "credit_to_usd":     _get_credit_to(company, "USD"),
-        "buying_price_list": "Compra estandar",
+        "buying_price_list": _get_buying_price_list(),
         "naming_series":     _get_naming_series_pi(company),
         "posting_date":      today(),
         "update_stock":      1,
@@ -163,7 +188,7 @@ def get_item_purchase_info(item_code: str, company: str = None) -> dict:
         "item_group":   item.item_group,
         "has_serial_no": int(item.has_serial_no or 0),
         "is_stock_item": int(item.is_stock_item or 0),
-        "uom":          item.stock_uom or "Unidad(es)",
+        "uom":          item.stock_uom or _default_uom(),
         "warehouse":    warehouse,
     }
 
@@ -185,7 +210,7 @@ def search_items(txt: str = "", company: str = None) -> list:
             ["item_name", "like", f"%{txt}%"],
         ],
         fields=["name as item_code", "item_name", "item_group",
-                "has_serial_no", "is_stock_item"],
+                "has_serial_no", "is_stock_item", "stock_uom"],
         order_by="item_code asc",
         limit=25,
     )
@@ -199,6 +224,7 @@ def search_items(txt: str = "", company: str = None) -> list:
             "item_group":   r.item_group,
             "has_serial_no": int(r.has_serial_no or 0),
             "is_stock_item": int(r.is_stock_item or 0),
+            "uom":          r.stock_uom or _default_uom(),
             "warehouse":    wh,
         })
     return out
@@ -359,14 +385,16 @@ def save_purchase_invoice(data_json: str) -> dict:
     """
     Crea o actualiza un Purchase Invoice en borrador.
     data_json: {name?, company, supplier, posting_date, bill_no, bill_date,
-                currency, tax_type, items: [{item_code, qty, rate, warehouse, serial_no}]}
+                currency, tax_type (nombre real de la Plantilla de Impuestos de Compra),
+                bfel_multi_tipo (Tipo FEL de encabezado),
+                items: [{item_code, qty, rate, warehouse, serial_no, bfel_multi_tipo}]}
     """
     data     = json.loads(data_json) if isinstance(data_json, str) else data_json
     from facex_multi.api.invoice import get_effective_company
-    company  = get_effective_company(data.get("company"))
-    currency = data.get("currency") or "GTQ"
-    tax_type = data.get("tax_type") or "normal"
-    name     = (data.get("name") or "").strip()
+    company       = get_effective_company(data.get("company"))
+    currency      = data.get("currency") or "GTQ"
+    tax_template  = data.get("tax_type") or ""
+    name          = (data.get("name") or "").strip()
 
     if name and frappe.db.exists("Purchase Invoice", name):
         doc = frappe.get_doc("Purchase Invoice", name)
@@ -384,12 +412,16 @@ def save_purchase_invoice(data_json: str) -> dict:
     doc.posting_date      = data.get("posting_date") or today()
     doc.bill_no           = data.get("bill_no") or ""
     doc.bill_date         = data.get("bill_date") or doc.posting_date
-    doc.currency          = currency
-    doc.buying_price_list = "Compra estandar"
-    doc.update_stock      = 1
-    doc.taxes_and_charges = _get_purchase_taxes(company, tax_type)
-    doc.credit_to         = _get_credit_to(company, currency)
-    doc.set_warehouse     = None
+    doc.currency             = currency
+    doc.conversion_rate      = 1
+    doc.price_list_currency  = currency
+    doc.plc_conversion_rate  = 1
+    doc.buying_price_list    = _get_buying_price_list()
+    doc.update_stock         = 1
+    doc.taxes_and_charges    = _resolve_purchase_tax_template(company, tax_template)
+    doc.credit_to            = _get_credit_to(company, currency)
+    doc.set_warehouse        = None
+    doc.bfel_multi_tipo      = data.get("bfel_multi_tipo") or ""
 
     for row in data.get("items", []):
         item_code = (row.get("item_code") or "").strip()
@@ -400,8 +432,12 @@ def save_purchase_invoice(data_json: str) -> dict:
         wh        = row.get("warehouse") or _resolve_item_warehouse(item_code, company)
         serial_no = (row.get("serial_no") or "").strip()
 
-        has_serial = int(frappe.db.get_value("Item", item_code, "has_serial_no") or 0)
-        is_stock   = int(frappe.db.get_value("Item", item_code, "is_stock_item")  or 0)
+        item_info  = frappe.db.get_value(
+            "Item", item_code, ["has_serial_no", "is_stock_item", "stock_uom"], as_dict=True
+        )
+        has_serial = int(item_info.has_serial_no or 0)
+        is_stock   = int(item_info.is_stock_item or 0)
+        stock_uom  = item_info.stock_uom or _default_uom()
 
         if has_serial and serial_no:
             serials   = [s.strip() for s in serial_no.replace(",", "\n").split("\n") if s.strip()]
@@ -409,12 +445,15 @@ def save_purchase_invoice(data_json: str) -> dict:
             serial_no = "\n".join(serials)
 
         item_row = {
-            "item_code": item_code,
-            "qty":       qty,
-            "rate":      rate,
-            "amount":    qty * rate,
-            "uom":       row.get("uom") or "Unidad(es)",
-            "warehouse": wh if is_stock else "",
+            "item_code":         item_code,
+            "qty":               qty,
+            "rate":              rate,
+            "amount":            qty * rate,
+            "uom":               stock_uom,
+            "stock_uom":         stock_uom,
+            "conversion_factor": 1.0,
+            "bfel_multi_tipo":   row.get("bfel_multi_tipo") or "",
+            "warehouse":         wh if is_stock else "",
         }
         if has_serial and serial_no:
             item_row["serial_no"] = serial_no
@@ -424,8 +463,19 @@ def save_purchase_invoice(data_json: str) -> dict:
     if not doc.items:
         frappe.throw("Agregue al menos un producto antes de guardar.")
 
+    doc.taxes = []
+    for tax_row in _get_tax_rows(doc.taxes_and_charges):
+        doc.append("taxes", tax_row)
+
     doc.flags.ignore_validate   = True
     doc.flags.ignore_mandatory  = True
+
+    # validate() está deshabilitado (ignore_validate) para evitar las validaciones
+    # estrictas de ERPNext no aplicables a este flujo simplificado; por eso se
+    # invoca manualmente el cálculo de impuestos/totales que normalmente correría
+    # dentro de validate(), para que la plantilla de impuestos sí se refleje en
+    # total_taxes_and_charges/grand_total.
+    doc.calculate_taxes_and_totals()
 
     if name and frappe.db.exists("Purchase Invoice", name):
         doc.save(ignore_permissions=True)
