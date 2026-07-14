@@ -34,7 +34,28 @@ doc_events = {
         "before_insert": "facex_multi.api.invoice.fix_abbr_in_naming_series"
     }
 }
+
+after_migrate = [
+    "facex_multi.api.permissions.ensure_stock_entry_permissions",
+    "facex_multi.api.permissions.ensure_stock_entry_naming_series",
+    "facex_multi.api.permissions.ensure_warehouse_establecimiento_field"
+]
+
 fixtures = [
+    {
+        "dt": "Custom DocPerm",
+        "filters": [
+            ["parent", "=", "Stock Entry"],
+            ["role", "in", ["Sales User", "Accounts User", "Sales Manager", "Accounts Manager", "System Manager", "facex_multi"]]
+        ]
+    },
+    {
+        "dt": "Property Setter",
+        "filters": [
+            ["doc_type", "=", "Stock Entry"],
+            ["field_name", "=", "naming_series"]
+        ]
+    },
 
     {
         # Solo los formatos base de FACEX (compañía de pruebas) se versionan

@@ -101,3 +101,166 @@ def get_facex_company_config(company: str) -> dict:
         else:
             result[k] = int(v or 0)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Módulo de Inventario (Entradas / Salidas / Transferencias / Reportes)
+# ---------------------------------------------------------------------------
+# A diferencia de _ALL_PERM_FIELDS (Ventas/Compras), aquí NO hay acceso total
+# por defecto. Sin fila de FacEx Settings para el usuario+compañía → sin
+# acceso. Es una decisión deliberada: el módulo de inventario mueve stock,
+# no debe quedar expuesto a usuarios que nunca fueron configurados para él.
+
+_INVENTORY_PERM_FIELDS = [
+    "puede_ver_inventario",
+    "puede_hacer_entradas",
+    "puede_hacer_salidas",
+    "puede_hacer_transferencias",
+    "puede_cancelar_movimientos",
+    "reporte_inv_kardex",
+    "reporte_inv_existencias",
+    "reporte_inv_trazabilidad",
+]
+
+
+def _inventory_no_access() -> dict:
+    return {f: 0 for f in _INVENTORY_PERM_FIELDS}
+
+
+def _inventory_full_access() -> dict:
+    return {f: 1 for f in _INVENTORY_PERM_FIELDS}
+
+
+def get_facex_inventory_permissions(company: str) -> dict:
+    """
+    Retorna el dict de permisos de inventario para frappe.session.user + company.
+    Deny-by-default: sin fila configurada → sin acceso (salvo System Manager).
+    """
+    if "System Manager" in frappe.get_roles():
+        return _inventory_full_access()
+
+    if not company:
+        return _inventory_no_access()
+
+    row = frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        _INVENTORY_PERM_FIELDS,
+        as_dict=True,
+    )
+
+    if not row:
+        return _inventory_no_access()
+
+    return {k: int(row.get(k) or 0) for k in _INVENTORY_PERM_FIELDS}
+
+
+# Roles que ya tienen acceso al page FacEx (ver facex_inventario.json > roles).
+# Stock Entry, por defecto en ERPNext, solo lo tienen "Stock User"/"Stock Manager" —
+# aquí se les otorga el permiso nativo para que el motor de ERPNext los valide de
+# forma normal (create/write/submit/cancel). El filtro fino de QUÉ compañía y QUÉ
+# acción (entrada/salida/transferencia) sigue resuelto por FacEx Settings arriba;
+# esto solo abre la puerta a nivel de DocType, como ya ocurre con Sales Invoice.
+STOCK_ENTRY_ROLES = [
+    "Sales User", "Accounts User", "Sales Manager",
+    "Accounts Manager", "System Manager", "facex_multi",
+]
+
+
+def ensure_stock_entry_permissions():
+    """
+    Idempotente: otorga permiso nativo de Stock Entry (read/write/create/
+    submit/cancel/report/print) a los roles que ya usa FacEx, si no lo tienen.
+    Se llama desde after_migrate (hooks.py) para que sobreviva a futuros
+    `bench migrate` sin depender de que alguien lo corra a mano.
+    """
+    for role in STOCK_ENTRY_ROLES:
+        if frappe.db.exists("Custom DocPerm", {"parent": "Stock Entry", "role": role}):
+            continue
+        frappe.get_doc({
+            "doctype": "Custom DocPerm",
+            "parent": "Stock Entry",
+            "parenttype": "DocType",
+            "parentfield": "permissions",
+            "role": role,
+            "permlevel": 0,
+            "read": 1,
+            "write": 1,
+            "create": 1,
+            "submit": 1,
+            "cancel": 1,
+            "delete": 0,
+            "report": 1,
+            "export": 0,
+            "print": 1,
+            "email": 0,
+            "share": 0,
+        }).insert(ignore_permissions=True)
+    frappe.db.commit()
+    frappe.clear_cache(doctype="Stock Entry")
+
+
+# ---------------------------------------------------------------------------
+# Series de numeración por tipo de movimiento (Entradas/Salidas/Transferencias)
+# ---------------------------------------------------------------------------
+# ".ABBR." ya lo resuelve ERPNext de forma nativa (erpnext.hooks.naming_series_variables
+# -> parse_naming_series_variable), para cualquier doctype con campo "company".
+# No hay que reimplementar esa lógica: solo declarar las series como opciones
+# válidas del campo naming_series de Stock Entry.
+
+STOCK_ENTRY_NAMING_SERIES = [
+    "MAT-STE-.YYYY.-",   # serie nativa de ERPNext — no se retira, la siguen usando Repack/Manufacture/etc.
+    "ING-.ABBR.-.####",  # Entradas
+    "SAL-.ABBR.-.####",  # Salidas (fase futura)
+    "TRA-.ABBR.-.####",  # Transferencias (fase futura)
+]
+
+
+def ensure_stock_entry_naming_series():
+    """Idempotente: agrega ING-/SAL-/TRA- a las opciones de Stock Entry.naming_series
+    vía Property Setter, sin quitar la serie nativa. Se llama desde after_migrate."""
+    from frappe.custom.doctype.property_setter.property_setter import make_property_setter
+
+    meta_options = frappe.get_meta("Stock Entry").get_field("naming_series").options or ""
+    current_options = [o.strip() for o in meta_options.split("\n") if o.strip()]
+    missing = [o for o in STOCK_ENTRY_NAMING_SERIES if o not in current_options]
+    if not missing:
+        return
+
+    new_value = "\n".join(current_options + missing)
+    existing_name = frappe.db.get_value(
+        "Property Setter",
+        {"doc_type": "Stock Entry", "field_name": "naming_series", "property": "options"},
+    )
+    if existing_name:
+        frappe.db.set_value("Property Setter", existing_name, "value", new_value)
+    else:
+        make_property_setter("Stock Entry", "naming_series", "options", new_value, "Text")
+
+    frappe.db.commit()
+    frappe.clear_cache(doctype="Stock Entry")
+
+
+# ---------------------------------------------------------------------------
+# Sucursal (BFEL Establecimiento) por Almacén
+# ---------------------------------------------------------------------------
+# No existía ninguna relación entre Almacén y BFEL Establecimientos (esa tabla
+# solo se usaba para series fiscales de facturación). La agregamos aquí como
+# campo simple (igual convención que bfel_establecimiento en Sales/Purchase
+# Invoice: Data guardando el establecimiento_id, no un Link).
+
+def ensure_warehouse_establecimiento_field():
+    """Idempotente: agrega el campo bfel_establecimiento a Warehouse si no existe."""
+    if frappe.db.exists("Custom Field", "Warehouse-bfel_establecimiento"):
+        return
+    frappe.get_doc({
+        "doctype": "Custom Field",
+        "dt": "Warehouse",
+        "fieldname": "bfel_establecimiento",
+        "label": "Establecimiento (Sucursal)",
+        "fieldtype": "Data",
+        "insert_after": "company",
+        "description": "ID de BFEL Establecimientos al que pertenece este almacén. Vacío = sin asignar.",
+    }).insert(ignore_permissions=True)
+    frappe.db.commit()
+    frappe.clear_cache(doctype="Warehouse")

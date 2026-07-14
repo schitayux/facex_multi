@@ -55,7 +55,20 @@
   "mostrar_desc_pct",
   "cb_columnas",
   "mostrar_adenda",
-  "mostrar_tipo"
+  "mostrar_tipo",
+  "sb_inventario_movs",
+  "puede_ver_inventario",
+  "puede_hacer_entradas",
+  "cb_inv_movs1",
+  "puede_hacer_salidas",
+  "puede_hacer_transferencias",
+  "cb_inv_movs2",
+  "puede_cancelar_movimientos",
+  "sb_inventario_reportes",
+  "reporte_inv_kardex",
+  "reporte_inv_existencias",
+  "cb_inv_rep",
+  "reporte_inv_trazabilidad"
  ],
  "fields": [
   {
@@ -350,11 +363,81 @@
    "fieldname": "mostrar_tipo",
    "fieldtype": "Check",
    "label": "Mostrar Tipo FEL"
+  },
+  {
+   "fieldname": "sb_inventario_movs",
+   "fieldtype": "Section Break",
+   "label": "Movimientos de Inventario"
+  },
+  {
+   "default": "0",
+   "fieldname": "puede_ver_inventario",
+   "fieldtype": "Check",
+   "label": "Ver Módulo de Inventario"
+  },
+  {
+   "default": "0",
+   "fieldname": "puede_hacer_entradas",
+   "fieldtype": "Check",
+   "label": "Registrar Entradas"
+  },
+  {
+   "fieldname": "cb_inv_movs1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "puede_hacer_salidas",
+   "fieldtype": "Check",
+   "label": "Registrar Salidas"
+  },
+  {
+   "default": "0",
+   "fieldname": "puede_hacer_transferencias",
+   "fieldtype": "Check",
+   "label": "Registrar Transferencias"
+  },
+  {
+   "fieldname": "cb_inv_movs2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "puede_cancelar_movimientos",
+   "fieldtype": "Check",
+   "label": "Anular Movimientos de Inventario"
+  },
+  {
+   "fieldname": "sb_inventario_reportes",
+   "fieldtype": "Section Break",
+   "label": "Reportes de Inventario"
+  },
+  {
+   "default": "0",
+   "fieldname": "reporte_inv_kardex",
+   "fieldtype": "Check",
+   "label": "Kardex de Movimientos"
+  },
+  {
+   "default": "0",
+   "fieldname": "reporte_inv_existencias",
+   "fieldtype": "Check",
+   "label": "Existencias (Status / Antigüedad / Sin Rotación)"
+  },
+  {
+   "fieldname": "cb_inv_rep",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "reporte_inv_trazabilidad",
+   "fieldtype": "Check",
+   "label": "Trazabilidad Serie / Lote"
   }
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-06-24 00:00:00.000000",
+ "modified": "2026-07-09 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Settings",
