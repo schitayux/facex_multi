@@ -82,6 +82,7 @@ class EFastSalePage {
 				this._bind_events();
 				this._setup_invoice_search();
 				this._setup_collapse_btn();
+				this._setup_section_accordion();
 
 				// Bind analytics button
 				this.$body.find("#ef-btn-show-analytics").on("click", () => {
@@ -393,7 +394,7 @@ class EFastSalePage {
   <div id="ef-billing-view" class="ef-view-content" style="display:none;">
     <div class="ef-wrapper">
 
-      <!-- ── HEADER ──────────────────────────────────────────────────── -->
+      <!-- ── HEADER (tira de identidad + tarjetas Cliente/Documento/FEL) ── -->
       <div class="ef-header">
         <div class="ef-header-top">
           <div class="ef-doc-info">
@@ -406,6 +407,10 @@ class EFastSalePage {
               <svg class="ef-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
               <input id="ef-invoice-search" type="text" class="ef-search-input" placeholder="Buscar factura o cliente..." autocomplete="off" />
             </div>
+          </div>
+          <div class="ef-header-total">
+            <span class="ef-header-total-label">Total</span>
+            <span id="ef-header-grand-total" class="ef-header-total-value">Q 0.00</span>
           </div>
           <div class="ef-header-brand">
             <div class="ef-header-title">
@@ -421,122 +426,166 @@ class EFastSalePage {
           </div>
         </div>
 
-        <!-- Encabezado en 3 Columnas -->
-        <div class="ef-header-grid" style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; align-items: start;">
-          
-          <!-- Columna 1 -->
-          <div class="ef-col">
-            <div class="ef-field-group">
-              <label class="ef-label">Establecimiento <span class="ef-req">*</span></label>
-              <select id="ef-establecimiento" class="ef-select" tabindex="1"></select>
-            </div>
-            <div class="ef-field-group">
-              <label class="ef-label">Serie <span class="ef-req">*</span></label>
-              <select id="ef-naming-series" class="ef-select" tabindex="2"></select>
-            </div>
-            <div class="ef-field-group">
-              <label class="ef-label">Cliente <span class="ef-req">*</span></label>
-              <div style="display:flex;gap:4px">
-                <div data-ctrl="customer" class="ef-link-ctrl" style="flex:1" tabindex="3"></div>
-                <button id="ef-btn-show-analytics" class="ef-btn ef-btn-secondary" style="padding:6px 9px;" title="Ver Análisis de Ventas" tabindex="4">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-                </button>
-              </div>
-            </div>
-            <div class="ef-field-group">
-              <label class="ef-label">Nombre para Factura</label>
-              <input id="ef-bfel-nombre" type="text" class="ef-input" placeholder="Nombre en factura..." maxlength="100" tabindex="5" />
-            </div>
-            <div class="ef-field-group">
-              <label class="ef-label">NIT / Identificación (FEL)</label>
-              <select id="ef-bfel-identificacion" class="ef-input" tabindex="6">
-                <option value="">-- Seleccione --</option>
-                <option value="NIT">NIT</option>
-                <option value="CUI">CUI</option>
-                <option value="PASAPORTE">PASAPORTE</option>
-                <option value="CF">CF</option>
-              </select>
-            </div>
-            <div class="ef-field-group">
-              <label class="ef-label">ID Receptor (FEL)</label>
-              <input id="ef-bfel-nit" type="text" class="ef-input" placeholder="CF" maxlength="20" tabindex="7" />
-            </div>
-            <div class="ef-field-group">
-              <label class="ef-label" style="color:var(--ef-primary); font-weight:600;">Estado FEL</label>
-              <select id="ef-bfel-status" class="ef-select" style="border-color:var(--ef-primary); font-weight:600;" tabindex="8">
-                <option value="01 Enviar">01 Enviar</option>
-                <option value="00 No enviar">00 No enviar</option>
-              </select>
-            </div>
-          </div>
+        <!-- Tarjetas colapsables: Cliente / Documento / Facturación FEL.
+             Solo una permanece abierta a la vez (ver _setup_section_accordion). -->
+        <div class="ef-sections">
 
-          <!-- Columna 2 -->
-          <div class="ef-col">
-            <div class="ef-field-group">
-              <label class="ef-label">Condición de Pago</label>
-              <div data-ctrl="payment_terms_template" class="ef-link-ctrl" tabindex="9"></div>
-            </div>
-            <div class="ef-field-group">
-              <label class="ef-label">F. Emisión <span class="ef-req">*</span></label>
-              <input id="ef-posting-date" type="date" class="ef-input" tabindex="10" />
-            </div>
-            <div class="ef-field-group">
-              <label class="ef-label">F. Vencimiento</label>
-              <input id="ef-due-date" type="date" class="ef-input" tabindex="11" />
-            </div>
-            <!-- Campos informativos de FEL -->
-            <div style="display:flex; gap:10px; margin-top:20px;">
-              <div class="ef-field-group" style="flex:1">
-                <label class="ef-label">UUID FEL</label>
-                <input id="ef-bfel-uuid" type="text" class="ef-input ef-input-readonly" readonly placeholder="—" style="font-size:11px;" />
+          <!-- CLIENTE -->
+          <div class="ef-sec-card" id="ef-sec-cliente">
+            <div class="ef-sec-head">
+              <div class="ef-sec-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+              <div class="ef-sec-titlewrap">
+                <div class="ef-sec-title">Cliente</div>
+                <div class="ef-sec-summary" id="ef-sec-cliente-summary">Sin cliente seleccionado</div>
               </div>
-              <div class="ef-field-group" style="flex:1">
-                <label class="ef-label">No. Doc. FEL</label>
-                <input id="ef-bfel-docto-no" type="text" class="ef-input ef-input-readonly" readonly placeholder="—" style="font-size:11px;" />
+              <svg class="ef-sec-chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="ef-sec-body">
+              <div class="ef-field-group">
+                <label class="ef-label">Cliente <span class="ef-req">*</span></label>
+                <div style="display:flex;gap:4px">
+                  <div data-ctrl="customer" class="ef-link-ctrl" style="flex:1" tabindex="1"></div>
+                  <button id="ef-btn-show-analytics" class="ef-btn ef-btn-secondary" style="padding:6px 9px;" title="Ver Análisis de Ventas" tabindex="2">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="ef-field-group">
+                <label class="ef-label">Nombre para Factura</label>
+                <input id="ef-bfel-nombre" type="text" class="ef-input" placeholder="Nombre en factura..." maxlength="100" tabindex="3" />
+              </div>
+              <div class="ef-field-row2">
+                <div class="ef-field-group">
+                  <label class="ef-label">NIT / Identificación (FEL)</label>
+                  <select id="ef-bfel-identificacion" class="ef-input" tabindex="4">
+                    <option value="">-- Seleccione --</option>
+                    <option value="NIT">NIT</option>
+                    <option value="CUI">CUI</option>
+                    <option value="PASAPORTE">PASAPORTE</option>
+                    <option value="CF">CF</option>
+                  </select>
+                </div>
+                <div class="ef-field-group">
+                  <label class="ef-label">ID Receptor (FEL)</label>
+                  <input id="ef-bfel-nit" type="text" class="ef-input" placeholder="CF" maxlength="20" tabindex="5" />
+                </div>
               </div>
             </div>
           </div>
 
-          <!-- Columna 3 -->
-          <div class="ef-col">
-            <div class="ef-field-group">
-              <label class="ef-label">Plantilla Impuestos</label>
-              <div data-ctrl="taxes_and_charges" class="ef-link-ctrl" tabindex="11"></div>
+          <!-- DOCUMENTO -->
+          <div class="ef-sec-card" id="ef-sec-documento">
+            <div class="ef-sec-head">
+              <div class="ef-sec-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+              <div class="ef-sec-titlewrap">
+                <div class="ef-sec-title">Documento</div>
+                <div class="ef-sec-summary" id="ef-sec-documento-summary">Sin datos de documento</div>
+              </div>
+              <svg class="ef-sec-chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3"><polyline points="6 9 12 15 18 9"/></svg>
             </div>
-            <div class="ef-field-group">
-              <label class="ef-label">Vendedor</label>
-              <div data-ctrl="sales_partner" class="ef-link-ctrl" tabindex="12"></div>
-            </div>
-            <div class="ef-field-group">
-              <label class="ef-label">Términos y Condiciones</label>
-              <textarea id="ef-terms" class="ef-textarea ef-textarea-sm" rows="3" placeholder="Términos..." tabindex="13"></textarea>
+            <div class="ef-sec-body">
+              <div class="ef-field-row2">
+                <div class="ef-field-group">
+                  <label class="ef-label">Establecimiento <span class="ef-req">*</span></label>
+                  <select id="ef-establecimiento" class="ef-select" tabindex="6"></select>
+                </div>
+                <div class="ef-field-group">
+                  <label class="ef-label">Serie <span class="ef-req">*</span></label>
+                  <select id="ef-naming-series" class="ef-select" tabindex="7"></select>
+                </div>
+              </div>
+              <div class="ef-field-row2">
+                <div class="ef-field-group">
+                  <label class="ef-label">F. Emisión <span class="ef-req">*</span></label>
+                  <input id="ef-posting-date" type="date" class="ef-input" tabindex="8" />
+                </div>
+                <div class="ef-field-group">
+                  <label class="ef-label">F. Vencimiento</label>
+                  <input id="ef-due-date" type="date" class="ef-input" tabindex="9" />
+                </div>
+              </div>
+              <div class="ef-field-group">
+                <label class="ef-label">Condición de Pago</label>
+                <div data-ctrl="payment_terms_template" class="ef-link-ctrl" tabindex="10"></div>
+              </div>
+              <div class="ef-field-row2">
+                <div class="ef-field-group">
+                  <label class="ef-label">Plantilla Impuestos</label>
+                  <div data-ctrl="taxes_and_charges" class="ef-link-ctrl" tabindex="11"></div>
+                </div>
+                <div class="ef-field-group">
+                  <label class="ef-label">Vendedor</label>
+                  <div data-ctrl="sales_partner" class="ef-link-ctrl" tabindex="12"></div>
+                </div>
+              </div>
+              <div class="ef-field-group">
+                <label class="ef-label">Términos y Condiciones</label>
+                <textarea id="ef-terms" class="ef-textarea ef-textarea-sm" rows="2" placeholder="Términos..." tabindex="13"></textarea>
+              </div>
             </div>
           </div>
+
+          <!-- FACTURACIÓN FEL -->
+          <div class="ef-sec-card ef-sec-open ef-sec-locked" id="ef-sec-fel">
+            <div class="ef-sec-head">
+              <div class="ef-sec-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg></div>
+              <div class="ef-sec-titlewrap">
+                <div class="ef-sec-title">Facturación FEL</div>
+                <div class="ef-sec-summary" id="ef-sec-fel-summary">Pendiente de envío a SAT</div>
+              </div>
+              <svg class="ef-sec-chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="ef-sec-body">
+              <div class="ef-field-group">
+                <label class="ef-label" style="color:var(--ef-primary); font-weight:600;">Estado FEL</label>
+                <select id="ef-bfel-status" class="ef-select" style="border-color:var(--ef-primary); font-weight:600;" tabindex="14">
+                  <option value="01 Enviar">01 Enviar</option>
+                  <option value="00 No enviar">00 No enviar</option>
+                </select>
+              </div>
+
+              <!-- Escenario Exento: visible solo si taxes_and_charges empieza con EXE -->
+              <div id="ef-row-escenario" class="ef-field-group" style="display:none;">
+                <label class="ef-label">Escenario Exento <span class="ef-req">*</span></label>
+                <select id="ef-bfel-escenario-exento" class="ef-select" disabled>
+                  <option value="">— seleccione escenario —</option>
+                  <option value="01 Exportación">01 Exportación</option>
+                  <option value="02 Art. 7 No. 4 Ley del IVA">02 Art. 7 No. 4 Ley del IVA</option>
+                  <option value="03 Art. 7 No. 5 Ley del IVA">03 Art. 7 No. 5 Ley del IVA</option>
+                  <option value="04 Art. 7 No. 9 Ley del IVA">04 Art. 7 No. 9 Ley del IVA</option>
+                  <option value="05 Art. 7 No. 10 Ley del IVA">05 Art. 7 No. 10 Ley del IVA</option>
+                  <option value="06 Art. 7 No. 13 Ley del IVA">06 Art. 7 No. 13 Ley del IVA</option>
+                  <option value="07 Art. 7 No. 14 Ley del IVA">07 Art. 7 No. 14 Ley del IVA</option>
+                  <option value="08 Art. 8 No. 1 Ley del IVA">08 Art. 8 No. 1 Ley del IVA</option>
+                  <option value="09 Art. 7 No. 15 Ley del IVA">09 Art. 7 No. 15 Ley del IVA</option>
+                  <option value="10 Art. 55 Ley del IVA">10 Art. 55 Ley del IVA</option>
+                  <option value="11 Decreto 29-89 Ley de Maquila">11 Decreto 29-89 Ley de Maquila</option>
+                  <option value="12 Decreto 65-89 Ley de Zonas Francas">12 Decreto 65-89 Ley de Zonas Francas</option>
+                  <option value="22 Nota de Crédito / Débito Exportación">22 Nota de Crédito / Débito Exportación</option>
+                </select>
+              </div>
+
+              <!-- Antes de certificar: sin campos vacíos, solo un mensaje -->
+              <div class="ef-fel-pending" id="ef-fel-pending-msg">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+                El UUID y número de autorización aparecerán aquí una vez certificada.
+              </div>
+
+              <!-- Después de certificar: aparecen los campos avanzados FEL (punto 6) -->
+              <div class="ef-fel-cert" id="ef-fel-cert-block" style="display:none;">
+                <div class="ef-field-group">
+                  <label class="ef-label">UUID FEL</label>
+                  <input id="ef-bfel-uuid" type="text" class="ef-input ef-input-readonly" readonly placeholder="—" style="font-size:11px;" />
+                </div>
+                <div class="ef-field-group" style="margin-top:8px;">
+                  <label class="ef-label">No. Doc. FEL</label>
+                  <input id="ef-bfel-docto-no" type="text" class="ef-input ef-input-readonly" readonly placeholder="—" style="font-size:11px;" />
+                </div>
+              </div>
+            </div>
+          </div>
+
         </div>
-
-        <!-- Fila 4: Escenario Exento FEL (visible solo si taxes_and_charges empieza con EXE) -->
-        <div id="ef-row-escenario" class="ef-hrow" style="grid-template-columns:220px 1fr; display:none;">
-          <div class="ef-field-group">
-            <label class="ef-label">Escenario Exento <span class="ef-req">*</span></label>
-            <select id="ef-bfel-escenario-exento" class="ef-select" disabled>
-              <option value="">— seleccione escenario —</option>
-              <option value="01 Exportación">01 Exportación</option>
-              <option value="02 Art. 7 No. 4 Ley del IVA">02 Art. 7 No. 4 Ley del IVA</option>
-              <option value="03 Art. 7 No. 5 Ley del IVA">03 Art. 7 No. 5 Ley del IVA</option>
-              <option value="04 Art. 7 No. 9 Ley del IVA">04 Art. 7 No. 9 Ley del IVA</option>
-              <option value="05 Art. 7 No. 10 Ley del IVA">05 Art. 7 No. 10 Ley del IVA</option>
-              <option value="06 Art. 7 No. 13 Ley del IVA">06 Art. 7 No. 13 Ley del IVA</option>
-              <option value="07 Art. 7 No. 14 Ley del IVA">07 Art. 7 No. 14 Ley del IVA</option>
-              <option value="08 Art. 8 No. 1 Ley del IVA">08 Art. 8 No. 1 Ley del IVA</option>
-              <option value="09 Art. 7 No. 15 Ley del IVA">09 Art. 7 No. 15 Ley del IVA</option>
-              <option value="10 Art. 55 Ley del IVA">10 Art. 55 Ley del IVA</option>
-              <option value="11 Decreto 29-89 Ley de Maquila">11 Decreto 29-89 Ley de Maquila</option>
-              <option value="12 Decreto 65-89 Ley de Zonas Francas">12 Decreto 65-89 Ley de Zonas Francas</option>
-              <option value="22 Nota de Crédito / Débito Exportación">22 Nota de Crédito / Débito Exportación</option>
-            </select>
-          </div>
-        </div>
-
       </div>
 
       <!-- ── TABS NAVIGATION ───────────────────────────────────────────── -->
@@ -1908,9 +1957,14 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 /* Brand wrapper + collapse button */
 .ef-header-collapsed .ef-btn-collapse svg { transform: rotate(180deg); }
-.ef-header-collapsed .ef-hrow, .ef-header-collapsed .ef-header-grid { display: none !important; }
+.ef-header-collapsed .ef-hrow, .ef-header-collapsed .ef-sections { display: none !important; }
 .ef-header-collapsed { padding-bottom: 10px !important; }
 .ef-header-brand { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
+/* Total en la tira de identidad: visible siempre, sin bajar hasta el footer */
+.ef-header-total { display: flex; flex-direction: column; align-items: flex-end; gap: 0; flex-shrink: 0; }
+.ef-header-total-label { font-size: 9.5px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; color: var(--ef-text-muted); }
+.ef-header-total-value { font-size: 17px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--ef-primary-dark); }
 
 .ef-header-title {
   display: flex;
@@ -1981,7 +2035,64 @@ body.facex-fullscreen-mode .ef-main-layout {
   margin-bottom: 8px;
 }
 .ef-hrow:last-child { margin-bottom: 0; }
-.ef-field-group { display: flex; flex-direction: column; gap: 3px; }
+
+/* Tarjetas colapsables Cliente / Documento / Facturación FEL. Responsive:
+   3 columnas en desktop, 2 en tablet, 1 en móvil (ver sección Responsive). */
+.ef-sections {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+  align-items: start;
+}
+.ef-sec-card {
+  background: var(--ef-card);
+  border: 1px solid var(--ef-border);
+  border-radius: var(--ef-radius);
+  box-shadow: var(--ef-shadow);
+  overflow: hidden;
+}
+.ef-sec-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.ef-sec-icon {
+  width: 24px; height: 24px; border-radius: 6px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--ef-bg); color: var(--ef-primary);
+}
+.ef-sec-titlewrap { min-width: 0; }
+.ef-sec-title { font-size: 12px; font-weight: 700; color: var(--ef-text); }
+.ef-sec-summary {
+  font-size: 10.5px; color: var(--ef-text-muted); margin-top: 1px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ef-sec-chev { margin-left: auto; flex-shrink: 0; color: var(--ef-text-muted); transition: transform .15s; }
+.ef-sec-card.ef-sec-open .ef-sec-chev { transform: rotate(180deg); }
+.ef-sec-body { display: none; padding: 2px 12px 12px; border-top: 1px solid var(--ef-border); }
+.ef-sec-card.ef-sec-open .ef-sec-body { display: block; padding-top: 10px; }
+
+/* Facturación FEL siempre desplegada: no es un acordeón, es informativa */
+.ef-sec-locked .ef-sec-head { cursor: default; }
+.ef-sec-locked .ef-sec-chev { display: none; }
+
+/* Mensaje sin ruido antes de certificar FEL (punto 6: campos avanzados
+   solo aparecen cuando existe certificación real) */
+.ef-fel-pending {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  background: var(--ef-bg); border-radius: 6px; font-size: 11px; color: var(--ef-text-muted);
+}
+.ef-fel-pending svg { flex-shrink: 0; }
+
+/* Empareja 2 campos afines en una sola fila para reducir la altura total
+   del encabezado (ej. Establecimiento+Serie, Fechas, IDs FEL) */
+.ef-field-row2 { display: flex; gap: 10px; }
+.ef-field-row2 > .ef-field-group { flex: 1; min-width: 0; }
+
+.ef-field-group { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .ef-field-check { display: flex; flex-direction: column; align-items: flex-start; }
 /* Toggle switch */
 .ef-toggle { display: inline-flex; align-items: center; cursor: pointer; margin-top: 3px; }
@@ -2419,12 +2530,18 @@ body.facex-fullscreen-mode .ef-main-layout {
 /* Responsive */
 @media (max-width: 900px) {
   .ef-hrow { grid-template-columns: repeat(2, 1fr) !important; }
+  .ef-sections { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .ef-sec-card:nth-child(3) { grid-column: 1 / -1; }
   .ef-table { font-size: 12px; }
   .ef-totals { min-width: 280px; }
 }
 @media (max-width: 600px) {
   .ef-header { padding: 10px 12px 8px; }
   .ef-hrow { grid-template-columns: 1fr !important; gap: 8px 0; }
+  .ef-sections { grid-template-columns: 1fr; gap: 8px; }
+  .ef-sec-card:nth-child(3) { grid-column: auto; }
+  .ef-field-row2 { gap: 8px; }
+  .ef-header-total { order: 4; width: 100%; align-items: flex-start; margin-top: 4px; }
   .ef-items-header { padding: 8px 12px; }
   .ef-action-bar { gap: 5px; padding: 6px 8px; justify-content: center; }
   .ef-btn { padding: 8px 10px; font-size: 12px; gap: 4px; }
@@ -2443,6 +2560,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 @media (max-width: 480px) {
   .ef-col-disc { display: none; }
   .ef-title-main { font-size: 16px; }
+  /* En pantallas muy angostas, campos emparejados vuelven a apilarse
+     (ej. fechas, IDs FEL) para que no queden ilegibles */
+  .ef-field-row2 { flex-direction: column; gap: 6px; }
 }
 
 /* ── Tabs ──────────────────────────────────────────────────────── */
@@ -3040,6 +3160,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this.$body.find("#ef-bfel-nombre").val("");
 			this.$body.find("#ef-bfel-identificacion").val("");
 			if (this.controls.sales_partner) this.controls.sales_partner.set_value("");
+			this._update_header_sections();
 			return;
 		}
 		frappe.call({
@@ -3093,9 +3214,31 @@ body.facex-fullscreen-mode .ef-main-layout {
 						}
 						this._fetch_tax_template(this.doc.taxes_and_charges);
 					}
+					this._maybe_autoselect_establecimiento();
+					this._update_header_sections();
 				}
 			},
 		});
+	}
+
+	// Si la compañía activa solo tiene un Establecimiento configurado en
+	// BFEL Settings > Datos Empresa > Establecimientos, lo selecciona de una
+	// vez al elegir cliente para que el usuario no tenga que marcarlo a mano.
+	// Si hay más de uno, se deja la selección manual como hasta ahora.
+	_maybe_autoselect_establecimiento() {
+		const establishments = this.defaults.establishments || [];
+		if (establishments.length !== 1) return;
+
+		const $est = this.$body.find("#ef-establecimiento");
+		if ($est.val()) return; // ya tiene uno seleccionado, no lo pisamos
+
+		const only = establishments[0].establecimiento_id;
+		$est.val(only);
+		this.doc.bfel_establecimiento = only;
+		this._load_naming_series_for_selected_establishment(() => {
+			this._update_header_sections();
+		});
+		this._mark_dirty();
 	}
 
 	_on_payment_terms_change(tpl_name) {
@@ -3148,10 +3291,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const $row = this.$body.find("#ef-row-escenario");
 		const $sel = this.$body.find("#ef-bfel-escenario-exento");
 		if (isExe) {
-			$row.show();
+			$row.css("display", "flex");
 			$sel.prop("disabled", false);
 		} else {
-			$row.hide();
+			$row.css("display", "none");
 			$sel.val("").prop("disabled", true);
 			this.doc.bfel_escenario_exento = "";
 		}
@@ -4103,6 +4246,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-discounts").text("- " + _fmtCurrency(itemDiscounts, this.doc.currency));
 		this.$body.find("#ef-taxes").text(_fmtCurrency(taxes, this.doc.currency));
 		this.$body.find("#ef-grand-total").text(_fmtCurrency(grand, this.doc.currency));
+		this.$body.find("#ef-header-grand-total").text(_fmtCurrency(grand, this.doc.currency));
 	}
 
 	_update_footer() {
@@ -4112,6 +4256,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-discounts").text("- " + _fmtCurrency(d.discount_amount, d.currency));
 		this.$body.find("#ef-taxes").text(_fmtCurrency(d.total_taxes_and_charges, d.currency));
 		this.$body.find("#ef-grand-total").text(_fmtCurrency(d.grand_total, d.currency));
+		this.$body.find("#ef-header-grand-total").text(_fmtCurrency(d.grand_total, d.currency));
 		this.$body.find("#ef-words").text(d.in_words || "");
 	}
 
@@ -4247,6 +4392,14 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const d = this.doc;
 		this.$body.find("#ef-bfel-uuid").val(d.bfel_uuid || "");
 		this.$body.find("#ef-bfel-docto-no").val(d.bfel_docto_no || "");
+
+		// Punto 6: los campos avanzados FEL (UUID, No. Doc.) solo se muestran
+		// una vez que la factura tiene certificación real; antes, solo un aviso.
+		const certified = !!d.bfel_uuid;
+		this.$body.find("#ef-fel-cert-block").toggle(certified);
+		this.$body.find("#ef-fel-pending-msg").toggle(!certified);
+
+		this._update_header_sections();
 	}
 
 	// -----------------------------------------------------------------------
@@ -5296,7 +5449,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const $header = this.$body.find(".ef-header");
 		const $btn = this.$body.find("#ef-btn-collapse");
 
-		if (localStorage.getItem(STORAGE_KEY) === "1") {
+		const stored = localStorage.getItem(STORAGE_KEY);
+		if (stored === "1") {
+			$header.addClass("ef-header-collapsed");
+		} else if (stored === null && window.innerWidth <= 600) {
+			// Primera visita en un dispositivo móvil: arranca colapsado para
+			// dejar más espacio a la tabla de items; el usuario puede expandirlo.
 			$header.addClass("ef-header-collapsed");
 		}
 
@@ -5304,6 +5462,62 @@ body.facex-fullscreen-mode .ef-main-layout {
 			const collapsed = $header.toggleClass("ef-header-collapsed").hasClass("ef-header-collapsed");
 			localStorage.setItem(STORAGE_KEY, collapsed ? "1" : "0");
 		});
+	}
+
+	// -----------------------------------------------------------------------
+	// Tarjetas colapsables del encabezado (Cliente / Documento / Facturación FEL)
+	// -----------------------------------------------------------------------
+
+	_setup_section_accordion() {
+		this.$body.on("click", ".ef-sec-head", (e) => {
+			const $card = $(e.currentTarget).closest(".ef-sec-card");
+			if ($card.hasClass("ef-sec-locked")) return; // Facturación FEL: siempre desplegada
+			const wasOpen = $card.hasClass("ef-sec-open");
+			this.$body.find(".ef-sec-card").not(".ef-sec-locked").removeClass("ef-sec-open");
+			if (!wasOpen) $card.addClass("ef-sec-open");
+		});
+
+		// Resumen en vivo mientras se edita, sin esperar a guardar
+		this.$body.on(
+			"change input",
+			"#ef-establecimiento, #ef-naming-series, #ef-due-date, #ef-posting-date, #ef-bfel-status, #ef-bfel-nombre, #ef-bfel-nit, #ef-bfel-identificacion",
+			() => this._update_header_sections()
+		);
+
+		// Cliente abierta por defecto: es el primer dato que se captura en una venta
+		this.$body.find("#ef-sec-cliente").addClass("ef-sec-open");
+	}
+
+	_update_header_sections() {
+		const d = this.doc;
+		const $b = this.$body;
+
+		// Cliente
+		const custName = d.customer_name || d.customer || "";
+		const nit = $b.find("#ef-bfel-nit").val() || "";
+		$b.find("#ef-sec-cliente-summary").text(
+			custName ? (nit ? `${custName} · ${nit}` : custName) : "Sin cliente seleccionado"
+		);
+
+		// Documento
+		const est = $b.find("#ef-establecimiento").val() || "";
+		const serie = $b.find("#ef-naming-series").val() || "";
+		const due = $b.find("#ef-due-date").val() || "";
+		let docSummary = [est, serie].filter(Boolean).join(" · ");
+		if (due) docSummary += (docSummary ? " · vence " : "vence ") + due;
+		$b.find("#ef-sec-documento-summary").text(docSummary || "Sin datos de documento");
+
+		// Facturación FEL
+		const felStatus = $b.find("#ef-bfel-status").val() || "";
+		let felSummary;
+		if (d.bfel_uuid) {
+			felSummary = "Certificada · UUID " + String(d.bfel_uuid).slice(0, 8) + "…";
+		} else if (felStatus === "00 No enviar") {
+			felSummary = "No se enviará a SAT";
+		} else {
+			felSummary = "Pendiente de envío a SAT";
+		}
+		$b.find("#ef-sec-fel-summary").text(felSummary);
 	}
 
 	// -----------------------------------------------------------------------
