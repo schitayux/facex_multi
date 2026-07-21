@@ -73,6 +73,9 @@ class FacexInventario {
 		this.wrapper = wrapper;
 		this.$body = $(page.body);
 		this.defaults = null;
+		this.page.add_menu_item(__("FacEx - Clásico"), () => {
+			window.location.href = "/app/facex";
+		});
 		this._init();
 	}
 

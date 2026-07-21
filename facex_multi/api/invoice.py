@@ -302,9 +302,19 @@ def get_defaults(company: str = None):
     # Selling Settings no tiene campo payment_terms en ERPNext v15
     default_payment_terms = ""
 
-    from facex_multi.api.permissions import get_facex_permissions_for_company, get_facex_company_config
+    from facex_multi.api.permissions import (
+        get_facex_permissions_for_company, get_facex_company_config,
+        get_facex_default_warehouse, get_facex_can_delete_held_sales,
+        get_facex_can_cancel_invoices, get_facex_can_access_pos,
+        get_facex_can_access_inventory_menu,
+    )
     permissions = get_facex_permissions_for_company(company)
+    permissions["puede_eliminar_ventas_espera"] = int(get_facex_can_delete_held_sales(company))
+    permissions["puede_anular_facturas"] = int(get_facex_can_cancel_invoices(company))
+    permissions["puede_ver_pos"] = int(get_facex_can_access_pos(company))
+    permissions["puede_ver_menu_inventario"] = int(get_facex_can_access_inventory_menu(company))
     company_config = get_facex_company_config(company)
+    default_pos_warehouse = get_facex_default_warehouse(company)
 
     return {
         "company": company,
@@ -321,7 +331,86 @@ def get_defaults(company: str = None):
         "bfel_status_default": "01 Enviar",
         "permissions": permissions,
         "company_config": company_config,
+        "default_pos_warehouse": default_pos_warehouse,
     }
+
+
+@frappe.whitelist()
+def get_invoice_history(company: str = None, from_date: str = None, to_date: str = None):
+    """Lista de facturas emitidas (cualquier estado) en un rango de fechas.
+    Por defecto: del primer día del mes actual a hoy."""
+    if not has_efast_permission():
+        frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
+
+    company = get_effective_company(company)
+    today_date = getdate(today())
+    from_date = getdate(from_date) if from_date else today_date.replace(day=1)
+    to_date = getdate(to_date) if to_date else today_date
+
+    return frappe.get_all(
+        "Sales Invoice",
+        filters={
+            "company": company,
+            "posting_date": ["between", [from_date, to_date]],
+        },
+        fields=["name", "customer_name", "posting_date", "grand_total", "docstatus", "bfel_status", "bfel_uuid"],
+        order_by="posting_date desc, creation desc",
+        limit_page_length=500,
+    )
+
+
+@frappe.whitelist()
+def get_held_sales(company: str = None):
+    """Ventas suspendidas (borradores) desde FacEx Screen, pendientes de retomar.
+    Trae sales_partner/owner además de los campos básicos para que la pantalla
+    pueda filtrar por fecha/vendedor/usuario creador sin llamadas adicionales."""
+    if not has_efast_permission():
+        frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
+
+    company = get_effective_company(company)
+    rows = frappe.get_all(
+        "Sales Invoice",
+        filters={
+            "company": company,
+            "docstatus": 0,
+            "bfel_venta_suspendida": 1,
+        },
+        fields=["name", "customer_name", "posting_date", "grand_total", "sales_partner", "owner"],
+        order_by="modified desc",
+        limit_page_length=200,
+    )
+    owners = list({r["owner"] for r in rows if r.get("owner")})
+    fullnames = {}
+    if owners:
+        for u in frappe.get_all("User", filters={"name": ["in", owners]}, fields=["name", "full_name"]):
+            fullnames[u["name"]] = u["full_name"] or u["name"]
+    for r in rows:
+        r["owner_fullname"] = fullnames.get(r.get("owner"), r.get("owner") or "")
+    return rows
+
+
+@frappe.whitelist()
+def delete_held_sale(name: str):
+    """Elimina definitivamente una venta en espera (borrador suspendido desde
+    FacEx Screen). Requiere el permiso dedicado (deny-by-default, ver
+    permissions.get_facex_can_delete_held_sales) — es irreversible."""
+    from facex_multi.api.permissions import get_facex_can_delete_held_sales
+
+    name = (name or "").strip()
+    doc = frappe.get_doc("Sales Invoice", name)
+
+    if not get_facex_can_delete_held_sales(doc.company):
+        frappe.throw("No tiene permisos para eliminar ventas en espera.", frappe.PermissionError)
+
+    # Salvaguarda: solo se permite borrar por esta vía documentos que
+    # realmente son borradores suspendidos de FacEx Screen — nunca facturas
+    # validadas ni borradores de otro origen que coincidan por casualidad.
+    if doc.docstatus != 0 or not doc.get("bfel_venta_suspendida"):
+        frappe.throw("Este documento no es una venta en espera; no se puede eliminar por esta vía.")
+
+    frappe.delete_doc("Sales Invoice", name, ignore_permissions=True)
+    frappe.db.commit()
+    return {"success": True}
 
 
 @frappe.whitelist()
@@ -491,17 +580,31 @@ def get_item_details(item_code: str, company: str = "", customer: str = "",
 
 
 @frappe.whitelist()
-def get_serial_nos_for_item(item_code: str, warehouse: str = "") -> list:
-    """Retorna series disponibles (status=Active) para el item en una bodega."""
-    filters = {"item_code": item_code, "status": "Active"}
+def get_serial_nos_for_item(item_code: str, warehouse: str = "", company: str = None) -> list:
+    """Retorna series disponibles (status=Active) para el item, restringidas SIEMPRE a
+    almacenes ligados a la compañía activa — nunca globales entre compañías, ni
+    siquiera cuando no se especifica una bodega puntual (caso: sin bodega por
+    defecto configurada, se acota igual a todas las bodegas de la compañía)."""
+    company = get_effective_company(company)
+
+    conditions = ["s.item_code = %(item_code)s", "s.status = 'Active'", "w.company = %(company)s", "w.is_group = 0"]
+    values = {"item_code": item_code, "company": company}
     if warehouse:
-        filters["warehouse"] = warehouse
-    return frappe.db.get_all(
-        "Serial No",
-        filters=filters,
-        fields=["name", "warehouse"],
-        order_by="name asc",
-        limit=500,
+        conditions.append("s.warehouse = %(warehouse)s")
+        values["warehouse"] = warehouse
+    where_clause = " AND ".join(conditions)
+
+    return frappe.db.sql(
+        f"""
+        SELECT s.name, s.warehouse
+        FROM `tabSerial No` s
+        JOIN `tabWarehouse` w ON w.name = s.warehouse
+        WHERE {where_clause}
+        ORDER BY s.name ASC
+        LIMIT 500
+        """,
+        values,
+        as_dict=True,
     )
 
 
@@ -665,7 +768,7 @@ def save_draft(doc_json: str):
             "naming_series", "customer", "posting_date", "due_date",
             "payment_terms_template", "terms", "taxes_and_charges",
             "bfel_nit", "bfel_identificacion", "bfel_nombre", "bfel_status", "bfel_escenario_exento",
-            "es_fiscal", "update_stock", "company", "bfel_facex_multi",
+            "es_fiscal", "update_stock", "company", "bfel_facex_multi", "bfel_venta_suspendida",
             "selling_price_list", "sales_partner", "bfel_establecimiento", "vendedor",
         ):
             # No pisar selling_price_list con vacío si el doc ya tiene uno
@@ -763,18 +866,43 @@ def submit_invoice(name: str):
 # 4b. Anular (cancel)
 # ---------------------------------------------------------------------------
 
+def _cancel_linked_payment_entries(invoice_name: str):
+    """Cancela (sin eliminar) los Payment Entry presentados que referencian
+    esta factura — ERPNext no permite cancelar una Sales Invoice mientras
+    tenga Payment Entries activos apuntándola."""
+    for pe_name in frappe.get_all(
+        "Payment Entry Reference",
+        filters={"reference_doctype": "Sales Invoice", "reference_name": invoice_name},
+        pluck="parent",
+    ):
+        pe = frappe.get_doc("Payment Entry", pe_name)
+        if pe.docstatus == 1:
+            pe.cancel()
+
+
 @frappe.whitelist()
 def cancel_invoice(name: str):
     """
-    Cancela un Sales Invoice a nivel de ERPNext.
-    Solo para facturas validadas (docstatus 1) que NO han sido certificadas en FEL.
+    Cancela internamente un Sales Invoice a nivel de ERPNext (revierte
+    contabilidad e inventario). Solo para facturas validadas (docstatus 1)
+    que NO han sido certificadas en FEL — una factura certificada debe
+    anularse primero ante la SAT vía cancel_certified_invoice_fel().
+    Requiere permiso puede_anular_facturas (deny-by-default).
     """
+    from facex_multi.api.permissions import get_facex_can_cancel_invoices
+
     name = (name or "").strip()
     doc = frappe.get_doc("Sales Invoice", name)
 
+    if not get_facex_can_cancel_invoices(doc.company):
+        frappe.throw("No tiene permiso para anular/cancelar documentos en FacEx Screen.")
+
     if doc.docstatus != 1:
         frappe.throw("Solo se puede anular una factura Validada.")
-        
+    if doc.bfel_uuid:
+        frappe.throw("Esta factura ya fue certificada en FEL — debe anularse ante la SAT, no cancelarse localmente.")
+
+    _cancel_linked_payment_entries(doc.name)
     doc.cancel()
     frappe.db.commit()
 
@@ -783,6 +911,58 @@ def cancel_invoice(name: str):
         "name": doc.name,
         "docstatus": doc.docstatus,
     }
+
+
+@frappe.whitelist()
+def mark_printed_without_cert(name: str):
+    """
+    Marca la factura como impresa sin certificar — una decisión definitiva
+    tomada por el cajero en FacEx Screen ("Solo Imprimir sin certificar").
+    A partir de aquí "Certificar FEL e Imprimir" ya no se ofrece para esta
+    factura (mutuamente excluyente, y persistido para que Historial lo
+    respete al recargarla).
+    """
+    name = (name or "").strip()
+    doc = frappe.get_doc("Sales Invoice", name)
+    if doc.bfel_uuid:
+        frappe.throw("Esta factura ya fue certificada en FEL.")
+    frappe.db.set_value("Sales Invoice", name, "bfel_impreso_sin_certificar", 1)
+    frappe.db.commit()
+    return {"success": True}
+
+
+@frappe.whitelist()
+def cancel_certified_invoice_fel(name: str, motivo_anulacion: str):
+    """
+    Anula una factura ya certificada en FEL: primero ante la SAT (delega
+    100% a brainfel.api.certify_sales_invoice.cancel_sales_invoice_fel, el
+    mismo mecanismo que usa el formulario clásico de Sales Invoice vía su
+    hook before_cancel), y solo si eso tiene éxito cancela el documento en
+    ERPNext (revierte contabilidad e inventario). Requiere permiso
+    puede_anular_facturas (deny-by-default).
+    """
+    from facex_multi.api.permissions import get_facex_can_cancel_invoices
+    from brainfel.api.certify_sales_invoice import cancel_sales_invoice_fel
+
+    name = (name or "").strip()
+    doc = frappe.get_doc("Sales Invoice", name)
+
+    if not get_facex_can_cancel_invoices(doc.company):
+        frappe.throw("No tiene permiso para anular/cancelar documentos en FacEx Screen.")
+    if doc.docstatus != 1:
+        frappe.throw("Solo se puede anular una factura Validada.")
+    if not doc.bfel_uuid:
+        frappe.throw("Esta factura no ha sido certificada en FEL — use la cancelación interna.")
+
+    cancel_sales_invoice_fel(name, motivo_anulacion)
+
+    doc.reload()
+    doc.flags.ignore_validate_update_after_submit = True
+    _cancel_linked_payment_entries(doc.name)
+    doc.cancel()
+    frappe.db.commit()
+
+    return {"success": True, "name": doc.name, "docstatus": doc.docstatus}
 
 
 # ---------------------------------------------------------------------------
@@ -867,7 +1047,7 @@ _DUPLICATE_ITEM_FIELDS = (
     "item_code", "item_name", "description", "qty", "uom", "conversion_factor",
     "rate", "price_list_rate", "discount_percentage", "discount_amount",
     "warehouse", "income_account", "expense_account", "cost_center",
-    "item_tax_template", "descripcion_2", "bfel_multi_tipo",
+    "item_tax_template", "descripcion_2", "bfel_multi_tipo", "bfel_comentario",
 )
 
 _DUPLICATE_TAX_FIELDS = (
@@ -932,6 +1112,95 @@ def duplicate_invoice(name: str):
 
 
 # ---------------------------------------------------------------------------
+# 6c. Corregir cliente al final de la venta (FacEx Screen)
+# ---------------------------------------------------------------------------
+# El cliente muchas veces se decide hasta el final de la venta, pero para
+# entonces la factura ya está validada (docstatus=1) y ERPNext no permite
+# editar el cliente de una factura validada. Se resuelve duplicándola con el
+# cliente correcto (reutilizando duplicate_invoice tal cual, sin duplicar
+# lógica), volviendo a validar y reaplicando el mismo desglose de pago.
+
+def _cancel_and_delete_invoice(name: str) -> None:
+    """Cancela y elimina una Sales Invoice + sus Payment Entries vinculados.
+    Solo debe usarse sobre facturas que nunca se certificaron en FEL (nunca
+    salieron del sistema hacia la SAT) — cancelar antes de eliminar deja un
+    trail contable de reversión limpio, sin huérfanos."""
+    for pe_name in frappe.get_all(
+        "Payment Entry Reference",
+        filters={"reference_doctype": "Sales Invoice", "reference_name": name},
+        pluck="parent",
+    ):
+        pe = frappe.get_doc("Payment Entry", pe_name)
+        if pe.docstatus == 1:
+            pe.cancel()
+        frappe.delete_doc("Payment Entry", pe_name, force=True, ignore_permissions=True)
+
+    doc = frappe.get_doc("Sales Invoice", name)
+    if doc.docstatus == 1:
+        doc.cancel()
+    frappe.delete_doc("Sales Invoice", name, force=True, ignore_permissions=True)
+    frappe.db.commit()
+
+
+@frappe.whitelist()
+def rebill_with_new_customer(invoice_name: str, new_customer: str, payments_json: str = None):
+    """
+    Corrige el cliente de una venta ya validada duplicándola con el cliente
+    correcto, validando la copia y reaplicando el mismo desglose de pago
+    (si lo hubo — una venta al Crédito no manda payments_json).
+
+    Los campos fiscales del cliente (bfel_nit, bfel_identificacion, etc.) no
+    se copian a mano: certify_invoice los lee directo del Customer al
+    certificar, así que basta con fijar el campo `customer`.
+
+    Maneja la factura original según su estado de certificación FEL:
+    - Si NO fue certificada: se cancela y se elimina (nunca llegó a la SAT).
+    - Si YA fue certificada: se conserva intacta (documento fiscal real);
+      la corrección queda como una factura adicional — anular la original
+      requiere el proceso formal de Nota de Crédito, fuera de este alcance.
+    """
+    invoice_name = (invoice_name or "").strip()
+    new_customer = (new_customer or "").strip()
+    if not new_customer:
+        frappe.throw("Debe indicar el cliente nuevo.")
+
+    src = frappe.get_doc("Sales Invoice", invoice_name)
+    if src.docstatus != 1:
+        frappe.throw("Solo se puede corregir el cliente de una venta ya validada.")
+
+    was_certified = bool(src.bfel_uuid) or src.bfel_status == "02 Procesada"
+
+    new_data = duplicate_invoice(invoice_name)
+    new_data["customer"] = new_customer
+    new_data["name"] = "new"
+    # duplicate_invoice deja due_date en None (due_date es obligatorio en save_draft)
+    new_data["due_date"] = new_data.get("posting_date")
+    # duplicate_invoice copia naming_series ya resuelto (p. ej. "FACT-.EMS.-.#####"
+    # en vez de la plantilla "FACT-.ABBR.-.#####"), lo cual la validación de
+    # save_draft rechaza como "no compatible" — se recalcula una serie
+    # compatible real para la compañía/establecimiento en vez de arrastrarlo.
+    compat_series = get_compatible_series(new_data.get("company"), new_data.get("bfel_establecimiento"))
+    if compat_series:
+        new_data["naming_series"] = compat_series[0]
+
+    new_doc = save_draft(frappe.as_json(new_data))
+    submit_invoice(new_doc["name"])
+    if payments_json:
+        save_payments(new_doc["name"], payments_json, "1")
+
+    original_deleted = False
+    if not was_certified:
+        _cancel_and_delete_invoice(invoice_name)
+        original_deleted = True
+
+    return {
+        "new_invoice": get_invoice(new_doc["name"]),
+        "original_deleted": original_deleted,
+        "original_was_certified": was_certified,
+    }
+
+
+# ---------------------------------------------------------------------------
 # 7. Enviar email
 # ---------------------------------------------------------------------------
 
@@ -988,7 +1257,11 @@ def _sync_custom_print_formats():
         "FAC CERTIFI": {
             "html": os.path.join(base_dir, "templates", "print_formats", "fac_certifi.html"),
             "css": os.path.join(base_dir, "templates", "print_formats", "fac_certifi.css"),
-        }
+        },
+        "Recibo Ticket FacEx": {
+            "html": os.path.join(base_dir, "templates", "print_formats", "recibo_ticket_facex.html"),
+            "css": os.path.join(base_dir, "templates", "print_formats", "recibo_ticket_facex.css"),
+        },
     }
     
     for name, paths in templates.items():
@@ -1037,6 +1310,33 @@ def get_print_formats(company: str = None):
         order_by="name asc",
     )
     return [f["name"] for f in formats]
+
+
+@frappe.whitelist()
+def get_fel_verification_url(invoice_name: str):
+    """
+    Construye el URL público de verificación de la SAT Guatemala para una
+    factura certificada en FEL — el mismo enlace que codifica el QR impreso
+    en el documento oficial (fac_fel.html). Se reutiliza para compartir por
+    WhatsApp sin exponer ningún archivo propio: apunta directo al validador
+    público de la SAT, no a nuestro servidor.
+    """
+    invoice_name = (invoice_name or "").strip()
+    doc = frappe.get_doc("Sales Invoice", invoice_name)
+    if not doc.bfel_uuid:
+        frappe.throw("La factura no ha sido certificada en FEL.")
+
+    company_nit = frappe.db.get_value(
+        "BFEL Settings", {"company": doc.company, "enabled": 1}, "company_nit"
+    ) or ""
+    emisor = company_nit.replace("-", "")
+    receptor = (doc.bfel_nit or "CF").replace("-", "")
+    monto = "%.2f" % doc.grand_total
+
+    return (
+        "https://felpub.c.sat.gob.gt/verificador-web/publico/vistas/verificacionDte.jsf"
+        f"?tipo=autorizacion&numero={doc.bfel_uuid}&emisor={emisor}&receptor={receptor}&monto={monto}"
+    )
 
 
 
@@ -1127,9 +1427,15 @@ def _create_payment_entry(invoice_doc, payment_method, payment_date, reference, 
     pe.source_exchange_rate       = 1
     pe.target_exchange_rate       = 1
     pe.remarks                    = f"FacEx | {invoice_doc.name}"
-    if reference:
-        pe.reference_no   = reference
-        pe.reference_date = payment_date or today()
+    # "Cheque/Reference No" está forzado a reqd=1 + unique=1 en este sitio
+    # (Property Setter sobre Payment Entry), a diferencia del comportamiento
+    # estándar de ERPNext (solo obligatorio para cuentas tipo Bank). Efectivo
+    # y otros métodos sin referencia manual necesitan igual un valor único
+    # por Payment Entry — mismo criterio que el flujo "Automático x FacEx" ya
+    # usado en FacEx clásico, pero con sufijo único para no chocar con la
+    # restricción unique=1 si hay más de un cobro en efectivo.
+    pe.reference_no   = reference or f"{invoice_doc.name}-{frappe.generate_hash(length=8)}"
+    pe.reference_date = payment_date or today()
 
     pe.append("references", {
         "reference_doctype":  "Sales Invoice",

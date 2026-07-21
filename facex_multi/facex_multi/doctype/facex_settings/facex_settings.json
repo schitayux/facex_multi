@@ -9,6 +9,8 @@
   "sb_facturador",
   "puede_ver_tablero",
   "puede_facturar",
+  "puede_ver_pos",
+  "puede_ver_menu_inventario",
   "cb_facturador",
   "puede_guardar",
   "puede_validar",
@@ -22,6 +24,9 @@
   "crea_items",
   "modifica_items",
   "actualiza_precios",
+  "puede_editar_precio",
+  "puede_eliminar_ventas_espera",
+  "puede_anular_facturas",
   "sb_reportes",
   "reporte_ventas_fecha",
   "reporte_ventas_producto",
@@ -50,6 +55,7 @@
   "maneja_inventario",
   "tipo_x_defecto",
   "cb_inventario",
+  "bodega_por_defecto",
   "sb_columnas",
   "mostrar_almacen",
   "mostrar_desc_pct",
@@ -68,7 +74,11 @@
   "reporte_inv_kardex",
   "reporte_inv_existencias",
   "cb_inv_rep",
-  "reporte_inv_trazabilidad"
+  "reporte_inv_trazabilidad",
+  "sb_pagos",
+  "exige_pago_completo",
+  "cb_pagos",
+  "permite_pago_credito"
  ],
  "fields": [
   {
@@ -107,6 +117,20 @@
    "fieldname": "puede_facturar",
    "fieldtype": "Check",
    "label": "Acceder a Facturador"
+  },
+  {
+   "default": "0",
+   "fieldname": "puede_ver_pos",
+   "fieldtype": "Check",
+   "label": "Ver botón POS (FacEx Screen)",
+   "description": "Muestra el botón \"POS\" en el menú superior de FacEx y lo dirige a FacEx Screen. Deshabilitado por defecto."
+  },
+  {
+   "default": "0",
+   "fieldname": "puede_ver_menu_inventario",
+   "fieldtype": "Check",
+   "label": "Ver botón Inventario (menú FacEx)",
+   "description": "Muestra el botón \"Inventario\" en el menú superior de FacEx y lo dirige a FacEx Inventario. Deshabilitado por defecto. Distinto del acceso a operaciones de inventario (módulo Inventario más abajo)."
   },
   {
    "fieldname": "cb_facturador",
@@ -180,6 +204,26 @@
    "fieldname": "actualiza_precios",
    "fieldtype": "Check",
    "label": "Actualizar Precios"
+  },
+  {
+   "default": "0",
+   "fieldname": "puede_editar_precio",
+   "fieldtype": "Check",
+   "label": "Editar Precio en Venta (FacEx Screen)"
+  },
+  {
+   "default": "0",
+   "fieldname": "puede_eliminar_ventas_espera",
+   "fieldtype": "Check",
+   "label": "Eliminar Docs en Espera (FacEx Screen)",
+   "description": "Permite eliminar definitivamente un documento del listado de Ventas en Espera en FacEx Screen. Deshabilitado por defecto — es una acción destructiva e irreversible."
+  },
+  {
+   "default": "0",
+   "fieldname": "puede_anular_facturas",
+   "fieldtype": "Check",
+   "label": "Anular/Cancelar Documentos FacEx",
+   "description": "Permite anular una factura certificada en FEL (ante la SAT) o cancelar internamente una no certificada, desde FacEx Screen. Deshabilitado por defecto — es una acción destructiva e irreversible."
   },
   {
    "fieldname": "sb_reportes",
@@ -332,6 +376,13 @@
    "fieldtype": "Column Break"
   },
   {
+   "fieldname": "bodega_por_defecto",
+   "fieldtype": "Link",
+   "label": "Bodega por Defecto (FacEx Screen)",
+   "options": "Warehouse",
+   "description": "Almacén usado para filtrar/colorear existencias en FacEx Screen. Vacío = ver todos los productos sin distinción de stock."
+  },
+  {
    "fieldname": "sb_columnas",
    "fieldtype": "Section Break",
    "label": "Columnas Visibles en Facturador"
@@ -433,11 +484,34 @@
    "fieldname": "reporte_inv_trazabilidad",
    "fieldtype": "Check",
    "label": "Trazabilidad Serie / Lote"
+  },
+  {
+   "fieldname": "sb_pagos",
+   "fieldtype": "Section Break",
+   "label": "Configuración de Pagos (FacEx Screen)"
+  },
+  {
+   "default": "0",
+   "fieldname": "exige_pago_completo",
+   "fieldtype": "Check",
+   "label": "Exigir Pago Completo",
+   "description": "Si está marcado, FacEx Screen no permite confirmar una venta con pago parcial (bloquea el cobro hasta completar el monto total)."
+  },
+  {
+   "fieldname": "cb_pagos",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "permite_pago_credito",
+   "fieldtype": "Check",
+   "label": "Permitir Pago a Crédito",
+   "description": "Si está marcado, se muestra el botón \"Crédito\" en la sección de Pago de FacEx Screen (venta sin cobro inmediato, factura queda pendiente)."
   }
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-07-09 00:00:00.000000",
+ "modified": "2026-07-21 03:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Settings",

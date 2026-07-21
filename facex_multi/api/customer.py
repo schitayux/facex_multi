@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import frappe
 import json
-from facex_multi.api.invoice import get_effective_company
+from facex_multi.api.invoice import get_effective_company, has_efast_permission
 
 
 def _get_linked_address(customer_name: str):
@@ -290,3 +290,48 @@ def validate_customer_on_save(doc, method=None):
         if doc.default_sales_partner:
             from facex_multi.api.sales_partner import validate_sales_partner_company
             validate_sales_partner_company(doc.default_sales_partner, company)
+
+
+@frappe.whitelist()
+def get_or_create_walkin_customer(company: str = None):
+    """Devuelve el cliente 'Consumidor Final' (mostrador) de la compañía activa, creándolo
+    la primera vez si no existe. Cliente por defecto de la pantalla POS (facex-screen)."""
+    if not has_efast_permission():
+        frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
+
+    company = get_effective_company(company)
+
+    existing = frappe.db.get_value(
+        "Customer",
+        {"customer_name": "Consumidor Final", "bfel_company": company},
+        ["name", "customer_name", "default_sales_partner"],
+        as_dict=True,
+    )
+    if existing:
+        return existing
+
+    price_list = (
+        frappe.db.get_value("Price List", {"selling": 1, "enabled": 1, "bfel_company": company}, "name")
+        or frappe.db.get_value("Price List", {"selling": 1, "enabled": 1}, "name")
+        or ""
+    )
+
+    doc = frappe.new_doc("Customer")
+    doc.customer_name = "Consumidor Final"
+    doc.customer_type = "Individual"
+    doc.customer_group = (
+        frappe.db.get_value("Customer Group", {"is_group": 0}, "name", order_by="lft asc")
+        or "All Customer Groups"
+    )
+    doc.territory = (
+        frappe.db.get_value("Territory", {"is_group": 0}, "name", order_by="lft asc")
+        or "All Territories"
+    )
+    doc.default_price_list = price_list
+    if doc.meta.has_field("bfel_company"):
+        doc.bfel_company = company
+
+    doc.insert(ignore_permissions=True)
+    frappe.db.commit()
+
+    return {"name": doc.name, "customer_name": doc.customer_name, "default_sales_partner": doc.default_sales_partner or ""}

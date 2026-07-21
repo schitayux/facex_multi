@@ -1,7 +1,7 @@
 {
  "app": "facex_multi",
  "charts": [],
- "content": "[{\"id\":\"facex_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"FacEx\",\"col\":4}},{\"id\":\"facex_si_carga_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Carga SI FacEx\",\"col\":4}},{\"id\":\"facex_inventario_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Inventario FacEx\",\"col\":4}}]",
+ "content": "[{\"id\":\"facex_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"FacEx\",\"col\":4}},{\"id\":\"facex_screen_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"FacEx Screen (POS)\",\"col\":4}},{\"id\":\"facex_si_carga_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Carga SI FacEx\",\"col\":4}},{\"id\":\"facex_inventario_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Inventario FacEx\",\"col\":4}}]",
  "creation": "2026-05-27 00:00:00.000000",
  "custom_blocks": [],
  "docstatus": 0,
@@ -20,6 +20,17 @@
    "label": "Abrir FacEx (Facturación Exprés)",
    "link_count": 0,
    "link_to": "facex",
+   "link_type": "Page",
+   "onboard": 1,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Abrir FacEx Screen (POS Rápido)",
+   "link_count": 0,
+   "link_to": "facex-screen",
    "link_type": "Page",
    "onboard": 1,
    "type": "Link"
@@ -115,6 +126,11 @@
   {
    "label": "Abrir FacEx",
    "link_to": "facex",
+   "type": "Page"
+  },
+  {
+   "label": "FacEx Screen (POS)",
+   "link_to": "facex-screen",
    "type": "Page"
   },
   {

@@ -1,0 +1,172 @@
+/* Recibo Ticket FacEx Print Stylesheet */
+body {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    color: #1e293b;
+    margin: 0;
+    padding: 20px;
+    font-size: 13px;
+    line-height: 1.5;
+}
+.print-format-wrapper {
+    max-width: 800px;
+    margin: 0 auto;
+    background: #fff;
+}
+.header-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    border-bottom: 2px solid #4361ee;
+    padding-bottom: 15px;
+    margin-bottom: 20px;
+}
+.company-section {
+    flex: 1;
+}
+.company-name {
+    color: #153375;
+    font-size: 22px;
+    font-weight: 800;
+    margin: 0 0 5px 0;
+}
+.company-detail {
+    font-size: 11px;
+    color: #64748b;
+    margin: 2px 0;
+}
+.doc-section {
+    text-align: right;
+    width: 250px;
+}
+.doc-title {
+    color: #4361ee;
+    font-size: 24px;
+    font-weight: 900;
+    margin: 0 0 10px 0;
+    letter-spacing: -0.5px;
+}
+.doc-meta {
+    font-size: 12px;
+    margin: 3px 0;
+    color: #334155;
+}
+.customer-container {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 12px 15px;
+    margin-bottom: 25px;
+}
+.section-title {
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: #153375;
+    margin: 20px 0 8px 0;
+    border-bottom: 1px solid #cbd5e1;
+    padding-bottom: 4px;
+}
+.customer-details {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 15px;
+}
+.detail-row {
+    font-size: 12px;
+}
+.items-table, .payments-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 20px;
+}
+.items-table th, .items-table td,
+.payments-table th, .payments-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid #e2e8f0;
+    font-size: 12px;
+    text-align: left;
+}
+.items-table th, .payments-table th {
+    background-color: #f1f5f9;
+    color: #153375;
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: 11px;
+}
+.th-num { width: 6%; }
+.th-desc { width: 46%; }
+.th-qty { width: 12%; }
+.th-rate { width: 18%; }
+.th-total { width: 18%; }
+.th-method { width: 35%; }
+.th-ref { width: 40%; }
+.th-pamount { width: 25%; }
+.item-name {
+    font-weight: 600;
+    color: #0f172a;
+}
+.item-desc {
+    font-size: 11px;
+    color: #64748b;
+    margin-top: 3px;
+}
+.text-right {
+    text-align: right !important;
+}
+.summary-container {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    gap: 30px;
+}
+.terms-section {
+    flex: 1.2;
+}
+.terms-content {
+    font-size: 11px;
+    color: #475569;
+    white-space: pre-wrap;
+}
+.totals-section {
+    flex: 0.8;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.total-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: #475569;
+}
+.total-row.discount {
+    color: #b91c1c;
+}
+.total-row.grand-total {
+    border-top: 2px solid #4361ee;
+    padding-top: 8px;
+    font-size: 16px;
+    font-weight: 800;
+    color: #153375;
+}
+.change-row {
+    display: flex;
+    justify-content: space-between;
+    max-width: 280px;
+    margin-left: auto;
+    font-size: 14px;
+    font-weight: 800;
+    color: #2dc653;
+    border-top: 1px solid #cbd5e1;
+    padding-top: 6px;
+}
+@media print {
+    body {
+        padding: 0;
+        background: #fff;
+    }
+    .print-format-wrapper {
+        width: 100%;
+        max-width: 100%;
+    }
+}

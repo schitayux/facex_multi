@@ -14,7 +14,7 @@ _ALL_PERM_FIELDS = [
     "puede_compras", "puede_validar_compras", "puede_cancelar_compras",
     "crea_clientes", "modifica_clientes",
     "crea_proveedores", "modifica_proveedores",
-    "crea_items", "modifica_items", "actualiza_precios",
+    "crea_items", "modifica_items", "actualiza_precios", "puede_editar_precio",
     "reporte_ventas_fecha", "reporte_ventas_producto",
     "reporte_facturas_canceladas", "reporte_estados_cuenta",
     "reporte_antiguedad_saldos", "reporte_cotizaciones",
@@ -57,6 +57,7 @@ _COMPANY_CONFIG_FIELDS = [
     "maneja_series", "maneja_adendas", "concatena_descripcion2",
     "maneja_inventario", "tipo_x_defecto",
     "mostrar_almacen", "mostrar_desc_pct", "mostrar_adenda", "mostrar_tipo",
+    "exige_pago_completo", "permite_pago_credito",
 ]
 # Campos texto (Select/Data) — no convertir a int
 _CONFIG_TEXT_FIELDS = {"tipo_x_defecto"}
@@ -74,6 +75,23 @@ def _config_default() -> dict:
         else:
             result[k] = 0
     return result
+
+
+def get_facex_default_warehouse(company: str) -> str:
+    """
+    Bodega por defecto del usuario en FacEx Screen (campo bodega_por_defecto,
+    registro user+company). System Manager y usuarios sin registro/valor
+    configurado devuelven "" — sin restricción, se ven todos los productos.
+    """
+    if "System Manager" in frappe.get_roles():
+        return ""
+    if not company:
+        return ""
+    return frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "bodega_por_defecto",
+    ) or ""
 
 
 def get_facex_company_config(company: str) -> dict:
@@ -153,6 +171,87 @@ def get_facex_inventory_permissions(company: str) -> dict:
         return _inventory_no_access()
 
     return {k: int(row.get(k) or 0) for k in _INVENTORY_PERM_FIELDS}
+
+
+# ---------------------------------------------------------------------------
+# Eliminar Ventas en Espera (FacEx Screen)
+# ---------------------------------------------------------------------------
+# Deny-by-default igual que el módulo de Inventario: es una acción destructiva
+# e irreversible (borra el documento), así que un usuario sin fila configurada
+# en FacEx Settings NO la tiene, a diferencia de _ALL_PERM_FIELDS.
+
+def get_facex_can_delete_held_sales(company: str) -> bool:
+    if "System Manager" in frappe.get_roles():
+        return True
+    if not company:
+        return False
+    value = frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "puede_eliminar_ventas_espera",
+    )
+    return bool(int(value or 0))
+
+
+# ---------------------------------------------------------------------------
+# Anular/Cancelar facturas desde FacEx Screen (FEL o interna)
+# ---------------------------------------------------------------------------
+# Deny-by-default: es una acción destructiva/irreversible (anula ante la SAT
+# o revierte contabilidad e inventario), así que un usuario sin fila
+# configurada en FacEx Settings NO la tiene.
+
+def get_facex_can_cancel_invoices(company: str) -> bool:
+    if "System Manager" in frappe.get_roles():
+        return True
+    if not company:
+        return False
+    value = frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "puede_anular_facturas",
+    )
+    return bool(int(value or 0))
+
+
+# ---------------------------------------------------------------------------
+# Botón "POS" en el menú del page FacEx (redirige a FacEx Screen)
+# ---------------------------------------------------------------------------
+# Deny-by-default: el botón nuevo no debe aparecer para nadie hasta que se
+# habilite explícitamente por usuario+compañía en FacEx Settings.
+
+def get_facex_can_access_pos(company: str) -> bool:
+    if "System Manager" in frappe.get_roles():
+        return True
+    if not company:
+        return False
+    value = frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "puede_ver_pos",
+    )
+    return bool(int(value or 0))
+
+
+# ---------------------------------------------------------------------------
+# Botón "Inventario" en el menú del page FacEx (redirige a FacEx Inventario)
+# ---------------------------------------------------------------------------
+# Deny-by-default, igual que el botón POS. Deliberadamente separado de
+# get_facex_inventory_permissions/puede_ver_inventario: aquél gobierna el
+# acceso a las operaciones dentro del módulo de Inventario, este solo la
+# visibilidad del atajo en el menú de FacEx — un admin puede querer otorgar
+# uno sin el otro.
+
+def get_facex_can_access_inventory_menu(company: str) -> bool:
+    if "System Manager" in frappe.get_roles():
+        return True
+    if not company:
+        return False
+    value = frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "puede_ver_menu_inventario",
+    )
+    return bool(int(value or 0))
 
 
 # Roles que ya tienen acceso al page FacEx (ver facex_inventario.json > roles).

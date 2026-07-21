@@ -1,0 +1,157 @@
+<script>
+    document.title = "{{ doc.name }}";
+</script>
+{% set bs = frappe.get_all("BFEL Settings", filters={"company": doc.company, "enabled": 1}, fields=["name", "company_nit", "isr_regime", "direccionemisor", "paisemisor"], limit=1) %}
+{% set bfel = bs[0] if bs else {} %}
+{% set company_logo = frappe.db.get_value("Company", doc.company, "company_logo") %}
+
+{% set est_logo = "" %}
+{% set est_name = doc.company %}
+{% set est_subname = "" %}
+{% if doc.bfel_establecimiento and bfel.name %}
+    {% set ests = frappe.get_all("BFEL Establecimientos", filters={"parent": bfel.name, "establecimiento_id": doc.bfel_establecimiento, "activo": 1}, fields=["logo", "nombre_establecimiento", "subnombre_establecimiento"]) %}
+    {% if ests %}
+        {% set est_logo = ests[0].logo %}
+        {% set est_name = ests[0].nombre_establecimiento %}
+        {% set est_subname = ests[0].subnombre_establecimiento %}
+    {% endif %}
+{% endif %}
+
+<div class="print-format-wrapper">
+    <div class="header-container" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px;">
+        <div class="logo-and-company" style="display: flex; align-items: center; gap: 15px;">
+            {% if est_logo %}
+                <img src="{{ est_logo }}" style="max-height: 70px; max-width: 150px; object-fit: contain;" alt="Logo">
+            {% elif company_logo %}
+                <img src="{{ company_logo }}" style="max-height: 70px; max-width: 150px; object-fit: contain;" alt="Logo">
+            {% endif %}
+            <div class="company-section">
+                <h2 class="company-name" style="margin: 0; font-size: 16px; font-weight: 700; color: #1e293b;">{{ est_name }}</h2>
+                {% if est_subname %}
+                    <p class="company-detail" style="margin: 2px 0 0 0; font-size: 11px; color: #64748b;">{{ est_subname }}</p>
+                {% endif %}
+                <p class="company-detail" style="margin: 2px 0 0 0; font-size: 11px; color: #64748b;"><strong>NIT:</strong> {{ bfel.company_nit or frappe.db.get_value("Company", doc.company, "tax_id") or "—" }}</p>
+                {% if bfel.direccionemisor %}
+                    <p class="company-detail" style="margin: 2px 0 0 0; font-size: 11px; color: #64748b;"><strong>Dirección:</strong> {{ bfel.direccionemisor }}</p>
+                {% endif %}
+            </div>
+        </div>
+        <div class="doc-section" style="text-align: right;">
+            <h1 class="doc-title" style="margin: 0; font-size: 20px; font-weight: 800; color: #4361ee; letter-spacing: 0.5px;">TICKET DE VENTA</h1>
+            <p class="doc-meta" style="margin: 4px 0 0 0; font-size: 11px; color: #475569;"><strong>No. Factura:</strong> {{ doc.name }}</p>
+            <p class="doc-meta" style="margin: 2px 0 0 0; font-size: 11px; color: #475569;"><strong>Fecha:</strong> {{ doc.get_formatted("posting_date") or doc.posting_date }}</p>
+            {% if doc.bfel_uuid %}
+            <p class="doc-meta" style="margin: 2px 0 0 0; font-size: 11px; color: #475569;"><strong>UUID FEL:</strong> {{ doc.bfel_uuid }}</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="customer-container">
+        <div class="customer-details">
+            <div class="detail-row"><strong>Cliente:</strong> {{ doc.bfel_nombre or doc.customer_name or doc.customer }}</div>
+            <div class="detail-row"><strong>NIT / Id.:</strong> {{ doc.bfel_nit or "C.F." }}</div>
+            <div class="detail-row"><strong>Vendedor:</strong> {{ doc.sales_partner or "—" }}</div>
+            <div class="detail-row"><strong>Moneda:</strong> {{ doc.currency }}</div>
+        </div>
+    </div>
+
+    <table class="items-table">
+        <thead>
+            <tr>
+                <th class="th-num">#</th>
+                <th class="th-desc">Producto</th>
+                <th class="th-qty text-right">Cant.</th>
+                <th class="th-rate text-right">Precio Unit.</th>
+                <th class="th-total text-right">Total</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in doc.items %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td>
+                    <div class="item-name">{{ item.item_name }}</div>
+                    {% if item.bfel_comentario %}
+                    <div class="item-desc">💬 {{ item.bfel_comentario }}</div>
+                    {% endif %}
+                </td>
+                <td class="text-right">{{ item.qty }}</td>
+                <td class="text-right">{{ doc.currency }} {{ "{:,.2f}".format(item.rate) }}</td>
+                <td class="text-right">{{ doc.currency }} {{ "{:,.2f}".format(item.amount) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="summary-container">
+        <div class="terms-section">
+            {% if doc.terms %}
+            <h4 class="section-title">Términos y Condiciones</h4>
+            <div class="terms-content">{{ doc.terms }}</div>
+            {% endif %}
+        </div>
+        <div class="totals-section">
+            <div class="total-row">
+                <span class="total-label">Subtotal:</span>
+                <span class="total-value">{{ doc.currency }} {{ "{:,.2f}".format(doc.total) }}</span>
+            </div>
+            {% if doc.discount_amount %}
+            <div class="total-row discount">
+                <span class="total-label">Descuento:</span>
+                <span class="total-value">- {{ doc.currency }} {{ "{:,.2f}".format(doc.discount_amount) }}</span>
+            </div>
+            {% endif %}
+            {% if doc.total_taxes_and_charges %}
+            <div class="total-row">
+                <span class="total-label">Impuestos:</span>
+                <span class="total-value">{{ doc.currency }} {{ "{:,.2f}".format(doc.total_taxes_and_charges) }}</span>
+            </div>
+            {% endif %}
+            <div class="total-row grand-total">
+                <span class="total-label">TOTAL:</span>
+                <span class="total-value">{{ doc.currency }} {{ "{:,.2f}".format(doc.grand_total) }}</span>
+            </div>
+        </div>
+    </div>
+
+    <h3 class="section-title">Formas de Pago</h3>
+    <table class="payments-table">
+        <thead>
+            <tr>
+                <th class="th-method">Método</th>
+                <th class="th-ref">Referencia</th>
+                <th class="th-pamount text-right">Monto</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% set total_paid = namespace(value=0) %}
+            {% if doc.custom_efast_payments %}
+                {% for pay in doc.custom_efast_payments %}
+                {% set total_paid.value = total_paid.value + pay.amount %}
+                <tr>
+                    <td>{{ pay.payment_method }}</td>
+                    <td>{{ pay.reference or "—" }}</td>
+                    <td class="text-right">{{ doc.currency }} {{ "{:,.2f}".format(pay.amount) }}</td>
+                </tr>
+                {% endfor %}
+            {% else %}
+                <tr>
+                    <td colspan="3" class="text-center" style="text-align: center; color: #64748b;">Venta al crédito — sin pago inmediato registrado.</td>
+                </tr>
+            {% endif %}
+        </tbody>
+    </table>
+    {% if total_paid.value > doc.grand_total + 0.009 %}
+    <div class="change-row">
+        <span class="total-label">Cambio entregado:</span>
+        <span class="total-value">{{ doc.currency }} {{ "{:,.2f}".format(total_paid.value - doc.grand_total) }}</span>
+    </div>
+    {% endif %}
+
+    <div class="slogan-footer" style="margin-top: 30px; text-align: center; font-size: 11px; color: #475569; border-top: 1px dashed #e2e8f0; padding-top: 12px;">
+        ¡Gracias por su compra!
+    </div>
+    <div class="slogan-footer" style="margin-top: 6px; text-align: center; font-size: 10px; color: #94a3b8;">
+        FacEx solución implementada por Soluciones Integrales Chapp, S.A.
+    </div>
+</div>

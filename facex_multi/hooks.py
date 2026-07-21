@@ -12,6 +12,10 @@ override_doctype_class = {
     "Supplier": "facex_multi.overrides.supplier.FacexSupplier"
 }
 
+doctype_js = {
+    "Item": "public/js/item.js"
+}
+
 # Roles que aparecerán en el menú de la app (opcional)
 # add_to_apps_screen = [
 #     {

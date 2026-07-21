@@ -277,6 +277,140 @@ def get_all_prices(price_list: str, txt: str = None, company: str = None):
 
 
 @frappe.whitelist()
+def get_pos_item_groups(company: str = None):
+    """Devuelve los Item Group con al menos un producto activo visible para la compañía, con conteo.
+    Alimenta la barra de categorías de la pantalla POS (facex-screen)."""
+    if not has_efast_permission():
+        frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
+
+    company = get_effective_company(company)
+
+    return frappe.db.sql(
+        """
+        SELECT item_group, COUNT(*) AS item_count
+        FROM `tabItem`
+        WHERE disabled = 0
+          AND item_group IS NOT NULL AND item_group != ''
+          AND (
+              bfel_company = %(company)s
+              OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
+          )
+        GROUP BY item_group
+        ORDER BY item_group ASC
+        """,
+        {"company": company},
+        as_dict=True,
+    )
+
+
+@frappe.whitelist()
+def get_pos_items(company: str = None, item_group: str = None, txt: str = None, warehouse: str = None):
+    """Bulk: productos para la grilla de tarjetas de la pantalla POS (facex-screen).
+    A diferencia de search_items/get_all_prices, trae item_group, imagen y precio
+    en una sola consulta (sin N+1) para poder poblar el grid completo de un jalón.
+
+    Si se pasa `warehouse`, `stock_qty` refleja las existencias de esa bodega
+    específica; si no, se suman todas las bodegas de la compañía (señal
+    informativa cuando el usuario no tiene bodega por defecto configurada)."""
+    if not has_efast_permission():
+        frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
+
+    company = get_effective_company(company)
+    price_list = _get_selling_price_list()
+
+    conditions = [
+        "i.disabled = 0",
+        "(i.bfel_company = %(company)s OR ((i.bfel_company IS NULL OR i.bfel_company = '') "
+        "AND IFNULL(i.bfel_company_null, 0) = 0))",
+    ]
+    values = {"company": company, "price_list": price_list}
+
+    if item_group:
+        conditions.append("i.item_group = %(item_group)s")
+        values["item_group"] = item_group
+
+    if txt and txt.strip():
+        conditions.append("(i.name LIKE %(txt)s OR i.item_name LIKE %(txt)s)")
+        values["txt"] = f"%{txt.strip()}%"
+
+    where_clause = " AND ".join(conditions)
+
+    if warehouse:
+        # JOIN a Warehouse (no solo WHERE por nombre) para que, aun si la bodega
+        # por defecto quedara mal configurada apuntando a otra compañía, nunca
+        # se filtre/muestre stock que no pertenece a la compañía activa.
+        bin_join = """
+        LEFT JOIN (
+            SELECT b.item_code, SUM(b.actual_qty) AS stock_qty
+            FROM `tabBin` b
+            JOIN `tabWarehouse` w ON w.name = b.warehouse
+            WHERE b.warehouse = %(warehouse)s AND w.company = %(company)s
+            GROUP BY b.item_code
+        ) bn ON bn.item_code = i.name
+        """
+        values["warehouse"] = warehouse
+    else:
+        bin_join = """
+        LEFT JOIN (
+            SELECT b.item_code, SUM(b.actual_qty) AS stock_qty
+            FROM `tabBin` b
+            JOIN `tabWarehouse` w ON w.name = b.warehouse
+            WHERE w.company = %(company)s AND w.is_group = 0 AND w.disabled = 0
+            GROUP BY b.item_code
+        ) bn ON bn.item_code = i.name
+        """
+
+    rows = frappe.db.sql(
+        f"""
+        SELECT
+            i.name AS item_code,
+            i.item_name,
+            i.item_group,
+            i.stock_uom,
+            COALESCE(i.image, f.file_url) AS image_url,
+            i.has_serial_no,
+            i.is_stock_item,
+            IFNULL(i.custom_tiene_adenda, 0) AS custom_tiene_adenda,
+            ip.price_list_rate AS rate,
+            IFNULL(bn.stock_qty, 0) AS stock_qty,
+            IFNULL(bc.barcodes, '') AS barcodes
+        FROM `tabItem` i
+        LEFT JOIN `tabItem Price` ip
+            ON ip.item_code = i.name
+           AND ip.price_list = %(price_list)s
+           AND ip.selling = 1
+        LEFT JOIN (
+            SELECT attached_to_name, file_url,
+                   ROW_NUMBER() OVER (PARTITION BY attached_to_name ORDER BY creation ASC) AS rn
+            FROM `tabFile`
+            WHERE attached_to_doctype = 'Item'
+              AND (file_name LIKE '%%.png' OR file_name LIKE '%%.jpg' OR file_name LIKE '%%.jpeg')
+        ) f ON f.attached_to_name = i.name AND f.rn = 1
+        LEFT JOIN (
+            SELECT parent, GROUP_CONCAT(barcode SEPARATOR ' ') AS barcodes
+            FROM `tabItem Barcode`
+            GROUP BY parent
+        ) bc ON bc.parent = i.name
+        {bin_join}
+        WHERE {where_clause}
+        ORDER BY i.item_name ASC
+        LIMIT 1500
+        """,
+        values,
+        as_dict=True,
+    )
+
+    for r in rows:
+        r["rate"] = float(r.get("rate") or 0)
+        r["has_serial_no"] = int(r.get("has_serial_no") or 0)
+        r["is_stock_item"] = int(r.get("is_stock_item") or 0)
+        r["custom_tiene_adenda"] = int(r.get("custom_tiene_adenda") or 0)
+        r["stock_qty"] = float(r.get("stock_qty") or 0)
+
+    return rows
+
+
+@frappe.whitelist()
 def update_item_price(item_code: str, rate: float | str, price_list: str, company: str = None):
     """Crea o actualiza el registro de Item Price validando que el ítem pertenece a la compañía."""
     if not has_efast_permission():
@@ -320,7 +454,7 @@ def get_customers_list(txt: str = None, company: str = None):
     txt_filter = "AND customer_name LIKE %(txt)s" if txt else ""
     res = frappe.db.sql(
         f"""
-        SELECT name, customer_name, tax_id, bfel_id_receptor
+        SELECT name, customer_name, tax_id, bfel_id_receptor, default_sales_partner
         FROM `tabCustomer`
         WHERE disabled = 0
           AND (
@@ -369,6 +503,60 @@ def delete_customer(customer_name: str, company: str = None):
         frappe.throw("No puede eliminar un cliente de otra compañía.")
 
     frappe.delete_doc("Customer", customer_name)
+    frappe.db.commit()
+    return {"success": True}
+
+
+@frappe.whitelist()
+def get_item_images(item_code: str):
+    """Retorna las imágenes (png/jpg/jpeg) adjuntas a un producto, incluyendo su imagen principal."""
+    if not item_code or not frappe.db.exists("Item", item_code):
+        return []
+
+    if not frappe.has_permission("Item", ptype="read", doc=item_code):
+        frappe.throw("No tiene permisos para ver este producto.", frappe.PermissionError)
+
+    exts = (".png", ".jpg", ".jpeg")
+    files = frappe.get_all(
+        "File",
+        filters={"attached_to_doctype": "Item", "attached_to_name": item_code},
+        fields=["name", "file_name", "file_url", "is_private"],
+        order_by="creation asc",
+    )
+    images = [f for f in files if (f.file_name or "").lower().endswith(exts)]
+
+    main_image = frappe.db.get_value("Item", item_code, "image")
+    if main_image and not any(img.file_url == main_image for img in images):
+        images.insert(0, {
+            "name": None,
+            "file_name": (main_image.rsplit("/", 1)[-1]),
+            "file_url": main_image,
+            "is_private": 0,
+        })
+
+    return images
+
+
+@frappe.whitelist()
+def delete_item_image(item_code: str, file_name: str = None):
+    """Elimina una imagen adjunta del producto (o limpia la imagen principal si no tiene File propio)."""
+    if not item_code or not frappe.db.exists("Item", item_code):
+        frappe.throw("Producto no encontrado.")
+
+    if not frappe.has_permission("Item", ptype="write", doc=item_code):
+        frappe.throw("No tiene permisos para modificar este producto.", frappe.PermissionError)
+
+    if file_name and frappe.db.exists("File", file_name):
+        f = frappe.get_doc("File", file_name)
+        if f.attached_to_doctype != "Item" or f.attached_to_name != item_code:
+            frappe.throw("El archivo no pertenece a este producto.")
+        file_url = f.file_url
+        frappe.delete_doc("File", file_name, ignore_permissions=False)
+        if frappe.db.get_value("Item", item_code, "image") == file_url:
+            frappe.db.set_value("Item", item_code, "image", None)
+    else:
+        frappe.db.set_value("Item", item_code, "image", None)
+
     frappe.db.commit()
     return {"success": True}
 

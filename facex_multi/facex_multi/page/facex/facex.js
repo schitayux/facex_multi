@@ -226,6 +226,14 @@ class EFastSalePage {
          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
          <span>Compras</span>
        </button>
+       <button class="ef-nav-btn" data-view="pos">
+         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/><line x1="6" y1="14" x2="10" y2="14"/></svg>
+         <span>POS</span>
+       </button>
+       <button class="ef-nav-btn" data-view="inventario">
+         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 8V21H3V8"/><path d="M1 3h22v5H1z"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+         <span>Inventario</span>
+       </button>
 
        <div class="ef-user-dropdown" style="position: relative; margin-left: 12px; display: flex; align-items: center;">
          <button id="ef-btn-user-profile" class="ef-nav-btn" style="padding: 6px 10px; border-radius: 20px; background: #f1f5f9; border: 1px solid #cbd5e1; display: flex; align-items: center; gap: 6px; cursor: pointer;" title="Perfil de Usuario">
@@ -1237,6 +1245,13 @@ class EFastSalePage {
               <label class="ef-label">Descripción FEL <span style="color:#64748b; font-weight:400; font-size:11px;">(max. 500 · se llena automáticamente desde el Nombre)</span></label>
               <textarea id="ef-maint-item-desc" class="ef-textarea" style="width:100%; height:80px;" maxlength="500" placeholder="Se completará automáticamente con el Nombre del ítem."></textarea>
             </div>
+            <div class="ef-field-group" style="grid-column: span 2; border-top:1px solid var(--ef-border); padding-top:14px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                <label class="ef-label" style="margin:0;">Imágenes del Producto</label>
+                <button id="ef-maint-item-images-add-btn" class="ef-btn ef-btn-sm ef-btn-secondary" style="display:none;">Agregar Imagen</button>
+              </div>
+              <div id="ef-maint-item-images-body"></div>
+            </div>
           </div>
           <div style="margin-top:20px; text-align:right;">
             <button id="ef-maint-item-btn-delete" class="ef-btn" style="background:#ef4444; color:white; padding:8px 24px; display:none; margin-right:8px;">Eliminar Producto</button>
@@ -1543,7 +1558,14 @@ class EFastSalePage {
 		// Bind navbar actions
 		this.$body.on("click", ".ef-nav-btn", (e) => {
 			const view = $(e.currentTarget).attr("data-view");
-			if (view === "billing" && (!this.doc.name || this.doc.name === "new")) {
+			if (view === "pos") {
+				// Navegación completa (no es un view interno de este page) —
+				// recarga limpia de FacEx Screen, sin arrastrar estado de esta
+				// sesión de FacEx clásico.
+				window.location.href = "/app/facex-screen";
+			} else if (view === "inventario") {
+				window.location.href = "/app/facex-inventario";
+			} else if (view === "billing" && (!this.doc.name || this.doc.name === "new")) {
 				this._action_new();
 			} else {
 				this._switch_view(view);
@@ -2320,7 +2342,16 @@ body.facex-fullscreen-mode .ef-main-layout {
   transition: color .15s, background .15s; z-index: 1; tabindex: -1;
 }
 .ef-btn-stock:hover { color: var(--ef-primary); background: #eff6ff; }
-.ef-item-code { padding-right: 22px !important; }
+
+/* Item images button */
+.ef-btn-image {
+  position: absolute; right: 20px; top: 50%; transform: translateY(-50%);
+  background: none; border: none; color: #94a3b8; cursor: pointer;
+  font-size: 12px; padding: 1px 4px; border-radius: 3px; line-height: 1;
+  transition: color .15s, background .15s; z-index: 1; tabindex: -1;
+}
+.ef-btn-image:hover { color: var(--ef-primary); background: #eff6ff; }
+.ef-item-code { padding-right: 40px !important; }
 
 /* Adenda DIGECAM button */
 .ef-th-adenda { width: 80px; text-align: center; }
@@ -2376,6 +2407,42 @@ body.facex-fullscreen-mode .ef-main-layout {
 .ef-stock-row-warn .ef-stock-qty-v { color: #dc2626; }
 .ef-stock-row-low .ef-stock-qty-v { color: #d97706; }
 .ef-stock-svc { padding: 14px; text-align: center; color: #64748b; font-style: italic; }
+
+/* Carrete de imágenes de producto */
+.ef-img-carousel { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 6px 0; }
+.ef-img-stage {
+  position: relative; display: flex; align-items: center; justify-content: center;
+  width: 100%; min-height: 320px; background: #0f172a0d; border-radius: 10px; padding: 10px;
+}
+.ef-img-main-link { display: block; max-width: 100%; }
+.ef-img-main {
+  max-width: 100%; max-height: 380px; object-fit: contain;
+  border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,.12); background: #fff;
+}
+.ef-img-nav {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  background: rgba(15,23,42,.55); color: #fff; border: none; width: 34px; height: 34px;
+  border-radius: 50%; font-size: 15px; cursor: pointer; z-index: 2;
+  display: flex; align-items: center; justify-content: center; transition: background .15s;
+}
+.ef-img-nav:hover { background: rgba(15,23,42,.8); }
+.ef-img-prev { left: 8px; }
+.ef-img-next { right: 8px; }
+.ef-img-remove-main {
+  position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border-radius: 50%;
+  border: none; background: #ef4444; color: #fff; font-size: 14px; cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0,0,0,.3); z-index: 3;
+}
+.ef-img-caption { font-size: 12px; color: #64748b; text-align: center; }
+.ef-img-thumbs {
+  display: flex; gap: 8px; overflow-x: auto; max-width: 100%; padding: 4px 2px;
+}
+.ef-img-thumb {
+  width: 56px; height: 56px; object-fit: cover; border-radius: 6px; cursor: pointer;
+  border: 2px solid transparent; opacity: .65; transition: opacity .15s, border-color .15s; flex-shrink: 0;
+}
+.ef-img-thumb:hover { opacity: 1; }
+.ef-img-thumb-active { opacity: 1; border-color: var(--ef-primary); }
 
 /* Empty state */
 .ef-empty-state {
@@ -3368,6 +3435,7 @@ body.facex-fullscreen-mode .ef-main-layout {
         data-field="item_code" data-idx="${idx}"
         value="${_esc(item.item_code || "")}"
         placeholder="Código..." autocomplete="off" />
+      <button class="ef-btn-image" data-idx="${idx}" tabindex="-1" title="Ver imágenes del producto">▦</button>
       <button class="ef-btn-stock" data-idx="${idx}" tabindex="-1" title="Ver saldos por bodega">≡</button>
     </div>
   </td>
@@ -3496,6 +3564,17 @@ body.facex-fullscreen-mode .ef-main-layout {
 			const warehouse = this.doc.items[idx].warehouse || "";
 			const qty       = parseFloat(this.doc.items[idx].qty) || 0;
 			this._show_stock_popover(e.currentTarget, item_code, warehouse, qty);
+		});
+
+		// Imágenes del producto
+		$row.find(".ef-btn-image").on("click", (e) => {
+			e.stopPropagation();
+			const item_code = this.doc.items[idx].item_code;
+			if (!item_code) {
+				frappe.show_alert({ message: "Seleccione un producto primero.", indicator: "orange" });
+				return;
+			}
+			this._show_item_images_dialog(item_code);
 		});
 
 		// Delete row
@@ -3685,6 +3764,89 @@ body.facex-fullscreen-mode .ef-main-layout {
 				}
 			},
 		});
+	}
+
+	_show_item_images_dialog(item_code) {
+		const d = new frappe.ui.Dialog({
+			title: `Imágenes del producto: ${item_code}`,
+			size: "large",
+			fields: [{ fieldtype: "HTML", fieldname: "ef_gallery_html" }],
+		});
+		const $wrapper = d.fields_dict.ef_gallery_html.$wrapper;
+		$wrapper.html('<div class="ef-stock-loading">Cargando imágenes…</div>');
+		d.show();
+
+		frappe.call({
+			method: "facex_multi.api.item.get_item_images",
+			args: { item_code },
+			callback: (r) => {
+				const images = r.message || [];
+				if (!images.length) {
+					$wrapper.html('<div class="ef-stock-empty">Este producto no tiene imágenes adjuntas.</div>');
+					return;
+				}
+				this._render_image_carousel($wrapper, images);
+			},
+		});
+	}
+
+	_render_image_carousel($wrapper, images, opts = {}) {
+		let idx = 0;
+		const editable = !!opts.editable;
+
+		const thumbs = images.map((img, i) => `
+			<img class="ef-img-thumb" data-idx="${i}" src="${img.file_url}" title="${_esc(img.file_name || "")}">
+		`).join("");
+
+		$wrapper.html(`
+			<div class="ef-img-carousel">
+				<div class="ef-img-stage">
+					<button class="ef-img-nav ef-img-prev" title="Anterior">&#10094;</button>
+					<a class="ef-img-main-link" href="#" target="_blank">
+						<img class="ef-img-main" src="">
+					</a>
+					${editable ? '<button class="ef-img-remove-main" title="Eliminar imagen">×</button>' : ""}
+					<button class="ef-img-nav ef-img-next" title="Siguiente">&#10095;</button>
+				</div>
+				<div class="ef-img-caption"></div>
+				${images.length > 1 ? `<div class="ef-img-thumbs">${thumbs}</div>` : ""}
+			</div>
+		`);
+
+		const $main = $wrapper.find(".ef-img-main");
+		const $mainLink = $wrapper.find(".ef-img-main-link");
+		const $caption = $wrapper.find(".ef-img-caption");
+
+		const render = () => {
+			const img = images[idx];
+			$main.attr("src", img.file_url);
+			$mainLink.attr("href", img.file_url);
+			$caption.text(`${img.file_name || ""} (${idx + 1}/${images.length})`);
+			$wrapper.find(".ef-img-thumb").removeClass("ef-img-thumb-active")
+				.filter(`[data-idx="${idx}"]`).addClass("ef-img-thumb-active");
+			$wrapper.find(".ef-img-nav").toggle(images.length > 1);
+		};
+
+		$wrapper.find(".ef-img-prev").on("click", () => { idx = (idx - 1 + images.length) % images.length; render(); });
+		$wrapper.find(".ef-img-next").on("click", () => { idx = (idx + 1) % images.length; render(); });
+		$wrapper.find(".ef-img-thumb").on("click", (e) => { idx = parseInt($(e.currentTarget).attr("data-idx"), 10); render(); });
+
+		if (editable) {
+			$wrapper.find(".ef-img-remove-main").on("click", () => {
+				frappe.confirm("¿Eliminar esta imagen del producto?", () => {
+					frappe.call({
+						method: "facex_multi.api.item.delete_item_image",
+						args: { item_code: opts.item_code, file_name: images[idx].name || "" },
+						callback: () => {
+							frappe.show_alert({ message: "Imagen eliminada.", indicator: "green" });
+							if (opts.onDeleted) opts.onDeleted();
+						},
+					});
+				});
+			});
+		}
+
+		render();
 	}
 
 	// -----------------------------------------------------------------------
@@ -3986,6 +4148,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 		if (!p.puede_ver_tablero) this.$body.find(".ef-nav-btn[data-view='dashboard']").hide();
 		if (!p.puede_facturar)    this.$body.find(".ef-nav-btn[data-view='billing']").hide();
 		if (!p.puede_compras)     this.$body.find(".ef-nav-btn[data-view='purchase']").hide();
+		// Deny-by-default: a diferencia de los anteriores (ON salvo que se
+		// desactiven explícitamente), estos botones arrancan ocultos y solo
+		// se muestran si el permiso viene explícitamente en 1.
+		if (p.puede_ver_pos) this.$body.find(".ef-nav-btn[data-view='pos']").show();
+		else this.$body.find(".ef-nav-btn[data-view='pos']").hide();
+		if (p.puede_ver_menu_inventario) this.$body.find(".ef-nav-btn[data-view='inventario']").show();
+		else this.$body.find(".ef-nav-btn[data-view='inventario']").hide();
 
 		// --- Reportes: ocultar tabs no permitidos ---
 		const REPORT_PERM = {
@@ -8407,13 +8576,52 @@ body.facex-fullscreen-mode .ef-main-layout {
 						.prop("checked", isStockForced || !!it.is_stock_item)
 						.prop("disabled", isStockForced);
 					if (this.perms.modifica_items) this.$body.find("#ef-maint-item-btn-delete").show();
+					this._maint_load_item_images(it.item_code);
 				}
 			}
 		});
 	}
 
+	_maint_load_item_images(item_code) {
+		const $wrapper = this.$body.find("#ef-maint-item-images-body");
+		const $addBtn = this.$body.find("#ef-maint-item-images-add-btn");
+
+		if (!item_code) {
+			$wrapper.html('<div style="padding:8px 0; color:#94a3b8; font-size:12px;">Guarde el producto para poder agregar imágenes.</div>');
+			$addBtn.hide();
+			return;
+		}
+
+		$addBtn.show().off("click").on("click", () => {
+			new frappe.ui.FileUploader({
+				doctype: "Item",
+				docname: item_code,
+				on_success: () => this._maint_load_item_images(item_code),
+			});
+		});
+
+		$wrapper.html('<div class="ef-stock-loading">Cargando imágenes…</div>');
+		frappe.call({
+			method: "facex_multi.api.item.get_item_images",
+			args: { item_code },
+			callback: (r) => {
+				const images = r.message || [];
+				if (!images.length) {
+					$wrapper.html('<div style="padding:8px 0; color:#94a3b8; font-size:12px;">Sin imágenes adjuntas.</div>');
+					return;
+				}
+				this._render_image_carousel($wrapper, images, {
+					editable: true,
+					item_code,
+					onDeleted: () => this._maint_load_item_images(item_code),
+				});
+			},
+		});
+	}
+
 	_clear_maint_item_form() {
 		this._current_maint_item_code = null;
+		this._maint_load_item_images(null);
 		this.$body.find("#ef-maint-item-title").text("Nuevo Producto");
 		this.$body.find("#ef-maint-item-auto-code-label").show();
 		this.$body.find("#ef-maint-item-auto-code").prop("checked", true);
