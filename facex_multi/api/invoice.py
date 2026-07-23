@@ -676,6 +676,10 @@ def save_draft(doc_json: str):
     """
     data = frappe.parse_json(doc_json)
 
+    # bfel_establecimiento es Small Text pero el frontend puede enviarlo como int
+    if data.get("bfel_establecimiento") is not None:
+        data["bfel_establecimiento"] = str(data["bfel_establecimiento"])
+
     # Resolver y validar la compañía activa
     company = get_effective_company(data.get("company"))
     data["company"] = company
