@@ -343,9 +343,33 @@ def get_serial_traceability(company: str = None, item_code: str = None, serial_n
     rows = frappe.db.sql(
         f"""
         SELECT s.name AS serial_no, s.item_code, i.item_name, s.warehouse, s.status,
-               s.reference_doctype, s.reference_name, s.posting_date, s.customer
+               lt.voucher_type AS reference_doctype, lt.voucher_no AS reference_name,
+               lt.posting_date,
+               CASE lt.voucher_type
+                   WHEN 'Sales Invoice' THEN si.customer
+                   WHEN 'Delivery Note' THEN dn.customer
+                   WHEN 'POS Invoice' THEN pi.customer
+                   ELSE NULL
+               END AS customer
         FROM `tabSerial No` s
         LEFT JOIN `tabItem` i ON i.name = s.item_code
+        LEFT JOIN (
+            SELECT serial_no, voucher_type, voucher_no, posting_date
+            FROM (
+                SELECT sbe.serial_no, sbb.voucher_type, sbb.voucher_no, sbb.posting_date,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY sbe.serial_no
+                           ORDER BY sbb.posting_date DESC, sbb.posting_time DESC, sbb.creation DESC
+                       ) AS rn
+                FROM `tabSerial and Batch Entry` sbe
+                INNER JOIN `tabSerial and Batch Bundle` sbb ON sbb.name = sbe.parent
+                WHERE sbb.is_cancelled = 0
+            ) ranked
+            WHERE rn = 1
+        ) lt ON lt.serial_no = s.name
+        LEFT JOIN `tabSales Invoice` si ON si.name = lt.voucher_no AND lt.voucher_type = 'Sales Invoice'
+        LEFT JOIN `tabDelivery Note` dn ON dn.name = lt.voucher_no AND lt.voucher_type = 'Delivery Note'
+        LEFT JOIN `tabPOS Invoice` pi ON pi.name = lt.voucher_no AND lt.voucher_type = 'POS Invoice'
         WHERE {" AND ".join(conditions)}
         ORDER BY s.creation DESC
         LIMIT 500

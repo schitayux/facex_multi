@@ -1005,6 +1005,13 @@ class EFastPOSScreen {
 	// -----------------------------------------------------------------------
 
 	_add_or_prompt(item) {
+		if (item.is_stock_item && parseFloat(item.stock_qty) <= 0) {
+			frappe.show_alert({
+				message: __("{0} no tiene existencias en la bodega actual.", [item.item_name || item.item_code]),
+				indicator: "orange",
+			});
+		}
+
 		const mergeable = !item.has_serial_no && !item.custom_tiene_adenda;
 		if (mergeable) {
 			const existingIdx = this.doc.items.findIndex((r) => r.item_code === item.item_code);

@@ -2247,6 +2247,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 }
 .ef-tr:hover { background: #fafbff; }
 .ef-tr.ef-tr-active { background: #eef2ff; }
+.ef-tr.ef-tr-no-stock { border-left: 3px solid #f59e0b; background: rgba(251,191,36,0.07) !important; }
+.ef-tr.ef-tr-no-stock.ef-tr-active { background: rgba(251,191,36,0.15) !important; }
+.ef-no-stock-badge { display: inline-block; font-size: 10px; font-weight: 700; color: #92400e; background: #fef3c7; border: 1px solid #f59e0b; border-radius: 3px; padding: 0 4px; margin-left: 4px; vertical-align: middle; white-space: nowrap; }
 
 .ef-td {
   padding: 4px 6px;
@@ -3404,6 +3407,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 	_item_row_html(idx, item) {
 		const base_rate = item.price_list_rate !== undefined && item.price_list_rate !== null && parseFloat(item.price_list_rate) > 0 ? parseFloat(item.price_list_rate) : (parseFloat(item.rate) || 0);
 		const amount = this._calc_amount(item.qty, base_rate, item.discount_percentage);
+		const _no_stock = item.is_stock_item && (item._no_stock || !item.warehouse);
+		const _no_stock_cls = _no_stock ? " ef-tr-no-stock" : "";
+		const _no_stock_badge = _no_stock
+			? `<span class="ef-no-stock-badge">${!item.warehouse ? "Sin bodega" : "Sin stock"}</span>`
+			: "";
 
 		// Botón adenda DIGECAM — solo para ARMAS y MUNICIÓN
 		const _grupo = item._item_group || item.item_group || "";
@@ -3427,7 +3435,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 </td>`;
 
 		return `
-<tr class="ef-tr" data-idx="${idx}" id="ef-row-${idx}">
+<tr class="ef-tr${_no_stock_cls}" data-idx="${idx}" id="ef-row-${idx}">
   <td class="ef-td ef-td-idx">${idx + 1}</td>
   <td class="ef-td">
     <div class="ef-ac-wrapper" style="position:relative">
@@ -3451,6 +3459,7 @@ body.facex-fullscreen-mode .ef-main-layout {
       <option value="">(Almacén)</option>
       ${(this.warehouses || []).map(w => `<option value="${_esc(w)}"${item.warehouse === w ? ' selected' : ''}>${_esc(w)}</option>`).join('')}
     </select>
+    ${_no_stock_badge}
   </td>
   <td class="ef-td ef-td-num">
     <input type="number" class="ef-cell-input ef-input-num ef-qty"
@@ -3520,6 +3529,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		$row.find(".ef-warehouse").on("change", (e) => {
 			this.doc.items[idx].warehouse = e.target.value;
 			this._mark_dirty();
+			this._update_row_stock_flag(idx);
 		});
 
 		// tipo FEL select
@@ -3664,10 +3674,49 @@ body.facex-fullscreen-mode .ef-main-layout {
 						this._render_items();
 						this._update_local_footer();
 						this._handle_item_serial_adenda(idx, d);
+						this._update_row_stock_flag(idx);
 					}
 				}
 			},
 		});
+	}
+
+	_update_row_stock_flag(idx) {
+		const row = this.doc.items[idx];
+		if (!row || !row.item_code || !row.is_stock_item) {
+			if (row) row._no_stock = false;
+			this._apply_row_stock_class(idx);
+			return;
+		}
+		if (!row.warehouse) {
+			row._no_stock = true;
+			this._apply_row_stock_class(idx);
+			return;
+		}
+		frappe.call({
+			method: "facex_multi.api.invoice.get_item_stock",
+			args: { item_code: row.item_code, company: this.doc.company || this.defaults.company || "" },
+			callback: (r) => {
+				if (this.doc.items[idx] !== row) return;
+				const whRow = (r.message || []).find(wr => wr.warehouse === row.warehouse);
+				row._no_stock = !whRow || parseFloat(whRow.actual_qty || 0) <= 0;
+				this._apply_row_stock_class(idx);
+			},
+		});
+	}
+
+	_apply_row_stock_class(idx) {
+		const row = this.doc.items[idx];
+		const $row = this.$body.find(`#ef-row-${idx}`);
+		if (!$row.length) return;
+		const noStock = !!(row && row.is_stock_item && (row._no_stock || !row.warehouse));
+		$row.toggleClass("ef-tr-no-stock", noStock);
+		const $wh = $row.find(".ef-col-wh");
+		$wh.find(".ef-no-stock-badge").remove();
+		if (noStock) {
+			const label = !row.warehouse ? "Sin bodega" : "Sin stock";
+			$wh.append(`<span class="ef-no-stock-badge">${label}</span>`);
+		}
 	}
 
 	_show_stock_popover(btn, item_code, selected_warehouse, requested_qty) {
