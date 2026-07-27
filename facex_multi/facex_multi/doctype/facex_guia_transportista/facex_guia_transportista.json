@@ -1,0 +1,117 @@
+{
+ "autoname": "hash",
+ "creation": "2026-07-27 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "transportista",
+  "numero_guia",
+  "piezas",
+  "estado_entrega",
+  "fecha_envio",
+  "destino",
+  "monto_cod",
+  "observaciones",
+  "abrir_rastreo",
+  "column_break_liquidacion",
+  "liquidado",
+  "fecha_liquidacion"
+ ],
+ "fields": [
+  {
+   "fieldname": "transportista",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Transportista",
+   "options": "FacEx Transportista",
+   "reqd": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "numero_guia",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Número de Guía",
+   "reqd": 1,
+   "columns": 2
+  },
+  {
+   "default": "1",
+   "fieldname": "piezas",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Piezas",
+   "columns": 1
+  },
+  {
+   "default": "Pendiente",
+   "fieldname": "estado_entrega",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Estado de Entrega",
+   "options": "Pendiente\nRecolectado\nEn tránsito\nEntregado\nAnulado",
+   "columns": 2
+  },
+  {
+   "fieldname": "fecha_envio",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Fecha de Envío",
+   "columns": 2
+  },
+  {
+   "fieldname": "destino",
+   "fieldtype": "Data",
+   "label": "Destino"
+  },
+  {
+   "fieldname": "monto_cod",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Monto Contra Entrega",
+   "columns": 2
+  },
+  {
+   "fieldname": "observaciones",
+   "fieldtype": "Small Text",
+   "label": "Observaciones"
+  },
+  {
+   "fieldname": "abrir_rastreo",
+   "fieldtype": "Button",
+   "label": "Rastrear Guía"
+  },
+  {
+   "fieldname": "column_break_liquidacion",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "liquidado",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Liquidado",
+   "read_only": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "fecha_liquidacion",
+   "fieldtype": "Date",
+   "label": "Fecha de Liquidación",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-07-27 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FacEx Multi",
+ "name": "FacEx Guia Transportista",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
