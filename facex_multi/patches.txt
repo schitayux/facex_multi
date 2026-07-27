@@ -8,3 +8,4 @@ facex_multi.patches.v1_0.add_purchase_bfel_multi_tipo
 facex_multi.patches.v1_0.add_item_tiene_adenda_field
 facex_multi.patches.v1_0.add_facex_transportista
 facex_multi.patches.v1_0.add_guias_transportista_to_sales_invoice
+facex_multi.patches.v1_0.add_facex_liquidacion_transportista

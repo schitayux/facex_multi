@@ -1,0 +1,133 @@
+{
+ "autoname": "hash",
+ "creation": "2026-07-27 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "guia",
+  "piezas",
+  "estado",
+  "monto_cod",
+  "efectivo",
+  "comision",
+  "valor_comision",
+  "monto_liquidado",
+  "operacion",
+  "autorizacion",
+  "numero_cuenta",
+  "sales_invoice",
+  "match_encontrado"
+ ],
+ "fields": [
+  {
+   "fieldname": "guia",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Guía",
+   "reqd": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "piezas",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Piezas",
+   "columns": 1
+  },
+  {
+   "fieldname": "estado",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Estado",
+   "description": "Estado tal como lo reporta el transportista, ej: ENT",
+   "columns": 1
+  },
+  {
+   "fieldname": "monto_cod",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Monto COD",
+   "columns": 2
+  },
+  {
+   "fieldname": "efectivo",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Efectivo",
+   "columns": 2
+  },
+  {
+   "fieldname": "comision",
+   "fieldtype": "Percent",
+   "in_list_view": 1,
+   "label": "Comisión",
+   "columns": 1
+  },
+  {
+   "fieldname": "valor_comision",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Valor Comisión",
+   "columns": 2
+  },
+  {
+   "fieldname": "monto_liquidado",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Monto Liquidado",
+   "columns": 2
+  },
+  {
+   "fieldname": "operacion",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Operación",
+   "columns": 2
+  },
+  {
+   "fieldname": "autorizacion",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Autorización",
+   "columns": 2
+  },
+  {
+   "fieldname": "numero_cuenta",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Número de Cuenta",
+   "columns": 2
+  },
+  {
+   "fieldname": "sales_invoice",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Sales Invoice",
+   "options": "Sales Invoice",
+   "read_only": 1,
+   "columns": 2
+  },
+  {
+   "default": "0",
+   "fieldname": "match_encontrado",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Match Encontrado",
+   "read_only": 1,
+   "columns": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-07-27 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FacEx Multi",
+ "name": "FacEx Liquidacion Transportista Detalle",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
