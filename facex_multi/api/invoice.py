@@ -359,13 +359,14 @@ def get_defaults(company: str = None):
         get_facex_permissions_for_company, get_facex_company_config,
         get_facex_default_warehouse, get_facex_can_delete_held_sales,
         get_facex_can_cancel_invoices, get_facex_can_access_pos,
-        get_facex_can_access_inventory_menu,
+        get_facex_can_access_inventory_menu, get_facex_can_edit_guias_transporte,
     )
     permissions = get_facex_permissions_for_company(company)
     permissions["puede_eliminar_ventas_espera"] = int(get_facex_can_delete_held_sales(company))
     permissions["puede_anular_facturas"] = int(get_facex_can_cancel_invoices(company))
     permissions["puede_ver_pos"] = int(get_facex_can_access_pos(company))
     permissions["puede_ver_menu_inventario"] = int(get_facex_can_access_inventory_menu(company))
+    permissions["puede_editar_guias_transporte"] = int(get_facex_can_edit_guias_transporte(company))
     company_config = get_facex_company_config(company)
     default_pos_warehouse = get_facex_default_warehouse(company)
 
@@ -464,6 +465,68 @@ def delete_held_sale(name: str):
     frappe.delete_doc("Sales Invoice", name, ignore_permissions=True)
     frappe.db.commit()
     return {"success": True}
+
+
+# ---------------------------------------------------------------------------
+# Envíos Pendientes de Guía (Pago Contra Entrega sin guía capturada)
+# ---------------------------------------------------------------------------
+# Análogo a Ventas en Espera: permite "saltar" el llenado de la guía al
+# cerrar una venta contra entrega y completarla después, sin reabrir el
+# resto de la factura ya sometida/certificada.
+
+@frappe.whitelist()
+def get_pending_guias(company: str = None):
+    """Facturas Contra Entrega ya sometidas que todavía no tienen ninguna
+    guía capturada. bfel_guias_transportista es allow_on_submit=1, así que
+    se pueden completar después vía save_guias_transporte."""
+    if not has_efast_permission():
+        frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
+
+    company = get_effective_company(company)
+    return frappe.db.sql(
+        """
+        select si.name, si.customer_name, si.posting_date, si.grand_total
+        from `tabSales Invoice` si
+        where si.docstatus = 1
+          and si.company = %(company)s
+          and si.bfel_pago_contra_entrega = 1
+          and not exists (
+            select 1 from `tabFacEx Guia Transportista` g
+            where g.parent = si.name and g.parenttype = 'Sales Invoice'
+          )
+        order by si.modified desc
+        limit 200
+        """,
+        {"company": company},
+        as_dict=True,
+    )
+
+
+@frappe.whitelist()
+def save_guias_transporte(invoice_name: str, guias_json: str):
+    """Agrega guías de transporte a una factura Contra Entrega YA SOMETIDA,
+    sin tocar el resto del documento. La tabla es allow_on_submit=1 y el
+    guardado dispara el validate() normal de Sales Invoice, incluyendo el
+    hook guard_guias_transporte_permission — el permiso se sigue
+    respetando igual que al editar guías antes de someter."""
+    guias = frappe.parse_json(guias_json) or []
+    if not isinstance(guias, list) or not guias:
+        frappe.throw("Debe incluir al menos una guía.")
+
+    doc = frappe.get_doc("Sales Invoice", invoice_name)
+
+    if doc.docstatus != 1:
+        frappe.throw("Esta factura no está sometida; use el flujo normal de guardado.")
+    if not doc.get("bfel_pago_contra_entrega"):
+        frappe.throw("Esta factura no está marcada como Pago Contra Entrega.")
+
+    for guia_row in guias:
+        guia_row.pop("name", None)
+        doc.append("bfel_guias_transportista", guia_row)
+
+    doc.save()
+    frappe.db.commit()
+    return _safe_doc_dict(doc)
 
 
 @frappe.whitelist()
@@ -827,6 +890,7 @@ def save_draft(doc_json: str):
             "bfel_nit", "bfel_identificacion", "bfel_nombre", "bfel_status", "bfel_escenario_exento",
             "es_fiscal", "update_stock", "company", "bfel_facex_multi", "bfel_venta_suspendida",
             "selling_price_list", "sales_partner", "bfel_establecimiento", "vendedor",
+            "bfel_pago_contra_entrega",
         ):
             # No pisar selling_price_list con vacío si el doc ya tiene uno
             if field == "selling_price_list" and not data.get(field) and doc.selling_price_list:
@@ -852,6 +916,13 @@ def save_draft(doc_json: str):
             elif not data.get("taxes_and_charges"):
                 # Plantilla fue eliminada explícitamente → limpiar taxes
                 doc.taxes = []
+
+        # Reconstruir tabla de guías de transporte desde el payload (FacEx Screen)
+        if "bfel_guias_transportista" in data and isinstance(data.get("bfel_guias_transportista"), list):
+            doc.bfel_guias_transportista = []
+            for guia_row in data["bfel_guias_transportista"]:
+                guia_row.pop("name", None)  # forzar nueva row
+                doc.append("bfel_guias_transportista", guia_row)
 
     # Bug fix: force ERPNext to compute taxes from template if no taxes are provided
     if doc.get("taxes_and_charges") and not doc.get("taxes"):
