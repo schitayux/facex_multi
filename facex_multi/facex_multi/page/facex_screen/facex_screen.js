@@ -119,6 +119,10 @@ class EFastPOSScreen {
 				this._render_step_encabezado();
 				this._show_step(1);
 				this._refresh_held_count();
+
+				const showPendingGuias = !!(this.company_config.permite_pago_contra_entrega && this.perms.puede_editar_guias_transporte);
+				this.$body.find("#efs-btn-pending-guias").toggle(showPendingGuias);
+				if (showPendingGuias) this._refresh_pending_guias_count();
 			},
 			error: () => {
 				frappe.msgprint(__("No se pudieron cargar los valores por defecto."));
@@ -235,6 +239,9 @@ class EFastPOSScreen {
 						<button class="efs-btn-link" id="efs-btn-held-sales" title="Ventas suspendidas, listas para retomar (F7)">
 							Ventas en espera<span class="efs-held-badge" id="efs-held-badge" style="display:none;">0</span>
 						</button>
+						<button class="efs-btn-link" id="efs-btn-pending-guias" title="Facturas Contra Entrega sin guía capturada todavía" style="display:none;">
+							Envíos Pendientes<span class="efs-held-badge" id="efs-pending-guias-badge" style="display:none;">0</span>
+						</button>
 						<button class="efs-btn-link" id="efs-btn-history">Historial</button>
 						<button class="efs-btn-link" id="efs-btn-toggle-fullscreen" title="Alternar Modo Enfoque (Pantalla Completa)">Modo ERPNext</button>
 						<a class="efs-btn-link" href="/app/facex" id="efs-link-classic">← FacEx clásico</a>
@@ -302,6 +309,7 @@ class EFastPOSScreen {
 
 				<div class="efs-overlay" id="efs-payment-view" style="display:none;"></div>
 				<div class="efs-overlay" id="efs-held-view" style="display:none;"></div>
+				<div class="efs-overlay" id="efs-pending-guias-view" style="display:none;"></div>
 				<div class="efs-overlay" id="efs-confirm-view" style="display:none;"></div>
 				<div class="efs-overlay" id="efs-history-view" style="display:none;"></div>
 			</div>
@@ -341,6 +349,7 @@ class EFastPOSScreen {
 		});
 		this.$body.find("#efs-btn-history").on("click", () => this._show_history_view());
 		this.$body.find("#efs-btn-held-sales").on("click", () => this._show_held_view());
+		this.$body.find("#efs-btn-pending-guias").on("click", () => this._show_pending_guias_view());
 		this.$body.find("#efs-btn-suspend").on("click", () => this._suspend_sale());
 		this.$body.find("#efs-btn-toggle-fullscreen").on("click", (e) => {
 			e.preventDefault();
@@ -1871,7 +1880,7 @@ class EFastPOSScreen {
 		});
 
 		$view.find("#efs-pay-add-split").on("click", () => this._add_split_row());
-		$view.find("#efs-btn-guias-transporte").on("click", () => this._show_guias_transporte_dialog());
+		$view.find("#efs-btn-guias-transporte").on("click", () => this._open_payment_guias_dialog());
 		$view.find("#efs-pay-confirm").on("click", () => this._confirm_payment());
 
 		this._update_change_display();
@@ -2114,11 +2123,14 @@ class EFastPOSScreen {
 		if (st.method === "Contra Entrega") {
 			if (!st.guiasResolved) {
 				frappe.show_alert({ message: __("Registre la guía de envío o elija \"Completar después\" antes de confirmar."), indicator: "orange" }, 6);
-				this._show_guias_transporte_dialog();
+				this._open_payment_guias_dialog();
 				return;
 			}
 			this._lastPaymentsApplied = null;
-			this._save_contra_entrega_then_submit(() => this._show_confirmation(0));
+			this._save_contra_entrega_then_submit(() => {
+				this._refresh_pending_guias_count();
+				this._show_confirmation(0);
+			});
 			return;
 		}
 
@@ -2236,13 +2248,41 @@ class EFastPOSScreen {
 		$btn.toggleClass("efs-pay-method-active", !!n);
 	}
 
+	// Abre el diálogo de guías atado al pago en curso (this.paymentState) —
+	// usado por el botón "Envíos x Transporte" y por el aviso de
+	// _confirm_payment cuando el cajero intenta confirmar sin resolverlo.
+	_open_payment_guias_dialog() {
+		const st = this.paymentState;
+		this._show_guias_transporte_dialog({
+			initialRows: st.guias.length ? st.guias : [{ monto_cod: st.total }],
+			onSave: (rows) => {
+				st.guias = rows;
+				st.guiasResolved = true;
+				st.guiasSkipped = false;
+				this._update_guias_transporte_button();
+				this._render_pay_summary();
+			},
+			onSkip: (rows) => {
+				st.guias = rows;
+				st.guiasResolved = true;
+				st.guiasSkipped = true;
+				this._update_guias_transporte_button();
+				this._render_pay_summary();
+			},
+		});
+	}
+
 	// Dialog con filas dinámicas (transportista/guía/piezas/destino/monto COD),
 	// igual patrón que los splits de pago. "Guardar Guías" exige transportista
-	// + número de guía por fila; "Completar después" cierra sin exigir nada —
-	// el envío queda pendiente y se retoma desde "Envíos Pendientes".
-	_show_guias_transporte_dialog() {
-		const total = this.paymentState.total;
-
+	// + número de guía por fila; "Completar después" (si se pasa onSkip) cierra
+	// sin exigir nada — el envío queda pendiente y se retoma desde "Envíos
+	// Pendientes". Genérico: no depende de this.paymentState, así que también
+	// lo usa _show_pending_guias_view() para completar una guía después.
+	//   initialRows: filas con las que arranca el diálogo.
+	//   onSave(rows): filas completas y válidas.
+	//   onSkip(rows): si se pasa, agrega el botón "Completar después" con las
+	//     filas parciales tal como quedaron (pueden estar vacías).
+	_show_guias_transporte_dialog({ initialRows = [], onSave, onSkip } = {}) {
 		const openDialog = (transportistas) => {
 			const options = transportistas.map((t) => `<option value="${_efs_esc(t.name)}">${_efs_esc(t.name)}</option>`).join("");
 			const $rows = $('<div class="efs-guias-rows"></div>');
@@ -2279,8 +2319,7 @@ class EFastPOSScreen {
 				$rows.append($row);
 			};
 
-			const initialRows = this.paymentState.guias.length ? this.paymentState.guias : [{ monto_cod: total }];
-			initialRows.forEach((g) => addRow(g));
+			(initialRows.length ? initialRows : [{}]).forEach((g) => addRow(g));
 			$addBtn.on("click", () => addRow());
 
 			const collectRows = () => {
@@ -2312,21 +2351,13 @@ class EFastPOSScreen {
 						frappe.show_alert({ message: __("Cada guía necesita Transportista y Número de Guía."), indicator: "orange" });
 						return;
 					}
-					this.paymentState.guias = rows;
-					this.paymentState.guiasResolved = true;
-					this.paymentState.guiasSkipped = false;
-					this._update_guias_transporte_button();
-					this._render_pay_summary();
 					dlg.hide();
+					if (onSave) onSave(rows);
 				},
-				secondary_action_label: __("Completar después"),
+				secondary_action_label: onSkip ? __("Completar después") : __("Cancelar"),
 				secondary_action: () => {
-					this.paymentState.guias = collectRows().filter((r) => r.transportista && r.numero_guia);
-					this.paymentState.guiasResolved = true;
-					this.paymentState.guiasSkipped = true;
-					this._update_guias_transporte_button();
-					this._render_pay_summary();
 					dlg.hide();
+					if (onSkip) onSkip(collectRows().filter((r) => r.transportista && r.numero_guia));
 				},
 			});
 
@@ -2871,6 +2902,104 @@ class EFastPOSScreen {
 					});
 				}
 			);
+		});
+	}
+
+	// -----------------------------------------------------------------------
+	// Envíos Pendientes (Pago Contra Entrega sin guía capturada)
+	// -----------------------------------------------------------------------
+	// Mismo patrón que Ventas en Espera: badge + vista con lista + acción por
+	// fila. A diferencia de una venta en espera, la factura ya está sometida
+	// (y puede estar certificada) — "completar" solo agrega la guía vía
+	// save_guias_transporte, nunca reabre ni reedita el resto del documento.
+
+	_refresh_pending_guias_count() {
+		frappe.call({
+			method: "facex_multi.api.invoice.get_pending_guias",
+			args: { company: this.doc.company },
+			callback: (r) => {
+				const n = (r.message || []).length;
+				const $badge = this.$body.find("#efs-pending-guias-badge");
+				if (n > 0) {
+					$badge.text(n).show();
+				} else {
+					$badge.hide();
+				}
+			},
+		});
+	}
+
+	_show_pending_guias_view() {
+		const $view = this.$body.find("#efs-pending-guias-view");
+		$view.html(`
+			<div class="efs-wizard efs-history-wizard">
+				<div class="efs-wizard-header">
+					<button class="efs-step-nav" id="efs-pending-guias-back">← Volver</button>
+					<div class="efs-wizard-title">Envíos Pendientes</div>
+				</div>
+				<div class="efs-history-results" id="efs-pending-guias-results">
+					<div class="efs-cust-details-loading">Cargando…</div>
+				</div>
+			</div>
+		`);
+		$view.show();
+		$view.find("#efs-pending-guias-back").on("click", () => $view.hide());
+
+		frappe.call({
+			method: "facex_multi.api.invoice.get_pending_guias",
+			args: { company: this.doc.company },
+			callback: (r) => {
+				this._pendingGuiasRaw = r.message || [];
+				this._render_pending_guias_results();
+			},
+		});
+	}
+
+	_render_pending_guias_results() {
+		const $results = this.$body.find("#efs-pending-guias-results");
+		const rows = this._pendingGuiasRaw || [];
+
+		if (!rows.length) {
+			$results.html('<div class="efs-cust-details-loading">No hay envíos pendientes de guía.</div>');
+			return;
+		}
+
+		$results.html(`
+			<table class="efs-stock-table">
+				<thead><tr><th>Factura</th><th>Cliente</th><th>Fecha</th><th>Total</th><th></th></tr></thead>
+				<tbody>
+					${rows.map((row) => `
+						<tr class="efs-hist-row" data-name="${_efs_esc(row.name)}">
+							<td>${_efs_esc(row.name)}</td>
+							<td>${_efs_esc(row.customer_name || "")}</td>
+							<td>${_efs_esc(row.posting_date)}</td>
+							<td>Q ${_efs_fmt(row.grand_total)}</td>
+							<td>Completar guía →</td>
+						</tr>
+					`).join("")}
+				</tbody>
+			</table>
+		`);
+		$results.find(".efs-hist-row").on("click", (e) => {
+			const name = $(e.currentTarget).data("name");
+			const row = rows.find((r) => r.name === name);
+			this._show_guias_transporte_dialog({
+				initialRows: [{ monto_cod: row ? row.grand_total : 0 }],
+				onSave: (guiaRows) => {
+					frappe.call({
+						method: "facex_multi.api.invoice.save_guias_transporte",
+						args: { invoice_name: name, guias_json: JSON.stringify(guiaRows) },
+						freeze: true,
+						freeze_message: __("Guardando guía…"),
+						callback: () => {
+							frappe.show_alert({ message: __("Guía registrada para {0}.", [name]), indicator: "green" });
+							this._pendingGuiasRaw = (this._pendingGuiasRaw || []).filter((r) => r.name !== name);
+							this._render_pending_guias_results();
+							this._refresh_pending_guias_count();
+						},
+					});
+				},
+			});
 		});
 	}
 
