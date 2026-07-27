@@ -360,6 +360,7 @@ def get_defaults(company: str = None):
         get_facex_default_warehouse, get_facex_can_delete_held_sales,
         get_facex_can_cancel_invoices, get_facex_can_access_pos,
         get_facex_can_access_inventory_menu, get_facex_can_edit_guias_transporte,
+        get_facex_can_administer_transportistas, get_facex_can_view_transporte_reportes,
     )
     permissions = get_facex_permissions_for_company(company)
     permissions["puede_eliminar_ventas_espera"] = int(get_facex_can_delete_held_sales(company))
@@ -367,6 +368,8 @@ def get_defaults(company: str = None):
     permissions["puede_ver_pos"] = int(get_facex_can_access_pos(company))
     permissions["puede_ver_menu_inventario"] = int(get_facex_can_access_inventory_menu(company))
     permissions["puede_editar_guias_transporte"] = int(get_facex_can_edit_guias_transporte(company))
+    permissions["puede_administrar_transportistas"] = int(get_facex_can_administer_transportistas(company))
+    permissions["puede_ver_reportes_transporte"] = int(get_facex_can_view_transporte_reportes(company))
     company_config = get_facex_company_config(company)
     default_pos_warehouse = get_facex_default_warehouse(company)
 

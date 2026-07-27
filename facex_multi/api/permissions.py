@@ -411,6 +411,19 @@ def get_facex_can_edit_guias_transporte(company: str) -> bool:
     return bool(int(value or 0))
 
 
+def get_facex_can_view_transporte_reportes(company: str) -> bool:
+    if "System Manager" in frappe.get_roles():
+        return True
+    if not company:
+        return False
+    value = frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "puede_ver_reportes_transporte",
+    )
+    return bool(int(value or 0))
+
+
 def get_facex_companies_with_transporte_report_access(companies: list) -> list:
     """
     Filtra `companies` (típicamente el resultado de get_user_companies())

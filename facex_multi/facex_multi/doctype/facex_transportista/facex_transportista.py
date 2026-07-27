@@ -18,3 +18,13 @@ class FacExTransportista(Document):
 				"No tiene permiso para administrar el catálogo de Transportistas.",
 				frappe.PermissionError,
 			)
+
+	def on_trash(self):
+		# validate() no corre en delete_doc — sin este chequeo, cualquier
+		# usuario con permiso "delete" a nivel de doctype (System Manager,
+		# Sales Manager) podría eliminar sin tener puede_administrar_transportistas.
+		if not get_facex_can_administer_transportistas(get_effective_company()):
+			frappe.throw(
+				"No tiene permiso para eliminar transportistas del catálogo.",
+				frappe.PermissionError,
+			)

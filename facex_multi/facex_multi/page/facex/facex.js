@@ -825,6 +825,29 @@ class EFastSalePage {
           </div>
         </div>
 
+        <!-- Group: Transporte -->
+        <div class="ef-report-group" data-group="transporte">
+          <button class="ef-report-group-header" data-group="transporte">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+            <span>Transporte</span>
+            <svg class="ef-group-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ef-report-group-items" data-group-items="transporte">
+            <button class="ef-report-nav-btn" data-report="transporte_guias_estado" data-external-report="FacEx Guias por Estado de Entrega">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+              <span>Guías por Estado de Entrega</span>
+            </button>
+            <button class="ef-report-nav-btn" data-report="transporte_facturas_guia" data-external-report="FacEx Facturas por Numero de Guia">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <span>Facturas por Número de Guía</span>
+            </button>
+            <button class="ef-report-nav-btn" data-report="transporte_control_liquidaciones" data-external-report="FacEx Control de Liquidaciones">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+              <span>Control de Liquidaciones</span>
+            </button>
+          </div>
+        </div>
+
         <div style="border-top: 1px solid var(--ef-border); margin: 8px 0;"></div>
 
         <button class="ef-report-nav-btn" data-report="print_receipt" style="color: var(--ef-warning);">
@@ -1096,6 +1119,9 @@ class EFastSalePage {
       <button class="ef-tab-btn ef-maint-tab-btn" data-maint-tab="proveedores">
         Proveedores
       </button>
+      <button class="ef-tab-btn ef-maint-tab-btn" data-maint-tab="transportistas" style="display:none;">
+        Transportistas
+      </button>
     </div>
 
     <!-- Maint Tab Content: Clientes -->
@@ -1331,6 +1357,60 @@ class EFastSalePage {
               <!-- Dynamically loaded -->
             </tbody>
           </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Maint Tab Content: Transportistas -->
+    <div class="ef-maint-tab-content" id="ef-maint-tab-transportistas" style="display:none;">
+      <div style="display: grid; grid-template-columns: 320px 1fr; gap: 24px; align-items: start;">
+        <div class="ef-analytics-card" style="box-shadow: var(--ef-shadow); padding:16px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <span class="ef-analytics-card-title" style="margin:0;">Listado de Transportistas</span>
+            <button id="ef-maint-transp-btn-load" class="ef-btn ef-btn-sm ef-btn-secondary" style="padding:2px 8px; font-size:10px;">Cargar Lista</button>
+          </div>
+          <input type="text" id="ef-maint-transp-search" class="ef-input" placeholder="Buscar transportista..." style="width:100%; margin-bottom:12px;" />
+          <div id="ef-maint-transp-list" style="max-height: 400px; overflow-y:auto; display:flex; flex-direction:column; gap:6px;"></div>
+        </div>
+        <div class="ef-analytics-card" style="box-shadow: var(--ef-shadow); padding:20px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; border-bottom:1px solid var(--ef-border); padding-bottom:10px;">
+            <span id="ef-maint-transp-form-title" style="font-weight:700; color:var(--ef-primary); font-size:16px;">Selecciona o crea un transportista</span>
+            <div style="display:flex; gap:8px;">
+              <button id="ef-maint-transp-btn-new" class="ef-btn ef-btn-sm" style="background:#10b981;color:#fff;">+ Nuevo</button>
+              <button id="ef-maint-transp-btn-save" class="ef-btn ef-btn-sm ef-btn-primary" style="display:none;">Guardar</button>
+              <button id="ef-maint-transp-btn-delete" class="ef-btn ef-btn-sm" style="display:none;background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;">Eliminar</button>
+            </div>
+          </div>
+          <div id="ef-maint-transp-form" style="display:none;">
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
+              <div>
+                <label class="ef-label">Nombre del Transportista <span class="ef-req">*</span></label>
+                <input type="text" id="ef-maint-transp-nombre" class="ef-input" style="width:100%" placeholder="Ej: Cargo Expreso"/>
+              </div>
+              <div>
+                <label class="ef-label">Abreviatura <span class="ef-req">*</span></label>
+                <input type="text" id="ef-maint-transp-abrev" class="ef-input" style="width:100%" placeholder="Ej: CAEX"/>
+              </div>
+              <div style="grid-column:1/-1;">
+                <label class="ef-label">URL de Rastreo</label>
+                <input type="text" id="ef-maint-transp-url" class="ef-input" style="width:100%" placeholder="https://transportista.com/tracking/?guia={guia}"/>
+              </div>
+              <div>
+                <label class="ef-label">Código de Crédito por Defecto</label>
+                <input type="text" id="ef-maint-transp-credito" class="ef-input" style="width:100%"/>
+              </div>
+              <div>
+                <label class="ef-label">Teléfono de Contacto</label>
+                <input type="text" id="ef-maint-transp-tel" class="ef-input" style="width:100%"/>
+              </div>
+              <div style="grid-column:1/-1;">
+                <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--ef-text-muted);">
+                  <input type="checkbox" id="ef-maint-transp-activo" checked /> Activo
+                </label>
+              </div>
+            </div>
+          </div>
+          <div id="ef-maint-transp-empty" style="color:#94a3b8; font-size:13px; padding:20px 0;">Selecciona un transportista de la lista o haz clic en <strong>+ Nuevo</strong>.</div>
         </div>
       </div>
     </div>
@@ -4216,6 +4296,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 			payments_report:       "reporte_recibos_pagos",
 			sales_growth_analysis: "reporte_crecimiento_ventas",
 			print_receipt:         "reporte_imprimir_recibo",
+			// Reportes de Transporte: no viven en este motor (son Report doctypes
+			// nativos, ver data-external-report / _setup_report_events), pero
+			// reusan el mismo mecanismo de ocultar/mostrar por permiso.
+			transporte_guias_estado:          "puede_ver_reportes_transporte",
+			transporte_facturas_guia:         "puede_ver_reportes_transporte",
+			transporte_control_liquidaciones: "puede_ver_reportes_transporte",
 		};
 		this.$body.find(".ef-report-nav-btn").each((_, el) => {
 			const report = $(el).data("report");
@@ -4262,6 +4348,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this.$body.find("#ef-maint-supp-btn-delete").hide();
 			this.$body.find("#ef-maint-tab-proveedores .ef-input")
 				.prop("readonly", true).css("background", "#f8fafc");
+		}
+		// Deny-by-default, igual que Inventario/POS: el tab arranca oculto y
+		// solo se muestra si puede_administrar_transportistas viene en 1.
+		if (p.puede_administrar_transportistas) {
+			this.$body.find(".ef-maint-tab-btn[data-maint-tab='transportistas']").show();
+		} else {
+			this.$body.find(".ef-maint-tab-btn[data-maint-tab='transportistas']").hide();
 		}
 
 		// Acciones del Facturador se aplican en _update_action_bar_state
@@ -6651,6 +6744,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 	_setup_report_events() {
 		this.$body.find(".ef-report-nav-btn").off("click").on("click", (e) => {
+			// Reportes de Transporte: Report doctypes nativos, no viven en este
+			// motor — se abren en pestaña nueva en vez de cambiar de reporte aquí.
+			const externalReport = $(e.currentTarget).data("external-report");
+			if (externalReport) {
+				window.open(`/app/query-report/${encodeURIComponent(externalReport)}`, "_blank");
+				return;
+			}
 			const report_id = $(e.currentTarget).data("report");
 			this._switch_report(report_id);
 		});
@@ -8356,6 +8456,31 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-maint-supp-btn-delete").on("click", () => {
 			this._delete_maint_supplier();
 		});
+
+		// ── Transportistas ──
+		let transpTimer = null;
+		this.$body.find("#ef-maint-transp-search").on("input", (e) => {
+			clearTimeout(transpTimer);
+			transpTimer = setTimeout(() => {
+				this._load_maint_transportistas($(e.target).val());
+			}, 250);
+		});
+
+		this.$body.find("#ef-maint-transp-btn-load").on("click", () => {
+			this._load_maint_transportistas(this.$body.find("#ef-maint-transp-search").val());
+		});
+
+		this.$body.find("#ef-maint-transp-btn-new").on("click", () => {
+			this._clear_maint_transp_form();
+		});
+
+		this.$body.find("#ef-maint-transp-btn-save").on("click", () => {
+			this._save_maint_transportista();
+		});
+
+		this.$body.find("#ef-maint-transp-btn-delete").on("click", () => {
+			this._delete_maint_transportista();
+		});
 	}
 
 	_load_maintenance_view() {
@@ -8379,6 +8504,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 		} else if (tab === "proveedores") {
 			this._load_maint_suppliers();
 			this._clear_maint_supp_form();
+		} else if (tab === "transportistas") {
+			this._load_maint_transportistas();
+			this._clear_maint_transp_form();
 		}
 	}
 
@@ -8954,6 +9082,135 @@ body.facex-fullscreen-mode .ef-main-layout {
 							frappe.show_alert({ message: "Proveedor eliminado.", indicator: "green" });
 							this._load_maint_suppliers();
 							this._clear_maint_supp_form();
+						}
+					},
+				});
+			}
+		);
+	}
+
+	// FacEx Transportista es un doctype normal con sus propios permisos
+	// (System Manager/Sales Manager escriben, Sales User solo lee — más el
+	// permiso fino puede_administrar_transportistas de FacEx Settings, ver
+	// FacExTransportista.validate()). No hace falta una API dedicada como
+	// Supplier: los métodos genéricos de frappe.client ya respetan todo eso.
+	_load_maint_transportistas(txt = "") {
+		const filters = txt ? { transportista_nombre: ["like", `%${txt}%`] } : {};
+		frappe.call({
+			method: "frappe.client.get_list",
+			args: {
+				doctype: "FacEx Transportista",
+				filters,
+				fields: ["name", "transportista_nombre", "abreviatura", "activo"],
+				order_by: "transportista_nombre asc",
+				limit_page_length: 200,
+			},
+			callback: (r) => {
+				if (r.exc) return;
+				const $list = this.$body.find("#ef-maint-transp-list");
+				$list.empty();
+				const rows = r.message || [];
+				if (!rows.length) {
+					$list.html('<div style="color:#94a3b8;font-size:12px;padding:8px 0;">Sin transportistas.</div>');
+					return;
+				}
+				rows.forEach(t => {
+					const $item = $(`<div style="padding:8px 10px;border:1px solid var(--ef-border);border-radius:6px;cursor:pointer;background:#fff;">
+						<div style="font-weight:600;color:#1e3a5f;font-size:13px;">${_esc(t.transportista_nombre)}${t.activo ? "" : ` <span style="color:#b91c1c;font-weight:400;">(inactivo)</span>`}</div>
+						<div style="font-size:11px;color:#64748b;">${_esc(t.abreviatura)}</div>
+					</div>`);
+					$item.on("click", () => this._load_maint_transp_form(t.name));
+					$list.append($item);
+				});
+			},
+		});
+	}
+
+	_clear_maint_transp_form() {
+		this._current_maint_transp = "";
+		this.$body.find("#ef-maint-transp-form-title").text("Nuevo Transportista");
+		this.$body.find("#ef-maint-transp-nombre").val("");
+		this.$body.find("#ef-maint-transp-abrev").val("");
+		this.$body.find("#ef-maint-transp-url").val("");
+		this.$body.find("#ef-maint-transp-credito").val("");
+		this.$body.find("#ef-maint-transp-tel").val("");
+		this.$body.find("#ef-maint-transp-activo").prop("checked", true);
+		this.$body.find("#ef-maint-transp-form").show();
+		this.$body.find("#ef-maint-transp-empty").hide();
+		this.$body.find("#ef-maint-transp-btn-save").show();
+		this.$body.find("#ef-maint-transp-btn-delete").hide();
+	}
+
+	_load_maint_transp_form(name) {
+		frappe.call({
+			method: "frappe.client.get",
+			args: { doctype: "FacEx Transportista", name },
+			callback: (r) => {
+				if (r.exc || !r.message) return;
+				const d = r.message;
+				this._current_maint_transp = d.name;
+				this.$body.find("#ef-maint-transp-form-title").text(d.transportista_nombre);
+				this.$body.find("#ef-maint-transp-nombre").val(d.transportista_nombre);
+				this.$body.find("#ef-maint-transp-abrev").val(d.abreviatura);
+				this.$body.find("#ef-maint-transp-url").val(d.url_tracking || "");
+				this.$body.find("#ef-maint-transp-credito").val(d.codigo_credito_default || "");
+				this.$body.find("#ef-maint-transp-tel").val(d.telefono_contacto || "");
+				this.$body.find("#ef-maint-transp-activo").prop("checked", !!d.activo);
+				this.$body.find("#ef-maint-transp-form").show();
+				this.$body.find("#ef-maint-transp-empty").hide();
+				this.$body.find("#ef-maint-transp-btn-save").show();
+				this.$body.find("#ef-maint-transp-btn-delete").show();
+			},
+		});
+	}
+
+	_save_maint_transportista() {
+		const transportista_nombre = this.$body.find("#ef-maint-transp-nombre").val().trim();
+		const abreviatura = this.$body.find("#ef-maint-transp-abrev").val().trim();
+		if (!transportista_nombre || !abreviatura) {
+			frappe.msgprint({ message: "Nombre y Abreviatura son obligatorios.", indicator: "orange" });
+			return;
+		}
+		const values = {
+			transportista_nombre,
+			abreviatura,
+			url_tracking: this.$body.find("#ef-maint-transp-url").val().trim(),
+			codigo_credito_default: this.$body.find("#ef-maint-transp-credito").val().trim(),
+			telefono_contacto: this.$body.find("#ef-maint-transp-tel").val().trim(),
+			activo: this.$body.find("#ef-maint-transp-activo").is(":checked") ? 1 : 0,
+		};
+		const isNew = !this._current_maint_transp;
+		frappe.call({
+			method: isNew ? "frappe.client.insert" : "frappe.client.set_value",
+			args: isNew
+				? { doc: { doctype: "FacEx Transportista", ...values } }
+				: { doctype: "FacEx Transportista", name: this._current_maint_transp, fieldname: values },
+			freeze: true, freeze_message: "Guardando transportista...",
+			callback: (r) => {
+				if (!r.exc && r.message) {
+					frappe.show_alert({ message: `Transportista <strong>${r.message.transportista_nombre}</strong> guardado.`, indicator: "green" });
+					this._load_maint_transportistas();
+					this._load_maint_transp_form(r.message.name);
+				}
+			},
+		});
+	}
+
+	_delete_maint_transportista() {
+		const name = this._current_maint_transp;
+		if (!name) return;
+		frappe.confirm(
+			`¿Eliminar el transportista <strong>${_esc(name)}</strong>? Esta acción no se puede deshacer.`,
+			() => {
+				frappe.call({
+					method: "frappe.client.delete",
+					args: { doctype: "FacEx Transportista", name },
+					freeze: true, freeze_message: "Eliminando transportista...",
+					callback: (r) => {
+						if (!r.exc) {
+							frappe.show_alert({ message: "Transportista eliminado.", indicator: "green" });
+							this._load_maint_transportistas();
+							this._clear_maint_transp_form();
 						}
 					},
 				});
