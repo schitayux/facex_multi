@@ -1729,11 +1729,17 @@ class EFastPOSScreen {
 
 	_render_payment_view(savedDoc) {
 		const total = parseFloat(savedDoc.grand_total || 0);
-		this.paymentState = { total, method: "Efectivo", tendered: "", primaryAmount: total.toFixed(2), reference: "", payments: [], changeDue: 0 };
+		this.paymentState = {
+			total, method: "Efectivo", tendered: "", primaryAmount: total.toFixed(2), reference: "", payments: [], changeDue: 0,
+			guias: [], guiasResolved: false, guiasSkipped: false,
+		};
 
 		const methods = ["Efectivo"];
 		if ((this.company_config || {}).permite_pago_credito) methods.push("Crédito");
 		methods.push("Tarjeta de Crédito", "Transferencia", "Cheque");
+		if ((this.company_config || {}).permite_pago_contra_entrega && (this.perms || {}).puede_editar_guias_transporte) {
+			methods.push("Contra Entrega");
+		}
 
 		const $view = this.$body.find("#efs-payment-view");
 		$view.html(`
@@ -1780,6 +1786,11 @@ class EFastPOSScreen {
 					Se registrará como venta al crédito: la factura quedará pendiente de cobro, sin pago inmediato.
 				</div>
 
+				<div class="efs-pay-credito-note" id="efs-pay-contra-entrega-note" style="display:none;">
+					Pago contra entrega: cobra el transportista al entregar, no se cobra en caja. Registre la guía de envío.
+				</div>
+				<button class="efs-btn-secondary" id="efs-btn-guias-transporte" style="display:none;">Envíos x Transporte</button>
+
 				<div class="efs-pay-splits" id="efs-pay-splits"></div>
 				<button class="efs-btn-link" id="efs-pay-add-split">+ Agregar otro método de pago</button>
 
@@ -1822,16 +1833,22 @@ class EFastPOSScreen {
 			$view.find("#efs-pay-reference").val("");
 
 			const isCredito = this.paymentState.method === "Crédito";
+			const isContraEntrega = this.paymentState.method === "Contra Entrega";
 			const isEfectivo = this.paymentState.method === "Efectivo";
-			const isOther = !isCredito && !isEfectivo;
+			const isOther = !isCredito && !isContraEntrega && !isEfectivo;
 			$view.find("#efs-pay-cash").toggle(isEfectivo);
 			$view.find("#efs-pay-amount-row").toggle(isOther);
 			$view.find("#efs-pay-reference-row").toggle(isOther);
 			$view.find("#efs-pay-credito-note").toggle(isCredito);
-			$view.find("#efs-pay-add-split, #efs-pay-splits").toggle(!isCredito);
-			if (isCredito) {
+			$view.find("#efs-pay-contra-entrega-note").toggle(isContraEntrega);
+			$view.find("#efs-btn-guias-transporte").toggle(isContraEntrega);
+			$view.find("#efs-pay-add-split, #efs-pay-splits").toggle(!isCredito && !isContraEntrega);
+			if (isCredito || isContraEntrega) {
 				this.paymentState.payments = [];
 				$view.find("#efs-pay-splits").empty();
+			}
+			if (isContraEntrega) {
+				this._update_guias_transporte_button();
 			}
 			if (isOther) {
 				const splitsTotal = (this.paymentState.payments || []).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
@@ -1854,6 +1871,7 @@ class EFastPOSScreen {
 		});
 
 		$view.find("#efs-pay-add-split").on("click", () => this._add_split_row());
+		$view.find("#efs-btn-guias-transporte").on("click", () => this._show_guias_transporte_dialog());
 		$view.find("#efs-pay-confirm").on("click", () => this._confirm_payment());
 
 		this._update_change_display();
@@ -1867,7 +1885,7 @@ class EFastPOSScreen {
 		const $view = this.$body.find("#efs-payment-view");
 		const st = this.paymentState;
 
-		if (st.method === "Crédito") {
+		if (st.method === "Crédito" || st.method === "Contra Entrega") {
 			this.paymentState.currentAmount = 0;
 			this.paymentState.changeDue = 0;
 			$view.find("#efs-pay-primary-covered").hide();
@@ -1924,10 +1942,13 @@ class EFastPOSScreen {
 		this.paymentState.primaryAmount = this.paymentState.total.toFixed(2);
 		this.paymentState.reference = "";
 		this.paymentState.payments = [];
+		this.paymentState.guias = [];
+		this.paymentState.guiasResolved = false;
+		this.paymentState.guiasSkipped = false;
 		$view.find(".efs-pay-method-btn").removeClass("efs-pay-method-active");
 		$view.find(`.efs-pay-method-btn[data-method="Efectivo"]`).addClass("efs-pay-method-active");
 		$view.find("#efs-pay-cash").show();
-		$view.find("#efs-pay-amount-row, #efs-pay-reference-row, #efs-pay-credito-note").hide();
+		$view.find("#efs-pay-amount-row, #efs-pay-reference-row, #efs-pay-credito-note, #efs-pay-contra-entrega-note, #efs-btn-guias-transporte").hide();
 		$view.find("#efs-pay-add-split, #efs-pay-splits").show();
 		$view.find("#efs-pay-splits").empty();
 		$view.find("#efs-pay-reference").val("");
@@ -1961,6 +1982,16 @@ class EFastPOSScreen {
 			$sum.html(`
 				<div class="efs-pay-summary-row efs-pay-summary-total"><span>Total</span><span>Q ${_efs_fmt(st.total)}</span></div>
 				<div class="efs-pay-summary-note">Sin cobro inmediato — venta al crédito.</div>
+			`);
+			return;
+		}
+
+		if (st.method === "Contra Entrega") {
+			const n = (st.guias || []).length;
+			$sum.html(`
+				<div class="efs-pay-summary-row efs-pay-summary-total"><span>Total</span><span>Q ${_efs_fmt(st.total)}</span></div>
+				<div class="efs-pay-summary-note">Sin cobro inmediato — cobra el transportista al entregar.</div>
+				<div class="efs-pay-summary-note">${n ? __("{0} guía(s) registrada(s).", [n]) : __("Sin guía registrada — puede completarse después.")}</div>
 			`);
 			return;
 		}
@@ -2076,6 +2107,21 @@ class EFastPOSScreen {
 			return;
 		}
 
+		// Contra Entrega: sin pago inmediato — cobra el transportista al
+		// entregar. Antes de continuar, exige haber pasado por el diálogo de
+		// guías al menos una vez (llenarla o "Completar después" explícito) —
+		// obligatorio abordarlo, pero no obligatorio llenarlo.
+		if (st.method === "Contra Entrega") {
+			if (!st.guiasResolved) {
+				frappe.show_alert({ message: __("Registre la guía de envío o elija \"Completar después\" antes de confirmar."), indicator: "orange" }, 6);
+				this._show_guias_transporte_dialog();
+				return;
+			}
+			this._lastPaymentsApplied = null;
+			this._save_contra_entrega_then_submit(() => this._show_confirmation(0));
+			return;
+		}
+
 		const payments = [...(st.payments || [])];
 		if (st.currentAmount > 0) {
 			payments.push({ payment_method: st.method, amount: st.currentAmount, reference: st.reference || "" });
@@ -2135,6 +2181,175 @@ class EFastPOSScreen {
 					this._show_confirmation(st.changeDue || 0);
 				},
 			});
+		});
+	}
+
+	// Persiste bfel_pago_contra_entrega + las guías capturadas (si las hay)
+	// en el borrador antes de someterlo — save_draft no toca esos campos si
+	// no vienen en el payload, así que hay que reenviarlos explícitamente
+	// (a diferencia de Crédito, que no necesita guardar nada adicional).
+	_save_contra_entrega_then_submit(callback) {
+		const guias = (this.paymentState.guias || []).map((g) => ({
+			transportista: g.transportista,
+			numero_guia: g.numero_guia,
+			piezas: parseInt(g.piezas) || 1,
+			estado_entrega: "Pendiente",
+			destino: g.destino || "",
+			monto_cod: parseFloat(g.monto_cod) || 0,
+		}));
+
+		// Caso de reintento: la factura ya quedó sometida en un intento previo
+		// (ver _proceed_to_payment) — save_draft ya no aplica (docstatus=1).
+		// Se usa save_guias_transporte (allow_on_submit) para no perder las
+		// guías capturadas en este intento en vez de descartarlas en silencio.
+		if (this.doc._submitted) {
+			if (!guias.length) {
+				callback();
+				return;
+			}
+			frappe.call({
+				method: "facex_multi.api.invoice.save_guias_transporte",
+				args: { invoice_name: this.doc.name, guias_json: JSON.stringify(guias) },
+				freeze: true,
+				freeze_message: __("Guardando envío…"),
+				callback: () => callback(),
+			});
+			return;
+		}
+
+		const payload = this._build_save_payload();
+		payload.bfel_pago_contra_entrega = 1;
+		payload.bfel_guias_transportista = guias;
+		frappe.call({
+			method: "facex_multi.api.invoice.save_draft",
+			args: { doc_json: JSON.stringify(payload) },
+			freeze: true,
+			freeze_message: __("Guardando envío…"),
+			callback: () => this._ensure_submitted(callback),
+		});
+	}
+
+	_update_guias_transporte_button() {
+		const $btn = this.$body.find("#efs-btn-guias-transporte");
+		const n = (this.paymentState.guias || []).length;
+		$btn.text(n ? __("Envíos x Transporte ({0})", [n]) : __("Envíos x Transporte"));
+		$btn.toggleClass("efs-pay-method-active", !!n);
+	}
+
+	// Dialog con filas dinámicas (transportista/guía/piezas/destino/monto COD),
+	// igual patrón que los splits de pago. "Guardar Guías" exige transportista
+	// + número de guía por fila; "Completar después" cierra sin exigir nada —
+	// el envío queda pendiente y se retoma desde "Envíos Pendientes".
+	_show_guias_transporte_dialog() {
+		const total = this.paymentState.total;
+
+		const openDialog = (transportistas) => {
+			const options = transportistas.map((t) => `<option value="${_efs_esc(t.name)}">${_efs_esc(t.name)}</option>`).join("");
+			const $rows = $('<div class="efs-guias-rows"></div>');
+			const $addBtn = $(`<button class="efs-btn-link" type="button">${__("+ Agregar otra guía")}</button>`);
+
+			const addRow = (data = {}) => {
+				const $row = $(`
+					<div class="efs-guia-row">
+						<select class="efs-guia-transportista">
+							<option value="">${__("Transportista…")}</option>
+							${options}
+						</select>
+						<input type="text" class="efs-guia-numero" placeholder="${__("Número de guía")}" />
+						<input type="number" class="efs-guia-piezas" placeholder="${__("Piezas")}" min="1" value="1" />
+						<input type="text" class="efs-guia-destino" placeholder="${__("Destino")}" />
+						<input type="number" class="efs-guia-monto" placeholder="${__("Monto COD")}" min="0" step="any" />
+						<button class="efs-line-remove" type="button">×</button>
+					</div>
+				`);
+				$row.find(".efs-guia-transportista").val(data.transportista || "");
+				$row.find(".efs-guia-numero").val(data.numero_guia || "");
+				$row.find(".efs-guia-piezas").val(data.piezas || 1);
+				$row.find(".efs-guia-destino").val(data.destino || "");
+				$row.find(".efs-guia-monto").val(data.monto_cod != null && data.monto_cod !== "" ? data.monto_cod : "");
+				$row.find(".efs-line-remove").on("click", () => {
+					if ($rows.children().length > 1) {
+						$row.remove();
+					} else {
+						$row.find("input").val("");
+						$row.find(".efs-guia-piezas").val(1);
+						$row.find("select").val("");
+					}
+				});
+				$rows.append($row);
+			};
+
+			const initialRows = this.paymentState.guias.length ? this.paymentState.guias : [{ monto_cod: total }];
+			initialRows.forEach((g) => addRow(g));
+			$addBtn.on("click", () => addRow());
+
+			const collectRows = () => {
+				const out = [];
+				$rows.find(".efs-guia-row").each((_, el) => {
+					const $r = $(el);
+					const transportista = $r.find(".efs-guia-transportista").val();
+					const numero_guia = ($r.find(".efs-guia-numero").val() || "").trim();
+					if (!transportista && !numero_guia) return; // fila vacía, se ignora
+					out.push({
+						transportista,
+						numero_guia,
+						piezas: parseInt($r.find(".efs-guia-piezas").val()) || 1,
+						destino: $r.find(".efs-guia-destino").val() || "",
+						monto_cod: parseFloat($r.find(".efs-guia-monto").val()) || 0,
+					});
+				});
+				return out;
+			};
+
+			const dlg = new frappe.ui.Dialog({
+				title: __("Envíos por Transporte"),
+				size: "large",
+				primary_action_label: __("Guardar Guías"),
+				primary_action: () => {
+					const rows = collectRows();
+					const incompletas = rows.some((r) => !r.transportista || !r.numero_guia);
+					if (incompletas) {
+						frappe.show_alert({ message: __("Cada guía necesita Transportista y Número de Guía."), indicator: "orange" });
+						return;
+					}
+					this.paymentState.guias = rows;
+					this.paymentState.guiasResolved = true;
+					this.paymentState.guiasSkipped = false;
+					this._update_guias_transporte_button();
+					this._render_pay_summary();
+					dlg.hide();
+				},
+				secondary_action_label: __("Completar después"),
+				secondary_action: () => {
+					this.paymentState.guias = collectRows().filter((r) => r.transportista && r.numero_guia);
+					this.paymentState.guiasResolved = true;
+					this.paymentState.guiasSkipped = true;
+					this._update_guias_transporte_button();
+					this._render_pay_summary();
+					dlg.hide();
+				},
+			});
+
+			dlg.$body.append(
+				$('<div class="efs-guias-hint"></div>').text(__("Puede agregar varias guías si el envío se divide en varios paquetes o transportistas.")),
+				$rows,
+				$addBtn,
+			);
+			dlg.show();
+		};
+
+		if (this._transportistaOptions) {
+			openDialog(this._transportistaOptions);
+			return;
+		}
+		frappe.db.get_list("FacEx Transportista", {
+			filters: { activo: 1 },
+			fields: ["name"],
+			order_by: "transportista_nombre asc",
+			limit: 100,
+		}).then((rows) => {
+			this._transportistaOptions = rows || [];
+			openDialog(this._transportistaOptions);
 		});
 	}
 
@@ -3253,6 +3468,15 @@ body.facex-fullscreen-mode .main-section {
 .efs-pay-summary-change { color: var(--efs-success); font-weight: 700; }
 .efs-pay-summary-note { text-align: center; color: var(--efs-text-muted); padding-top: 6px; }
 #efs-pay-confirm { margin-top: 20px; }
+#efs-btn-guias-transporte { width: 100%; margin: 10px 0; }
+.efs-guias-hint { color: var(--efs-text-muted); font-size: 13px; margin-bottom: 12px; }
+.efs-guias-rows { display: flex; flex-direction: column; gap: 8px; }
+.efs-guia-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.efs-guia-row select, .efs-guia-row input { padding: 8px; border-radius: 8px; border: 1px solid var(--efs-border); }
+.efs-guia-row select { flex: 2 1 160px; }
+.efs-guia-row input.efs-guia-numero { flex: 2 1 140px; }
+.efs-guia-row input.efs-guia-destino { flex: 2 1 140px; }
+.efs-guia-row input.efs-guia-piezas, .efs-guia-row input.efs-guia-monto { flex: 1 1 90px; min-width: 80px; max-width: 130px; }
 
 .efs-confirm { max-width: 420px; margin: 60px auto; text-align: center; }
 .efs-confirm-icon {

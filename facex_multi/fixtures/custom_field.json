@@ -4789,7 +4789,7 @@
  },
  {
   "allow_in_quick_entry": 0,
-  "allow_on_submit": 0,
+  "allow_on_submit": 1,
   "bold": 0,
   "collapsible": 0,
   "collapsible_depends_on": null,
@@ -4821,7 +4821,7 @@
   "length": 0,
   "link_filters": null,
   "mandatory_depends_on": null,
-  "modified": "2026-07-27 13:03:32.256673",
+  "modified": "2026-07-27 14:26:43.879568",
   "module": "FacEx Multi",
   "name": "Sales Invoice-bfel_pago_contra_entrega",
   "no_copy": 1,

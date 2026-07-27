@@ -12,3 +12,4 @@ facex_multi.patches.v1_0.add_facex_liquidacion_transportista
 facex_multi.patches.v1_0.add_facex_transporte_reports
 facex_multi.patches.v1_0.add_facex_settings_transporte_permissions
 facex_multi.patches.v1_0.add_pago_contra_entrega_fields
+facex_multi.patches.v1_0.allow_on_submit_pago_contra_entrega

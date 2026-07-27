@@ -518,7 +518,12 @@ def save_guias_transporte(invoice_name: str, guias_json: str):
     if doc.docstatus != 1:
         frappe.throw("Esta factura no está sometida; use el flujo normal de guardado.")
     if not doc.get("bfel_pago_contra_entrega"):
-        frappe.throw("Esta factura no está marcada como Pago Contra Entrega.")
+        # Caso de reintento (ver _save_contra_entrega_then_submit en
+        # facex_screen.js): la factura pudo quedar sometida con otro método
+        # antes de que el cajero cambiara a Contra Entrega. bfel_pago_contra_entrega
+        # también es allow_on_submit=1, así que se puede marcar aquí en vez de
+        # bloquear y perder las guías capturadas.
+        doc.bfel_pago_contra_entrega = 1
 
     for guia_row in guias:
         guia_row.pop("name", None)
