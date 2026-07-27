@@ -5,6 +5,7 @@ import frappe
 from frappe import _
 
 from facex_multi.api.invoice import get_user_companies
+from facex_multi.api.permissions import get_facex_companies_with_transporte_report_access
 
 
 def execute(filters=None):
@@ -30,7 +31,7 @@ def get_columns():
 
 
 def get_data(filters):
-	companies = get_user_companies()
+	companies = get_facex_companies_with_transporte_report_access(get_user_companies())
 	if not companies or not filters.numero_guia:
 		return []
 

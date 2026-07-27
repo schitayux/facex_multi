@@ -363,3 +363,70 @@ def ensure_warehouse_establecimiento_field():
     }).insert(ignore_permissions=True)
     frappe.db.commit()
     frappe.clear_cache(doctype="Warehouse")
+
+
+# ---------------------------------------------------------------------------
+# Módulo de Transporte (Catálogo de Transportistas / Guías / Liquidaciones)
+# ---------------------------------------------------------------------------
+# Deny-by-default, igual que Inventario y las acciones destructivas de arriba:
+# un usuario sin fila configurada en FacEx Settings NO tiene acceso a estas
+# 4 acciones hasta que se le habilite explícitamente por usuario+compañía.
+
+def get_facex_can_administer_transportistas(company: str) -> bool:
+    if "System Manager" in frappe.get_roles():
+        return True
+    if not company:
+        return False
+    value = frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "puede_administrar_transportistas",
+    )
+    return bool(int(value or 0))
+
+
+def get_facex_can_upload_liquidaciones_transporte(company: str) -> bool:
+    if "System Manager" in frappe.get_roles():
+        return True
+    if not company:
+        return False
+    value = frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "puede_cargar_liquidaciones_transporte",
+    )
+    return bool(int(value or 0))
+
+
+def get_facex_can_edit_guias_transporte(company: str) -> bool:
+    if "System Manager" in frappe.get_roles():
+        return True
+    if not company:
+        return False
+    value = frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "puede_editar_guias_transporte",
+    )
+    return bool(int(value or 0))
+
+
+def get_facex_companies_with_transporte_report_access(companies: list) -> list:
+    """
+    Filtra `companies` (típicamente el resultado de get_user_companies())
+    dejando solo aquellas donde el usuario tiene puede_ver_reportes_transporte=1.
+    System Manager conserva la lista completa.
+    """
+    if not companies:
+        return []
+    if "System Manager" in frappe.get_roles():
+        return companies
+    return frappe.get_all(
+        "FacEx Settings",
+        filters={
+            "user": frappe.session.user,
+            "bfel_company": ["in", companies],
+            "puede_ver_reportes_transporte": 1,
+        },
+        pluck="bfel_company",
+    )

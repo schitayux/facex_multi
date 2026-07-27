@@ -40,6 +40,59 @@ def fix_abbr_in_naming_series(doc, method=None):
     doc.naming_series = series.replace(".ABBR.", f".{abbr}.")
 
 
+def _guia_transporte_signature(row) -> tuple:
+    """Huella de una fila de bfel_guias_transportista, sin los campos que
+    controla el sistema (liquidado/fecha_liquidacion), para detectar si el
+    usuario editó la tabla manualmente."""
+    return (
+        row.get("transportista"),
+        row.get("numero_guia"),
+        row.get("piezas"),
+        row.get("estado_entrega"),
+        str(row.get("fecha_envio") or ""),
+        row.get("destino"),
+        row.get("monto_cod"),
+        row.get("observaciones"),
+    )
+
+
+def guard_guias_transporte_permission(doc, method=None):
+    """
+    Se activa via doc_events Sales Invoice > validate, como hook adicional
+    e independiente — no modifica ni depende de la lógica FEL/Brainfel
+    existente. Solo bloquea cambios a bfel_guias_transportista si el
+    usuario no tiene puede_editar_guias_transporte en FacEx Settings.
+    """
+    from facex_multi.api.permissions import get_facex_can_edit_guias_transporte
+
+    if "System Manager" in frappe.get_roles():
+        return
+
+    if get_facex_can_edit_guias_transporte(doc.company):
+        return
+
+    after_rows = [_guia_transporte_signature(r) for r in (doc.get("bfel_guias_transportista") or [])]
+
+    if doc.is_new():
+        if after_rows:
+            frappe.throw(
+                "No tiene permiso para agregar Guías de Transporte a esta factura.",
+                frappe.PermissionError,
+            )
+        return
+
+    before = doc.get_doc_before_save()
+    before_rows = [
+        _guia_transporte_signature(r) for r in ((before.get("bfel_guias_transportista") if before else []) or [])
+    ]
+
+    if before_rows != after_rows:
+        frappe.throw(
+            "No tiene permiso para editar las Guías de Transporte de esta factura.",
+            frappe.PermissionError,
+        )
+
+
 def get_effective_company(company: str = None) -> str:
     """
     Resuelve la compañía efectiva. Prioridad:

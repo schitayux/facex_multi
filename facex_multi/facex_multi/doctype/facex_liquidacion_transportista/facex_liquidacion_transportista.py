@@ -5,9 +5,18 @@ import frappe
 from frappe.model.document import Document
 from frappe.utils import flt
 
+from facex_multi.api.invoice import get_effective_company
+from facex_multi.api.permissions import get_facex_can_upload_liquidaciones_transporte
+
 
 class FacExLiquidacionTransportista(Document):
 	def validate(self):
+		if not get_facex_can_upload_liquidaciones_transporte(get_effective_company()):
+			frappe.throw(
+				"No tiene permiso para cargar Liquidaciones de Transportistas.",
+				frappe.PermissionError,
+			)
+
 		self.match_guias()
 		self.total_depositado = sum(flt(row.monto_liquidado) for row in self.detalle)
 

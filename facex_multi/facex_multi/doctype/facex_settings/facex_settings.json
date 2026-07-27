@@ -78,7 +78,13 @@
   "sb_pagos",
   "exige_pago_completo",
   "cb_pagos",
-  "permite_pago_credito"
+  "permite_pago_credito",
+  "sb_transporte",
+  "puede_administrar_transportistas",
+  "puede_editar_guias_transporte",
+  "cb_transporte",
+  "puede_cargar_liquidaciones_transporte",
+  "puede_ver_reportes_transporte"
  ],
  "fields": [
   {
@@ -507,6 +513,43 @@
    "fieldtype": "Check",
    "label": "Permitir Pago a Crédito",
    "description": "Si está marcado, se muestra el botón \"Crédito\" en la sección de Pago de FacEx Screen (venta sin cobro inmediato, factura queda pendiente)."
+  },
+  {
+   "fieldname": "sb_transporte",
+   "fieldtype": "Section Break",
+   "label": "Transporte (Guías / Liquidaciones)"
+  },
+  {
+   "default": "0",
+   "fieldname": "puede_administrar_transportistas",
+   "fieldtype": "Check",
+   "label": "Administrar Catálogo de Transportistas",
+   "description": "Permite crear/editar registros en FacEx Transportista (Cargo Expreso, Corre Caminos, etc.)."
+  },
+  {
+   "default": "0",
+   "fieldname": "puede_editar_guias_transporte",
+   "fieldtype": "Check",
+   "label": "Editar Guías de Transporte en Facturas",
+   "description": "Permite crear/editar/eliminar filas de la tabla de Guías de Transporte dentro de Sales Invoice."
+  },
+  {
+   "fieldname": "cb_transporte",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "puede_cargar_liquidaciones_transporte",
+   "fieldtype": "Check",
+   "label": "Cargar Liquidaciones de Transportistas",
+   "description": "Permite crear/editar registros de FacEx Liquidación Transportista."
+  },
+  {
+   "default": "0",
+   "fieldname": "puede_ver_reportes_transporte",
+   "fieldtype": "Check",
+   "label": "Ver Reportes de Transporte",
+   "description": "Permite ver los reportes de Guías por Estado, Facturas por Número de Guía y Control de Liquidaciones."
   }
  ],
  "index_web_pages_for_search": 0,

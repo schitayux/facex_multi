@@ -35,7 +35,8 @@ doc_events = {
         "before_save": "facex_multi.api.item.sync_description_from_item_name"
     },
     "Sales Invoice": {
-        "before_insert": "facex_multi.api.invoice.fix_abbr_in_naming_series"
+        "before_insert": "facex_multi.api.invoice.fix_abbr_in_naming_series",
+        "validate": "facex_multi.api.invoice.guard_guias_transporte_permission"
     }
 }
 
