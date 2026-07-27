@@ -1,0 +1,107 @@
+{
+ "autoname": "field:transportista_nombre",
+ "creation": "2026-07-27 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "transportista_nombre",
+  "abreviatura",
+  "activo",
+  "column_break_activo",
+  "telefono_contacto",
+  "section_break_tracking",
+  "url_tracking",
+  "codigo_credito_default"
+ ],
+ "fields": [
+  {
+   "fieldname": "transportista_nombre",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Nombre del Transportista",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "abreviatura",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Abreviatura",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "activo",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Activo"
+  },
+  {
+   "fieldname": "column_break_activo",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "telefono_contacto",
+   "fieldtype": "Data",
+   "label": "Teléfono de Contacto"
+  },
+  {
+   "fieldname": "section_break_tracking",
+   "fieldtype": "Section Break",
+   "label": "Rastreo y Crédito"
+  },
+  {
+   "description": "Patrón de URL para rastrear una guía. Debe incluir el placeholder {guia}, ej: https://transportista.com/tracking/?guia={guia}",
+   "fieldname": "url_tracking",
+   "fieldtype": "Data",
+   "label": "URL de Rastreo"
+  },
+  {
+   "description": "Código de crédito del cliente con este transportista, si aplica. Se usa como valor por defecto al cargar una liquidación.",
+   "fieldname": "codigo_credito_default",
+   "fieldtype": "Data",
+   "label": "Código de Crédito por Defecto"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 0,
+ "links": [],
+ "modified": "2026-07-27 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FacEx Multi",
+ "name": "FacEx Transportista",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Sales User"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
