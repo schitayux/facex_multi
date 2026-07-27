@@ -11,3 +11,4 @@ facex_multi.patches.v1_0.add_guias_transportista_to_sales_invoice
 facex_multi.patches.v1_0.add_facex_liquidacion_transportista
 facex_multi.patches.v1_0.add_facex_transporte_reports
 facex_multi.patches.v1_0.add_facex_settings_transporte_permissions
+facex_multi.patches.v1_0.add_pago_contra_entrega_fields

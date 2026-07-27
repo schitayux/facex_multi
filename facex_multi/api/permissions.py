@@ -57,7 +57,7 @@ _COMPANY_CONFIG_FIELDS = [
     "maneja_series", "maneja_adendas", "concatena_descripcion2",
     "maneja_inventario", "tipo_x_defecto",
     "mostrar_almacen", "mostrar_desc_pct", "mostrar_adenda", "mostrar_tipo",
-    "exige_pago_completo", "permite_pago_credito",
+    "exige_pago_completo", "permite_pago_credito", "permite_pago_contra_entrega",
 ]
 # Campos texto (Select/Data) — no convertir a int
 _CONFIG_TEXT_FIELDS = {"tipo_x_defecto"}
