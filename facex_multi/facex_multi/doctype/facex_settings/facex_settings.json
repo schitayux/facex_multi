@@ -81,11 +81,13 @@
   "permite_pago_credito",
   "permite_pago_contra_entrega",
   "sb_transporte",
+  "puede_ver_menu_transporte",
   "puede_administrar_transportistas",
   "puede_editar_guias_transporte",
   "cb_transporte",
   "puede_cargar_liquidaciones_transporte",
-  "puede_ver_reportes_transporte"
+  "puede_ver_reportes_transporte",
+  "puede_ver_kpis_transporte"
  ],
  "fields": [
   {
@@ -529,6 +531,13 @@
   },
   {
    "default": "0",
+   "fieldname": "puede_ver_menu_transporte",
+   "fieldtype": "Check",
+   "label": "Ver Menú de Transporte",
+   "description": "Llave maestra: muestra el menú \"Transporte\" en FacEx Screen. Sin este permiso, el resto de opciones de transporte (aunque estén marcadas) no se ven porque el menú que las contiene está oculto."
+  },
+  {
+   "default": "0",
    "fieldname": "puede_administrar_transportistas",
    "fieldtype": "Check",
    "label": "Administrar Catálogo de Transportistas",
@@ -558,6 +567,13 @@
    "fieldtype": "Check",
    "label": "Ver Reportes de Transporte",
    "description": "Permite ver los reportes de Guías por Estado, Facturas por Número de Guía y Control de Liquidaciones."
+  },
+  {
+   "default": "0",
+   "fieldname": "puede_ver_kpis_transporte",
+   "fieldtype": "Check",
+   "label": "Ver KPIs de Transporte",
+   "description": "Muestra el panel de indicadores (guías por estado, envíos por día, COD pendiente de liquidar) dentro del menú Transporte de FacEx Screen."
   }
  ],
  "index_web_pages_for_search": 0,

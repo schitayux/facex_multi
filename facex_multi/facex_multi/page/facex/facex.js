@@ -18,7 +18,7 @@ frappe.pages["facex"].on_page_load = function (wrapper) {
 	$("body").addClass("facex-fullscreen-mode");
 	// controls.bundle.js provides frappe.ui.form.make_control (Link, Date, etc.)
 	// It is NOT included in desk.bundle.js, so must be required explicitly.
-	frappe.require(["controls.bundle.js"], function () {
+	frappe.require(["/assets/facex_multi/js/facex_transporte_module.js", "controls.bundle.js"], function () {
 		wrapper.efast = new EFastSalePage(page, wrapper);
 	});
 };
@@ -26,10 +26,18 @@ frappe.pages["facex"].on_page_load = function (wrapper) {
 frappe.pages["facex"].on_page_show = function (wrapper) {
 	$("body").addClass("facex-fullscreen-mode");
 	if (!wrapper.efast) return;
-	const params = frappe.utils.get_url_to_dict();
+	const params = frappe.urllib.get_dict();
 	if (params.invoice) {
 		wrapper.efast.load_invoice(params.invoice);
 	}
+	// No forzar "home" aquí: cada _switch_view interno llama frappe.set_route
+	// para reflejar la vista actual en la URL, y ese set_route puede volver a
+	// disparar on_page_show antes de que window.location.href refleje el
+	// query string recién puesto — leerlo aquí en ese instante ve params
+	// desactualizados (vacíos) y rebota a "home" en medio de una navegación
+	// normal a Reportes/Mantenimiento, causando un ciclo de renders y
+	// llamadas que cuelga el navegador. El aterrizaje en Inicio en la carga
+	// inicial ya lo cubre on_page_load/_load_defaults_then_init.
 };
 
 // ---------------------------------------------------------------------------
@@ -94,12 +102,12 @@ class EFastSalePage {
 				this._apply_perms();
 				this._apply_column_visibility();
 
-				const params = frappe.utils.get_url_to_dict();
+				const params = frappe.urllib.get_dict();
 				if (params.invoice) {
 					this.load_invoice(params.invoice);
 				} else {
 					this._new_invoice();
-					this._switch_view(this.perms.puede_ver_tablero ? "dashboard" : "billing");
+					this._switch_view("home");
 				}
 			},
 		});
@@ -206,7 +214,11 @@ class EFastSalePage {
      </div>
 
      <div class="ef-navbar-menu">
-       <button class="ef-nav-btn ef-nav-active" data-view="dashboard">
+       <button class="ef-nav-btn ef-nav-active" data-view="home">
+         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+         <span>Inicio</span>
+       </button>
+       <button class="ef-nav-btn" data-view="dashboard">
          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
          <span>Tablero</span>
        </button>
@@ -233,6 +245,10 @@ class EFastSalePage {
        <button class="ef-nav-btn" data-view="inventario">
          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 8V21H3V8"/><path d="M1 3h22v5H1z"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
          <span>Inventario</span>
+       </button>
+       <button class="ef-nav-btn" data-view="transporte" style="display:none;">
+         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+         <span>Transporte</span>
        </button>
 
        <div class="ef-user-dropdown" style="position: relative; margin-left: 12px; display: flex; align-items: center;">
@@ -264,6 +280,23 @@ class EFastSalePage {
        </div>
 
      </div>
+  </div>
+
+  <!-- ── VIEW 0: INICIO (landing) ────────────────────────────────── -->
+  <div id="ef-home-view" class="ef-view-content" style="display:none;">
+    <div class="ef-home-wrap">
+      <div class="ef-home-welcome">
+        <div class="ef-home-greeting" id="ef-home-greeting">¡Bienvenido!</div>
+        <div class="ef-home-datetime">
+          <span id="ef-home-date"></span>
+          <span class="ef-home-time-sep">·</span>
+          <span id="ef-home-time"></span>
+        </div>
+        <div class="ef-home-session" id="ef-home-session"></div>
+      </div>
+      <div class="ef-home-cards" id="ef-home-cards"></div>
+      <div class="ef-home-footer" id="ef-home-footer"></div>
+    </div>
   </div>
 
   <!-- ── VIEW 1: DASHBOARD / TABLERO ──────────────────────────────── -->
@@ -305,7 +338,7 @@ class EFastSalePage {
     </div>
 
     <!-- Fila de KPIs -->
-    <div class="ef-dashboard-kpis" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; margin-bottom: 24px;">
+    <div class="ef-dashboard-kpis" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; margin-bottom: 24px;">
       <!-- KPI 1 -->
       <div class="ef-stat-card" id="ef-kpi-card-today" style="border-left: 4px solid var(--ef-primary); text-align: left; box-shadow: var(--ef-shadow); display: flex; flex-direction: column; justify-content: center; min-height: 85px;">
         <div class="ef-stat-label">Ventas Hoy</div>
@@ -319,6 +352,12 @@ class EFastSalePage {
         <div id="ef-kpi-month-count" style="font-size: 11px; color: var(--ef-text-muted); margin-top: 4px;">0 facturas</div>
       </div>
       <!-- KPI 3 -->
+      <div class="ef-stat-card" id="ef-kpi-card-draft" style="border-left: 4px solid var(--ef-info); text-align: left; box-shadow: var(--ef-shadow); display: flex; flex-direction: column; justify-content: center; min-height: 85px;">
+        <div class="ef-stat-label">Ventas Borrador/Cotización</div>
+        <div id="ef-kpi-draft-total" class="ef-stat-value" style="color: var(--ef-info); font-family:monospace; font-size: 22px;">Q 0.00</div>
+        <div id="ef-kpi-draft-count" style="font-size: 11px; color: var(--ef-text-muted); margin-top: 4px;">0 facturas</div>
+      </div>
+      <!-- KPI 4 -->
       <div class="ef-stat-card" id="ef-kpi-card-fel" style="border-left: 4px solid var(--ef-warning); text-align: left; box-shadow: var(--ef-shadow); display: flex; flex-direction: column; justify-content: center; min-height: 85px;">
         <div class="ef-stat-label">Facturas Certificadas FEL</div>
         <div id="ef-kpi-fel-processed" class="ef-stat-value" style="color: var(--ef-warning); font-size: 22px;">0</div>
@@ -716,6 +755,9 @@ class EFastSalePage {
               <span class="ef-section-title">Formas de Pago</span>
               <button id="ef-add-payment" class="ef-btn ef-btn-sm ef-btn-secondary">+ Agregar</button>
             </div>
+            <div id="ef-pay-contra-entrega-note" class="ef-contra-entrega-note" style="display:none">
+              Contra Entrega: el transportista cobra al entregar, esta línea no se contabiliza en bancos ahora. Se registrará un pago automático cuando se concilie la liquidación del transportista.
+            </div>
             <div class="ef-table-wrapper">
               <table class="ef-table" id="ef-payments-table">
                 <thead>
@@ -825,28 +867,10 @@ class EFastSalePage {
           </div>
         </div>
 
-        <!-- Group: Transporte -->
-        <div class="ef-report-group" data-group="transporte">
-          <button class="ef-report-group-header" data-group="transporte">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
-            <span>Transporte</span>
-            <svg class="ef-group-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
-          <div class="ef-report-group-items" data-group-items="transporte">
-            <button class="ef-report-nav-btn" data-report="transporte_guias_estado" data-external-report="FacEx Guias por Estado de Entrega">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
-              <span>Guías por Estado de Entrega</span>
-            </button>
-            <button class="ef-report-nav-btn" data-report="transporte_facturas_guia" data-external-report="FacEx Facturas por Numero de Guia">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-              <span>Facturas por Número de Guía</span>
-            </button>
-            <button class="ef-report-nav-btn" data-report="transporte_control_liquidaciones" data-external-report="FacEx Control de Liquidaciones">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-              <span>Control de Liquidaciones</span>
-            </button>
-          </div>
-        </div>
+        <!-- Los reportes de Transporte (Guías por Estado, Facturas por Guía,
+             Control de Liquidaciones) se movieron al tab "Transporte" del
+             nav principal, junto con Maestros y Documentos — ver
+             #ef-transporte-view / FacexTransporteModule#showReportes. -->
 
         <div style="border-top: 1px solid var(--ef-border); margin: 8px 0;"></div>
 
@@ -1119,9 +1143,6 @@ class EFastSalePage {
       <button class="ef-tab-btn ef-maint-tab-btn" data-maint-tab="proveedores">
         Proveedores
       </button>
-      <button class="ef-tab-btn ef-maint-tab-btn" data-maint-tab="transportistas" style="display:none;">
-        Transportistas
-      </button>
     </div>
 
     <!-- Maint Tab Content: Clientes -->
@@ -1361,59 +1382,9 @@ class EFastSalePage {
       </div>
     </div>
 
-    <!-- Maint Tab Content: Transportistas -->
-    <div class="ef-maint-tab-content" id="ef-maint-tab-transportistas" style="display:none;">
-      <div style="display: grid; grid-template-columns: 320px 1fr; gap: 24px; align-items: start;">
-        <div class="ef-analytics-card" style="box-shadow: var(--ef-shadow); padding:16px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-            <span class="ef-analytics-card-title" style="margin:0;">Listado de Transportistas</span>
-            <button id="ef-maint-transp-btn-load" class="ef-btn ef-btn-sm ef-btn-secondary" style="padding:2px 8px; font-size:10px;">Cargar Lista</button>
-          </div>
-          <input type="text" id="ef-maint-transp-search" class="ef-input" placeholder="Buscar transportista..." style="width:100%; margin-bottom:12px;" />
-          <div id="ef-maint-transp-list" style="max-height: 400px; overflow-y:auto; display:flex; flex-direction:column; gap:6px;"></div>
-        </div>
-        <div class="ef-analytics-card" style="box-shadow: var(--ef-shadow); padding:20px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; border-bottom:1px solid var(--ef-border); padding-bottom:10px;">
-            <span id="ef-maint-transp-form-title" style="font-weight:700; color:var(--ef-primary); font-size:16px;">Selecciona o crea un transportista</span>
-            <div style="display:flex; gap:8px;">
-              <button id="ef-maint-transp-btn-new" class="ef-btn ef-btn-sm" style="background:#10b981;color:#fff;">+ Nuevo</button>
-              <button id="ef-maint-transp-btn-save" class="ef-btn ef-btn-sm ef-btn-primary" style="display:none;">Guardar</button>
-              <button id="ef-maint-transp-btn-delete" class="ef-btn ef-btn-sm" style="display:none;background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;">Eliminar</button>
-            </div>
-          </div>
-          <div id="ef-maint-transp-form" style="display:none;">
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
-              <div>
-                <label class="ef-label">Nombre del Transportista <span class="ef-req">*</span></label>
-                <input type="text" id="ef-maint-transp-nombre" class="ef-input" style="width:100%" placeholder="Ej: Cargo Expreso"/>
-              </div>
-              <div>
-                <label class="ef-label">Abreviatura <span class="ef-req">*</span></label>
-                <input type="text" id="ef-maint-transp-abrev" class="ef-input" style="width:100%" placeholder="Ej: CAEX"/>
-              </div>
-              <div style="grid-column:1/-1;">
-                <label class="ef-label">URL de Rastreo</label>
-                <input type="text" id="ef-maint-transp-url" class="ef-input" style="width:100%" placeholder="https://transportista.com/tracking/?guia={guia}"/>
-              </div>
-              <div>
-                <label class="ef-label">Código de Crédito por Defecto</label>
-                <input type="text" id="ef-maint-transp-credito" class="ef-input" style="width:100%"/>
-              </div>
-              <div>
-                <label class="ef-label">Teléfono de Contacto</label>
-                <input type="text" id="ef-maint-transp-tel" class="ef-input" style="width:100%"/>
-              </div>
-              <div style="grid-column:1/-1;">
-                <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--ef-text-muted);">
-                  <input type="checkbox" id="ef-maint-transp-activo" checked /> Activo
-                </label>
-              </div>
-            </div>
-          </div>
-          <div id="ef-maint-transp-empty" style="color:#94a3b8; font-size:13px; padding:20px 0;">Selecciona un transportista de la lista o haz clic en <strong>+ Nuevo</strong>.</div>
-        </div>
-      </div>
-    </div>
+    <!-- El mantenimiento de Transportistas se movió al tab "Transporte" del
+         nav principal (Maestros → Transportistas) — ver #ef-transporte-view
+         / FacexTransporteModule#showTransportistas. -->
 
   </div>
 
@@ -1632,6 +1603,13 @@ class EFastSalePage {
     </div>
   </div>
 
+  <!-- ── VIEW 6: TRANSPORTE (Maestros, Documentos, Reportes, KPIs) ──── -->
+  <!-- Contenido delegado por completo a FacexTransporteModule (compartido
+       con FacEx Screen) — ver _switch_view("transporte") más abajo. -->
+  <div id="ef-transporte-view" class="ef-view-content" style="display:none; padding: 24px; max-width: 1200px; margin: 0 auto; font-family: var(--ef-font);">
+    <div id="ef-transporte-module-container"></div>
+  </div>
+
 </div><!-- ef-main-layout -->
 		`);
 
@@ -1667,21 +1645,30 @@ class EFastSalePage {
 			$(this.wrapper).find("#ef-action-bar").hide();
 		}
 
-		if (view === "dashboard") {
+		// Oculta las vistas de nivel superior antes de mostrar la elegida —
+		// única línea que necesita conocer #ef-transporte-view, para no tener
+		// que repetir un .hide() nuevo en cada rama existente.
+		this.$body.find(".ef-view-content").hide();
+
+		// El reloj en vivo de Inicio solo debe correr mientras esa vista esté
+		// visible — se detiene al salir, igual que el patrón ya usado en
+		// facex_screen.js para su pantalla de bienvenida.
+		if (view !== "home" && this._homeClockTimer) {
+			clearInterval(this._homeClockTimer);
+			this._homeClockTimer = null;
+		}
+
+		if (view === "home") {
+			this.$body.find("#ef-home-view").show();
+			frappe.set_route("facex");
+			this._show_home();
+		} else if (view === "dashboard") {
 			this.$body.find("#ef-dashboard-view").show();
-			this.$body.find("#ef-billing-view").hide();
-			this.$body.find("#ef-reports-view").hide();
-			this.$body.find("#ef-maintenance-view").hide();
-			this.$body.find("#ef-purchase-view").hide();
 			// Clear URL query params
 			frappe.set_route("facex");
 			this._load_dashboard_data();
 		} else if (view === "billing") {
-			this.$body.find("#ef-dashboard-view").hide();
 			this.$body.find("#ef-billing-view").show();
-			this.$body.find("#ef-reports-view").hide();
-			this.$body.find("#ef-maintenance-view").hide();
-			this.$body.find("#ef-purchase-view").hide();
 			if (this.doc && this.doc.name && this.doc.name !== "new") {
 				frappe.set_route("facex", "", { invoice: this.doc.name });
 			} else {
@@ -1689,30 +1676,162 @@ class EFastSalePage {
 			}
 			this._focus_first_field();
 		} else if (view === "reports") {
-			this.$body.find("#ef-dashboard-view").hide();
-			this.$body.find("#ef-billing-view").hide();
 			this.$body.find("#ef-reports-view").show();
-			this.$body.find("#ef-maintenance-view").hide();
-			this.$body.find("#ef-purchase-view").hide();
 			frappe.set_route("facex", "", { view: "reports" });
 			this._load_reports_view();
 		} else if (view === "maintenance") {
-			this.$body.find("#ef-dashboard-view").hide();
-			this.$body.find("#ef-billing-view").hide();
-			this.$body.find("#ef-reports-view").hide();
 			this.$body.find("#ef-maintenance-view").show();
-			this.$body.find("#ef-purchase-view").hide();
 			frappe.set_route("facex", "", { view: "maintenance" });
 			this._load_maintenance_view();
 		} else if (view === "purchase") {
-			this.$body.find("#ef-dashboard-view").hide();
-			this.$body.find("#ef-billing-view").hide();
-			this.$body.find("#ef-reports-view").hide();
-			this.$body.find("#ef-maintenance-view").hide();
 			this.$body.find("#ef-purchase-view").show();
 			frappe.set_route("facex", "", { view: "purchase" });
 			this._init_purchase_view();
+		} else if (view === "transporte") {
+			this.$body.find("#ef-transporte-view").show();
+			frappe.set_route("facex", "", { view: "transporte" });
+			this._transporte_module().showHub();
 		}
+	}
+
+	// Transporte (Maestros, Documentos, Reportes, KPIs) vive por completo en
+	// FacexTransporteModule (public/js/facex_transporte_module.js),
+	// compartido con FacEx Screen — aquí solo se monta una vez dentro del
+	// contenedor del tab y se mantiene sincronizado con perms/company.
+	// Es un tab de nivel superior igual que Inventario o POS, así que no
+	// se le pasa onBack (el módulo no dibuja botón de "volver" en el hub).
+	_transporte_module() {
+		if (!this._transporteModuleInstance) {
+			this._transporteModuleInstance = new FacexTransporteModule({
+				$container: this.$body.find("#ef-transporte-module-container"),
+				perms: this.perms,
+				company: this.defaults.company,
+			});
+		} else {
+			this._transporteModuleInstance.setContext({ perms: this.perms, company: this.defaults.company });
+		}
+		return this._transporteModuleInstance;
+	}
+
+	// Pantalla de aterrizaje ("Inicio"): saludo, reloj/fecha en vivo y
+	// tarjetas de navegación filtradas por permiso — mismo patrón que
+	// _show_home() en facex_screen.js, adaptado a los ef-* tokens y a las
+	// vistas internas (_switch_view) de este page.
+	_show_home() {
+		const fullname = frappe.session.user_fullname || frappe.session.user;
+		const company  = this.defaults.company || "";
+		this.$body.find("#ef-home-greeting").text(`¡Bienvenido, ${fullname}!`);
+		this.$body.find("#ef-home-session").html(
+			`Conectado como <strong>${_esc(fullname)}</strong> (${_esc(frappe.session.user)})` +
+			(company ? ` — Compañía: <strong>${_esc(company)}</strong>` : "")
+		);
+
+		// Logo real de la compañía activa (BFEL Establecimientos.logo /
+		// Company.company_logo, resuelto por get_defaults) + logo de CHAPPSA —
+		// mismo dato y mismo asset estático que usa el pie de página de
+		// facex_screen.js, aquí juntos en el footer en vez de repartidos entre
+		// encabezado y esquina flotante.
+		const establishments = this.defaults.establishments || [];
+		const currentEst = establishments.find((e) => String(e.establecimiento_id) === String(this.doc.bfel_establecimiento)) || establishments[0];
+		const companyLogoUrl = currentEst && currentEst.logo ? currentEst.logo : "";
+		const currentYear = new Date().getFullYear();
+		this.$body.find("#ef-home-footer").html(`
+			<div class="ef-home-footer-brand">
+				${companyLogoUrl
+					? `<img class="ef-home-footer-logo" src="${_esc(companyLogoUrl)}" alt="${_esc(company)}" onerror="this.style.display='none'" />`
+					: `<span class="ef-home-footer-logo-fallback">${_esc(company)}</span>`}
+			</div>
+			<div class="ef-home-footer-sep"></div>
+			<div class="ef-home-footer-poweredby">
+				<img src="/assets/facex_multi/images/chappsa-logo.png" alt="CHAPPSA" onerror="this.style.display='none'" />
+				<span>© ${currentYear} CHAPPSA</span>
+			</div>
+		`);
+
+		const tick = () => {
+			const now = new Date();
+			let dateStr = now.toLocaleDateString("es-GT", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+			dateStr = dateStr.charAt(0).toUpperCase() + dateStr.slice(1);
+			const timeStr = now.toLocaleTimeString("es-GT", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+			this.$body.find("#ef-home-date").text(dateStr);
+			this.$body.find("#ef-home-time").text(timeStr);
+		};
+		tick();
+		clearInterval(this._homeClockTimer);
+		this._homeClockTimer = setInterval(() => {
+			if (this._current_view !== "home") { clearInterval(this._homeClockTimer); this._homeClockTimer = null; return; }
+			tick();
+		}, 1000);
+
+		const p = this.perms || {};
+		const icon = (paths) => `<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`;
+
+		const cards = [
+			p.puede_ver_tablero && {
+				label: "Tablero",
+				desc: "KPIs de ventas, facturas recientes y productos más vendidos.",
+				icon: icon(`<rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/>`),
+				action: () => this._switch_view("dashboard"),
+			},
+			p.puede_facturar && {
+				label: "Facturar Rápida",
+				desc: "Crear y validar facturas con certificación FEL.",
+				icon: icon(`<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>`),
+				action: () => {
+					if (!this.doc.name || this.doc.name === "new") this._action_new();
+					else this._switch_view("billing");
+				},
+			},
+			this._any_report_access() && {
+				label: "Reportes",
+				desc: "Ventas, cobros, cotizaciones y estados de cuenta.",
+				icon: icon(`<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><path d="M3 20h18"/>`),
+				action: () => this._switch_view("reports"),
+			},
+			p.puede_ver_menu_inventario && {
+				label: "Inventario",
+				desc: "Entradas, salidas y transferencias de stock.",
+				icon: icon(`<path d="M21 8V21H3V8"/><path d="M1 3h22v5H1z"/><line x1="10" y1="12" x2="14" y2="12"/>`),
+				action: () => { window.location.href = "/app/facex-inventario"; },
+			},
+			p.puede_compras && {
+				label: "Compras",
+				desc: "Registrar y validar facturas de proveedores.",
+				icon: icon(`<path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/>`),
+				action: () => this._switch_view("purchase"),
+			},
+			this._has_transporte_access() && {
+				label: "Transporte",
+				desc: "Guías, transportistas y liquidaciones de envío.",
+				icon: icon(`<rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>`),
+				action: () => this._switch_view("transporte"),
+			},
+			p.puede_ver_pos && {
+				label: "POS",
+				desc: "Punto de venta rápido tipo caja.",
+				icon: icon(`<rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/><line x1="6" y1="14" x2="10" y2="14"/>`),
+				action: () => { window.location.href = "/app/facex-screen"; },
+			},
+			{
+				label: "Mantenimiento",
+				desc: "Clientes, productos, proveedores y precios.",
+				icon: icon(`<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/><circle cx="12" cy="12" r="3"/>`),
+				action: () => this._switch_view("maintenance"),
+			},
+		].filter(Boolean);
+
+		const $cards = this.$body.find("#ef-home-cards");
+		$cards.html(cards.map((c, i) => `
+			<button class="ef-home-card" data-idx="${i}">
+				<div class="ef-home-card-icon">${c.icon}</div>
+				<div class="ef-home-card-label">${_esc(c.label)}</div>
+				<div class="ef-home-card-desc">${_esc(c.desc)}</div>
+			</button>
+		`).join(""));
+		$cards.find(".ef-home-card").off("click").on("click", (e) => {
+			const card = cards[$(e.currentTarget).data("idx")];
+			if (card) card.action();
+		});
 	}
 
 	_setup_dashboard_controls() {
@@ -1825,6 +1944,8 @@ class EFastSalePage {
 					this.$body.find("#ef-kpi-today-count").text(`${data.today_count} facturas`);
 					this.$body.find("#ef-kpi-month-total").text(format_currency(data.month_total, "GTQ"));
 					this.$body.find("#ef-kpi-month-count").text(`${data.month_count} facturas`);
+					this.$body.find("#ef-kpi-draft-total").text(format_currency(data.draft_total, "GTQ"));
+					this.$body.find("#ef-kpi-draft-count").text(`${data.draft_count} facturas`);
 					this.$body.find("#ef-kpi-fel-processed").text(data.fel_processed);
 					this.$body.find("#ef-kpi-fel-pending").text(`${data.fel_pending} pendientes`);
 
@@ -1951,6 +2072,38 @@ class EFastSalePage {
   --ef-shadow-lg: 0 10px 25px rgba(0,0,0,.12);
   --ef-font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
+
+/* Inicio (landing) */
+#ef-home-view { flex: 1; display: flex; align-items: center; justify-content: center; min-height: calc(100vh - 48px); padding: 24px; }
+.ef-home-wrap { width: 100%; max-width: 1000px; }
+.ef-home-welcome { text-align: center; margin-bottom: 30px; }
+.ef-home-greeting { font-size: 26px; font-weight: 800; color: var(--ef-text); letter-spacing: -.3px; }
+.ef-home-datetime { margin-top: 8px; font-size: 15px; color: var(--ef-text-muted); font-weight: 600; text-transform: capitalize; }
+.ef-home-time-sep { margin: 0 6px; }
+.ef-home-session { margin-top: 6px; font-size: 12px; color: var(--ef-text-muted); }
+.ef-home-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; }
+.ef-home-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 10px; text-align: left;
+  padding: 24px 20px; border: 1px solid var(--ef-border); border-radius: var(--ef-radius); background: var(--ef-card);
+  cursor: pointer; transition: border-color .15s, box-shadow .15s, transform .15s; box-shadow: var(--ef-shadow);
+  font-family: var(--ef-font);
+}
+.ef-home-card:hover { border-color: var(--ef-primary); box-shadow: var(--ef-shadow-lg); transform: translateY(-2px); }
+.ef-home-card-icon { color: var(--ef-primary); }
+.ef-home-card-label { font-weight: 800; font-size: 16px; color: var(--ef-text); }
+.ef-home-card-desc { font-size: 12.5px; color: var(--ef-text-muted); line-height: 1.4; }
+
+.ef-home-footer {
+  margin-top: 30px; padding-top: 18px; border-top: 1px solid var(--ef-border);
+  display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap;
+}
+.ef-home-footer-brand { display: flex; align-items: center; }
+.ef-home-footer-logo { max-height: 40px; width: auto; }
+.ef-home-footer-logo-fallback { font-size: 15px; font-weight: 800; color: var(--ef-primary); letter-spacing: -.2px; }
+.ef-home-footer-sep { width: 1px; height: 24px; background: var(--ef-border); }
+.ef-home-footer-poweredby { display: flex; align-items: center; gap: 8px; }
+.ef-home-footer-poweredby img { height: 20px; width: auto; }
+.ef-home-footer-poweredby span { font-size: 11px; color: var(--ef-text-muted); font-weight: 600; white-space: nowrap; }
 
 /* Fullscreen Focus Mode */
 body.facex-fullscreen-mode .navbar,
@@ -2628,6 +2781,69 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 .ef-btn-danger    { background: var(--ef-danger); color: #fff; }
 .ef-btn-danger:hover    { background: #c1121f; }
+
+.ef-btn-teal      { background: #0d9488; color: #fff; }
+.ef-btn-teal:hover      { background: #0b7a70; }
+
+.ef-contra-entrega-note {
+  background: #f0fdfa;
+  border: 1px solid #99f6e4;
+  color: #0f766e;
+  font-size: 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 10px;
+}
+
+.ef-btn-link {
+  background: none;
+  border: none;
+  color: var(--ef-primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 0;
+}
+.ef-btn-link:hover { text-decoration: underline; }
+
+.ef-empty-hint {
+  padding: 14px;
+  text-align: center;
+  color: var(--ef-text-muted);
+  font-size: 13px;
+}
+
+/* Diálogo "Guía de Transporte" — filas dinámicas */
+.ef-guias-hint {
+  font-size: 12px;
+  color: var(--ef-text-muted);
+  margin-bottom: 10px;
+}
+.ef-guias-rows { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+.ef-guia-row {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr .7fr 1.1fr 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+.ef-guia-row select,
+.ef-guia-row input {
+  padding: 7px 9px;
+  border: 1px solid var(--ef-border);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: var(--ef-font);
+  width: 100%;
+}
+.ef-guia-row .ef-line-remove {
+  background: none;
+  border: none;
+  color: var(--ef-danger);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+}
 
 /* Dirty pulse on save button */
 @keyframes ef-pulse {
@@ -4270,6 +4486,36 @@ body.facex-fullscreen-mode .ef-main-layout {
 		};
 	}
 
+	// Únicos flags de permisos que gatean navegación de nivel superior
+	// (nav bar Y tarjetas de Inicio, ver _show_home) — factorizados aquí para
+	// no repetir el mismo criterio en dos lugares.
+	_report_perm_map() {
+		return {
+			sales_by_date:         "reporte_ventas_fecha",
+			sales_by_product:      "reporte_ventas_producto",
+			cancelled_invoices:    "reporte_facturas_canceladas",
+			customer_statement:    "reporte_estados_cuenta",
+			aging_receivables:     "reporte_antiguedad_saldos",
+			quotations_report:     "reporte_cotizaciones",
+			payments_report:       "reporte_recibos_pagos",
+			sales_growth_analysis: "reporte_crecimiento_ventas",
+			print_receipt:         "reporte_imprimir_recibo",
+		};
+	}
+
+	_any_report_access() {
+		const p = this.perms || {};
+		return Object.values(this._report_perm_map()).some((f) => p[f]);
+	}
+
+	_has_transporte_access() {
+		const p = this.perms || {};
+		return !!(p.puede_ver_menu_transporte && (
+			p.puede_editar_guias_transporte || p.puede_administrar_transportistas
+			|| p.puede_ver_reportes_transporte || p.puede_cargar_liquidaciones_transporte || p.puede_ver_kpis_transporte
+		));
+	}
+
 	_apply_perms() {
 		const p = this.perms;
 
@@ -4284,25 +4530,14 @@ body.facex-fullscreen-mode .ef-main-layout {
 		else this.$body.find(".ef-nav-btn[data-view='pos']").hide();
 		if (p.puede_ver_menu_inventario) this.$body.find(".ef-nav-btn[data-view='inventario']").show();
 		else this.$body.find(".ef-nav-btn[data-view='inventario']").hide();
+		// Transporte: el tab solo aparece si puede_ver_menu_transporte está
+		// activo Y al menos un sub-permiso específico también lo está.
+		const hasTransporteAccess = this._has_transporte_access();
+		if (hasTransporteAccess) this.$body.find(".ef-nav-btn[data-view='transporte']").show();
+		else this.$body.find(".ef-nav-btn[data-view='transporte']").hide();
 
 		// --- Reportes: ocultar tabs no permitidos ---
-		const REPORT_PERM = {
-			sales_by_date:         "reporte_ventas_fecha",
-			sales_by_product:      "reporte_ventas_producto",
-			cancelled_invoices:    "reporte_facturas_canceladas",
-			customer_statement:    "reporte_estados_cuenta",
-			aging_receivables:     "reporte_antiguedad_saldos",
-			quotations_report:     "reporte_cotizaciones",
-			payments_report:       "reporte_recibos_pagos",
-			sales_growth_analysis: "reporte_crecimiento_ventas",
-			print_receipt:         "reporte_imprimir_recibo",
-			// Reportes de Transporte: no viven en este motor (son Report doctypes
-			// nativos, ver data-external-report / _setup_report_events), pero
-			// reusan el mismo mecanismo de ocultar/mostrar por permiso.
-			transporte_guias_estado:          "puede_ver_reportes_transporte",
-			transporte_facturas_guia:         "puede_ver_reportes_transporte",
-			transporte_control_liquidaciones: "puede_ver_reportes_transporte",
-		};
+		const REPORT_PERM = this._report_perm_map();
 		this.$body.find(".ef-report-nav-btn").each((_, el) => {
 			const report = $(el).data("report");
 			const field  = REPORT_PERM[report];
@@ -4315,8 +4550,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			if (allHidden) $grp.hide();
 		});
 		// Si ningún reporte visible, ocultar tab Reportes del nav
-		const anyReport = Object.values(REPORT_PERM).some(f => p[f]);
-		if (!anyReport) this.$body.find(".ef-nav-btn[data-view='reports']").hide();
+		if (!this._any_report_access()) this.$body.find(".ef-nav-btn[data-view='reports']").hide();
 
 		// --- Mantenimiento ---
 		if (!p.crea_clientes)    this.$body.find("#ef-maint-cust-btn-new").hide();
@@ -4349,14 +4583,6 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this.$body.find("#ef-maint-tab-proveedores .ef-input")
 				.prop("readonly", true).css("background", "#f8fafc");
 		}
-		// Deny-by-default, igual que Inventario/POS: el tab arranca oculto y
-		// solo se muestra si puede_administrar_transportistas viene en 1.
-		if (p.puede_administrar_transportistas) {
-			this.$body.find(".ef-maint-tab-btn[data-maint-tab='transportistas']").show();
-		} else {
-			this.$body.find(".ef-maint-tab-btn[data-maint-tab='transportistas']").hide();
-		}
-
 		// Acciones del Facturador se aplican en _update_action_bar_state
 		// (llamado por el estado de la factura actual)
 		this._update_action_bar_state();
@@ -4751,6 +4977,10 @@ body.facex-fullscreen-mode .ef-main-layout {
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
     <span class="ef-btn-label">Duplicar</span>
   </button>
+  <button id="ef-btn-guia-transporte" class="ef-btn ef-btn-teal" title="Guía de Transporte" style="display:none">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13"></rect><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"></polygon><circle cx="5.5" cy="18.5" r="2.5"></circle><circle cx="18.5" cy="18.5" r="2.5"></circle></svg>
+    <span class="ef-btn-label">Guía de Transporte</span>
+  </button>
   <button id="ef-btn-print" class="ef-btn ef-btn-info" title="Imprimir (F4)">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
     <span class="ef-btn-label">Imprimir</span>
@@ -4785,6 +5015,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		$bar.find("#ef-btn-cancel-doc").on("click", () => this._action_cancel_doc());
 		$bar.find("#ef-btn-cancel-fel").on("click", () => this._action_cancel_fel());
 		$bar.find("#ef-btn-duplicate").on("click", () => this._action_duplicate());
+		$bar.find("#ef-btn-guia-transporte").on("click", () => this._action_guias_transporte());
 		$bar.find("#ef-btn-print").on("click", () => this._action_print());
 		$bar.find("#ef-btn-pdf").on("click", () => this._action_pdf());
 		$bar.find("#ef-btn-new").on("click", () => this._action_new());
@@ -4813,7 +5044,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		// Ocultar todo primero, luego mostrar solo lo necesario
 		["#ef-btn-save", "#ef-btn-cancel-changes", "#ef-btn-submit",
 		 "#ef-btn-certify", "#ef-btn-cancel-doc", "#ef-btn-cancel-fel", "#ef-btn-print", "#ef-btn-open-erp", "#ef-btn-customer", "#ef-btn-pdf",
-		 "#ef-btn-duplicate"].forEach(hide);
+		 "#ef-btn-duplicate", "#ef-btn-guia-transporte"].forEach(hide);
 		btn("#ef-btn-save").removeClass("ef-btn-save-dirty");
 
 		// Siempre visibles: Nueva Fac
@@ -4849,6 +5080,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 				show("#ef-btn-cancel-fel"); enable("#ef-btn-cancel-fel");
 			} else if (!isCertified && d.bfel_status === "00 No enviar") {
 				show("#ef-btn-cancel-doc"); enable("#ef-btn-cancel-doc");
+			}
+			// Asociar Guía de Transporte: solo con factura ya validada y permiso
+			// puede_editar_guias_transporte (mismo flag que gatea el botón
+			// equivalente en facex_screen.js).
+			if (this.perms && this.perms.puede_editar_guias_transporte) {
+				show("#ef-btn-guia-transporte"); enable("#ef-btn-guia-transporte");
+				this._refresh_guia_transporte_label();
 			}
 
 		} else if (isCancelled) {
@@ -5275,6 +5513,177 @@ body.facex-fullscreen-mode .ef-main-layout {
 		if (!this.doc.name || this.doc.name === "new") return;
 		const url = `/app/sales-invoice/${encodeURIComponent(this.doc.name)}`;
 		window.open(url, "_blank");
+	}
+
+	_refresh_guia_transporte_label() {
+		const count = (this.doc.bfel_guias_transportista || []).length;
+		const $label = this.$bar && this.$bar.find("#ef-btn-guia-transporte .ef-btn-label");
+		if ($label && $label.length) {
+			$label.text(count ? __("Guía ({0})", [count]) : __("Guía de Transporte"));
+		}
+	}
+
+	// Mismo flujo que el botón "Guía de Transporte" de facex_screen.js
+	// (_open_confirm_guias_dialog): muestra en modo lectura lo ya guardado en
+	// this.doc.bfel_guias_transportista y permite agregar más filas vía
+	// save_guias_transporte (AGREGA, no reemplaza, así que las guías
+	// existentes nunca se reenvían).
+	_action_guias_transporte() {
+		if (!this.doc || !this.doc.name || this.doc.name === "new" || this.doc.docstatus !== 1) return;
+
+		const dlg = new frappe.ui.Dialog({
+			title: __("Guía de Transporte — {0}", [this.doc.name]),
+			fields: [{ fieldname: "html", fieldtype: "HTML" }],
+		});
+
+		const renderExisting = () => {
+			const rows = this.doc.bfel_guias_transportista || [];
+			dlg.fields_dict.html.$wrapper.html(`
+				${rows.length ? `
+					<table class="ef-table">
+						<thead><tr><th>${__("Transportista")}</th><th>${__("Guía")}</th><th>${__("Piezas")}</th><th>${__("Destino")}</th><th>${__("Monto COD")}</th><th>${__("Estado")}</th></tr></thead>
+						<tbody>
+							${rows.map((r) => `
+								<tr>
+									<td>${_esc(r.transportista || "")}</td>
+									<td>${_esc(r.numero_guia || "")}</td>
+									<td>${r.piezas || 0}</td>
+									<td>${_esc(r.destino || "")}</td>
+									<td>Q ${_fmt(r.monto_cod)}</td>
+									<td>${_esc(r.estado_entrega || "")}</td>
+								</tr>
+							`).join("")}
+						</tbody>
+					</table>
+				` : `<div class="ef-empty-hint">${__("Todavía no tiene guías registradas.")}</div>`}
+				<button type="button" class="ef-btn-link" id="ef-guia-add-more" style="margin-top:10px;">${__("+ Agregar guía")}</button>
+			`);
+			dlg.$wrapper.find("#ef-guia-add-more").on("click", () => {
+				dlg.hide();
+				this._show_guias_transporte_dialog({
+					initialRows: [{}],
+					onSave: (newRows) => {
+						frappe.call({
+							method: "facex_multi.api.invoice.save_guias_transporte",
+							args: { invoice_name: this.doc.name, guias_json: JSON.stringify(newRows) },
+							freeze: true,
+							freeze_message: __("Guardando guía…"),
+							callback: (r) => {
+								this.doc.bfel_guias_transportista = (r.message && r.message.bfel_guias_transportista) || this.doc.bfel_guias_transportista;
+								frappe.show_alert({ message: __("Guía registrada para {0}.", [this.doc.name]), indicator: "green" });
+								this._refresh_guia_transporte_label();
+							},
+						});
+					},
+				});
+			});
+		};
+
+		renderExisting();
+		dlg.show();
+	}
+
+	// Diálogo con filas dinámicas (transportista/guía/piezas/destino/monto
+	// COD) — mismo patrón que _show_guias_transporte_dialog en
+	// facex_screen.js. "Guardar Guías" exige transportista + número de guía
+	// por fila.
+	_show_guias_transporte_dialog({ initialRows = [], onSave } = {}) {
+		const openDialog = (transportistas) => {
+			const options = transportistas.map((t) => `<option value="${_esc(t.name)}">${_esc(t.name)}</option>`).join("");
+			const $rows = $('<div class="ef-guias-rows"></div>');
+			const $addBtn = $(`<button class="ef-btn-link" type="button">${__("+ Agregar otra guía")}</button>`);
+
+			const addRow = (data = {}) => {
+				const $row = $(`
+					<div class="ef-guia-row">
+						<select class="ef-guia-transportista">
+							<option value="">${__("Transportista…")}</option>
+							${options}
+						</select>
+						<input type="text" class="ef-guia-numero" placeholder="${__("Número de guía")}" />
+						<input type="number" class="ef-guia-piezas" placeholder="${__("Piezas")}" min="1" value="1" />
+						<input type="text" class="ef-guia-destino" placeholder="${__("Destino")}" />
+						<input type="number" class="ef-guia-monto" placeholder="${__("Monto COD")}" min="0" step="any" />
+						<button class="ef-line-remove" type="button">×</button>
+					</div>
+				`);
+				$row.find(".ef-guia-transportista").val(data.transportista || "");
+				$row.find(".ef-guia-numero").val(data.numero_guia || "");
+				$row.find(".ef-guia-piezas").val(data.piezas || 1);
+				$row.find(".ef-guia-destino").val(data.destino || "");
+				$row.find(".ef-guia-monto").val(data.monto_cod != null && data.monto_cod !== "" ? data.monto_cod : "");
+				$row.find(".ef-line-remove").on("click", () => {
+					if ($rows.children().length > 1) {
+						$row.remove();
+					} else {
+						$row.find("input").val("");
+						$row.find(".ef-guia-piezas").val(1);
+						$row.find("select").val("");
+					}
+				});
+				$rows.append($row);
+			};
+
+			(initialRows.length ? initialRows : [{}]).forEach((g) => addRow(g));
+			$addBtn.on("click", () => addRow());
+
+			const collectRows = () => {
+				const out = [];
+				$rows.find(".ef-guia-row").each((_, el) => {
+					const $r = $(el);
+					const transportista = $r.find(".ef-guia-transportista").val();
+					const numero_guia = ($r.find(".ef-guia-numero").val() || "").trim();
+					if (!transportista && !numero_guia) return; // fila vacía, se ignora
+					out.push({
+						transportista,
+						numero_guia,
+						piezas: parseInt($r.find(".ef-guia-piezas").val()) || 1,
+						destino: $r.find(".ef-guia-destino").val() || "",
+						monto_cod: parseFloat($r.find(".ef-guia-monto").val()) || 0,
+					});
+				});
+				return out;
+			};
+
+			const dlg = new frappe.ui.Dialog({
+				title: __("Envíos por Transporte"),
+				size: "large",
+				primary_action_label: __("Guardar Guías"),
+				primary_action: () => {
+					const rows = collectRows();
+					const incompletas = rows.some((r) => !r.transportista || !r.numero_guia);
+					if (incompletas) {
+						frappe.show_alert({ message: __("Cada guía necesita Transportista y Número de Guía."), indicator: "orange" });
+						return;
+					}
+					dlg.hide();
+					if (onSave) onSave(rows);
+				},
+				secondary_action_label: __("Cancelar"),
+				secondary_action: () => dlg.hide(),
+			});
+
+			dlg.$body.append(
+				$('<div class="ef-guias-hint"></div>').text(__("Puede agregar varias guías si el envío se divide en varios paquetes o transportistas.")),
+				$rows,
+				$addBtn,
+			);
+			dlg.show();
+		};
+
+		if (this._transportistaOptions) {
+			openDialog(this._transportistaOptions);
+			return;
+		}
+		frappe.db.get_list("FacEx Transportista", {
+			filters: { activo: 1 },
+			fields: ["name"],
+			order_by: "transportista_nombre asc",
+			limit: 100,
+		}).then((rows) => {
+			this._transportistaOptions = rows || [];
+			openDialog(this._transportistaOptions);
+		});
 	}
 
 	// -----------------------------------------------------------------------
@@ -6307,6 +6716,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 				this._bind_payment_row_events();
 			}
 			this._update_payments_total();
+			this._update_contra_entrega_note();
 
 			// Detect manual vs auto mode from existing payments
 			const _isAuto = payments.length === 1 && payments[0].reference === "Automático x FacEx";
@@ -6321,8 +6731,19 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this._sync_pagado_ui();
 	}
 
+	_update_contra_entrega_note() {
+		const payments = this.doc.custom_efast_payments || [];
+		const has = payments.some((p) => p.payment_method === "Contra Entrega");
+		this.$body.find("#ef-pay-contra-entrega-note").toggle(has);
+	}
+
+	_can_offer_contra_entrega() {
+		return !!((this.company_config || {}).permite_pago_contra_entrega && (this.perms || {}).puede_editar_guias_transporte);
+	}
+
 	_payment_row_html(idx, p) {
 		const METHODS = ["Efectivo", "Tarjeta de Crédito", "Transferencia", "Cheque"];
+		if (this._can_offer_contra_entrega()) METHODS.push("Contra Entrega");
 		const opts = METHODS.map((m) =>
 			`<option value="${m}"${p.payment_method === m ? " selected" : ""}>${m}</option>`
 		).join("");
@@ -6355,6 +6776,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			const $row = this.$body.find(`#ef-pay-row-${idx}`);
 			$row.find(".ef-pay-method").off("change").on("change", (e) => {
 				payments[idx].payment_method = e.target.value;
+				this._update_contra_entrega_note();
 			});
 			$row.find(".ef-pay-date").off("change").on("change", (e) => {
 				payments[idx].payment_date = e.target.value;
@@ -6449,6 +6871,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 			frappe.show_alert({ message: msg, indicator: "orange" });
 		}
 
+		const hasContraEntrega = payments.some((p) => p.payment_method === "Contra Entrega");
+		const invoiceName = this.doc.name;
+
 		frappe.call({
 			method: "facex_multi.api.invoice.save_payments",
 			args: {
@@ -6461,7 +6886,17 @@ body.facex-fullscreen-mode .ef-main-layout {
 			callback: (r) => {
 				if (!r.exc && r.message) {
 					frappe.show_alert({ message: "Pagos guardados correctamente.", indicator: "green" });
-					this.load_invoice(this.doc.name);
+					this.load_invoice(invoiceName);
+					if (hasContraEntrega) {
+						frappe.confirm(
+							__("Esta factura quedó marcada como Contra Entrega. ¿Desea ingresar el detalle de la guía de transporte ahora?"),
+							() => this._action_guias_transporte(),
+							() => frappe.show_alert({
+								message: __("Podrá completarla después desde el botón \"Guía de Transporte\" o desde Envíos Pendientes."),
+								indicator: "blue",
+							}),
+						);
+					}
 				}
 			},
 		});
@@ -6744,13 +7179,6 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 	_setup_report_events() {
 		this.$body.find(".ef-report-nav-btn").off("click").on("click", (e) => {
-			// Reportes de Transporte: Report doctypes nativos, no viven en este
-			// motor — se abren en pestaña nueva en vez de cambiar de reporte aquí.
-			const externalReport = $(e.currentTarget).data("external-report");
-			if (externalReport) {
-				window.open(`/app/query-report/${encodeURIComponent(externalReport)}`, "_blank");
-				return;
-			}
 			const report_id = $(e.currentTarget).data("report");
 			this._switch_report(report_id);
 		});
@@ -8456,31 +8884,6 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-maint-supp-btn-delete").on("click", () => {
 			this._delete_maint_supplier();
 		});
-
-		// ── Transportistas ──
-		let transpTimer = null;
-		this.$body.find("#ef-maint-transp-search").on("input", (e) => {
-			clearTimeout(transpTimer);
-			transpTimer = setTimeout(() => {
-				this._load_maint_transportistas($(e.target).val());
-			}, 250);
-		});
-
-		this.$body.find("#ef-maint-transp-btn-load").on("click", () => {
-			this._load_maint_transportistas(this.$body.find("#ef-maint-transp-search").val());
-		});
-
-		this.$body.find("#ef-maint-transp-btn-new").on("click", () => {
-			this._clear_maint_transp_form();
-		});
-
-		this.$body.find("#ef-maint-transp-btn-save").on("click", () => {
-			this._save_maint_transportista();
-		});
-
-		this.$body.find("#ef-maint-transp-btn-delete").on("click", () => {
-			this._delete_maint_transportista();
-		});
 	}
 
 	_load_maintenance_view() {
@@ -8504,9 +8907,6 @@ body.facex-fullscreen-mode .ef-main-layout {
 		} else if (tab === "proveedores") {
 			this._load_maint_suppliers();
 			this._clear_maint_supp_form();
-		} else if (tab === "transportistas") {
-			this._load_maint_transportistas();
-			this._clear_maint_transp_form();
 		}
 	}
 
@@ -9082,135 +9482,6 @@ body.facex-fullscreen-mode .ef-main-layout {
 							frappe.show_alert({ message: "Proveedor eliminado.", indicator: "green" });
 							this._load_maint_suppliers();
 							this._clear_maint_supp_form();
-						}
-					},
-				});
-			}
-		);
-	}
-
-	// FacEx Transportista es un doctype normal con sus propios permisos
-	// (System Manager/Sales Manager escriben, Sales User solo lee — más el
-	// permiso fino puede_administrar_transportistas de FacEx Settings, ver
-	// FacExTransportista.validate()). No hace falta una API dedicada como
-	// Supplier: los métodos genéricos de frappe.client ya respetan todo eso.
-	_load_maint_transportistas(txt = "") {
-		const filters = txt ? { transportista_nombre: ["like", `%${txt}%`] } : {};
-		frappe.call({
-			method: "frappe.client.get_list",
-			args: {
-				doctype: "FacEx Transportista",
-				filters,
-				fields: ["name", "transportista_nombre", "abreviatura", "activo"],
-				order_by: "transportista_nombre asc",
-				limit_page_length: 200,
-			},
-			callback: (r) => {
-				if (r.exc) return;
-				const $list = this.$body.find("#ef-maint-transp-list");
-				$list.empty();
-				const rows = r.message || [];
-				if (!rows.length) {
-					$list.html('<div style="color:#94a3b8;font-size:12px;padding:8px 0;">Sin transportistas.</div>');
-					return;
-				}
-				rows.forEach(t => {
-					const $item = $(`<div style="padding:8px 10px;border:1px solid var(--ef-border);border-radius:6px;cursor:pointer;background:#fff;">
-						<div style="font-weight:600;color:#1e3a5f;font-size:13px;">${_esc(t.transportista_nombre)}${t.activo ? "" : ` <span style="color:#b91c1c;font-weight:400;">(inactivo)</span>`}</div>
-						<div style="font-size:11px;color:#64748b;">${_esc(t.abreviatura)}</div>
-					</div>`);
-					$item.on("click", () => this._load_maint_transp_form(t.name));
-					$list.append($item);
-				});
-			},
-		});
-	}
-
-	_clear_maint_transp_form() {
-		this._current_maint_transp = "";
-		this.$body.find("#ef-maint-transp-form-title").text("Nuevo Transportista");
-		this.$body.find("#ef-maint-transp-nombre").val("");
-		this.$body.find("#ef-maint-transp-abrev").val("");
-		this.$body.find("#ef-maint-transp-url").val("");
-		this.$body.find("#ef-maint-transp-credito").val("");
-		this.$body.find("#ef-maint-transp-tel").val("");
-		this.$body.find("#ef-maint-transp-activo").prop("checked", true);
-		this.$body.find("#ef-maint-transp-form").show();
-		this.$body.find("#ef-maint-transp-empty").hide();
-		this.$body.find("#ef-maint-transp-btn-save").show();
-		this.$body.find("#ef-maint-transp-btn-delete").hide();
-	}
-
-	_load_maint_transp_form(name) {
-		frappe.call({
-			method: "frappe.client.get",
-			args: { doctype: "FacEx Transportista", name },
-			callback: (r) => {
-				if (r.exc || !r.message) return;
-				const d = r.message;
-				this._current_maint_transp = d.name;
-				this.$body.find("#ef-maint-transp-form-title").text(d.transportista_nombre);
-				this.$body.find("#ef-maint-transp-nombre").val(d.transportista_nombre);
-				this.$body.find("#ef-maint-transp-abrev").val(d.abreviatura);
-				this.$body.find("#ef-maint-transp-url").val(d.url_tracking || "");
-				this.$body.find("#ef-maint-transp-credito").val(d.codigo_credito_default || "");
-				this.$body.find("#ef-maint-transp-tel").val(d.telefono_contacto || "");
-				this.$body.find("#ef-maint-transp-activo").prop("checked", !!d.activo);
-				this.$body.find("#ef-maint-transp-form").show();
-				this.$body.find("#ef-maint-transp-empty").hide();
-				this.$body.find("#ef-maint-transp-btn-save").show();
-				this.$body.find("#ef-maint-transp-btn-delete").show();
-			},
-		});
-	}
-
-	_save_maint_transportista() {
-		const transportista_nombre = this.$body.find("#ef-maint-transp-nombre").val().trim();
-		const abreviatura = this.$body.find("#ef-maint-transp-abrev").val().trim();
-		if (!transportista_nombre || !abreviatura) {
-			frappe.msgprint({ message: "Nombre y Abreviatura son obligatorios.", indicator: "orange" });
-			return;
-		}
-		const values = {
-			transportista_nombre,
-			abreviatura,
-			url_tracking: this.$body.find("#ef-maint-transp-url").val().trim(),
-			codigo_credito_default: this.$body.find("#ef-maint-transp-credito").val().trim(),
-			telefono_contacto: this.$body.find("#ef-maint-transp-tel").val().trim(),
-			activo: this.$body.find("#ef-maint-transp-activo").is(":checked") ? 1 : 0,
-		};
-		const isNew = !this._current_maint_transp;
-		frappe.call({
-			method: isNew ? "frappe.client.insert" : "frappe.client.set_value",
-			args: isNew
-				? { doc: { doctype: "FacEx Transportista", ...values } }
-				: { doctype: "FacEx Transportista", name: this._current_maint_transp, fieldname: values },
-			freeze: true, freeze_message: "Guardando transportista...",
-			callback: (r) => {
-				if (!r.exc && r.message) {
-					frappe.show_alert({ message: `Transportista <strong>${r.message.transportista_nombre}</strong> guardado.`, indicator: "green" });
-					this._load_maint_transportistas();
-					this._load_maint_transp_form(r.message.name);
-				}
-			},
-		});
-	}
-
-	_delete_maint_transportista() {
-		const name = this._current_maint_transp;
-		if (!name) return;
-		frappe.confirm(
-			`¿Eliminar el transportista <strong>${_esc(name)}</strong>? Esta acción no se puede deshacer.`,
-			() => {
-				frappe.call({
-					method: "frappe.client.delete",
-					args: { doctype: "FacEx Transportista", name },
-					freeze: true, freeze_message: "Eliminando transportista...",
-					callback: (r) => {
-						if (!r.exc) {
-							frappe.show_alert({ message: "Transportista eliminado.", indicator: "green" });
-							this._load_maint_transportistas();
-							this._clear_maint_transp_form();
 						}
 					},
 				});

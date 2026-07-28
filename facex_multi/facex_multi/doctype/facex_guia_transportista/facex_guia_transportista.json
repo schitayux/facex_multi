@@ -16,7 +16,8 @@
   "abrir_rastreo",
   "column_break_liquidacion",
   "liquidado",
-  "fecha_liquidacion"
+  "fecha_liquidacion",
+  "monto_pendiente"
  ],
  "fields": [
   {
@@ -45,6 +46,7 @@
    "columns": 1
   },
   {
+   "allow_on_submit": 1,
    "default": "Pendiente",
    "fieldname": "estado_entrega",
    "fieldtype": "Select",
@@ -100,6 +102,13 @@
    "fieldtype": "Date",
    "label": "Fecha de Liquidación",
    "read_only": 1
+  },
+  {
+   "fieldname": "monto_pendiente",
+   "fieldtype": "Currency",
+   "label": "Monto COD Pendiente",
+   "read_only": 1,
+   "description": "Monto Contra Entrega aún no reconciliado por ninguna liquidación (Monto COD − Valor Comisión − Monto Liquidado de la fila que hizo match). Vacío = todavía no se ha calculado, se trata como el Monto COD completo."
   }
  ],
  "index_web_pages_for_search": 0,

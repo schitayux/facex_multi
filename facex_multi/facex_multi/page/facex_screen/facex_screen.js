@@ -15,7 +15,7 @@ frappe.pages["facex-screen"].on_page_load = function (wrapper) {
 		single_column: true,
 	});
 	$("body").addClass("facex-fullscreen-mode");
-	frappe.require(["controls.bundle.js"], function () {
+	frappe.require(["/assets/facex_multi/js/facex_transporte_module.js", "controls.bundle.js"], function () {
 		wrapper.efscreen = new EFastPOSScreen(page, wrapper);
 	});
 };
@@ -64,6 +64,8 @@ class EFastPOSScreen {
 		this._lastSavedInvoice = null;
 		this.customerDetails = null;
 		this.step = 1;
+		this.heldCount = 0;
+		this.pendingGuiasCount = 0;
 
 		this._inject_styles();
 		this._render_html();
@@ -117,12 +119,16 @@ class EFastPOSScreen {
 				this._load_sales_partners();
 				this._load_pos_data();
 				this._render_step_encabezado();
-				this._show_step(1);
-				this._refresh_held_count();
+				this._show_home();
 
-				const showPendingGuias = !!(this.company_config.permite_pago_contra_entrega && this.perms.puede_editar_guias_transporte);
-				this.$body.find("#efs-btn-pending-guias").toggle(showPendingGuias);
-				if (showPendingGuias) this._refresh_pending_guias_count();
+				// El módulo "Transporte" del menú se arma por permiso dedicado
+				// (puede_ver_menu_transporte, llave maestra en FacEx Settings),
+				// no por permite_pago_contra_entrega — un usuario puede
+				// administrar transportistas/reportes/liquidaciones aunque la
+				// empresa no tenga habilitado el cobro Contra Entrega.
+				this._render_main_menu();
+				this._refresh_held_count();
+				if (this.perms.puede_editar_guias_transporte) this._refresh_pending_guias_count();
 			},
 			error: () => {
 				frappe.msgprint(__("No se pudieron cargar los valores por defecto."));
@@ -164,6 +170,13 @@ class EFastPOSScreen {
 			args: { company: this.doc.company },
 			callback: (r) => {
 				this.priceLists = (r.message || []).filter((p) => p.selling);
+				// Si la compañía activa tiene una única lista de precios
+				// asociada (bfel_company), se usa directo sin obligar al
+				// cajero a elegirla — solo se respeta una selección previa
+				// (retomar venta en espera / factura ya cargada).
+				if (this.priceLists.length === 1 && !this.doc.selling_price_list) {
+					this.doc.selling_price_list = this.priceLists[0].name;
+				}
 				this._render_step_encabezado();
 			},
 		});
@@ -224,6 +237,14 @@ class EFastPOSScreen {
 			<div class="efs-wrap">
 				<div class="efs-header">
 					<div class="efs-header-left">
+						<div class="efs-main-menu" id="efs-main-menu">
+							<button type="button" class="efs-menu-trigger" id="efs-btn-main-menu" title="Menú">
+								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+								Menú
+								<span class="efs-held-badge" id="efs-menu-total-badge" style="display:none;">0</span>
+							</button>
+							<div class="efs-menu-panel" id="efs-menu-panel" style="display:none;"></div>
+						</div>
 						<span class="efs-logo">FacEx Screen</span>
 						<span class="efs-company-badge" id="efs-company-badge"></span>
 					</div>
@@ -236,15 +257,6 @@ class EFastPOSScreen {
 							<label class="efs-pill-label">Vendedor:</label>
 							<select id="efs-vendor-select" class="efs-pill-select"></select>
 						</div>
-						<button class="efs-btn-link" id="efs-btn-held-sales" title="Ventas suspendidas, listas para retomar (F7)">
-							Ventas en espera<span class="efs-held-badge" id="efs-held-badge" style="display:none;">0</span>
-						</button>
-						<button class="efs-btn-link" id="efs-btn-pending-guias" title="Facturas Contra Entrega sin guía capturada todavía" style="display:none;">
-							Envíos Pendientes<span class="efs-held-badge" id="efs-pending-guias-badge" style="display:none;">0</span>
-						</button>
-						<button class="efs-btn-link" id="efs-btn-history">Historial</button>
-						<button class="efs-btn-link" id="efs-btn-toggle-fullscreen" title="Alternar Modo Enfoque (Pantalla Completa)">Modo ERPNext</button>
-						<a class="efs-btn-link" href="/app/facex" id="efs-link-classic">← FacEx clásico</a>
 
 						<div class="efs-user-dropdown" id="efs-user-dropdown">
 							<button class="efs-user-btn" id="efs-btn-user-profile" title="Perfil de Usuario">
@@ -267,13 +279,15 @@ class EFastPOSScreen {
 					</div>
 				</div>
 
-				<div class="efs-stepbar">
+				<div class="efs-home-view" id="efs-home-view" style="display:none;"></div>
+
+				<div class="efs-stepbar" style="display:none;">
 					<button class="efs-step-nav" id="efs-step-prev">← Inicio</button>
 					<span class="efs-step-label" id="efs-step-label">Paso 1 de 3</span>
 					<button class="efs-step-nav efs-step-nav-primary" id="efs-step-next">Siguiente →</button>
 				</div>
 
-				<div class="efs-body">
+				<div class="efs-body" style="display:none;">
 					<div class="efs-main">
 						<div class="efs-step-pane" id="efs-step-encabezado"></div>
 
@@ -309,9 +323,9 @@ class EFastPOSScreen {
 
 				<div class="efs-overlay" id="efs-payment-view" style="display:none;"></div>
 				<div class="efs-overlay" id="efs-held-view" style="display:none;"></div>
-				<div class="efs-overlay" id="efs-pending-guias-view" style="display:none;"></div>
 				<div class="efs-overlay" id="efs-confirm-view" style="display:none;"></div>
 				<div class="efs-overlay" id="efs-history-view" style="display:none;"></div>
+				<div class="efs-overlay" id="efs-transporte-view" style="display:none;"></div>
 			</div>
 		`);
 
@@ -347,19 +361,9 @@ class EFastPOSScreen {
 			this.doc.sales_partner = e.target.value;
 			this._render_vendor_bar();
 		});
-		this.$body.find("#efs-btn-history").on("click", () => this._show_history_view());
-		this.$body.find("#efs-btn-held-sales").on("click", () => this._show_held_view());
-		this.$body.find("#efs-btn-pending-guias").on("click", () => this._show_pending_guias_view());
 		this.$body.find("#efs-btn-suspend").on("click", () => this._suspend_sale());
-		this.$body.find("#efs-btn-toggle-fullscreen").on("click", (e) => {
-			e.preventDefault();
-			this._toggle_focus_mode();
-		});
-		this.$body.find("#efs-link-classic").on("click", (e) => {
-			e.preventDefault();
-			window.location.href = "/app/facex";
-		});
 		this._bind_user_menu();
+		this._bind_main_menu();
 		this.$body.find("#efs-step-prev").on("click", () => this._step_prev());
 		this.$body.find("#efs-step-next").on("click", () => this._step_next());
 		this._bind_keyboard_shortcuts();
@@ -459,6 +463,172 @@ class EFastPOSScreen {
 		});
 	}
 
+	// -----------------------------------------------------------------------
+	// Menú principal — agrupado por módulo, con submódulos desplegables tipo
+	// acordeón (un módulo abierto a la vez). Nuevas opciones se agregan
+	// empujando entradas dentro de _get_menu_modules(), sin tocar el layout.
+	// -----------------------------------------------------------------------
+
+	_bind_main_menu() {
+		this.$body.find("#efs-btn-main-menu").on("click", (e) => {
+			e.stopPropagation();
+			const $panel = this.$body.find("#efs-menu-panel");
+			if ($panel.is(":hidden")) {
+				$panel.fadeIn(120);
+			} else {
+				$panel.fadeOut(120);
+			}
+		});
+
+		$(document).on("click.efs_main_menu", (e) => {
+			const $panel = this.$body.find("#efs-menu-panel");
+			if ($panel.length && !$(e.target).closest("#efs-main-menu").length) {
+				$panel.fadeOut(120);
+			}
+		});
+	}
+
+	// Llave maestra puede_ver_menu_transporte + al menos un permiso específico
+	// habilitado — mismo criterio usado tanto por el módulo "Transporte" del
+	// menú principal como por la tarjeta "Transporte" de la pantalla de
+	// Inicio, para no duplicar la condición en dos lugares.
+	_has_transporte_access() {
+		const p = this.perms || {};
+		if (!p.puede_ver_menu_transporte) return false;
+		return !!(p.puede_editar_guias_transporte || p.puede_administrar_transportistas
+			|| p.puede_ver_reportes_transporte || p.puede_cargar_liquidaciones_transporte || p.puede_ver_kpis_transporte);
+	}
+
+	_get_menu_modules() {
+		const p = this.perms || {};
+		const cartSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"></circle><circle cx="20" cy="21" r="1"></circle><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path></svg>`;
+		const truckSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13"></rect><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"></polygon><circle cx="5.5" cy="18.5" r="2.5"></circle><circle cx="18.5" cy="18.5" r="2.5"></circle></svg>`;
+		const gearSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>`;
+
+		const modules = [];
+
+		modules.push({
+			id: "ventas",
+			label: __("Ventas"),
+			icon: cartSvg,
+			items: [
+				{ id: "held", label: __("Ventas en espera"), hotkey: "F7", badgeId: "efs-held-badge", action: () => this._show_held_view() },
+				{ id: "history", label: __("Historial"), action: () => this._show_history_view() },
+			],
+		});
+
+		// "Transporte" — gateado por la llave maestra puede_ver_menu_transporte.
+		// A diferencia de Ventas/Sistema, esto NO es un grupo con submenú: es
+		// una sola fila de acción directa (mod.action, sin mod.items) que abre
+		// el hub de tarjetas (_show_transporte_hub) en un solo click — ahí
+		// adentro cada tarjeta ya respeta su propio permiso específico (mismo
+		// criterio que antes gobernaba cada entrada del submenú).
+		if (this._has_transporte_access()) {
+			modules.push({
+				id: "transporte",
+				label: __("Transporte"),
+				icon: truckSvg,
+				badgeId: "efs-transporte-menu-badge",
+				action: () => this._show_transporte_hub(),
+			});
+		}
+
+		modules.push({
+			id: "sistema",
+			label: __("Sistema"),
+			icon: gearSvg,
+			items: [
+				{
+					id: "focus",
+					label: $("body").hasClass("facex-fullscreen-mode") ? __("Modo ERPNext") : __("Modo Enfoque"),
+					labelId: "efs-menu-focus-label",
+					action: () => this._toggle_focus_mode(),
+				},
+				{ id: "classic", label: __("← FacEx clásico"), action: () => { window.location.href = "/app/facex"; } },
+			],
+		});
+
+		return modules;
+	}
+
+	_render_main_menu() {
+		const modules = this._get_menu_modules();
+		const $panel = this.$body.find("#efs-menu-panel");
+
+		// Dos formas de módulo: con mod.action (fila única, click directo —
+		// caso de "Transporte", que ahora abre su hub de tarjetas de un solo
+		// click) o con mod.items (grupo tipo acordeón, caso Ventas/Sistema).
+		$panel.html(modules.map((mod) => {
+			if (mod.action) {
+				return `
+					<div class="efs-menu-group" data-module="${mod.id}">
+						<button type="button" class="efs-menu-group-header efs-menu-group-header-direct" data-module="${mod.id}">
+							<span class="efs-menu-group-icon">${mod.icon}</span>
+							<span class="efs-menu-group-label">${mod.label}</span>
+							${mod.badgeId ? `<span class="efs-held-badge" id="${mod.badgeId}" style="display:none;">0</span>` : ""}
+						</button>
+					</div>
+				`;
+			}
+			return `
+				<div class="efs-menu-group" data-module="${mod.id}">
+					<button type="button" class="efs-menu-group-header">
+						<span class="efs-menu-group-icon">${mod.icon}</span>
+						<span class="efs-menu-group-label">${mod.label}</span>
+						<span class="efs-held-badge efs-menu-group-badge" id="efs-menu-group-badge-${mod.id}" style="display:none;">0</span>
+						<svg class="efs-menu-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+					</button>
+					<div class="efs-menu-group-items">
+						${mod.items.map((item) => `
+							<button type="button" class="efs-menu-item" data-module="${mod.id}" data-item="${item.id}">
+								<span class="efs-menu-item-label"${item.labelId ? ` id="${item.labelId}"` : ""}>${item.label}</span>
+								${item.hotkey ? `<span class="efs-kbd">${item.hotkey}</span>` : ""}
+								${item.badgeId ? `<span class="efs-held-badge" id="${item.badgeId}" style="display:none;">0</span>` : ""}
+							</button>
+						`).join("")}
+					</div>
+				</div>
+			`;
+		}).join(""));
+
+		// Acordeón: al abrir un módulo (con submenú) se cierran los demás.
+		$panel.find(".efs-menu-group-header").not(".efs-menu-group-header-direct").on("click", (e) => {
+			const $group = $(e.currentTarget).closest(".efs-menu-group");
+			const wasOpen = $group.hasClass("efs-menu-group-open");
+			$panel.find(".efs-menu-group").removeClass("efs-menu-group-open");
+			if (!wasOpen) $group.addClass("efs-menu-group-open");
+		});
+
+		// Módulos de acción directa: un click ejecuta y cierra el menú, sin pasar por el acordeón.
+		$panel.find(".efs-menu-group-header-direct").on("click", (e) => {
+			const mod = modules.find((m) => m.id === $(e.currentTarget).data("module"));
+			$panel.fadeOut(120);
+			if (mod && mod.action) mod.action();
+		});
+
+		$panel.find(".efs-menu-item").on("click", (e) => {
+			const modId = $(e.currentTarget).data("module");
+			const itemId = $(e.currentTarget).data("item");
+			const mod = modules.find((m) => m.id === modId);
+			const item = mod && mod.items && mod.items.find((i) => i.id === itemId);
+			this.$body.find("#efs-menu-panel").fadeOut(120);
+			if (item) item.action();
+		});
+	}
+
+	_set_badge(id, n) {
+		const $badge = this.$body.find(`#${id}`);
+		if (n > 0) {
+			$badge.text(n).show();
+		} else {
+			$badge.hide();
+		}
+	}
+
+	_update_menu_total_badge() {
+		this._set_badge("efs-menu-total-badge", (this.heldCount || 0) + (this.pendingGuiasCount || 0));
+	}
+
 	_show_change_password_dialog() {
 		const dlg = new frappe.ui.Dialog({
 			title: __("Cambiar Contraseña"),
@@ -496,14 +666,183 @@ class EFastPOSScreen {
 	}
 
 	// -----------------------------------------------------------------------
+	// Pantalla de Inicio — primera pantalla al entrar a FacEx Screen (y al
+	// volver con "← Inicio" desde el paso 1). Reemplaza el wizard de venta
+	// (stepbar + cuerpo) por tarjetas grandes: "Nueva Venta" sigue el flujo
+	// normal de siempre (paso 1: cliente y encabezado); "Transporte" redirige
+	// al hub; "Sistema" solo tiene FacEx Clásico, así que es acción directa
+	// (no una sub-pantalla) — no hay nada más detrás para mostrar. Cada
+	// tarjeta respeta permisos de FacEx Settings, igual que el resto del menú.
+	// -----------------------------------------------------------------------
+
+	// Frases cortas, positivas y de ambiente laboral (sin afirmaciones de
+	// salud/dinero/política — contenido curado por nosotros, no una API
+	// externa: así no dependemos de un tercero ni de contenido sin moderar
+	// en una pantalla de venta). Se elige una por día del año, así que es
+	// la misma todo el día y cambia automáticamente al día siguiente.
+	_HOME_MOTIVATIONAL_MESSAGES = [
+		"Cada cliente que atiendes hoy es una oportunidad de dejar una gran impresión.",
+		"Un buen día empieza con una sonrisa — la tuya cuenta más de lo que crees.",
+		"La constancia de hoy es el resultado de mañana.",
+		"Gracias por hacer que cada venta sea una buena experiencia para alguien.",
+		"Pequeños detalles, grandes resultados. ¡Vamos con todo hoy!",
+		"Tu trabajo hace que esta empresa avance un paso más cada día.",
+		"Hoy es una nueva oportunidad para superar el día de ayer.",
+		"La actitud correcta convierte un día común en uno extraordinario.",
+		"Cada factura bien hecha es un cliente satisfecho.",
+		"El buen servicio se nota, y tú lo brindas todos los días.",
+		"Un equipo que suma esfuerzos, multiplica resultados.",
+		"La paciencia y la buena energía son tus mejores herramientas hoy.",
+		"Celebra los pequeños logros del día — todos cuentan.",
+		"Hoy puedes marcar la diferencia en la experiencia de alguien más.",
+		"El esfuerzo constante siempre encuentra su recompensa.",
+		"Buen ánimo, buen servicio, buenos resultados.",
+		"Cada 'gracias' de un cliente es una señal de que vas por buen camino.",
+		"La organización de hoy facilita el éxito de mañana.",
+		"Trabajar con calidad es la mejor forma de dejar huella.",
+		"Un problema resuelto a tiempo es una confianza ganada.",
+		"Tu buena disposición hoy puede alegrar el día de alguien más.",
+		"La excelencia es la suma de pequeños esfuerzos repetidos cada día.",
+		"Hoy es un buen día para hacer bien las cosas.",
+		"La confianza se construye con cada atención bien hecha.",
+		"Ser puntual y claro con el cliente siempre suma.",
+		"Cada día trae una nueva oportunidad de mejorar.",
+		"El buen trabajo en equipo hace que todo fluya mejor.",
+		"Tu esfuerzo de hoy es la base del éxito de mañana.",
+		"Una actitud positiva es contagiosa — compártela hoy.",
+		"Gracias por tu dedicación, se nota en cada detalle.",
+	];
+
+	_get_daily_motivational_message() {
+		const list = this._HOME_MOTIVATIONAL_MESSAGES;
+		const now = new Date();
+		const start = new Date(now.getFullYear(), 0, 0);
+		const dayOfYear = Math.floor((now - start) / 86400000);
+		return list[dayOfYear % list.length];
+	}
+
+	_format_home_datetime(d) {
+		let dateStr = d.toLocaleDateString("es-GT", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+		dateStr = dateStr.charAt(0).toUpperCase() + dateStr.slice(1);
+		const timeStr = d.toLocaleTimeString("es-GT", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+		return { dateStr, timeStr };
+	}
+
+	_show_home() {
+		this.step = 0;
+		this.$body.find(".efs-stepbar").hide();
+		this.$body.find(".efs-body").hide();
+		const $view = this.$body.find("#efs-home-view");
+		const p = this.perms || {};
+
+		const saleSvg = `<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"></circle><circle cx="20" cy="21" r="1"></circle><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path></svg>`;
+		const truckSvg = `<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13"></rect><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"></polygon><circle cx="5.5" cy="18.5" r="2.5"></circle><circle cx="18.5" cy="18.5" r="2.5"></circle></svg>`;
+		const gearSvg = `<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>`;
+
+		const cards = [
+			p.puede_facturar ? {
+				icon: saleSvg, label: __("Nueva Venta"),
+				desc: __("Seleccionar cliente y comenzar una factura."),
+				action: () => this._show_step(1),
+			} : null,
+			this._has_transporte_access() ? {
+				icon: truckSvg, label: __("Transporte"), badgeId: "efs-home-badge-transporte",
+				desc: __("Envíos, guías, transportistas y liquidaciones."),
+				action: () => this._show_transporte_hub(),
+			} : null,
+			{
+				icon: gearSvg, label: __("Sistema"),
+				desc: __("FacEx Clásico."),
+				action: () => { window.location.href = "/app/facex"; },
+			},
+		].filter(Boolean);
+
+		const fullname = frappe.session.user_fullname || frappe.session.user;
+		const { dateStr, timeStr } = this._format_home_datetime(new Date());
+
+		// Logo real de la compañía activa (no el de CHAPPSA) — mismo dato que
+		// ya resuelve get_defaults para el establecimiento fiscal actual
+		// (BFEL Establecimientos.logo, o Company.company_logo si la compañía
+		// no tiene establecimientos configurados). Si no hay logo cargado, se
+		// muestra el nombre de la compañía en su lugar en vez de dejar el
+		// espacio vacío.
+		const establishments = this.defaults.establishments || [];
+		const currentEst = establishments.find((e) => String(e.establecimiento_id) === String(this.doc.bfel_establecimiento)) || establishments[0];
+		const companyLogoUrl = currentEst && currentEst.logo ? currentEst.logo : "";
+		const currentYear = new Date().getFullYear();
+
+		$view.html(`
+			<div class="efs-home-poweredby">
+				<img src="/assets/facex_multi/images/chappsa-logo.png" alt="CHAPPSA" onerror="this.style.display='none'" />
+				<span>© ${currentYear} CHAPPSA</span>
+			</div>
+			<div class="efs-home-wrap">
+				<div class="efs-home-brand">
+					${companyLogoUrl
+						? `<img class="efs-home-logo" src="${_efs_esc(companyLogoUrl)}" alt="${_efs_esc(this.doc.company || "")}" onerror="this.style.display='none'" />`
+						: `<div class="efs-home-logo-fallback">${_efs_esc(this.doc.company || "")}</div>`}
+				</div>
+				<div class="efs-home-welcome">
+					<div class="efs-home-greeting">${__("¡Bienvenido, {0}!", [_efs_esc(fullname)])}</div>
+					<div class="efs-home-datetime">
+						<span id="efs-home-date">${_efs_esc(dateStr)}</span>
+						<span class="efs-home-time-sep">·</span>
+						<span id="efs-home-time">${_efs_esc(timeStr)}</span>
+					</div>
+					<div class="efs-home-session">
+						${__("Conectado como")} <strong>${_efs_esc(fullname)}</strong> (${_efs_esc(frappe.session.user)}) —
+						${__("Compañía")}: <strong>${_efs_esc(this.doc.company || "—")}</strong>
+					</div>
+				</div>
+				<div class="efs-home-quote">${_efs_esc(this._get_daily_motivational_message())}</div>
+				<div class="efs-home-cards">
+					${cards.map((c, i) => `
+						<button type="button" class="efs-home-card" data-idx="${i}">
+							<span class="efs-home-card-icon">${c.icon}</span>
+							<span class="efs-home-card-label">${c.label}${c.badgeId ? `<span class="efs-held-badge" id="${c.badgeId}" style="display:none;">0</span>` : ""}</span>
+							<span class="efs-home-card-desc">${c.desc}</span>
+						</button>
+					`).join("")}
+				</div>
+			</div>
+		`);
+		$view.show();
+		$view.find(".efs-home-card").on("click", (e) => {
+			const card = cards[$(e.currentTarget).data("idx")];
+			if (card) card.action();
+		});
+
+		if (p.puede_editar_guias_transporte) this._set_badge("efs-home-badge-transporte", this.pendingGuiasCount || 0);
+
+		// Reloj en vivo — se limpia primero por si _show_home() se llama de
+		// nuevo (evita acumular varios intervals corriendo en paralelo), y se
+		// vuelve a limpiar al salir de Inicio (_show_step) para no seguir
+		// actualizando un nodo oculto en segundo plano.
+		clearInterval(this._homeClockTimer);
+		this._homeClockTimer = setInterval(() => {
+			const $date = this.$body.find("#efs-home-date");
+			if (!$date.length) {
+				clearInterval(this._homeClockTimer);
+				return;
+			}
+			const parts = this._format_home_datetime(new Date());
+			$date.text(parts.dateStr);
+			this.$body.find("#efs-home-time").text(parts.timeStr);
+		}, 1000);
+	}
+
+	// -----------------------------------------------------------------------
 	// Wizard de pasos (Cliente/Encabezado → Productos → Pago)
 	// -----------------------------------------------------------------------
 
 	_show_step(n) {
 		this.step = n;
+		clearInterval(this._homeClockTimer);
+		this.$body.find("#efs-home-view").hide();
+		this.$body.find(".efs-body").show();
 		this.$body.find("#efs-step-encabezado").toggle(n === 1);
 		this.$body.find("#efs-step-productos").toggle(n === 2);
-		this.$body.find(".efs-stepbar").toggle(n !== 3);
+		this.$body.find(".efs-stepbar").show().toggle(n !== 3);
 		this._render_stepbar();
 		// Foco listo para tipear/escanear apenas se entra al grid de productos.
 		if (n === 2) {
@@ -517,11 +856,9 @@ class EFastPOSScreen {
 		const $next = this.$body.find("#efs-step-next");
 		this.$body.find("#efs-step-label").text(`Paso ${this.step} de 3: ${NAMES[this.step]}`);
 
-		if (this.step <= 1) {
-			$prev.prop("disabled", true).text("← Inicio");
-		} else {
-			$prev.prop("disabled", false).text(`← ${NAMES[this.step - 1]}`);
-		}
+		// "← Inicio" ya no es un callejón sin salida en el paso 1: regresa a
+		// la pantalla de Inicio (_step_prev), así que queda habilitado ahí también.
+		$prev.prop("disabled", false).text(this.step === 1 ? "← Inicio" : `← ${NAMES[this.step - 1]}`);
 
 		if (this.step === 1) {
 			$next.prop("disabled", false).text(`${NAMES[2]} →`).show();
@@ -534,7 +871,9 @@ class EFastPOSScreen {
 	}
 
 	_step_prev() {
-		if (this.step === 2) {
+		if (this.step === 1) {
+			this._show_home();
+		} else if (this.step === 2) {
 			this._show_step(1);
 		} else if (this.step === 3) {
 			this.$body.find("#efs-payment-view").hide();
@@ -743,9 +1082,10 @@ class EFastPOSScreen {
 			</div>
 			<div class="efs-field-row">
 				<label>Lista de Precios</label>
-				<select id="efs-fld-price-list" class="efs-search-input">
-					<option value="">(Por defecto)</option>
-					${priceLists.map((p) => `<option value="${_efs_esc(p.name)}" ${p.name === this.doc.selling_price_list ? "selected" : ""}>${_efs_esc(p.name)}</option>`).join("")}
+				<select id="efs-fld-price-list" class="efs-search-input" ${priceLists.length === 1 ? "disabled" : ""}>
+					${priceLists.length === 1
+						? `<option value="${_efs_esc(priceLists[0].name)}" selected>${_efs_esc(priceLists[0].name)}</option>`
+						: `<option value="">(Por defecto)</option>${priceLists.map((p) => `<option value="${_efs_esc(p.name)}" ${p.name === this.doc.selling_price_list ? "selected" : ""}>${_efs_esc(p.name)}</option>`).join("")}`}
 				</select>
 			</div>
 			<div class="efs-field-row">
@@ -851,19 +1191,17 @@ class EFastPOSScreen {
 	}
 
 	_toggle_focus_mode() {
-		const $btn = this.$body.find("#efs-btn-toggle-fullscreen");
 		const is_focus = $("body").hasClass("facex-fullscreen-mode");
 		if (is_focus) {
 			$("body").removeClass("facex-fullscreen-mode");
 			localStorage.setItem("facex-focus-mode", "false");
-			$btn.text("Modo Enfoque");
 			frappe.show_alert({ message: __("Modo Enfoque desactivado. Se muestran los marcos de ERPNext."), indicator: "info" });
 		} else {
 			$("body").addClass("facex-fullscreen-mode");
 			localStorage.setItem("facex-focus-mode", "true");
-			$btn.text("Modo ERPNext");
 			frappe.show_alert({ message: __("Modo Enfoque activado. Pantalla completa sin distracciones."), indicator: "green" });
 		}
+		this.$body.find("#efs-menu-focus-label").text(is_focus ? __("Modo Enfoque") : __("Modo ERPNext"));
 	}
 
 	_render_company_badge() {
@@ -1403,7 +1741,7 @@ class EFastPOSScreen {
 				`).join("")
 			);
 			$list.find(".efs-serial-row").on("click", (e) => {
-				const serial = $(e.currentTarget).data("serial");
+				const serial = String($(e.currentTarget).attr("data-serial"));
 				row.serial_no = serial;
 				row.qty = 1;
 				this._render_cart();
@@ -2276,8 +2614,8 @@ class EFastPOSScreen {
 	// igual patrón que los splits de pago. "Guardar Guías" exige transportista
 	// + número de guía por fila; "Completar después" (si se pasa onSkip) cierra
 	// sin exigir nada — el envío queda pendiente y se retoma desde "Envíos
-	// Pendientes". Genérico: no depende de this.paymentState, así que también
-	// lo usa _show_pending_guias_view() para completar una guía después.
+	// Pendientes" (FacexTransporteModule tiene su propia versión simplificada
+	// de este diálogo, sin onSkip, para ese flujo).
 	//   initialRows: filas con las que arranca el diálogo.
 	//   onSave(rows): filas completas y válidas.
 	//   onSkip(rows): si se pasa, agrega el botón "Completar después" con las
@@ -2412,7 +2750,24 @@ class EFastPOSScreen {
 		const isPrintOnlyLocked = !!this.doc.bfel_impreso_sin_certificar;
 		const alreadyProcessed = isCertified || isPrintOnlyLocked;
 		const canCancel = !!(this.perms || {}).puede_anular_facturas;
+		const canEditGuias = !!(this.perms || {}).puede_editar_guias_transporte;
+		// Fuente de verdad: this.doc.bfel_guias_transportista (lo que ya está
+		// guardado en la factura, incluyendo al recargarla desde Historial).
+		// this.doc._confirmGuias ya no se usa para el conteo — quedaba en 0 al
+		// reabrir una factura con guías ya capturadas en un clic previo.
+		const guiasCount = (this.doc.bfel_guias_transportista || []).length;
 		$view.html(`
+			${canEditGuias ? `
+				<button class="efs-fab-guia-transporte" id="efs-confirm-guias-transporte" ${skipCustomerGate ? "" : "disabled"} title="${__("Asociar Guía de Transporte")}">
+					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<rect x="1" y="3" width="15" height="13"></rect>
+						<polygon points="16 8 20 8 23 11 23 16 16 16 16 8"></polygon>
+						<circle cx="5.5" cy="18.5" r="2.5"></circle>
+						<circle cx="18.5" cy="18.5" r="2.5"></circle>
+					</svg>
+					<span>${guiasCount ? __("Guía ({0})", [guiasCount]) : __("Guía de Transporte")}</span>
+				</button>
+			` : ""}
 			<div class="efs-confirm">
 				<div class="efs-confirm-icon">✓</div>
 				<div class="efs-confirm-title">Venta completada</div>
@@ -2472,12 +2827,75 @@ class EFastPOSScreen {
 		$view.find("#efs-confirm-email").on("click", () => this._send_whatsapp());
 		$view.find("#efs-confirm-new").on("click", () => this._new_sale());
 		$view.find("#efs-confirm-cancel").on("click", () => this._show_cancel_invoice_dialog());
+		$view.find("#efs-confirm-guias-transporte").on("click", () => this._open_confirm_guias_dialog($view));
 
 		if (skipCustomerGate) {
 			this._show_locked_customer_label($view);
 		} else {
 			$view.find("#efs-confirm-update-customer").on("click", () => this._show_update_customer_gate());
 		}
+	}
+
+	// Botón opcional en la pantalla de confirmación (cualquier método de pago,
+	// no solo Contra Entrega) para asociar una guía de transporte a la venta
+	// recién completada — o revisar/completar las que ya tenía, al reabrir la
+	// factura desde Historial. Primero muestra en modo lectura lo que YA está
+	// guardado en this.doc.bfel_guias_transportista (antes esto se perdía: el
+	// diálogo siempre arrancaba en blanco y no había forma de ver lo ya
+	// capturado). "+ Agregar guía" sigue usando filas en blanco y
+	// save_guias_transporte (que AGREGA, no reemplaza), así que las guías ya
+	// existentes nunca se reenvían — evita duplicarlas.
+	_open_confirm_guias_dialog($view) {
+		const dlg = new frappe.ui.Dialog({
+			title: __("Guía de Transporte — {0}", [this.doc.name]),
+			fields: [{ fieldname: "html", fieldtype: "HTML" }],
+		});
+
+		const renderExisting = () => {
+			const rows = this.doc.bfel_guias_transportista || [];
+			dlg.fields_dict.html.$wrapper.html(`
+				${rows.length ? `
+					<table class="efs-stock-table">
+						<thead><tr><th>${__("Transportista")}</th><th>${__("Guía")}</th><th>${__("Piezas")}</th><th>${__("Destino")}</th><th>${__("Monto COD")}</th><th>${__("Estado")}</th></tr></thead>
+						<tbody>
+							${rows.map((r) => `
+								<tr>
+									<td>${_efs_esc(r.transportista || "")}</td>
+									<td>${_efs_esc(r.numero_guia || "")}</td>
+									<td>${r.piezas || 0}</td>
+									<td>${_efs_esc(r.destino || "")}</td>
+									<td>Q ${_efs_fmt(r.monto_cod)}</td>
+									<td>${_efs_esc(r.estado_entrega || "")}</td>
+								</tr>
+							`).join("")}
+						</tbody>
+					</table>
+				` : `<div class="efs-cust-details-loading">${__("Todavía no tiene guías registradas.")}</div>`}
+				<button type="button" class="efs-btn-link" id="efs-confirm-guia-add-more" style="margin-top:10px;">${__("+ Agregar guía")}</button>
+			`);
+			dlg.$wrapper.find("#efs-confirm-guia-add-more").on("click", () => {
+				dlg.hide();
+				this._show_guias_transporte_dialog({
+					initialRows: [{}],
+					onSave: (newRows) => {
+						frappe.call({
+							method: "facex_multi.api.invoice.save_guias_transporte",
+							args: { invoice_name: this.doc.name, guias_json: JSON.stringify(newRows) },
+							freeze: true,
+							freeze_message: __("Guardando guía…"),
+							callback: (r) => {
+								this.doc.bfel_guias_transportista = (r.message && r.message.bfel_guias_transportista) || this.doc.bfel_guias_transportista;
+								frappe.show_alert({ message: __("Guía registrada para {0}.", [this.doc.name]), indicator: "green" });
+								$view.find("#efs-confirm-guias-transporte span").text(__("Guía ({0})", [(this.doc.bfel_guias_transportista || []).length]));
+							},
+						});
+					},
+				});
+			});
+		};
+
+		renderExisting();
+		dlg.show();
 	}
 
 	// "Anular Factura FEL" (certificada: primero ante la SAT, delega 100% a
@@ -2758,13 +3176,10 @@ class EFastPOSScreen {
 			method: "facex_multi.api.invoice.get_held_sales",
 			args: { company: this.doc.company },
 			callback: (r) => {
-				const n = (r.message || []).length;
-				const $badge = this.$body.find("#efs-held-badge");
-				if (n > 0) {
-					$badge.text(n).show();
-				} else {
-					$badge.hide();
-				}
+				this.heldCount = (r.message || []).length;
+				this._set_badge("efs-held-badge", this.heldCount);
+				this._set_badge("efs-menu-group-badge-ventas", this.heldCount);
+				this._update_menu_total_badge();
 			},
 		});
 	}
@@ -2906,100 +3321,49 @@ class EFastPOSScreen {
 	}
 
 	// -----------------------------------------------------------------------
-	// Envíos Pendientes (Pago Contra Entrega sin guía capturada)
+	// Módulo Transporte del menú principal — toda la lógica (hub, Maestros,
+	// Documentos, Reportes, KPIs) vive en FacexTransporteModule
+	// (public/js/facex_transporte_module.js), compartida con FacEx Clásico.
+	// Aquí solo se monta dentro del overlay de la página y se conecta el
+	// permiso/compañía activos; ver _has_transporte_access en
+	// _get_menu_modules para el gate del punto de entrada del menú.
 	// -----------------------------------------------------------------------
-	// Mismo patrón que Ventas en Espera: badge + vista con lista + acción por
-	// fila. A diferencia de una venta en espera, la factura ya está sometida
-	// (y puede estar certificada) — "completar" solo agrega la guía vía
-	// save_guias_transporte, nunca reabre ni reedita el resto del documento.
 
+	_transporte_module() {
+		if (!this._transporteModuleInstance) {
+			this._transporteModuleInstance = new FacexTransporteModule({
+				$container: this.$body.find("#efs-transporte-view"),
+				perms: this.perms,
+				company: this.doc.company,
+				onBack: () => this.$body.find("#efs-transporte-view").hide(),
+			});
+		} else {
+			this._transporteModuleInstance.setContext({ perms: this.perms, company: this.doc.company });
+		}
+		return this._transporteModuleInstance;
+	}
+
+	// Hub de Transporte: única pantalla a la que lleva el menú principal
+	// (un click). Vive en FacexTransporteModule#showHub — aquí solo se
+	// muestra el overlay que lo contiene y se le delega el render.
+	_show_transporte_hub() {
+		this.$body.find("#efs-transporte-view").show();
+		this._transporte_module().showHub();
+	}
+
+	// Badges de Envíos Pendientes fuera del módulo (menú principal, tarjeta
+	// de Inicio) — el badge dentro del hub del módulo se resuelve solo, ver
+	// FacexTransporteModule#showHub.
 	_refresh_pending_guias_count() {
 		frappe.call({
 			method: "facex_multi.api.invoice.get_pending_guias",
 			args: { company: this.doc.company },
 			callback: (r) => {
-				const n = (r.message || []).length;
-				const $badge = this.$body.find("#efs-pending-guias-badge");
-				if (n > 0) {
-					$badge.text(n).show();
-				} else {
-					$badge.hide();
-				}
+				this.pendingGuiasCount = (r.message || []).length;
+				this._set_badge("efs-transporte-menu-badge", this.pendingGuiasCount);
+				this._set_badge("efs-home-badge-transporte", this.pendingGuiasCount);
+				this._update_menu_total_badge();
 			},
-		});
-	}
-
-	_show_pending_guias_view() {
-		const $view = this.$body.find("#efs-pending-guias-view");
-		$view.html(`
-			<div class="efs-wizard efs-history-wizard">
-				<div class="efs-wizard-header">
-					<button class="efs-step-nav" id="efs-pending-guias-back">← Volver</button>
-					<div class="efs-wizard-title">Envíos Pendientes</div>
-				</div>
-				<div class="efs-history-results" id="efs-pending-guias-results">
-					<div class="efs-cust-details-loading">Cargando…</div>
-				</div>
-			</div>
-		`);
-		$view.show();
-		$view.find("#efs-pending-guias-back").on("click", () => $view.hide());
-
-		frappe.call({
-			method: "facex_multi.api.invoice.get_pending_guias",
-			args: { company: this.doc.company },
-			callback: (r) => {
-				this._pendingGuiasRaw = r.message || [];
-				this._render_pending_guias_results();
-			},
-		});
-	}
-
-	_render_pending_guias_results() {
-		const $results = this.$body.find("#efs-pending-guias-results");
-		const rows = this._pendingGuiasRaw || [];
-
-		if (!rows.length) {
-			$results.html('<div class="efs-cust-details-loading">No hay envíos pendientes de guía.</div>');
-			return;
-		}
-
-		$results.html(`
-			<table class="efs-stock-table">
-				<thead><tr><th>Factura</th><th>Cliente</th><th>Fecha</th><th>Total</th><th></th></tr></thead>
-				<tbody>
-					${rows.map((row) => `
-						<tr class="efs-hist-row" data-name="${_efs_esc(row.name)}">
-							<td>${_efs_esc(row.name)}</td>
-							<td>${_efs_esc(row.customer_name || "")}</td>
-							<td>${_efs_esc(row.posting_date)}</td>
-							<td>Q ${_efs_fmt(row.grand_total)}</td>
-							<td>Completar guía →</td>
-						</tr>
-					`).join("")}
-				</tbody>
-			</table>
-		`);
-		$results.find(".efs-hist-row").on("click", (e) => {
-			const name = $(e.currentTarget).data("name");
-			const row = rows.find((r) => r.name === name);
-			this._show_guias_transporte_dialog({
-				initialRows: [{ monto_cod: row ? row.grand_total : 0 }],
-				onSave: (guiaRows) => {
-					frappe.call({
-						method: "facex_multi.api.invoice.save_guias_transporte",
-						args: { invoice_name: name, guias_json: JSON.stringify(guiaRows) },
-						freeze: true,
-						freeze_message: __("Guardando guía…"),
-						callback: () => {
-							frappe.show_alert({ message: __("Guía registrada para {0}.", [name]), indicator: "green" });
-							this._pendingGuiasRaw = (this._pendingGuiasRaw || []).filter((r) => r.name !== name);
-							this._render_pending_guias_results();
-							this._refresh_pending_guias_count();
-						},
-					});
-				},
-			});
 		});
 	}
 
@@ -3133,9 +3497,29 @@ class EFastPOSScreen {
 					if (row.docstatus === 1) return row.bfel_uuid ? "Certificada" : "Validada";
 					return "Borrador";
 				};
+				const truckIcon = (active, count) => `
+					<span class="efs-hist-guia-icon ${active ? "efs-hist-guia-icon-active" : ""}" title="${active ? __("{0} guía(s) de transporte vinculada(s)", [count]) : __("Sin guía de transporte")}">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<rect x="1" y="3" width="15" height="13"></rect>
+							<polygon points="16 8 20 8 23 11 23 16 16 16 16 8"></polygon>
+							<circle cx="5.5" cy="18.5" r="2.5"></circle>
+							<circle cx="18.5" cy="18.5" r="2.5"></circle>
+						</svg>
+					</span>
+				`;
+				const pagoIcon = (paid) => `
+					<span class="efs-hist-pago-icon ${paid ? "efs-hist-pago-icon-active" : ""}" title="${paid ? __("Factura pagada — ver detalle de pago") : __("Aún no marcada como pagada")}">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<rect x="2" y="6" width="20" height="12" rx="2"></rect>
+							<circle cx="12" cy="12" r="2.5"></circle>
+							<line x1="6" y1="12" x2="6.01" y2="12"></line>
+							<line x1="18" y1="12" x2="18.01" y2="12"></line>
+						</svg>
+					</span>
+				`;
 				$results.html(`
 					<table class="efs-stock-table">
-						<thead><tr><th>Factura</th><th>Cliente</th><th>Fecha</th><th>Total</th><th>Estado</th></tr></thead>
+						<thead><tr><th>Factura</th><th>Cliente</th><th>Fecha</th><th>Total</th><th>Estado</th><th></th><th></th></tr></thead>
 						<tbody>
 							${rows.map((row) => `
 								<tr class="efs-hist-row" data-name="${_efs_esc(row.name)}" data-docstatus="${_efs_esc(row.docstatus)}">
@@ -3144,11 +3528,17 @@ class EFastPOSScreen {
 									<td>${_efs_esc(row.posting_date)}</td>
 									<td>Q ${_efs_fmt(row.grand_total)}</td>
 									<td>${_efs_esc(estadoLabel(row))}</td>
+									<td>${truckIcon(row.guias_count > 0, row.guias_count)}</td>
+									<td class="efs-hist-pago-cell" data-name="${_efs_esc(row.name)}">${pagoIcon(!!row.custom_pagado)}</td>
 								</tr>
 							`).join("")}
 						</tbody>
 					</table>
 				`);
+				$results.find(".efs-hist-pago-cell").on("click", (e) => {
+					e.stopPropagation();
+					this._show_payment_detail_dialog($(e.currentTarget).data("name"));
+				});
 				$results.find(".efs-hist-row").on("click", (e) => {
 					const name = $(e.currentTarget).data("name");
 					const docstatus = parseInt($(e.currentTarget).data("docstatus"), 10);
@@ -3180,6 +3570,47 @@ class EFastPOSScreen {
 						window.open(`/app/sales-invoice/${encodeURIComponent(name)}`, "_blank");
 					}
 				});
+			},
+		});
+	}
+
+	// Icono de Pago del Historial — abre el detalle (custom_efast_payments)
+	// de la factura clickeada, sin navegar fuera del Historial.
+	_show_payment_detail_dialog(name) {
+		frappe.call({
+			method: "facex_multi.api.invoice.get_invoice_payment_detail",
+			args: { name },
+			freeze: true,
+			freeze_message: __("Cargando pagos…"),
+			callback: (r) => {
+				const data = r.message || {};
+				const invoice = data.invoice || {};
+				const payments = data.payments || [];
+				const dlg = new frappe.ui.Dialog({
+					title: __("Detalle de Pago — {0}", [name]),
+					fields: [{ fieldname: "html", fieldtype: "HTML" }],
+				});
+				const rowsHtml = payments.length
+					? payments.map((p) => `
+						<tr>
+							<td>${_efs_esc(p.payment_method || "")}</td>
+							<td>${_efs_esc(p.payment_date || "")}</td>
+							<td>${_efs_esc(p.reference || "")}</td>
+							<td>Q ${_efs_fmt(p.amount)}</td>
+						</tr>
+					`).join("")
+					: `<tr><td colspan="4" class="efs-cust-details-loading">${__("Sin pagos registrados.")}</td></tr>`;
+				dlg.fields_dict.html.$wrapper.html(`
+					<div class="efs-pago-detail-summary">
+						<span>${__("Total factura")}: <strong>Q ${_efs_fmt(invoice.grand_total)}</strong></span>
+						<span>${__("Saldo pendiente")}: <strong>Q ${_efs_fmt(invoice.outstanding_amount)}</strong></span>
+					</div>
+					<table class="efs-stock-table">
+						<thead><tr><th>Forma de Pago</th><th>Fecha</th><th>Referencia</th><th>Monto</th></tr></thead>
+						<tbody>${rowsHtml}</tbody>
+					</table>
+				`);
+				dlg.show();
 			},
 		});
 	}
@@ -3362,6 +3793,36 @@ body.facex-fullscreen-mode .main-section {
 .efs-customer-pill { display: flex; align-items: center; gap: 8px; font-size: 13px; background: #f1f5f9; padding: 5px 12px; border-radius: 20px; }
 .efs-pill-missing { background: #fff7ed; color: #c2410c; }
 
+.efs-main-menu { position: relative; display: flex; align-items: center; }
+.efs-menu-trigger {
+  display: inline-flex; align-items: center; gap: 7px; background: none; border: 1px solid var(--efs-border);
+  color: var(--efs-text); cursor: pointer; font-size: 13px; font-weight: 600; padding: 7px 12px; border-radius: 8px;
+}
+.efs-menu-trigger:hover { background: #f1f5f9; }
+.efs-menu-panel {
+  position: absolute; top: 120%; left: 0; background: var(--efs-card); border: 1px solid var(--efs-border);
+  box-shadow: var(--efs-shadow-lg, 0 10px 25px rgba(0,0,0,.15)); border-radius: 10px; padding: 6px;
+  min-width: 260px; z-index: 300;
+}
+.efs-menu-group + .efs-menu-group { border-top: 1px solid var(--efs-border); margin-top: 2px; padding-top: 2px; }
+.efs-menu-group-header {
+  width: 100%; display: flex; align-items: center; gap: 10px; background: none; border: none; cursor: pointer;
+  padding: 10px 8px; border-radius: 6px; font-size: 13px; font-weight: 700; color: var(--efs-text); text-align: left;
+}
+.efs-menu-group-header:hover { background: #f1f5f9; }
+.efs-menu-group-icon { display: inline-flex; color: var(--efs-primary); }
+.efs-menu-group-label { flex: 1; }
+.efs-menu-chevron { color: var(--efs-text-muted); transition: transform .15s; flex-shrink: 0; }
+.efs-menu-group-open > .efs-menu-group-header .efs-menu-chevron { transform: rotate(180deg); }
+.efs-menu-group-items { display: none; flex-direction: column; padding: 2px 4px 6px 30px; }
+.efs-menu-group-open > .efs-menu-group-items { display: flex; }
+.efs-menu-item {
+  display: flex; align-items: center; gap: 8px; background: none; border: none; cursor: pointer;
+  padding: 8px; border-radius: 6px; font-size: 13px; color: var(--efs-text); text-align: left;
+}
+.efs-menu-item:hover { background: #f1f5f9; }
+.efs-menu-item-label { flex: 1; }
+
 .efs-user-dropdown { position: relative; display: flex; align-items: center; }
 .efs-user-btn {
   width: 32px; height: 32px; border-radius: 50%; background: #f1f5f9; border: 1px solid #cbd5e1;
@@ -3379,6 +3840,41 @@ body.facex-fullscreen-mode .main-section {
 .efs-company-select { width: 100%; margin-bottom: 8px; }
 .efs-user-menu-btn { width: 100%; margin-bottom: 8px; }
 .efs-user-menu-btn:last-child { margin-bottom: 0; }
+
+.efs-home-view { flex: 1; display: flex; align-items: center; justify-content: center; overflow-y: auto; padding: 24px; }
+.efs-home-wrap { width: 100%; max-width: 900px; }
+.efs-home-brand { display: flex; justify-content: center; margin-bottom: 18px; }
+.efs-home-logo { max-height: 64px; width: auto; }
+.efs-home-logo-fallback { font-size: 20px; font-weight: 800; color: var(--efs-primary); letter-spacing: -.3px; }
+.efs-home-poweredby {
+  position: fixed; right: 18px; bottom: 14px; display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px; background: rgba(255,255,255,.92); border: 1px solid var(--efs-border); border-radius: 20px;
+  box-shadow: var(--efs-shadow); z-index: 5;
+}
+.efs-home-poweredby img { height: 22px; width: auto; }
+.efs-home-poweredby span { font-size: 11px; color: var(--efs-text-muted); font-weight: 600; white-space: nowrap; }
+.efs-home-welcome { text-align: center; margin-bottom: 18px; }
+.efs-home-greeting { font-size: 24px; font-weight: 800; color: var(--efs-text); letter-spacing: -.3px; }
+.efs-home-datetime { margin-top: 6px; font-size: 14px; color: var(--efs-text-muted); font-weight: 600; text-transform: capitalize; }
+.efs-home-time-sep { margin: 0 6px; }
+.efs-home-session { margin-top: 6px; font-size: 12px; color: var(--efs-text-muted); }
+.efs-home-quote {
+  max-width: 640px; margin: 0 auto 28px; padding: 14px 20px; text-align: center; font-size: 14px; font-style: italic;
+  color: var(--efs-primary); background: #eef2ff; border: 1px solid #c7d2fe; border-radius: var(--efs-radius);
+  animation: efs-home-quote-fade .5s ease;
+}
+@keyframes efs-home-quote-fade { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+.efs-home-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; }
+.efs-home-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 10px; text-align: left;
+  padding: 26px 22px; border: 1px solid var(--efs-border); border-radius: var(--efs-radius); background: #fff;
+  cursor: pointer; transition: border-color .15s, box-shadow .15s, transform .15s;
+  box-shadow: var(--efs-shadow);
+}
+.efs-home-card:hover { border-color: var(--efs-primary); box-shadow: 0 6px 16px rgba(21,51,117,.14); transform: translateY(-2px); }
+.efs-home-card-icon { color: var(--efs-primary); }
+.efs-home-card-label { font-weight: 800; font-size: 18px; color: var(--efs-text); }
+.efs-home-card-desc { font-size: 13px; color: var(--efs-text-muted); }
 
 .efs-stepbar {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -3612,6 +4108,15 @@ body.facex-fullscreen-mode .main-section {
   width: 70px; height: 70px; border-radius: 50%; background: var(--efs-success); color: #fff;
   font-size: 36px; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px;
 }
+.efs-fab-guia-transporte {
+  position: absolute; top: 20px; right: 20px; z-index: 5;
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 16px; border: none; border-radius: 999px;
+  background: #0d9488; color: #fff; font-size: 13px; font-weight: 700;
+  cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.15);
+}
+.efs-fab-guia-transporte:hover:not(:disabled) { background: #0f766e; }
+.efs-fab-guia-transporte:disabled { background: #cbd5e1; color: #64748b; cursor: not-allowed; box-shadow: none; }
 .efs-confirm-title { font-size: 22px; font-weight: 800; margin-bottom: 6px; }
 .efs-confirm-invoice { font-size: 14px; color: var(--efs-text-muted); margin-bottom: 16px; }
 .efs-confirm-change { font-size: 16px; margin-bottom: 20px; }
@@ -3661,11 +4166,86 @@ body.facex-fullscreen-mode .main-section {
 .efs-btn-danger:disabled { border-color: #e2e8f0; color: #94a3b8; cursor: not-allowed; }
 
 .efs-history-wizard { max-width: 900px; }
+.efs-liq-wizard-wide { max-width: 96vw; }
 .efs-history-filters { display: flex; align-items: flex-end; gap: 14px; margin-bottom: 20px; flex-wrap: wrap; }
 .efs-history-filters .efs-field-row { margin-bottom: 0; }
 .efs-history-results { overflow-x: auto; }
 .efs-hist-row { cursor: pointer; }
 .efs-hist-row:hover { background: #f0f7ff; }
+.efs-hist-guia-icon { display: inline-flex; color: #cbd5e1; }
+.efs-hist-guia-icon-active { color: #0d9488; }
+.efs-hist-pago-cell { cursor: pointer; }
+.efs-hist-pago-icon { display: inline-flex; color: #cbd5e1; }
+.efs-hist-pago-icon-active { color: var(--efs-success); }
+.efs-pending-actions { display: flex; gap: 8px; }
+.efs-pending-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 1px solid var(--efs-border); border-radius: 8px; background: #fff; color: var(--efs-text-muted); cursor: pointer; transition: border-color .15s, color .15s, background .15s; }
+.efs-pending-icon-btn:hover { border-color: var(--efs-primary); color: var(--efs-primary); background: #f0f4ff; }
+.efs-pending-assign-btn:hover { border-color: #0d9488; color: #0d9488; background: #ecfdf9; }
+.efs-pago-detail-summary { display: flex; gap: 20px; margin-bottom: 12px; font-size: 13px; color: var(--efs-text-muted); }
+
+.efs-input { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--efs-border); font-size: 13px; background: #fff; }
+
+.efs-report-tabs { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+.efs-report-tab {
+  padding: 8px 14px; border-radius: 20px; border: 1px solid var(--efs-border); background: #fff;
+  cursor: pointer; font-size: 13px; font-weight: 600; color: var(--efs-text-muted);
+}
+.efs-report-tab-active { background: var(--efs-primary); border-color: var(--efs-primary); color: #fff; }
+.efs-report-filters { margin-bottom: 14px; }
+.efs-report-filter-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.efs-report-results { overflow-x: auto; }
+
+.efs-liq-editor-back { margin-bottom: 14px; }
+.efs-liq-header-fields { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+.efs-liq-field { display: flex; flex-direction: column; gap: 4px; min-width: 160px; }
+.efs-liq-field label { font-size: 11px; font-weight: 700; color: var(--efs-text-muted); text-transform: uppercase; letter-spacing: .03em; }
+.efs-liq-table-wrap { overflow-x: auto; margin-bottom: 10px; }
+.efs-liq-table { border-collapse: collapse; font-size: 12px; width: 100%; }
+.efs-liq-table th, .efs-liq-table td { padding: 6px; border-bottom: 1px solid var(--efs-border); white-space: nowrap; }
+.efs-liq-table th { text-align: left; color: var(--efs-text-muted); font-size: 10px; text-transform: uppercase; }
+.efs-liq-table input { width: 90px; padding: 5px 6px; border-radius: 6px; border: 1px solid var(--efs-border); font-size: 12px; }
+.efs-liq-table input.efs-liq-guia { width: 110px; }
+.efs-liq-match { font-size: 11px; color: var(--efs-success); white-space: normal; max-width: 140px; }
+.efs-liq-table-actions { display: flex; gap: 16px; align-items: center; margin-top: 4px; }
+.efs-liq-footer-totals { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--efs-border); }
+.efs-liq-total-box {
+  display: flex; flex-direction: column; gap: 2px; padding: 10px 16px; border-radius: var(--efs-radius);
+  background: #f8fafc; border: 1px solid var(--efs-border); min-width: 150px;
+}
+.efs-liq-total-box span { font-size: 11px; font-weight: 700; color: var(--efs-text-muted); text-transform: uppercase; letter-spacing: .03em; }
+.efs-liq-total-box strong { font-size: 16px; font-family: monospace; color: var(--efs-text); }
+.efs-liq-total-box-diff { background: #fff7ed; border-color: #fdba74; }
+.efs-liq-total-box-diff strong { color: #c2410c; }
+.efs-liq-actions { margin-top: 14px; max-width: 320px; }
+
+.efs-hub-section { margin-bottom: 28px; }
+.efs-hub-section-title { font-weight: 700; font-size: 13px; margin-bottom: 12px; color: var(--efs-text-muted); text-transform: uppercase; letter-spacing: .03em; }
+.efs-hub-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; }
+.efs-hub-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 6px; text-align: left;
+  padding: 16px; border: 1px solid var(--efs-border); border-radius: var(--efs-radius); background: #fff;
+  cursor: pointer; transition: border-color .15s, box-shadow .15s;
+}
+.efs-hub-card:hover { border-color: #0d9488; box-shadow: 0 2px 8px rgba(13,148,136,.12); }
+.efs-hub-card-icon { color: #0d9488; }
+.efs-hub-card-label { font-weight: 700; font-size: 14px; }
+.efs-hub-card-desc { font-size: 12px; color: var(--efs-text-muted); }
+
+.efs-kpi-section-title { font-weight: 700; font-size: 13px; margin: 22px 0 10px; color: var(--efs-text-muted); text-transform: uppercase; letter-spacing: .03em; }
+.efs-kpi-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; }
+.efs-kpi-tile { background: #f8fafc; border-radius: var(--efs-radius); padding: 14px; text-align: center; }
+.efs-kpi-tile-value { font-size: 24px; font-weight: 800; color: var(--efs-primary); }
+.efs-kpi-tile-label { font-size: 11px; color: var(--efs-text-muted); margin-top: 2px; }
+.efs-kpi-tiles-cod { margin-top: 10px; }
+.efs-kpi-tile-cod { background: #f0fdfa; grid-column: 1 / -1; }
+.efs-kpi-tile-cod .efs-kpi-tile-value { color: #0d9488; }
+.efs-kpi-bars {
+  display: flex; align-items: flex-end; gap: 6px; height: 140px; padding: 10px 6px 0;
+  border-bottom: 1px solid var(--efs-border); overflow-x: auto;
+}
+.efs-kpi-bar-col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; min-width: 22px; flex: 1; }
+.efs-kpi-bar { width: 100%; max-width: 26px; background: #0d9488; border-radius: 4px 4px 0 0; min-height: 2px; }
+.efs-kpi-bar-label { font-size: 10px; color: var(--efs-text-muted); margin-top: 6px; white-space: nowrap; }
 
 .efs-serial-list, .efs-cust-list { margin-top: 8px; max-height: 320px; overflow-y: auto; border: 1px solid #e0e0e0; border-radius: 4px; background: #fff; }
 .efs-serial-loading, .efs-serial-empty, .efs-cust-empty { padding: 16px; color: #888; text-align: center; }

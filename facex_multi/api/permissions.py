@@ -443,3 +443,31 @@ def get_facex_companies_with_transporte_report_access(companies: list) -> list:
         },
         pluck="bfel_company",
     )
+
+
+def get_facex_can_view_transporte_menu(company: str) -> bool:
+    """Llave maestra del menú 'Transporte' en FacEx Screen — si es False, el
+    menú completo se oculta sin importar los demás permisos de transporte."""
+    if "System Manager" in frappe.get_roles():
+        return True
+    if not company:
+        return False
+    value = frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "puede_ver_menu_transporte",
+    )
+    return bool(int(value or 0))
+
+
+def get_facex_can_view_transporte_kpis(company: str) -> bool:
+    if "System Manager" in frappe.get_roles():
+        return True
+    if not company:
+        return False
+    value = frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "puede_ver_kpis_transporte",
+    )
+    return bool(int(value or 0))

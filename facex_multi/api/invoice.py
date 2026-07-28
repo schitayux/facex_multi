@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import frappe
 import json
+from collections import Counter
 from frappe.utils import today, add_days, getdate
 
 
@@ -361,6 +362,8 @@ def get_defaults(company: str = None):
         get_facex_can_cancel_invoices, get_facex_can_access_pos,
         get_facex_can_access_inventory_menu, get_facex_can_edit_guias_transporte,
         get_facex_can_administer_transportistas, get_facex_can_view_transporte_reportes,
+        get_facex_can_upload_liquidaciones_transporte, get_facex_can_view_transporte_menu,
+        get_facex_can_view_transporte_kpis,
     )
     permissions = get_facex_permissions_for_company(company)
     permissions["puede_eliminar_ventas_espera"] = int(get_facex_can_delete_held_sales(company))
@@ -370,6 +373,9 @@ def get_defaults(company: str = None):
     permissions["puede_editar_guias_transporte"] = int(get_facex_can_edit_guias_transporte(company))
     permissions["puede_administrar_transportistas"] = int(get_facex_can_administer_transportistas(company))
     permissions["puede_ver_reportes_transporte"] = int(get_facex_can_view_transporte_reportes(company))
+    permissions["puede_cargar_liquidaciones_transporte"] = int(get_facex_can_upload_liquidaciones_transporte(company))
+    permissions["puede_ver_menu_transporte"] = int(get_facex_can_view_transporte_menu(company))
+    permissions["puede_ver_kpis_transporte"] = int(get_facex_can_view_transporte_kpis(company))
     company_config = get_facex_company_config(company)
     default_pos_warehouse = get_facex_default_warehouse(company)
 
@@ -404,16 +410,57 @@ def get_invoice_history(company: str = None, from_date: str = None, to_date: str
     from_date = getdate(from_date) if from_date else today_date.replace(day=1)
     to_date = getdate(to_date) if to_date else today_date
 
-    return frappe.get_all(
+    rows = frappe.get_all(
         "Sales Invoice",
         filters={
             "company": company,
             "posting_date": ["between", [from_date, to_date]],
         },
-        fields=["name", "customer_name", "posting_date", "grand_total", "docstatus", "bfel_status", "bfel_uuid"],
+        fields=["name", "customer_name", "posting_date", "grand_total", "docstatus", "bfel_status", "bfel_uuid", "custom_pagado"],
         order_by="posting_date desc, creation desc",
         limit_page_length=500,
     )
+
+    if rows:
+        guia_parents = frappe.get_all(
+            "FacEx Guia Transportista",
+            filters={"parenttype": "Sales Invoice", "parent": ["in", [r.name for r in rows]]},
+            pluck="parent",
+        )
+        guia_map = Counter(guia_parents)
+        for r in rows:
+            r["guias_count"] = guia_map.get(r.name, 0)
+
+    return rows
+
+
+@frappe.whitelist()
+def get_invoice_payment_detail(name: str):
+    """Detalle de pago (custom_efast_payments) de una factura, para el icono
+    de Pago del Historial en FacEx Screen."""
+    if not has_efast_permission():
+        frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
+
+    name = (name or "").strip()
+    if not name:
+        frappe.throw("Factura no especificada.")
+
+    invoice = frappe.db.get_value(
+        "Sales Invoice", name,
+        ["name", "grand_total", "outstanding_amount", "custom_pagado"],
+        as_dict=True,
+    )
+    if not invoice:
+        frappe.throw(f"Factura {name} no encontrada.")
+
+    payments = frappe.get_all(
+        "eFast Invoice Payment",
+        filters={"parenttype": "Sales Invoice", "parent": name},
+        fields=["payment_method", "payment_date", "reference", "amount"],
+        order_by="idx asc",
+    )
+
+    return {"invoice": invoice, "payments": payments}
 
 
 @frappe.whitelist()
@@ -535,6 +582,138 @@ def save_guias_transporte(invoice_name: str, guias_json: str):
     doc.save()
     frappe.db.commit()
     return _safe_doc_dict(doc)
+
+
+@frappe.whitelist()
+def get_guias_transporte(company: str = None, estado_entrega: str = None, transportista: str = None, limit: int = 200):
+    """Lista de guías de transporte YA capturadas (para la tarjeta "Guías" del
+    hub de Transporte en FacEx Screen — a diferencia de get_pending_guias, que
+    solo lista facturas SIN guía). Mismo permiso que gobierna captura/edición
+    de guías."""
+    from facex_multi.api.permissions import get_facex_can_edit_guias_transporte
+
+    company = get_effective_company(company)
+    if not get_facex_can_edit_guias_transporte(company):
+        frappe.throw("No tiene permisos para ver/editar guías de transporte.", frappe.PermissionError)
+
+    conditions = ["si.company = %(company)s", "si.docstatus = 1"]
+    values = {"company": company, "limit": int(limit or 200)}
+
+    if estado_entrega:
+        conditions.append("g.estado_entrega = %(estado_entrega)s")
+        values["estado_entrega"] = estado_entrega
+    if transportista:
+        conditions.append("g.transportista = %(transportista)s")
+        values["transportista"] = transportista
+
+    where_clause = " and ".join(conditions)
+
+    return frappe.db.sql(
+        f"""
+        select
+            g.name as guia_name, g.parent as sales_invoice, g.numero_guia, g.transportista,
+            g.estado_entrega, g.piezas, g.destino, g.monto_cod, g.fecha_envio,
+            g.liquidado, si.customer_name
+        from `tabFacEx Guia Transportista` g
+        inner join `tabSales Invoice` si on si.name = g.parent
+        where g.parenttype = 'Sales Invoice' and {where_clause}
+        order by g.fecha_envio desc, g.modified desc
+        limit %(limit)s
+        """,
+        values,
+        as_dict=True,
+    )
+
+
+@frappe.whitelist()
+def update_guia_estado(sales_invoice: str, guia_name: str, estado_entrega: str):
+    """Cambia el estado de entrega de UNA guía ya capturada. Pasa por
+    doc.save() del Sales Invoice (no frappe.client.set_value directo sobre el
+    child doctype) para que guard_guias_transporte_permission — el hook de
+    validate que compara la tabla completa antes/después — se siga
+    disparando y respete puede_editar_guias_transporte; escribir el child
+    table por fuera del ciclo de guardado del padre saltaría ese chequeo."""
+    valid_estados = ["Pendiente", "Recolectado", "En tránsito", "Entregado", "Anulado"]
+    if estado_entrega not in valid_estados:
+        frappe.throw("Estado de entrega no válido.")
+
+    doc = frappe.get_doc("Sales Invoice", sales_invoice)
+    row = next((r for r in doc.bfel_guias_transportista if r.name == guia_name), None)
+    if not row:
+        frappe.throw("No se encontró la guía indicada en esta factura.")
+
+    row.estado_entrega = estado_entrega
+    doc.save()
+    frappe.db.commit()
+    return {"name": row.name, "estado_entrega": row.estado_entrega}
+
+
+@frappe.whitelist()
+def get_transporte_kpis(company: str = None, days: int = 14):
+    """KPIs para el panel de Transporte de FacEx Screen: guías por estado de
+    entrega, envíos por día (últimos `days` días) y monto COD pendiente de
+    liquidar. Gateado por puede_ver_kpis_transporte (System Manager bypass)."""
+    from facex_multi.api.permissions import get_facex_can_view_transporte_kpis
+
+    company = get_effective_company(company)
+    if not get_facex_can_view_transporte_kpis(company):
+        frappe.throw("No tiene permisos para ver los KPIs de transporte.", frappe.PermissionError)
+
+    days = int(days or 14)
+
+    por_estado = frappe.db.sql(
+        """
+        select g.estado_entrega as estado, count(g.name) as total
+        from `tabFacEx Guia Transportista` g
+        inner join `tabSales Invoice` si on si.name = g.parent
+        where g.parenttype = 'Sales Invoice' and si.company = %(company)s and si.docstatus = 1
+        group by g.estado_entrega
+        """,
+        {"company": company},
+        as_dict=True,
+    )
+
+    por_dia = frappe.db.sql(
+        """
+        select g.fecha_envio as fecha, count(g.name) as total
+        from `tabFacEx Guia Transportista` g
+        inner join `tabSales Invoice` si on si.name = g.parent
+        where g.parenttype = 'Sales Invoice' and si.company = %(company)s and si.docstatus = 1
+            and g.fecha_envio is not null and g.fecha_envio >= %(from_date)s
+        group by g.fecha_envio
+        order by g.fecha_envio asc
+        """,
+        {"company": company, "from_date": add_days(today(), -(days - 1))},
+        as_dict=True,
+    )
+
+    # Remanente por guía: si liquidado=0 nunca hubo match, pendiente es el
+    # Monto COD completo. Si liquidado=1, monto_pendiente ya trae el
+    # remanente real (Monto COD - Valor Comisión - Monto Liquidado de la
+    # fila que hizo match, ver FacExLiquidacionTransportista.match_guias) —
+    # salvo en guías que ya estaban liquidado=1 ANTES de que existiera esta
+    # columna, donde monto_pendiente sigue NULL hasta que su liquidación se
+    # vuelva a guardar; ahí se asume 0 (mismo criterio que el comportamiento
+    # previo: liquidado=1 significaba "ya cubierto por completo").
+    cod_pendiente = frappe.db.sql(
+        """
+        select coalesce(sum(case when g.liquidado = 0 then g.monto_cod else coalesce(g.monto_pendiente, 0) end), 0) as total,
+            coalesce(sum(case when (case when g.liquidado = 0 then g.monto_cod else coalesce(g.monto_pendiente, 0) end) > 0.005 then 1 else 0 end), 0) as cantidad
+        from `tabFacEx Guia Transportista` g
+        inner join `tabSales Invoice` si on si.name = g.parent
+        where g.parenttype = 'Sales Invoice' and si.company = %(company)s and si.docstatus = 1
+            and g.estado_entrega != 'Anulado'
+        """,
+        {"company": company},
+        as_dict=True,
+    )[0]
+
+    return {
+        "por_estado": por_estado,
+        "por_dia": por_dia,
+        "cod_pendiente": cod_pendiente,
+        "days": days,
+    }
 
 
 @frappe.whitelist()
@@ -1620,6 +1799,7 @@ def save_payments(invoice_name: str, payments_json: str, pagado: str = "0"):
     doc.custom_efast_payments = []
 
     created_pes = []
+    has_contra_entrega = False
     if pagado_val:
         for row in payments:
             amount = float(row.get("amount") or 0)
@@ -1634,10 +1814,22 @@ def save_payments(invoice_name: str, payments_json: str, pagado: str = "0"):
                 "reference":      ref,
                 "amount":         amount,
             })
+            # Contra Entrega: el transportista cobra al entregar, todavía no
+            # entró dinero a ninguna cuenta — no genera Payment Entry (eso
+            # sucede después, automático, cuando la liquidación hace match).
+            if method == "Contra Entrega":
+                has_contra_entrega = True
+                continue
             created_pes.append(
                 _create_payment_entry(doc, method, date, ref, amount)
             )
 
+    # Solo se ACTIVA aquí; no se desactiva si esta fila no aparece, para no
+    # pisar un bfel_pago_contra_entrega=1 que pueda venir de otro origen
+    # (p.ej. la venta se marcó Contra Entrega desde facex_screen.js al
+    # facturar, y aquí solo se está ajustando el desglose de pagos).
+    if has_contra_entrega:
+        doc.bfel_pago_contra_entrega = 1
     doc.flags.ignore_validate_update_after_submit = True
     doc.save(ignore_permissions=False)
     frappe.db.commit()
@@ -1701,15 +1893,21 @@ def get_dashboard_stats(start_date=None, end_date=None, customer=None, item_code
         if inv.docstatus != 2 or (inv.bfel_uuid or inv.bfel_documento_anulado == 1)
     ]
 
-    # 2. Ventas del día (hoy) - Excluyendo las canceladas/anuladas del conteo de ventas activas
+    # 2. Ventas del día (hoy) - Solo facturas vigentes y validadas (docstatus=1,
+    # sin anular), no borradores (0) ni canceladas (2).
     today_date = getdate(today())
-    today_invoices = [inv for inv in invoices if getdate(inv.posting_date) == today_date and inv.docstatus != 2 and inv.bfel_documento_anulado != 1]
+    today_invoices = [inv for inv in invoices if getdate(inv.posting_date) == today_date and inv.docstatus == 1 and inv.bfel_documento_anulado != 1]
     today_total = sum(float(inv.grand_total or 0) for inv in today_invoices)
 
-    # 3. Ventas del mes (mes actual) - Excluyendo las canceladas/anuladas
+    # 3. Ventas del mes (mes actual) - mismo criterio: solo vigentes y validadas.
     month_start_date = getdate(today()[:7] + "-01")
-    month_invoices = [inv for inv in invoices if getdate(inv.posting_date) >= month_start_date and inv.docstatus != 2 and inv.bfel_documento_anulado != 1]
+    month_invoices = [inv for inv in invoices if getdate(inv.posting_date) >= month_start_date and inv.docstatus == 1 and inv.bfel_documento_anulado != 1]
     month_total = sum(float(inv.grand_total or 0) for inv in month_invoices)
+
+    # 3b. Ventas Borrador/Cotización - facturas aún no validadas (docstatus=0)
+    # dentro del mismo rango de fechas/filtros ya aplicado arriba.
+    draft_invoices = [inv for inv in invoices if inv.docstatus == 0]
+    draft_total = sum(float(inv.grand_total or 0) for inv in draft_invoices)
 
     # 4. Detalle de items vendidos (excluyendo canceladas y anuladas)
     invoice_names = [inv.name for inv in invoices if inv.docstatus != 2 and inv.bfel_documento_anulado != 1]
@@ -1786,6 +1984,8 @@ def get_dashboard_stats(start_date=None, end_date=None, customer=None, item_code
         "today_count": len(today_invoices),
         "month_total": month_total,
         "month_count": len(month_invoices),
+        "draft_total": draft_total,
+        "draft_count": len(draft_invoices),
         "fel_processed": fel_processed,
         "fel_pending": fel_pending,
         "invoices": invoices[:50],  # Limitar a las últimas 50 facturas en lista rápida
