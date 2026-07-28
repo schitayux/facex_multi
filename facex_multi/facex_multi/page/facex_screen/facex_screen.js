@@ -15,7 +15,7 @@ frappe.pages["facex-screen"].on_page_load = function (wrapper) {
 		single_column: true,
 	});
 	$("body").addClass("facex-fullscreen-mode");
-	frappe.require(["/assets/facex_multi/js/facex_transporte_module.js", "controls.bundle.js"], function () {
+	frappe.require(["/assets/facex_multi/js/facex_transporte_module.js", "/assets/facex_multi/js/ef_guide.js", "controls.bundle.js"], function () {
 		wrapper.efscreen = new EFastPOSScreen(page, wrapper);
 	});
 };
@@ -367,6 +367,23 @@ class EFastPOSScreen {
 		this.$body.find("#efs-step-prev").on("click", () => this._step_prev());
 		this.$body.find("#efs-step-next").on("click", () => this._step_next());
 		this._bind_keyboard_shortcuts();
+		this._attach_static_hints();
+	}
+
+	// Ayudas contextuales (ⓘ tenue) siempre visibles sobre los controles
+	// permanentes de la pantalla — no requieren activar nada. Los controles
+	// dentro de vistas que se reconstruyen (ej. pago) se enganchan aparte,
+	// junto a su propio render.
+	_attach_static_hints() {
+		if (typeof EFGuide === "undefined") return;
+		EFGuide.attachHints(this.$body, [
+			{ selector: "#efs-search", text: "Escribe el nombre o código del producto. Con lector de código de barras: escanea y Enter agrega el producto solo si hay una única coincidencia." },
+			{ selector: ".efs-instock-toggle", text: "Si está activo, la grilla solo muestra productos con existencia disponible en la bodega actual." },
+			{ selector: "#efs-btn-change-customer", text: "Cliente de esta venta. Por defecto es 'Consumidor Final'; toca aquí para buscar o crear otro." },
+			{ selector: "#efs-vendor-select", text: "Selecciona el vendedor que atiende esta venta (útil para reportes de comisión)." },
+			{ selector: ".efs-ticket-header", text: "Aquí aparecen los productos agregados. Usa +/− para la cantidad, o toca la línea para más opciones (bodega, descuento, adenda)." },
+			{ selector: "#efs-btn-suspend", text: "Guarda esta venta en espera para retomarla después, sin perder lo agregado." },
+		]);
 	}
 
 	// -----------------------------------------------------------------------
@@ -938,6 +955,13 @@ class EFastPOSScreen {
 
 		this._render_cliente_card();
 		this._render_documento_card();
+
+		if (typeof EFGuide !== "undefined") {
+			EFGuide.attachHints($el, [
+				{ selector: "#efs-sec-cliente .efs-sec-title", text: "Selecciona o crea el cliente de esta factura. Toca la tarjeta para expandirla." },
+				{ selector: "#efs-sec-documento .efs-sec-title", text: "Establecimiento, serie y condiciones del documento fiscal." },
+			]);
+		}
 	}
 
 	_render_cliente_card() {
@@ -2147,6 +2171,17 @@ class EFastPOSScreen {
 			</div>
 		`);
 		$view.show();
+
+		if (typeof EFGuide !== "undefined") {
+			EFGuide.attachHints($view, [
+				{ selector: "#efs-pay-methods", text: "Elige la forma de pago. 'Crédito' deja la factura pendiente de cobro; 'Contra Entrega' la cobra el transportista al entregar." },
+				{ selector: ".efs-pay-quick-cash", text: "Ingresa el monto que el cliente entrega en efectivo, o usa los montos rápidos (Q50, Q100...) o 'Monto exacto'." },
+				{ selector: "#efs-pay-amount-row label", text: "Monto que se aplicará con este método de pago." },
+				{ selector: "#efs-pay-reference-row label", text: "Número de autorización o referencia del pago (tarjeta, transferencia, cheque)." },
+				{ selector: "#efs-pay-add-split", text: "Si el cliente paga con más de un método (ej. parte efectivo, parte tarjeta), agrega otro método aquí." },
+				{ selector: "#efs-pay-confirm", text: "Confirma el pago y certifica la factura ante SAT (FEL)." },
+			]);
+		}
 
 		this._render_numpad($view.find("#efs-pay-numpad"), {
 			initial: "",

@@ -18,7 +18,7 @@ frappe.pages["facex"].on_page_load = function (wrapper) {
 	$("body").addClass("facex-fullscreen-mode");
 	// controls.bundle.js provides frappe.ui.form.make_control (Link, Date, etc.)
 	// It is NOT included in desk.bundle.js, so must be required explicitly.
-	frappe.require(["/assets/facex_multi/js/facex_transporte_module.js", "controls.bundle.js"], function () {
+	frappe.require(["/assets/facex_multi/js/facex_transporte_module.js", "/assets/facex_multi/js/ef_guide.js", "controls.bundle.js"], function () {
 		wrapper.efast = new EFastSalePage(page, wrapper);
 	});
 };
@@ -205,6 +205,10 @@ class EFastSalePage {
        <button id="ef-btn-toggle-fullscreen" class="ef-btn" style="margin-left: 12px; font-size: 11px; padding: 4px 10px; border-radius: 6px; display: flex; align-items: center; gap: 5px; border: 1px solid var(--ef-border); background: var(--ef-card); color: var(--ef-text);" title="Alternar Modo Enfoque (Pantalla Completa)">
          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
          <span id="ef-fullscreen-btn-text">Modo Enfoque</span>
+       </button>
+       <button id="ef-btn-guide" class="ef-btn" style="margin-left: 6px; font-size: 11px; padding: 4px 10px; border-radius: 6px; display: flex; align-items: center; gap: 5px; border: 1px solid var(--ef-border); background: var(--ef-card); color: var(--ef-text);" title="Guía paso a paso de esta pantalla">
+         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 2-3 4"/><path d="M12 17h.01"/></svg>
+         <span>Guía</span>
        </button>
      </div>
      
@@ -5916,6 +5920,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this.toggle_focus_mode();
 		});
 
+		// Guía paso a paso — tour contextual según la vista actual
+		this.$body.find("#ef-btn-guide").on("click", (e) => {
+			e.preventDefault();
+			this._start_guide_tour();
+		});
+
 		// Force clean focus mode on load immediately
 		$("body").addClass("facex-fullscreen-mode");
 		localStorage.setItem("facex-focus-mode", "true");
@@ -5935,6 +5945,139 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this.$body.find("#ef-fullscreen-btn-text").text("Modo ERPNext");
 			frappe.show_alert({ message: "Modo Enfoque activado. Pantalla completa sin distracciones.", indicator: "green" });
 		}
+	}
+
+	// -----------------------------------------------------------------------
+	// Guía paso a paso (EFGuide) — un tour por vista/pestaña, disparado con
+	// el botón "Guía" del navbar. No duplica lógica: solo señala en qué
+	// campo hacer clic y qué significa, el usuario ejecuta la acción real.
+	// -----------------------------------------------------------------------
+	_start_guide_tour() {
+		const view = this._current_view;
+		if (view === "maintenance") {
+			const tab = this.$body.find(".ef-maint-tab-btn.ef-tab-active").data("maint-tab") || "clientes";
+			const builders = {
+				clientes: () => this._guide_steps_maint_clientes(),
+				productos: () => this._guide_steps_maint_productos(),
+				precios: () => this._guide_steps_maint_precios(),
+			};
+			if (!builders[tab]) {
+				frappe.show_alert({ message: __("No hay guía disponible para esta pestaña todavía."), indicator: "orange" });
+				return;
+			}
+			EFGuide.startTour(builders[tab]());
+		} else if (view === "billing") {
+			EFGuide.startTour(this._guide_steps_billing());
+		} else if (view === "dashboard") {
+			EFGuide.startTour(this._guide_steps_dashboard());
+		} else {
+			frappe.show_alert({ message: __("La guía está disponible en Tablero, Facturador y Mantenimiento."), indicator: "orange" });
+		}
+	}
+
+	_guide_steps_maint_clientes() {
+		const goTo = () => {
+			this._switch_view("maintenance");
+			this.$body.find('.ef-maint-tab-btn[data-maint-tab="clientes"]').trigger("click");
+		};
+		return [
+			{ before: goTo, selector: "#ef-maint-cust-btn-new", title: "Nuevo cliente",
+				text: "Haz clic en '+ Nuevo' para limpiar el formulario y comenzar un cliente desde cero." },
+			{ selector: "#ef-maint-cust-name", title: "Nombre",
+				text: "Escribe el nombre completo o la razón social del cliente." },
+			{ selector: "#ef-maint-cust-ident", title: "Identificación (FEL)",
+				text: "Elige NIT si es contribuyente, CF si es Consumidor Final, o CUI/Pasaporte según el caso." },
+			{ selector: "#ef-maint-cust-receptor", title: "No. de identificación",
+				text: "Escribe el NIT o CUI. Si el NIT existe en SAT, el nombre se autocompleta al salir del campo." },
+			{ selector: "#ef-maint-cust-price-list-ctrl", title: "Lista de precios (opcional)",
+				text: "Asigna una lista de precios especial para este cliente, si aplica." },
+			{ selector: "#ef-maint-cust-btn-save", title: "Guardar",
+				text: "Haz clic en 'Guardar Cliente' para crearlo. Aparecerá de inmediato en el listado de la izquierda." },
+		];
+	}
+
+	_guide_steps_maint_productos() {
+		const goTo = () => {
+			this._switch_view("maintenance");
+			this.$body.find('.ef-maint-tab-btn[data-maint-tab="productos"]').trigger("click");
+		};
+		return [
+			{ before: goTo, selector: "#ef-maint-item-btn-new", title: "Nuevo producto",
+				text: "Haz clic en '+ Nuevo' para iniciar un producto desde cero." },
+			{ selector: "#ef-maint-item-auto-code-label", title: "Código del ítem",
+				text: "Deja 'Código Automático' activo para que el sistema lo asigne, o desactívalo para escribir uno propio." },
+			{ selector: "#ef-maint-item-name", title: "Nombre",
+				text: "Nombre del producto. También se usa para completar la Descripción FEL automáticamente." },
+			{ selector: "#ef-maint-item-group-ctrl", title: "Grupo de artículos",
+				text: "Selecciona la categoría a la que pertenece este producto." },
+			{ selector: "#ef-maint-item-gestionado-por", title: "Gestionado por",
+				text: "'Serie' si cada unidad tiene número único (ej. armas), 'Lote' si se maneja por lote, o 'General' para productos normales." },
+			{ selector: "#ef-maint-item-is-stock", title: "Inventariable",
+				text: "Actívalo si este producto controla existencias en bodega." },
+			{ selector: "#ef-maint-item-btn-save", title: "Guardar",
+				text: "Haz clic en 'Guardar Producto' para crearlo." },
+		];
+	}
+
+	_guide_steps_maint_precios() {
+		const goTo = () => {
+			this._switch_view("maintenance");
+			this.$body.find('.ef-maint-tab-btn[data-maint-tab="precios"]').trigger("click");
+		};
+		return [
+			{ before: goTo, selector: "#ef-maint-price-list-select", title: "Lista de precios",
+				text: "Elige la Lista de Precios que quieres revisar o editar." },
+			{ selector: "#ef-maint-prices-search", title: "Buscar producto",
+				text: "Filtra por nombre para encontrar el producto más rápido." },
+			{ selector: "#ef-maint-tab-precios .ef-table", title: "Editar precio",
+				text: "Haz clic sobre el precio de un producto en la tabla para editarlo directamente; se guarda al confirmar." },
+		];
+	}
+
+	_guide_steps_billing() {
+		const openSection = (id) => {
+			const $card = this.$body.find(`#${id}`);
+			if (!$card.hasClass("ef-sec-open")) $card.find(".ef-sec-head").trigger("click");
+		};
+		return [
+			{ before: () => { this._switch_view("billing"); openSection("ef-sec-cliente"); },
+				selector: '[data-ctrl="customer"]', title: "Cliente",
+				text: "Busca o crea el cliente al que le vas a facturar." },
+			{ before: () => openSection("ef-sec-documento"), selector: "#ef-establecimiento", title: "Establecimiento",
+				text: "Selecciona el establecimiento fiscal (punto de emisión ante SAT)." },
+			{ selector: "#ef-naming-series", title: "Serie",
+				text: "Elige la serie del documento (correlativo de facturación)." },
+			{ selector: "#ef-add-row", title: "Agregar productos",
+				text: "Haz clic aquí para agregar una línea por cada producto o servicio que vendes." },
+			{ selector: "#ef-items-table", title: "Detalle de la factura",
+				text: "Escribe o busca el código del producto y ajusta Cantidad y Precio Unitario; el Importe se calcula solo." },
+			{ selector: "#ef-bfel-status", title: "Estado FEL",
+				text: "Deja '01 Enviar' para certificar ante SAT al guardar, o '00 No enviar' si es un documento interno." },
+			{ selector: ".ef-pagado-toggle", title: "Estado de pago",
+				text: "Actívalo si el cliente ya pagó de contado; si no, la factura queda pendiente de cobro." },
+			{ selector: "#ef-btn-save", title: "Guardar borrador",
+				text: "Guarda como borrador (F3) para revisar antes de certificar." },
+			{ selector: "#ef-btn-submit", title: "Validar factura",
+				text: "Cuando todo esté listo, 'Validar factura' certifica y envía el documento a SAT." },
+		];
+	}
+
+	_guide_steps_dashboard() {
+		const goTo = () => this._switch_view("dashboard");
+		return [
+			{ before: goTo, selector: ".ef-dashboard-filters", title: "Filtros",
+				text: "Filtra el tablero por rango de fechas y por cliente." },
+			{ selector: "#ef-dash-btn-apply", title: "Aplicar filtro",
+				text: "Haz clic en 'Filtrar' para aplicar el rango elegido a todo el tablero." },
+			{ selector: "#ef-kpi-card-today", title: "KPIs en vivo",
+				text: "Ventas de hoy, del mes, en borrador y facturas certificadas FEL, siempre actualizados." },
+			{ selector: '.ef-analytics-card:contains("Ventas Recientes")', title: "Informe: Ventas Recientes",
+				text: "Aquí ves las últimas 50 facturas del filtro aplicado. Haz clic en una fila para abrirla en el Facturador." },
+			{ selector: "#ef-dash-top-products", title: "Top productos",
+				text: "Los 15 productos más vendidos en el rango filtrado — útil para identificar qué se vende más." },
+			{ selector: "#ef-dash-customer-ctrl", title: "Análisis por cliente",
+				text: "Selecciona un cliente aquí para ver su tarjeta de Análisis: compras totales, facturas, crédito y saldo pendiente." },
+		];
 	}
 
 	// -----------------------------------------------------------------------
