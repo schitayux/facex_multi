@@ -12,7 +12,21 @@ frappe.pages["facex-inventario"].on_page_load = function (wrapper) {
 		title: "Inventario — FacEx",
 		single_column: true,
 	});
+	// Mismo Modo Enfoque que FacEx / FacEx Screen. Frappe Desk es un SPA —
+	// el <body> persiste entre rutas — así que hay que quitar la clase apenas
+	// el usuario navega a OTRA pantalla, o el resto de ERPNext se quedaría
+	// sin navbar/sidebar.
+	$("body").addClass("facex-fullscreen-mode");
+	frappe.router.on("change", () => {
+		if (frappe.get_route()[0] !== "facex-inventario") {
+			$("body").removeClass("facex-fullscreen-mode");
+		}
+	});
 	new FacexInventario(page, wrapper);
+};
+
+frappe.pages["facex-inventario"].on_page_show = function (wrapper) {
+	$("body").addClass("facex-fullscreen-mode");
 };
 
 const INV_MOVEMENTS = [
@@ -25,6 +39,12 @@ const INV_REPORTS = [
 	{ key: "reporte_inv_kardex", id: "inv-rep-kardex", title: "Kardex de Movimientos", desc: "Entradas, salidas y transferencias por fecha, almacén o producto." },
 	{ key: "reporte_inv_existencias", id: "inv-rep-existencias", title: "Existencias", desc: "Status de stock por almacén, antigüedad y productos sin rotación." },
 	{ key: "reporte_inv_trazabilidad", id: "inv-rep-trazabilidad", title: "Trazabilidad Serie / Lote", desc: "Ubicación e historial por número de serie o lote." },
+];
+
+// Listas de Materiales para venta (paquetes/kits) y su operación de Transformación.
+const INV_BOM = [
+	{ key: "gestiona_listas_materiales", id: "inv-bom-listas", bom: "listas", title: "Listas de Materiales", desc: "Crear paquetes/kits de venta combinando varios productos, con stock en el padre o en los componentes." },
+	{ key: "puede_hacer_transformaciones", id: "inv-bom-transformar", bom: "transformar", title: "Transformación", desc: "Convertir componentes en unidades del producto padre (solo Listas de Materiales con stock en el padre)." },
 ];
 
 const WAREHOUSE_FIELD_LABEL = { source: "Almacén origen", target: "Almacén destino" };
@@ -71,12 +91,164 @@ class FacexInventario {
 	constructor(page, wrapper) {
 		this.page = page;
 		this.wrapper = wrapper;
-		this.$body = $(page.body);
+		this.$page_root = $(page.body);
 		this.defaults = null;
 		this.page.add_menu_item(__("FacEx - Clásico"), () => {
 			window.location.href = "/app/facex";
 		});
+		// Barra superior (marca + accesos + perfil de usuario) persistente:
+		// se dibuja UNA sola vez, fuera del área que las pantallas internas
+		// (_render_shell / _render_movement / reportes / etc.) reemplazan por
+		// completo en cada navegación — por eso this.$body queda apuntando al
+		// contenedor interno, no al body completo de la página.
+		this._render_topbar();
+		this.$body = this.$page_root.find("#inv-content-root");
 		this._init();
+	}
+
+	// ──────────────────────────────────────────────
+	// Barra superior — misma marca/patrón de perfil de usuario (compañía,
+	// contraseña, cerrar sesión) ya replicado en FacEx y FacEx Screen. Aquí
+	// además hace de reemplazo al menú "..." estándar de Frappe, que el Modo
+	// Enfoque oculta junto con el resto del navbar/page-head.
+	// ──────────────────────────────────────────────
+
+	_render_topbar() {
+		this.$page_root.html(`
+<style>${INV_TOPBAR_STYLES}</style>
+<div class="inv-topbar">
+	<div class="inv-topbar-left">
+		<span class="inv-topbar-logo">
+			<svg width="18" height="18" viewBox="0 0 24 24" fill="#153375"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+			FacEx <span class="inv-topbar-sub">Inventario</span>
+		</span>
+	</div>
+	<div class="inv-topbar-right">
+		<button type="button" class="inv-topbar-link" id="inv-topbar-billing">Facturador</button>
+		<button type="button" class="inv-topbar-link" id="inv-topbar-pos">POS</button>
+		<div class="inv-user-dropdown" id="inv-user-dropdown">
+			<button class="inv-user-btn" id="inv-btn-user-profile" title="Perfil de Usuario">
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#475569" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+			</button>
+			<div class="inv-user-menu" id="inv-user-menu" style="display:none;">
+				<div class="inv-user-menu-label">Usuario Conectado</div>
+				<div class="inv-user-fullname" id="inv-active-user-fullname"></div>
+				<div class="inv-user-email" id="inv-active-user-email"></div>
+				<div class="inv-company-switcher" id="inv-company-switcher-section" style="display:none;">
+					<div class="inv-user-menu-label">Cambiar Compañía</div>
+					<select id="inv-user-company-select" class="inv-select inv-company-select"></select>
+					<button type="button" class="inv-btn inv-btn-secondary inv-user-menu-btn" id="inv-btn-switch-company">Aplicar Compañía</button>
+					<hr />
+				</div>
+				<button type="button" class="inv-btn inv-btn-secondary inv-user-menu-btn" id="inv-btn-change-password">Cambiar Contraseña</button>
+				<button type="button" class="inv-btn inv-btn-danger inv-user-menu-btn" id="inv-btn-logout">Cerrar Sesión</button>
+			</div>
+		</div>
+	</div>
+</div>
+<div id="inv-content-root"></div>
+		`);
+
+		this.$page_root.find("#inv-topbar-billing").on("click", () => { window.location.href = "/app/facex"; });
+		this.$page_root.find("#inv-topbar-pos").on("click", () => { window.location.href = "/app/facex-screen"; });
+
+		this.$page_root.find("#inv-btn-user-profile").on("click", (e) => {
+			e.stopPropagation();
+			const $menu = this.$page_root.find("#inv-user-menu");
+			if ($menu.is(":hidden")) {
+				this.$page_root.find("#inv-active-user-fullname").text(frappe.session.user_fullname || "Usuario");
+				this.$page_root.find("#inv-active-user-email").text(frappe.session.user);
+				frappe.call({
+					method: "facex_multi.api.invoice.get_user_companies",
+					callback: (r) => {
+						const companies = r.message || [];
+						if (companies.length > 1) {
+							const $sel = this.$page_root.find("#inv-user-company-select");
+							const $sec = this.$page_root.find("#inv-company-switcher-section");
+							const currentCompany = (this.defaults && this.defaults.company) || "";
+							$sel.html(companies.map((c) => `<option value="${frappe.utils.escape_html(c)}" ${c === currentCompany ? "selected" : ""}>${frappe.utils.escape_html(c)}</option>`).join(""));
+							$sec.show();
+						}
+					},
+				});
+				$menu.fadeIn(150);
+			} else {
+				$menu.fadeOut(150);
+			}
+		});
+
+		this.$page_root.find("#inv-btn-switch-company").on("click", (e) => {
+			e.stopPropagation();
+			const company = this.$page_root.find("#inv-user-company-select").val();
+			if (!company) return;
+			frappe.call({
+				method: "facex_multi.api.invoice.set_active_company",
+				args: { company },
+				freeze: true,
+				freeze_message: `Cambiando a ${company}...`,
+				callback: (r) => {
+					if (!r.exc) {
+						frappe.show_alert({ message: `Compañía cambiada a <b>${company}</b>. Recargando...`, indicator: "green" });
+						setTimeout(() => window.location.reload(), 1200);
+					}
+				},
+			});
+		});
+
+		this.$page_root.find("#inv-btn-logout").on("click", () => frappe.app.logout());
+
+		this.$page_root.find("#inv-btn-change-password").on("click", (e) => {
+			e.stopPropagation();
+			this.$page_root.find("#inv-user-menu").fadeOut(150);
+			this._show_change_password_dialog();
+		});
+
+		// Namespace propio (.invUserMenu), distinto de ".facexInv" que las
+		// pantallas internas limpian en cada navegación — así el cierre del
+		// dropdown de usuario sigue funcionando sin importar qué pantalla
+		// interna esté activa.
+		$(document).off(".invUserMenu").on("click.invUserMenu", (e) => {
+			const $menu = this.$page_root.find("#inv-user-menu");
+			if ($menu.length && !$(e.target).closest("#inv-user-dropdown").length) {
+				$menu.fadeOut(150);
+			}
+		});
+	}
+
+	_show_change_password_dialog() {
+		const dlg = new frappe.ui.Dialog({
+			title: __("Cambiar Contraseña"),
+			fields: [
+				{ fieldtype: "Password", fieldname: "old_password", label: __("Contraseña Actual"), reqd: 1 },
+				{ fieldtype: "Password", fieldname: "new_password", label: __("Nueva Contraseña"), reqd: 1 },
+				{ fieldtype: "Password", fieldname: "confirm_password", label: __("Confirmar Nueva Contraseña"), reqd: 1 },
+			],
+			primary_action_label: __("Actualizar Contraseña"),
+			primary_action: (values) => {
+				if (values.new_password !== values.confirm_password) {
+					frappe.msgprint({
+						title: __("Error de Validación"),
+						message: __("La nueva contraseña y la confirmación no coinciden."),
+						indicator: "red",
+					});
+					return;
+				}
+				dlg.get_primary_btn().attr("disabled", true);
+				frappe.call({
+					method: "frappe.core.doctype.user.user.update_password",
+					args: { old_password: values.old_password, new_password: values.new_password, logout_all_sessions: 0 },
+					callback: (r) => {
+						dlg.get_primary_btn().attr("disabled", false);
+						if (!r.exc) {
+							frappe.show_alert({ message: __("Contraseña actualizada exitosamente."), indicator: "green" });
+							dlg.hide();
+						}
+					},
+					error: () => dlg.get_primary_btn().attr("disabled", false),
+				});
+			},
+		});
+		dlg.show();
 	}
 
 	_init() {
@@ -147,6 +319,11 @@ class FacexInventario {
     ${INV_MOVEMENTS.map(m => this._movement_card(m, !!perms[m.key])).join("")}
   </div>
 
+  <div style="font-size:13px;font-weight:600;color:#6c757d;text-transform:uppercase;letter-spacing:.4px;margin:4px 0 10px;">Listas de Materiales para Venta</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;margin-bottom:24px;">
+    ${INV_BOM.map(b => this._bom_card(b, !!perms[b.key])).join("")}
+  </div>
+
   <div style="font-size:13px;font-weight:600;color:#6c757d;text-transform:uppercase;letter-spacing:.4px;margin:4px 0 10px;">Reportes de Operaciones</div>
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;">
     ${INV_REPORTS.map(r => this._report_card(r, !!perms[r.key])).join("")}
@@ -179,6 +356,15 @@ class FacexInventario {
 </div>`;
 	}
 
+	_bom_card(item, allowed) {
+		return `
+<div id="${item.id}" class="inv-card ${allowed ? "" : "inv-card-disabled"}" data-bom="${allowed ? item.bom : ""}">
+  <div class="inv-card-title">${item.title}</div>
+  <div class="inv-card-desc">${item.desc}</div>
+  ${allowed ? `<div class="inv-card-tag">Abrir →</div>` : `<div class="inv-card-tag" style="color:#adb5bd;">Sin acceso</div>`}
+</div>`;
+	}
+
 	_bind_shell_events() {
 		// Siempre limpiar TODO lo previamente atado a $body antes de re-atar
 		// (causa raíz de un bug ya corregido: handlers se acumulaban en cada render).
@@ -207,6 +393,13 @@ class FacexInventario {
 			if (report === "reporte_inv_existencias") { this._open_existencias(); return; }
 			if (report === "reporte_inv_trazabilidad") { this._open_trazabilidad(); return; }
 			frappe.show_alert({ message: __("Próximamente: {0}", [report]), indicator: "blue" });
+		});
+
+		this.$body.on("click", "[data-bom]", (e) => {
+			const bom = $(e.currentTarget).data("bom");
+			if (!bom) return;
+			if (bom === "listas") { this._open_lista_materiales(); return; }
+			if (bom === "transformar") { this._open_transformacion(); return; }
 		});
 	}
 
@@ -1734,7 +1927,817 @@ ${rows.map(r => `<tr>
 </tr>`).join("")}
 </tbody>`);
 	}
+
+	// ──────────────────────────────────────────────
+	// Listas de Materiales para Venta (paquetes/kits)
+	// ──────────────────────────────────────────────
+
+	_open_lista_materiales() {
+		frappe.call({
+			method: "facex_multi.api.item.list_listas_materiales",
+			args: { company: this.defaults.company },
+			freeze: true,
+			callback: (r) => {
+				this._lm_rows = r.message || [];
+				this._render_lista_materiales_list();
+			},
+		});
+	}
+
+	_render_lista_materiales_list() {
+		const rows = this._lm_rows || [];
+
+		this.$body.html(`
+<div id="inv-lm-app" style="max-width:1000px;margin:0 auto;padding:16px 8px;">
+
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;">
+    <button type="button" id="inv-back" class="inv-btn inv-btn-secondary">&larr; Volver</button>
+    <div style="font-size:16px;font-weight:600;color:#333;flex:1;">Listas de Materiales</div>
+    <button type="button" id="inv-lm-new" class="inv-btn inv-btn-primary">+ Nueva Lista de Materiales</button>
+  </div>
+
+  <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;overflow-x:auto;">
+    <table class="inv-table" style="width:100%;">
+      <thead>
+        <tr><th>Producto</th><th>Nombre</th><th style="width:120px;">Modo de Stock</th><th style="width:110px;">Estado</th></tr>
+      </thead>
+      <tbody>
+        ${!rows.length ? `<tr><td colspan="4" style="text-align:center;color:#adb5bd;padding:20px;">Sin Listas de Materiales configuradas.</td></tr>` : rows.map(row => `
+        <tr class="inv-mov-row" data-edit="${frappe.utils.escape_html(row.item_code)}">
+          <td><strong>${frappe.utils.escape_html(row.item_code)}</strong></td>
+          <td>${frappe.utils.escape_html(row.item_name || "")}</td>
+          <td>${frappe.utils.escape_html(row.modo_stock || "")}</td>
+          <td>${row.disabled ? `<span style="color:#adb5bd;">Deshabilitado</span>` : `<span style="color:#28a745;">Activo</span>`}</td>
+        </tr>`).join("")}
+      </tbody>
+    </table>
+  </div>
+
+</div>
+<style>${INV_STYLES}</style>
+		`);
+
+		this._bind_lista_materiales_list_events();
+	}
+
+	_bind_lista_materiales_list_events() {
+		this.$body.off();
+		$(document).off(".facexInv");
+		this.$body.on("click", "#inv-back", () => this._render_shell());
+		this.$body.on("click", "#inv-lm-new", () => this._open_lista_materiales_form());
+		this.$body.on("click", "[data-edit]", (e) => {
+			this._open_lista_materiales_form($(e.currentTarget).data("edit"));
+		});
+	}
+
+	_open_lista_materiales_form(item_code) {
+		this._lm_form = {
+			item_code: item_code || "",
+			item_name: "",
+			modo_stock: "",
+			items: [],
+			uid_counter: 0,
+		};
+
+		if (!item_code) {
+			this._render_lista_materiales_form();
+			return;
+		}
+
+		frappe.call({
+			method: "facex_multi.api.item.get_lista_materiales_detail",
+			args: { item_code },
+			freeze: true,
+			callback: (r) => {
+				const d = r.message || {};
+				this._lm_form.modo_stock = d.modo_stock || "";
+				(d.items || []).forEach((it) => {
+					this._lm_form.uid_counter += 1;
+					this._lm_form.items.push({
+						uid: this._lm_form.uid_counter,
+						item_code: it.item_code,
+						item_name: it.item_name,
+						qty: it.qty,
+						uom: it.uom,
+					});
+				});
+				frappe.call({
+					method: "facex_multi.api.item.get_item",
+					args: { name: item_code, company: this.defaults.company },
+					callback: (r2) => {
+						this._lm_form.item_name = (r2.message && r2.message.item_name) || item_code;
+						this._render_lista_materiales_form();
+					},
+				});
+			},
+		});
+	}
+
+	_render_lista_materiales_form() {
+		const f = this._lm_form;
+		const is_edit = !!f.item_code;
+
+		this.$body.html(`
+<div id="inv-lm-form-app" style="max-width:900px;margin:0 auto;padding:16px 8px;">
+
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+    <button type="button" id="inv-lm-back" class="inv-btn inv-btn-secondary">&larr; Volver</button>
+    <div style="font-size:16px;font-weight:600;color:#333;">${is_edit ? "Editar" : "Nueva"} Lista de Materiales</div>
+  </div>
+
+  <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:18px 20px;margin-bottom:16px;">
+    <label class="inv-label">Producto Padre</label>
+    ${is_edit ? `
+    <div style="font-size:14px;margin-top:6px;"><strong>${frappe.utils.escape_html(f.item_code)}</strong> — ${frappe.utils.escape_html(f.item_name || "")}</div>
+    ` : `
+    <div style="position:relative;max-width:420px;margin-top:6px;">
+      <input type="text" id="inv-lm-item-search" class="inv-select" style="width:100%;" placeholder="Buscar producto existente..." autocomplete="off">
+      <div id="inv-lm-item-results" class="inv-autocomplete"></div>
+    </div>
+    <div style="font-size:11.5px;color:#6c757d;margin-top:4px;">Debe ser un producto ya existente. Para crear productos nuevos use Mantenimiento &rarr; Productos.</div>
+    `}
+  </div>
+
+  <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:18px 20px;margin-bottom:16px;">
+    <label class="inv-label">Manejo de Stock</label>
+    <div style="display:flex;gap:20px;margin-top:10px;flex-wrap:wrap;">
+      <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;max-width:360px;">
+        <input type="radio" name="inv-lm-modo" value="Padre" ${f.modo_stock === "Padre" ? "checked" : ""} style="margin-top:3px;">
+        <span><strong>Padre lleva el stock</strong><br><span style="font-size:12px;color:#6c757d;">El producto padre tiene existencia propia. Se carga mediante la operación de Transformación.</span></span>
+      </label>
+      <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;max-width:360px;">
+        <input type="radio" name="inv-lm-modo" value="Hijos" ${f.modo_stock === "Hijos" ? "checked" : ""} style="margin-top:3px;">
+        <span><strong>Hijos llevan el stock</strong><br><span style="font-size:12px;color:#6c757d;">El padre es solo un agrupador (sin stock propio). Al venderlo se descuentan sus componentes automáticamente.</span></span>
+      </label>
+    </div>
+  </div>
+
+  <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:18px 20px;margin-bottom:16px;">
+    <label class="inv-label">Buscar componente para agregar</label>
+    <div style="position:relative;max-width:420px;margin-top:6px;">
+      <input type="text" id="inv-lm-comp-search" class="inv-select" style="width:100%;" placeholder="Código o nombre del producto..." autocomplete="off">
+      <div id="inv-lm-comp-results" class="inv-autocomplete"></div>
+    </div>
+  </div>
+
+  <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;margin-bottom:16px;overflow-x:auto;">
+    <table class="inv-table" style="width:100%;">
+      <thead>
+        <tr><th>Producto</th><th style="width:160px;">Cantidad por unidad del padre</th><th style="width:80px;">UOM</th><th style="width:50px;"></th></tr>
+      </thead>
+      <tbody id="inv-lm-tbody"></tbody>
+    </table>
+  </div>
+
+  <div style="display:flex;justify-content:space-between;gap:10px;">
+    <div>
+      ${is_edit ? `<button type="button" id="inv-lm-disable" class="inv-btn inv-btn-danger">Quitar de Listas de Materiales</button>` : ""}
+    </div>
+    <button type="button" id="inv-lm-save" class="inv-btn inv-btn-primary">Guardar</button>
+  </div>
+
+</div>
+<style>${INV_STYLES}</style>
+		`);
+
+		this._lm_render_component_rows();
+		this._bind_lista_materiales_form_events();
+	}
+
+	_lm_render_component_rows() {
+		const rows = this._lm_form.items;
+		const $tbody = this.$body.find("#inv-lm-tbody");
+		if (!rows.length) {
+			$tbody.html(`<tr><td colspan="4" style="text-align:center;color:#adb5bd;padding:20px;">Busque un producto arriba para agregarlo.</td></tr>`);
+			return;
+		}
+		$tbody.html(rows.map((row) => `
+<tr data-row-id="${row.uid}">
+  <td><strong>${frappe.utils.escape_html(row.item_code)}</strong><br><span style="color:#6c757d;">${frappe.utils.escape_html(row.item_name || "")}</span></td>
+  <td><input type="number" min="0" step="any" class="inv-lm-field" data-field="qty" value="${row.qty}"></td>
+  <td>${frappe.utils.escape_html(row.uom || "")}</td>
+  <td><span class="inv-row-remove" data-remove="${row.uid}">&times;</span></td>
+</tr>`).join(""));
+	}
+
+	_bind_lista_materiales_form_events() {
+		this.$body.off();
+		$(document).off(".facexInv");
+		const $body = this.$body;
+
+		$body.on("click", "#inv-lm-back", () => this._open_lista_materiales());
+
+		let _padre_timer = null;
+		$body.on("input", "#inv-lm-item-search", (e) => {
+			clearTimeout(_padre_timer);
+			const val = e.target.value.trim();
+			if (val.length < 2) { $body.find("#inv-lm-item-results").hide(); return; }
+			_padre_timer = setTimeout(() => {
+				frappe.call({
+					method: "facex_multi.api.item.search_items",
+					args: { txt: val, company: this.defaults.company },
+					callback: (r) => {
+						const items = r.message || [];
+						const $results = $body.find("#inv-lm-item-results");
+						if (!items.length) { $results.html(`<div style="color:#adb5bd;">Sin resultados</div>`).show(); return; }
+						$results.html(items.map((it) => `
+<div data-item='${JSON.stringify(it).replace(/'/g, "&#39;")}'>
+  <strong>${frappe.utils.escape_html(it.item_code || it.name)}</strong> — ${frappe.utils.escape_html(it.item_name || "")}
+</div>`).join("")).show();
+					},
+				});
+			}, 300);
+		});
+		$body.on("click", "#inv-lm-item-results div", (e) => {
+			const it = $(e.currentTarget).data("item");
+			this._lm_form.item_code = it.item_code || it.name;
+			this._lm_form.item_name = it.item_name || "";
+			$body.find("#inv-lm-item-search").val(`${this._lm_form.item_code} — ${this._lm_form.item_name}`);
+			$body.find("#inv-lm-item-results").hide();
+		});
+
+		$body.on("change", "input[name='inv-lm-modo']", (e) => {
+			this._lm_form.modo_stock = e.target.value;
+		});
+
+		let _comp_timer = null;
+		$body.on("input", "#inv-lm-comp-search", (e) => {
+			clearTimeout(_comp_timer);
+			const val = e.target.value.trim();
+			if (val.length < 2) { $body.find("#inv-lm-comp-results").hide(); return; }
+			_comp_timer = setTimeout(() => {
+				frappe.call({
+					method: "facex_multi.api.stock.search_items_for_stock",
+					args: { txt: val, company: this.defaults.company },
+					callback: (r) => {
+						const items = r.message || [];
+						const $results = $body.find("#inv-lm-comp-results");
+						if (!items.length) { $results.html(`<div style="color:#adb5bd;">Sin resultados</div>`).show(); return; }
+						$results.html(items.map((it) => `
+<div data-item='${JSON.stringify(it).replace(/'/g, "&#39;")}'>
+  <strong>${frappe.utils.escape_html(it.item_code)}</strong> — ${frappe.utils.escape_html(it.item_name || "")}
+</div>`).join("")).show();
+					},
+				});
+			}, 300);
+		});
+		$body.on("click", "#inv-lm-comp-results div", (e) => {
+			const it = $(e.currentTarget).data("item");
+			if (this._lm_form.item_code && it.item_code === this._lm_form.item_code) {
+				frappe.show_alert({ message: "El producto padre no puede ser componente de sí mismo.", indicator: "orange" });
+				return;
+			}
+			if (this._lm_form.items.some((r) => r.item_code === it.item_code)) {
+				frappe.show_alert({ message: "Ese componente ya fue agregado.", indicator: "orange" });
+				return;
+			}
+			this._lm_form.uid_counter += 1;
+			this._lm_form.items.push({
+				uid: this._lm_form.uid_counter,
+				item_code: it.item_code,
+				item_name: it.item_name,
+				qty: 1,
+				uom: it.stock_uom,
+			});
+			this._lm_render_component_rows();
+			$body.find("#inv-lm-comp-search").val("").focus();
+			$body.find("#inv-lm-comp-results").hide();
+		});
+
+		$(document).on("click.facexInv", (e) => {
+			if (!$(e.target).closest("#inv-lm-item-search, #inv-lm-item-results").length) $body.find("#inv-lm-item-results").hide();
+			if (!$(e.target).closest("#inv-lm-comp-search, #inv-lm-comp-results").length) $body.find("#inv-lm-comp-results").hide();
+		});
+
+		$body.on("input", ".inv-lm-field", (e) => {
+			const uid = $(e.target).closest("tr").data("row-id");
+			const row = this._lm_form.items.find((r) => r.uid === uid);
+			if (row) row.qty = $(e.target).val();
+		});
+
+		$body.on("click", "[data-remove]", (e) => {
+			const uid = $(e.currentTarget).data("remove");
+			this._lm_form.items = this._lm_form.items.filter((r) => r.uid !== uid);
+			this._lm_render_component_rows();
+		});
+
+		$body.on("click", "#inv-lm-save", () => this._lm_save());
+		$body.on("click", "#inv-lm-disable", () => this._lm_disable());
+	}
+
+	_lm_save() {
+		const f = this._lm_form;
+		if (!f.item_code) { frappe.show_alert({ message: "Seleccione el producto padre.", indicator: "orange" }); return; }
+		if (!f.modo_stock) { frappe.show_alert({ message: "Seleccione el modo de manejo de stock.", indicator: "orange" }); return; }
+		if (!f.items.length) { frappe.show_alert({ message: "Agregue al menos un componente.", indicator: "orange" }); return; }
+		for (const row of f.items) {
+			if (!(flt(row.qty) > 0)) {
+				frappe.show_alert({ message: `Cantidad inválida para '${row.item_code}'.`, indicator: "orange" });
+				return;
+			}
+		}
+
+		frappe.call({
+			method: "facex_multi.api.item.save_lista_materiales",
+			args: {
+				item_code: f.item_code,
+				modo_stock: f.modo_stock,
+				items_json: JSON.stringify(f.items.map((r) => ({ item_code: r.item_code, qty: r.qty }))),
+				company: this.defaults.company,
+			},
+			freeze: true,
+			freeze_message: "Guardando…",
+			callback: (r) => {
+				if (!r.message) return;
+				frappe.show_alert({ message: "Lista de Materiales guardada.", indicator: "green" });
+				this._open_lista_materiales();
+			},
+		});
+	}
+
+	_lm_disable() {
+		const item_code = this._lm_form.item_code;
+		frappe.confirm(
+			`¿Quitar a <strong>${frappe.utils.escape_html(item_code)}</strong> de las Listas de Materiales? Volverá a ser un producto normal.`,
+			() => {
+				frappe.call({
+					method: "facex_multi.api.item.disable_lista_materiales",
+					args: { item_code, company: this.defaults.company },
+					freeze: true,
+					callback: (r) => {
+						if (!r.message) return;
+						frappe.show_alert({ message: "Lista de Materiales eliminada.", indicator: "green" });
+						this._open_lista_materiales();
+					},
+				});
+			}
+		);
+	}
+
+	// ──────────────────────────────────────────────
+	// Transformación (Listas de Materiales en modo 'Padre')
+	// ──────────────────────────────────────────────
+
+	_open_transformacion() {
+		this._trf = {
+			item_code: "",
+			item_name: "",
+			cantidad: 1,
+			components: [],
+			target_warehouse: "",
+		};
+		this._trf_tab = "nueva";
+		this._trf_client_token = frappe.utils.get_random(20);
+		this._render_transformacion();
+	}
+
+	_render_transformacion() {
+		const d = this.defaults;
+		const t = this._trf;
+		const warehouses = d.warehouses || [];
+		const first_day = frappe.datetime.month_start();
+		const last_day = frappe.datetime.month_end();
+
+		this.$body.html(`
+<div id="inv-trf-app" style="max-width:1200px;margin:0 auto;padding:16px 8px;">
+
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+    <button type="button" id="inv-back" class="inv-btn inv-btn-secondary">&larr; Volver</button>
+    <div style="font-size:16px;font-weight:600;color:#333;">Transformación de Inventario</div>
+    <div style="font-size:12.5px;color:#6c757d;">${frappe.utils.escape_html(d.company)}</div>
+  </div>
+
+  <div class="inv-tabs">
+    <div class="inv-tab ${this._trf_tab === "nueva" ? "inv-tab-active" : ""}" data-ttab="nueva">Nueva Transformación</div>
+    <div class="inv-tab ${this._trf_tab === "movs" ? "inv-tab-active" : ""}" data-ttab="movs">Movimientos del Mes</div>
+  </div>
+
+  <div id="inv-trf-tab-nueva" style="display:${this._trf_tab === "nueva" ? "" : "none"};">
+
+    <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:18px 20px;margin-bottom:16px;">
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;align-items:end;">
+        <div>
+          <label class="inv-label">Producto Padre (Lista de Materiales)</label>
+          <div style="position:relative;">
+            <input type="text" id="inv-trf-item-search" class="inv-select" style="width:100%;" placeholder="Buscar producto..." autocomplete="off" value="${t.item_code ? frappe.utils.escape_html(`${t.item_code} — ${t.item_name}`) : ""}">
+            <div id="inv-trf-item-results" class="inv-autocomplete"></div>
+          </div>
+        </div>
+        <div>
+          <label class="inv-label">Cantidad a Transformar</label>
+          <input type="number" min="0" step="any" id="inv-trf-cantidad" class="inv-select" style="width:100%;" value="${t.cantidad}" ${t.item_code ? "" : "disabled"}>
+        </div>
+        <div>
+          <label class="inv-label">Almacén Destino (Producto Padre) <span style="color:#e03e2d;">*</span></label>
+          <select id="inv-trf-warehouse-target" class="inv-select" style="width:100%;" ${t.item_code ? "" : "disabled"}>
+            <option value="">Seleccione...</option>
+            ${warehouses.map(w => `<option value="${frappe.utils.escape_html(w)}" ${w === t.target_warehouse ? "selected" : ""}>${frappe.utils.escape_html(w)}</option>`).join("")}
+          </select>
+        </div>
+        <div>
+          <label class="inv-label">Fecha</label>
+          <input type="date" id="inv-trf-date" class="inv-select" style="width:100%;" value="${frappe.datetime.get_today()}">
+        </div>
+        <div style="grid-column:1/-1;">
+          <label class="inv-label">Comentario</label>
+          <input type="text" id="inv-trf-remarks" class="inv-select" style="width:100%;" placeholder="Motivo de la transformación (opcional)">
+        </div>
+      </div>
+    </div>
+
+    <div class="card" id="inv-trf-comp-card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;margin-bottom:16px;overflow-x:auto;">
+      <table class="inv-table" style="width:100%;">
+        <thead>
+          <tr>
+            <th>Componente</th>
+            <th style="width:110px;">Cant. Necesaria</th>
+            <th style="width:220px;">Almacén Origen</th>
+            <th style="width:140px;">Lote</th>
+            <th style="width:200px;">N° de Serie</th>
+          </tr>
+        </thead>
+        <tbody id="inv-trf-tbody"></tbody>
+      </table>
+    </div>
+
+    <div style="display:flex;justify-content:flex-end;gap:10px;">
+      <button type="button" id="inv-trf-save" class="inv-btn inv-btn-primary">Guardar Transformación</button>
+    </div>
+
+  </div>
+
+  <div id="inv-trf-tab-movs" style="display:${this._trf_tab === "movs" ? "" : "none"};">
+
+    <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 20px;margin-bottom:16px;display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;">
+      <div>
+        <label class="inv-label">Desde</label>
+        <input type="date" id="inv-m-from" class="inv-select" value="${first_day}">
+      </div>
+      <div>
+        <label class="inv-label">Hasta</label>
+        <input type="date" id="inv-m-to" class="inv-select" value="${last_day}">
+      </div>
+      <button type="button" id="inv-m-refresh" class="inv-btn inv-btn-secondary">Actualizar</button>
+    </div>
+
+    <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;overflow-x:auto;">
+      <table class="inv-table" style="width:100%;">
+        <thead>
+          <tr><th>Documento</th><th>Fecha</th><th style="width:70px;">Ítems</th><th style="width:110px;">Valor</th><th style="width:90px;">Estado</th><th>Comentario</th></tr>
+        </thead>
+        <tbody id="inv-m-tbody"><tr><td colspan="6" style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr></tbody>
+      </table>
+    </div>
+
+  </div>
+
+</div>
+<style>${INV_STYLES}</style>
+		`);
+
+		this._trf_render_components();
+		this._bind_transformacion_events();
+	}
+
+	_trf_render_components() {
+		const t = this._trf;
+		const $tbody = this.$body.find("#inv-trf-tbody");
+		if (!t.item_code) {
+			$tbody.html(`<tr><td colspan="5" style="text-align:center;color:#adb5bd;padding:20px;">Busque un producto padre (Lista de Materiales, modo Padre) arriba.</td></tr>`);
+			return;
+		}
+		if (!t.components.length) {
+			$tbody.html(`<tr><td colspan="5" style="text-align:center;color:#adb5bd;padding:20px;">Este producto no tiene componentes.</td></tr>`);
+			return;
+		}
+		$tbody.html(t.components.map((c) => {
+			const needed = flt(c.qty_per_unit) * flt(t.cantidad);
+			const stock_hint = (c.stock || []).map(s => `${frappe.utils.escape_html(s.warehouse)}: ${flt(s.actual_qty)}`).join(" · ") || "Sin existencia";
+			return `
+<tr data-comp="${frappe.utils.escape_html(c.item_code)}">
+  <td><strong>${frappe.utils.escape_html(c.item_code)}</strong><br><span style="color:#6c757d;">${frappe.utils.escape_html(c.item_name || "")}</span></td>
+  <td>${needed} ${frappe.utils.escape_html(c.stock_uom || "")}</td>
+  <td>
+    <select class="inv-select inv-trf-source" data-comp="${frappe.utils.escape_html(c.item_code)}" style="width:100%;">
+      <option value="">Seleccione...</option>
+      ${(this.defaults.warehouses || []).map(w => `<option value="${frappe.utils.escape_html(w)}" ${w === c.source_warehouse ? "selected" : ""}>${frappe.utils.escape_html(w)}</option>`).join("")}
+    </select>
+    <div style="font-size:10.5px;color:#6c757d;margin-top:3px;">${stock_hint}</div>
+  </td>
+  <td>${c.has_batch_no ? `<input type="text" class="inv-trf-field" data-comp="${frappe.utils.escape_html(c.item_code)}" data-field="batch_no" value="${frappe.utils.escape_html(c.batch_no || "")}" placeholder="Lote">` : `<span style="color:#adb5bd;">—</span>`}</td>
+  <td>${c.has_serial_no ? `<input type="text" class="inv-trf-field" data-comp="${frappe.utils.escape_html(c.item_code)}" data-field="serial_no" value="${frappe.utils.escape_html(c.serial_no || "")}" placeholder="Uno por línea o coma">` : `<span style="color:#adb5bd;">—</span>`}</td>
+</tr>`;
+		}).join(""));
+	}
+
+	_bind_transformacion_events() {
+		this.$body.off();
+		$(document).off(".facexInv");
+		const $body = this.$body;
+
+		$body.on("click", "#inv-back", () => this._render_shell());
+		$body.on("click", ".inv-tab", (e) => this._switch_transformacion_tab($(e.currentTarget).data("ttab")));
+		$body.on("click", "#inv-m-refresh", () => this._load_transformacion_list());
+		$body.on("click", ".inv-mov-row", (e) => this._trf_view_detail($(e.currentTarget).data("view")));
+
+		let _timer = null;
+		$body.on("input", "#inv-trf-item-search", (e) => {
+			clearTimeout(_timer);
+			const val = e.target.value.trim();
+			if (val.length < 2) { $body.find("#inv-trf-item-results").hide(); return; }
+			_timer = setTimeout(() => {
+				frappe.call({
+					method: "facex_multi.api.stock.search_items_padre_transformables",
+					args: { txt: val, company: this.defaults.company },
+					callback: (r) => {
+						const items = r.message || [];
+						const $results = $body.find("#inv-trf-item-results");
+						if (!items.length) { $results.html(`<div style="color:#adb5bd;">Sin resultados</div>`).show(); return; }
+						$results.html(items.map((it) => `
+<div data-item='${JSON.stringify(it).replace(/'/g, "&#39;")}'>
+  <strong>${frappe.utils.escape_html(it.item_code)}</strong> — ${frappe.utils.escape_html(it.item_name || "")}
+</div>`).join("")).show();
+					},
+				});
+			}, 300);
+		});
+		$body.on("click", "#inv-trf-item-results div", (e) => {
+			const it = $(e.currentTarget).data("item");
+			$body.find("#inv-trf-item-results").hide();
+			this._trf_load_bom(it.item_code);
+		});
+		$(document).on("click.facexInv", (e) => {
+			if (!$(e.target).closest("#inv-trf-item-search, #inv-trf-item-results").length) $body.find("#inv-trf-item-results").hide();
+		});
+
+		$body.on("input", "#inv-trf-cantidad", (e) => {
+			this._trf.cantidad = e.target.value;
+			this._trf_render_components();
+		});
+		$body.on("change", "#inv-trf-warehouse-target", (e) => { this._trf.target_warehouse = e.target.value; });
+		$body.on("change", ".inv-trf-source", (e) => {
+			const comp = $(e.target).data("comp");
+			const row = this._trf.components.find((c) => c.item_code === comp);
+			if (row) row.source_warehouse = e.target.value;
+		});
+		$body.on("input", ".inv-trf-field", (e) => {
+			const comp = $(e.target).data("comp");
+			const field = $(e.target).data("field");
+			const row = this._trf.components.find((c) => c.item_code === comp);
+			if (row) row[field] = e.target.value;
+		});
+
+		$body.on("click", "#inv-trf-save", () => this._trf_save());
+	}
+
+	_switch_transformacion_tab(tab) {
+		this._trf_tab = tab;
+		this.$body.find(".inv-tab").removeClass("inv-tab-active");
+		this.$body.find(`.inv-tab[data-ttab="${tab}"]`).addClass("inv-tab-active");
+		this.$body.find("#inv-trf-tab-nueva").toggle(tab === "nueva");
+		this.$body.find("#inv-trf-tab-movs").toggle(tab === "movs");
+		if (tab === "movs") this._load_transformacion_list();
+	}
+
+	_trf_load_bom(item_code) {
+		frappe.call({
+			method: "facex_multi.api.stock.get_lista_materiales_for_transform",
+			args: { item_code, company: this.defaults.company },
+			freeze: true,
+			callback: (r) => {
+				if (!r.message) return;
+				const d = r.message;
+				this._trf.item_code = item_code;
+				this._trf.item_name = d.item_name || "";
+				this._trf.components = (d.items || []).map((it) => ({
+					item_code: it.item_code,
+					item_name: it.item_name,
+					qty_per_unit: it.qty,
+					stock_uom: it.stock_uom,
+					has_batch_no: cint(it.has_batch_no),
+					has_serial_no: cint(it.has_serial_no),
+					stock: it.stock || [],
+					source_warehouse: "",
+					batch_no: "",
+					serial_no: "",
+				}));
+				this._render_transformacion();
+			},
+		});
+	}
+
+	_trf_save() {
+		const t = this._trf;
+		if (!t.item_code) { frappe.show_alert({ message: "Seleccione el producto padre.", indicator: "orange" }); return; }
+		const cantidad = flt(t.cantidad);
+		if (!(cantidad > 0)) { frappe.show_alert({ message: "La cantidad a transformar debe ser mayor a cero.", indicator: "orange" }); return; }
+		const target_warehouse = this.$body.find("#inv-trf-warehouse-target").val();
+		if (!target_warehouse) { frappe.show_alert({ message: "Seleccione el almacén destino del producto padre.", indicator: "orange" }); return; }
+		if (!t.components.length) { frappe.show_alert({ message: "Este producto no tiene componentes configurados.", indicator: "orange" }); return; }
+		for (const c of t.components) {
+			if (!c.source_warehouse) {
+				frappe.show_alert({ message: `Seleccione el almacén origen de '${c.item_code}'.`, indicator: "orange" });
+				return;
+			}
+		}
+
+		const posting_date = this.$body.find("#inv-trf-date").val();
+		const remarks = this.$body.find("#inv-trf-remarks").val();
+
+		const payload = {
+			company: this.defaults.company,
+			item_padre: t.item_code,
+			cantidad,
+			target_warehouse,
+			posting_date,
+			remarks,
+			componentes: t.components.map((c) => ({
+				item_code: c.item_code,
+				source_warehouse: c.source_warehouse,
+				batch_no: c.batch_no,
+				serial_no: c.serial_no,
+			})),
+		};
+		const client_token = this._trf_client_token;
+
+		frappe.confirm(
+			`¿Confirmar la transformación de <strong>${cantidad}</strong> unidad(es) de <strong>${frappe.utils.escape_html(t.item_code)}</strong>?`,
+			() => {
+				frappe.call({
+					method: "facex_multi.api.stock.create_transformacion",
+					args: { payload: JSON.stringify(payload), client_token },
+					freeze: true,
+					freeze_message: "Registrando transformación…",
+					callback: (r) => {
+						if (!r.message) return;
+						frappe.show_alert({ message: `Transformación ${r.message.name} registrada.`, indicator: "green" });
+						this._open_transformacion();
+					},
+				});
+			}
+		);
+	}
+
+	_load_transformacion_list() {
+		const from_date = this.$body.find("#inv-m-from").val();
+		const to_date = this.$body.find("#inv-m-to").val();
+		const $tbody = this.$body.find("#inv-m-tbody");
+		$tbody.html(`<tr><td colspan="6" style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr>`);
+
+		frappe.call({
+			method: "facex_multi.api.stock.list_stock_entries_transform",
+			args: { company: this.defaults.company, from_date, to_date },
+			callback: (r) => {
+				const rows = (r.message && r.message.rows) || [];
+				if (!rows.length) {
+					$tbody.html(`<tr><td colspan="6" style="text-align:center;color:#adb5bd;padding:20px;">Sin transformaciones en este rango.</td></tr>`);
+					return;
+				}
+				const STATUS = { 0: ["Borrador", "#6c757d"], 1: ["Sometido", "#28a745"], 2: ["Anulado", "#e03e2d"] };
+				$tbody.html(rows.map((row) => {
+					const [label, color] = STATUS[row.docstatus] || STATUS[0];
+					return `
+<tr class="inv-mov-row" data-view="${frappe.utils.escape_html(row.name)}">
+  <td><strong>${frappe.utils.escape_html(row.name)}</strong></td>
+  <td>${frappe.utils.escape_html(row.posting_date || "")}</td>
+  <td>${row.item_count}</td>
+  <td>${frappe.format(row.total_incoming_value, { fieldtype: "Currency" })}</td>
+  <td><span style="color:${color};font-weight:600;">${label}</span></td>
+  <td>${frappe.utils.escape_html(row.remarks || "")}</td>
+</tr>`;
+				}).join(""));
+			},
+		});
+	}
+
+	_trf_view_detail(name) {
+		frappe.call({
+			method: "facex_multi.api.stock.get_stock_entry_detail",
+			args: { name },
+			freeze: true,
+			callback: (r) => {
+				if (!r.message) return;
+				this._show_transformacion_detail(r.message);
+			},
+		});
+	}
+
+	_show_transformacion_detail(doc) {
+		const is_cancelled = cint(doc.docstatus) === 2;
+		const padre = doc.items.find((it) => cint(it.is_finished_item));
+		const componentes = doc.items.filter((it) => !cint(it.is_finished_item));
+
+		const rows_html = `
+<tr style="background:#f0f4ff;">
+  <td><strong>${frappe.utils.escape_html(padre ? padre.item_code : "")}</strong><br><span style="color:#6c757d;">${frappe.utils.escape_html(padre ? padre.item_name || "" : "")}</span></td>
+  <td>Producido</td>
+  <td>+${padre ? flt(padre.qty) : 0} ${frappe.utils.escape_html(padre ? padre.uom || "" : "")}</td>
+</tr>
+${componentes.map((c) => `
+<tr>
+  <td><strong>${frappe.utils.escape_html(c.item_code)}</strong><br><span style="color:#6c757d;">${frappe.utils.escape_html(c.item_name || "")}</span></td>
+  <td>Consumido</td>
+  <td>-${flt(c.qty)} ${frappe.utils.escape_html(c.uom || "")}</td>
+</tr>`).join("")}`;
+
+		const d = new frappe.ui.Dialog({
+			title: `Transformación ${doc.name}${is_cancelled ? " (Anulado)" : ""}`,
+			fields: [
+				{
+					fieldtype: "HTML",
+					fieldname: "detail",
+					options: `
+<div style="font-size:12.5px;color:#6c757d;margin-bottom:10px;">${frappe.utils.escape_html(doc.posting_date || "")}${doc.remarks ? " · " + frappe.utils.escape_html(doc.remarks) : ""}</div>
+<table class="inv-table" style="width:100%;"><thead><tr><th>Producto</th><th style="width:90px;">Tipo</th><th style="width:130px;">Cantidad</th></tr></thead><tbody>${rows_html}</tbody></table>
+<style>${INV_STYLES}</style>`,
+				},
+			],
+			primary_action_label: is_cancelled ? "Cerrar" : "Anular",
+			primary_action: () => {
+				if (is_cancelled) { d.hide(); return; }
+				frappe.confirm(`¿Anular la transformación <strong>${doc.name}</strong>? Esta acción no se puede deshacer.`, () => {
+					frappe.call({
+						method: "facex_multi.api.stock.cancel_stock_entry",
+						args: { name: doc.name },
+						freeze: true,
+						callback: (r) => {
+							if (!r.message) return;
+							d.hide();
+							frappe.show_alert({ message: "Transformación anulada.", indicator: "green" });
+							this._load_transformacion_list();
+						},
+					});
+				});
+			},
+		});
+		d.show();
+	}
 }
+
+// Modo Enfoque — mismo bloque genérico ya usado por FacEx y FacEx Screen
+// (oculta navbar/sidebar/footer de Frappe Desk y expande el contenido a
+// ancho completo). Cada página carga su propia copia porque cada una tiene
+// su <style> propio, pero la clase de body (facex-fullscreen-mode) es la
+// misma en las tres, así que basta con que UNA la agregue/quite.
+const INV_TOPBAR_STYLES = `
+body.facex-fullscreen-mode .navbar,
+body.facex-fullscreen-mode .page-head,
+body.facex-fullscreen-mode .layout-side-section,
+body.facex-fullscreen-mode .standard-sidebar-wrapper,
+body.facex-fullscreen-mode .standard-sidebar,
+body.facex-fullscreen-mode .desk-sidebar,
+body.facex-fullscreen-mode .sidebar-left,
+body.facex-fullscreen-mode .left-sidebar,
+body.facex-fullscreen-mode .sidebar,
+body.facex-fullscreen-mode .page-sidebar,
+body.facex-fullscreen-mode .body-sidebar-container,
+body.facex-fullscreen-mode .body-sidebar,
+body.facex-fullscreen-mode .footer {
+  display: none !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+body.facex-fullscreen-mode .layout-main-section,
+body.facex-fullscreen-mode .page-content,
+body.facex-fullscreen-mode .page-container,
+body.facex-fullscreen-mode .layout-main,
+body.facex-fullscreen-mode .page-body,
+body.facex-fullscreen-mode .workspace-layout,
+body.facex-fullscreen-mode .layout-container,
+body.facex-fullscreen-mode #space-layout,
+body.facex-fullscreen-mode .main-section {
+  width: 100% !important;
+  max-width: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  display: block !important;
+}
+
+.inv-topbar { display:flex;align-items:center;justify-content:space-between;background:#fff;border-bottom:1px solid #d1d8dd;padding:10px 20px; }
+.inv-topbar-left, .inv-topbar-right { display:flex;align-items:center;gap:14px; }
+.inv-topbar-logo { display:flex;align-items:center;gap:8px;font-weight:800;font-size:17px;color:#153375; }
+.inv-topbar-sub { font-weight:600;font-size:13px;color:#6c757d; }
+.inv-topbar-link { background:none;border:none;padding:6px 10px;border-radius:4px;font-size:13px;font-weight:500;color:#495057;cursor:pointer; }
+.inv-topbar-link:hover { background:#f1f5f9;color:#153375; }
+
+.inv-user-dropdown { position:relative;display:flex;align-items:center; }
+.inv-user-btn { padding:6px 10px;border-radius:20px;background:#f1f5f9;border:1px solid #cbd5e1;display:flex;align-items:center;gap:6px;cursor:pointer; }
+.inv-user-btn:hover { background:#e2e8f0; }
+.inv-user-menu { display:none;position:absolute;top:120%;right:0;background:#fff;border:1px solid #d1d8dd;box-shadow:0 10px 15px -3px rgba(0,0,0,.1);border-radius:10px;padding:14px;min-width:220px;max-width:90vw;max-height:calc(100vh - 80px);overflow-y:auto;z-index:1001; }
+.inv-user-menu-label { font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#6c757d;margin-bottom:4px; }
+.inv-user-fullname { font-size:14px;font-weight:700;color:#0f172a;line-height:1.2; }
+.inv-user-email { font-size:12px;color:#6c757d;margin-bottom:14px;word-break:break-all; }
+.inv-company-select { width:100%;margin-bottom:8px; }
+.inv-user-menu-btn { width:100%;margin-bottom:8px; }
+.inv-user-menu-btn:last-child { margin-bottom:0; }
+`;
 
 const INV_STYLES = `
 .inv-filter-panel { background:#fff;border:1px solid #d1d8dd;border-radius:6px;margin-bottom:16px;overflow:hidden; }

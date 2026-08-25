@@ -28,6 +28,29 @@ def _check_report_access(company: str, perm_field: str) -> str:
     return company
 
 
+def _warehouse_condition(company: str, warehouse: str, alias: str = "sle"):
+    """
+    Retorna (condicion_sql_o_None, params_dict) acotando el reporte a las
+    bodegas habilitadas del usuario (FacEx Settings > bodegas_habilitadas).
+    - Bodega explícita fuera de lo permitido -> PermissionError.
+    - Sin bodega explícita y hay restricción -> condición IN sobre la lista
+      permitida (no se puede dejar "todas" cuando el usuario está acotado).
+    - Sin restricción configurada -> sin condición (comportamiento actual).
+    """
+    from facex_multi.api.permissions import get_facex_allowed_warehouses
+    allowed = get_facex_allowed_warehouses(company)
+
+    if warehouse:
+        if allowed is not None and warehouse not in allowed:
+            frappe.throw(f"No tiene permiso para ver la bodega '{warehouse}' en este informe.", frappe.PermissionError)
+        return f"{alias}.warehouse = %(warehouse)s", {"warehouse": warehouse}
+
+    if allowed is not None:
+        return f"{alias}.warehouse IN %(allowed_warehouses)s", {"allowed_warehouses": tuple(allowed) or ("",)}
+
+    return None, {}
+
+
 class _NoWarehousesForEstablecimiento(Exception):
     """Señal interna: la sucursal filtrada no tiene almacenes asignados."""
 
@@ -93,9 +116,10 @@ def get_kardex(
     elif movement_type == "out":
         conditions.append(f"sle.actual_qty < 0 AND NOT {is_transfer_sql}")
 
-    if warehouse:
-        conditions.append("sle.warehouse = %(warehouse)s")
-        params["warehouse"] = warehouse
+    wh_cond, wh_params = _warehouse_condition(company, warehouse, "sle")
+    if wh_cond:
+        conditions.append(wh_cond)
+        params.update(wh_params)
 
     if item_code:
         conditions.append("sle.item_code = %(item_code)s")
@@ -161,9 +185,10 @@ def get_stock_status(company: str = None, warehouse: str = None, item_code: str 
 
     conditions = ["w.company = %(company)s", "b.actual_qty != 0"]
     params = {"company": company}
-    if warehouse:
-        conditions.append("b.warehouse = %(warehouse)s")
-        params["warehouse"] = warehouse
+    wh_cond, wh_params = _warehouse_condition(company, warehouse, "b")
+    if wh_cond:
+        conditions.append(wh_cond)
+        params.update(wh_params)
     if item_code:
         conditions.append("b.item_code = %(item_code)s")
         params["item_code"] = item_code
@@ -204,9 +229,10 @@ def get_stock_aging(company: str = None, warehouse: str = None, item_code: str =
 
     conditions = ["w.company = %(company)s", "b.actual_qty > 0"]
     params = {"company": company}
-    if warehouse:
-        conditions.append("b.warehouse = %(warehouse)s")
-        params["warehouse"] = warehouse
+    wh_cond, wh_params = _warehouse_condition(company, warehouse, "b")
+    if wh_cond:
+        conditions.append(wh_cond)
+        params.update(wh_params)
     if item_code:
         conditions.append("b.item_code = %(item_code)s")
         params["item_code"] = item_code
@@ -274,9 +300,10 @@ def get_non_moving_items(company: str = None, warehouse: str = None, days: int =
 
     conditions = ["w.company = %(company)s", "b.actual_qty > 0"]
     params = {"company": company, "cutoff": cutoff}
-    if warehouse:
-        conditions.append("b.warehouse = %(warehouse)s")
-        params["warehouse"] = warehouse
+    wh_cond, wh_params = _warehouse_condition(company, warehouse, "b")
+    if wh_cond:
+        conditions.append(wh_cond)
+        params.update(wh_params)
     if item_code:
         conditions.append("b.item_code = %(item_code)s")
         params["item_code"] = item_code
@@ -329,9 +356,10 @@ def get_serial_traceability(company: str = None, item_code: str = None, serial_n
     if serial_no:
         conditions.append("s.name LIKE %(serial_no)s")
         params["serial_no"] = f"%{serial_no}%"
-    if warehouse:
-        conditions.append("s.warehouse = %(warehouse)s")
-        params["warehouse"] = warehouse
+    wh_cond, wh_params = _warehouse_condition(company, warehouse, "s")
+    if wh_cond:
+        conditions.append(wh_cond)
+        params.update(wh_params)
     try:
         est_cond, est_val = _establecimiento_condition(company, establecimiento, "s")
     except _NoWarehousesForEstablecimiento:
@@ -392,9 +420,10 @@ def get_batch_traceability(company: str = None, item_code: str = None, batch_no:
     if batch_no:
         conditions.append("sle.batch_no LIKE %(batch_no)s")
         params["batch_no"] = f"%{batch_no}%"
-    if warehouse:
-        conditions.append("sle.warehouse = %(warehouse)s")
-        params["warehouse"] = warehouse
+    wh_cond, wh_params = _warehouse_condition(company, warehouse, "sle")
+    if wh_cond:
+        conditions.append(wh_cond)
+        params.update(wh_params)
     try:
         est_cond, est_val = _establecimiento_condition(company, establecimiento, "sle")
     except _NoWarehousesForEstablecimiento:

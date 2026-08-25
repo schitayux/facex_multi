@@ -11,7 +11,7 @@ import frappe
 from frappe.utils import today, cint, flt, get_first_day, get_last_day
 
 from facex_multi.api.invoice import get_effective_company, get_user_companies, get_warehouses
-from facex_multi.api.permissions import get_facex_inventory_permissions
+from facex_multi.api.permissions import get_facex_inventory_permissions, get_facex_permissions_for_company
 from facex_multi.api.si_carga import _get_establishments
 
 
@@ -57,6 +57,15 @@ _MOVEMENT_CONFIG = {
         "purpose": "Material Transfer",
         "naming_series": "TRA-.ABBR.-.####",
         "perm_field": "puede_hacer_transferencias",
+    },
+    # Transformación: no pasa por _create_stock_movement (mezcla filas de salida de
+    # componentes + una fila de entrada del padre con is_finished_item), pero comparte
+    # esta tabla para el listado/detalle de movimientos (ver _list_stock_movements).
+    "transform": {
+        "purpose": "Manufacture",
+        "naming_series": "TRF-.ABBR.-.####",
+        "perm_field": "puede_hacer_transformaciones",
+        "extra_filter": "AND se.bfel_transformacion = 1",
     },
 }
 
@@ -195,6 +204,13 @@ def _build_stock_entry_items(
     El bloqueo de stock negativo (out/transfer) lo hace ERPNext de forma nativa
     (Stock Settings > Allow Negative Stock) — no se reimplementa aquí.
     """
+    from facex_multi.api.permissions import get_facex_allowed_warehouses
+    allowed_warehouses = get_facex_allowed_warehouses(company)
+
+    def _check_warehouse_allowed(i, item_code, warehouse):
+        if warehouse and allowed_warehouses is not None and warehouse not in allowed_warehouses:
+            frappe.throw(f"Fila {i} ({item_code}): no tiene permiso para utilizar la bodega '{warehouse}'.")
+
     built = []
     for i, row in enumerate(rows, start=1):
         item_code = (row.get("item_code") or "").strip()
@@ -235,12 +251,14 @@ def _build_stock_entry_items(
             s_warehouse = row.get("source_warehouse") or default_source
             if not s_warehouse:
                 frappe.throw(f"Fila {i} ({item_code}): falta el almacén origen.")
+            _check_warehouse_allowed(i, item_code, s_warehouse)
             entry_row["s_warehouse"] = s_warehouse
 
         if mode in ("in", "transfer"):
             t_warehouse = row.get("target_warehouse") or default_target
             if not t_warehouse:
                 frappe.throw(f"Fila {i} ({item_code}): falta el almacén destino.")
+            _check_warehouse_allowed(i, item_code, t_warehouse)
             entry_row["t_warehouse"] = t_warehouse
 
         if mode == "transfer" and entry_row.get("s_warehouse") == entry_row.get("t_warehouse"):
@@ -409,6 +427,230 @@ def get_available_serials(item_code: str, warehouse: str):
     )
 
 
+# ---------------------------------------------------------------------------
+# Transformación — Listas de Materiales en modo 'Padre'
+# ---------------------------------------------------------------------------
+# Convierte N unidades de componentes en N unidades del producto padre: una
+# Salida de los componentes + una Entrada del padre, en un solo Stock Entry
+# (purpose=Manufacture, sin BOM/Work Order — ERPNext lo permite siempre que
+# fg_completed_qty coincida con la(s) fila(s) is_finished_item=1).
+
+@frappe.whitelist()
+def search_items_padre_transformables(txt: str = None, company: str = None):
+    """Autocomplete de productos padre en modo 'Padre' (Lista de Materiales con
+    stock propio) — los únicos que se pueden transformar."""
+    company = get_effective_company(company)
+    q = f"%{(txt or '').strip()}%"
+    return frappe.db.sql(
+        """
+        SELECT name, item_code, item_name, stock_uom
+        FROM `tabItem`
+        WHERE disabled = 0
+          AND bfel_es_lista_materiales = 1
+          AND bfel_modo_stock_lista = 'Padre'
+          AND (
+              bfel_company = %(company)s
+              OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
+          )
+          AND (%(txt)s = '' OR name LIKE %(q)s OR item_name LIKE %(q)s)
+        ORDER BY item_name ASC
+        LIMIT 50
+        """,
+        {"q": q, "company": company, "txt": (txt or "").strip()},
+        as_dict=True,
+    )
+
+
+@frappe.whitelist()
+def get_lista_materiales_for_transform(item_code: str, company: str = None):
+    """Componentes de un producto padre (modo 'Padre') listos para la pantalla de
+    Transformación: cantidad por unidad, flags de lote/serie y saldo actual por
+    almacén (para que la UI marque disponibilidad antes de guardar)."""
+    company = get_effective_company(company)
+    item = frappe.db.get_value(
+        "Item", item_code,
+        ["bfel_es_lista_materiales", "bfel_modo_stock_lista", "item_name"],
+        as_dict=True,
+    )
+    if not item or not item.bfel_es_lista_materiales or item.bfel_modo_stock_lista != "Padre":
+        frappe.throw(f"'{item_code}' no es una Lista de Materiales en modo 'Padre'.")
+
+    _check_item_company(item_code, company)
+
+    rows = frappe.get_all(
+        "FacEx Lista Materiales Item",
+        filters={"parent": item_code, "parenttype": "Item"},
+        fields=["item_code", "qty"],
+        order_by="idx asc",
+    )
+    for r in rows:
+        meta = frappe.db.get_value(
+            "Item", r.item_code,
+            ["item_name", "stock_uom", "has_batch_no", "has_serial_no"],
+            as_dict=True,
+        ) or {}
+        r.update(meta)
+        r["stock"] = get_item_stock_summary(r.item_code, company)
+
+    return {"item_name": item.item_name, "items": rows}
+
+
+def _build_transform_items(
+    item_padre: str, cantidad: float, componentes: list, target_warehouse: str, company: str
+) -> list:
+    """
+    Arma las filas del Stock Entry de Transformación: una fila de salida por
+    componente (cantidad recalculada server-side desde la Lista de Materiales
+    vigente, nunca confiada del cliente) + una fila de entrada del padre con
+    is_finished_item=1. No reutiliza _build_stock_entry_items porque ese helper
+    asume un solo sentido (s u t) uniforme para todas las filas.
+    """
+    cantidad = flt(cantidad)
+    if cantidad <= 0:
+        frappe.throw("La cantidad a transformar debe ser mayor a cero.")
+    if not target_warehouse:
+        frappe.throw("Falta el almacén destino del producto padre.")
+
+    item = frappe.db.get_value(
+        "Item", item_padre,
+        ["bfel_es_lista_materiales", "bfel_modo_stock_lista", "disabled", "stock_uom", "has_batch_no", "has_serial_no"],
+        as_dict=True,
+    )
+    if not item or not item.bfel_es_lista_materiales or item.bfel_modo_stock_lista != "Padre":
+        frappe.throw(f"'{item_padre}' no es una Lista de Materiales en modo 'Padre'.")
+    if item.disabled:
+        frappe.throw(f"El producto '{item_padre}' está deshabilitado.")
+    if item.has_batch_no or item.has_serial_no:
+        frappe.throw(
+            f"'{item_padre}' maneja lote o número de serie propios; la Transformación "
+            "todavía no soporta esa combinación para el producto padre."
+        )
+
+    _check_item_company(item_padre, company)
+
+    from facex_multi.api.permissions import get_facex_allowed_warehouses
+    allowed_warehouses = get_facex_allowed_warehouses(company)
+    if allowed_warehouses is not None and target_warehouse not in allowed_warehouses:
+        frappe.throw(f"No tiene permiso para utilizar la bodega '{target_warehouse}'.")
+
+    bom_rows = frappe.get_all(
+        "FacEx Lista Materiales Item",
+        filters={"parent": item_padre, "parenttype": "Item"},
+        fields=["item_code", "qty"],
+        order_by="idx asc",
+    )
+    if not bom_rows:
+        frappe.throw(f"'{item_padre}' no tiene componentes configurados.")
+
+    componentes_by_code = {(c.get("item_code") or ""): c for c in (componentes or [])}
+
+    built = []
+    for bom_row in bom_rows:
+        comp_input = componentes_by_code.get(bom_row.item_code)
+        if not comp_input or not comp_input.get("source_warehouse"):
+            frappe.throw(f"Falta el almacén origen del componente '{bom_row.item_code}'.")
+        if allowed_warehouses is not None and comp_input["source_warehouse"] not in allowed_warehouses:
+            frappe.throw(f"No tiene permiso para utilizar la bodega '{comp_input['source_warehouse']}'.")
+
+        _check_item_company(bom_row.item_code, company)
+
+        qty = flt(bom_row.qty) * cantidad
+        if qty <= 0:
+            frappe.throw(f"Componente '{bom_row.item_code}': cantidad calculada inválida.")
+
+        item_meta = frappe.db.get_value(
+            "Item", bom_row.item_code, ["stock_uom", "has_batch_no", "has_serial_no"], as_dict=True
+        )
+
+        entry_row = {
+            "item_code": bom_row.item_code,
+            "qty": qty,
+            "uom": item_meta.stock_uom,
+            "conversion_factor": 1,
+            "s_warehouse": comp_input["source_warehouse"],
+            "is_finished_item": 0,
+        }
+
+        if item_meta.has_batch_no:
+            entry_row["use_serial_batch_fields"] = 1
+            entry_row["batch_no"] = _resolve_batch(bom_row.item_code, comp_input.get("batch_no"), "out")
+
+        if item_meta.has_serial_no:
+            raw = (comp_input.get("serial_no") or "").strip()
+            if not raw:
+                frappe.throw(f"Componente '{bom_row.item_code}': requiere número(s) de serie.")
+            serials = [s.strip() for s in raw.replace(",", "\n").splitlines() if s.strip()]
+            if len(serials) != cint(qty):
+                frappe.throw(
+                    f"Componente '{bom_row.item_code}': la cantidad ({cint(qty)}) no coincide "
+                    f"con la cantidad de números de serie ingresados ({len(serials)})."
+                )
+            entry_row["use_serial_batch_fields"] = 1
+            entry_row["serial_no"] = "\n".join(serials)
+
+        built.append(entry_row)
+
+    built.append({
+        "item_code": item_padre,
+        "qty": cantidad,
+        "uom": item.stock_uom,
+        "conversion_factor": 1,
+        "t_warehouse": target_warehouse,
+        "is_finished_item": 1,
+    })
+
+    return built
+
+
+@frappe.whitelist()
+def create_transformacion(payload: str, client_token: str = None):
+    """Crea y somete la Transformación: un Stock Entry (purpose=Manufacture) que
+    descarga los componentes de una Lista de Materiales (modo Padre) y carga el
+    producto padre, en un solo movimiento."""
+    replay = _idempotent_replay(client_token)
+    if replay:
+        return {"name": replay, "replay": True}
+
+    data = frappe.parse_json(payload)
+
+    company = get_effective_company(data.get("company"))
+    if company not in (get_user_companies() or []):
+        frappe.throw("No tiene permiso para operar sobre esta compañía.", frappe.PermissionError)
+
+    perms = get_facex_inventory_permissions(company)
+    if not perms.get("puede_hacer_transformaciones"):
+        frappe.throw("No tiene permiso para registrar transformaciones de inventario.", frappe.PermissionError)
+
+    item_padre = (data.get("item_padre") or "").strip()
+    cantidad = flt(data.get("cantidad"))
+    target_warehouse = data.get("target_warehouse")
+
+    items = _build_transform_items(
+        item_padre, cantidad, data.get("componentes") or [], target_warehouse, company
+    )
+
+    doc = frappe.get_doc({
+        "doctype": "Stock Entry",
+        "naming_series": "TRF-.ABBR.-.####",
+        "stock_entry_type": "Manufacture",
+        "purpose": "Manufacture",
+        "company": company,
+        "posting_date": data.get("posting_date") or today(),
+        "remarks": data.get("remarks"),
+        "fg_completed_qty": cantidad,
+        "bfel_transformacion": 1,
+        "items": items,
+    })
+    doc.flags.ignore_permissions = False
+    doc.insert()
+    doc.submit()
+    frappe.db.commit()
+
+    _remember_token(client_token, doc.name)
+
+    return {"name": doc.name}
+
+
 @frappe.whitelist()
 def cancel_stock_entry(name: str):
     """Anula (cancel nativo de ERPNext) un movimiento de inventario ya sometido."""
@@ -442,6 +684,13 @@ def get_inventory_defaults(company: str = None):
         company = allowed_companies[0]
 
     permissions = get_facex_inventory_permissions(company)
+    # "Listas de Materiales" es un permiso general (Mantenimiento, default ON —
+    # crea_items/modifica_items), no deny-by-default como el resto de Inventario;
+    # se mezcla aquí para que la tarjeta en Inventario use la misma fuente de verdad
+    # que el tab de Mantenimiento en FacEx Clásico.
+    permissions["gestiona_listas_materiales"] = get_facex_permissions_for_company(company).get(
+        "gestiona_listas_materiales", 0
+    )
     warehouses = get_warehouses(company) if permissions.get("puede_ver_inventario") else []
     establishments = _get_establishments(company) if permissions.get("puede_ver_inventario") else []
     warehouses_meta = get_warehouses_meta(company) if permissions.get("puede_ver_inventario") else []
@@ -471,7 +720,7 @@ def _list_stock_movements(mode: str, company: str = None, from_date: str = None,
     to_date = to_date or get_last_day(today())
 
     rows = frappe.db.sql(
-        """
+        f"""
         SELECT
             se.name, se.posting_date, se.from_warehouse, se.to_warehouse, se.docstatus,
             se.remarks, se.owner, se.creation,
@@ -480,6 +729,7 @@ def _list_stock_movements(mode: str, company: str = None, from_date: str = None,
         FROM `tabStock Entry` se
         WHERE se.company = %(company)s
           AND se.purpose = %(purpose)s
+          {cfg.get("extra_filter", "")}
           AND se.posting_date BETWEEN %(from_date)s AND %(to_date)s
         ORDER BY se.posting_date DESC, se.creation DESC
         LIMIT 500
@@ -507,6 +757,11 @@ def list_stock_entries_transfer(company: str = None, from_date: str = None, to_d
 
 
 @frappe.whitelist()
+def list_stock_entries_transform(company: str = None, from_date: str = None, to_date: str = None):
+    return _list_stock_movements("transform", company, from_date, to_date)
+
+
+@frappe.whitelist()
 def get_stock_entry_detail(name: str):
     """Detalle de un movimiento ya creado, para reabrirlo desde la pestaña de Movimientos."""
     doc = frappe.get_doc("Stock Entry", name)
@@ -518,7 +773,10 @@ def get_stock_entry_detail(name: str):
         "Material Issue": "out",
         "Material Transfer": "transfer",
     }
-    mode = mode_by_purpose.get(doc.purpose, "other")
+    if doc.purpose == "Manufacture" and doc.get("bfel_transformacion"):
+        mode = "transform"
+    else:
+        mode = mode_by_purpose.get(doc.purpose, "other")
 
     return {
         "name": doc.name,
@@ -538,6 +796,9 @@ def get_stock_entry_detail(name: str):
                 "serial_no": d.serial_no,
                 "rate": d.basic_rate,
                 "expense_account": d.expense_account,
+                "s_warehouse": d.s_warehouse,
+                "t_warehouse": d.t_warehouse,
+                "is_finished_item": d.is_finished_item,
             }
             for d in doc.items
         ],

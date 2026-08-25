@@ -15,6 +15,7 @@ _ALL_PERM_FIELDS = [
     "crea_clientes", "modifica_clientes",
     "crea_proveedores", "modifica_proveedores",
     "crea_items", "modifica_items", "actualiza_precios", "puede_editar_precio",
+    "gestiona_listas_materiales",
     "reporte_ventas_fecha", "reporte_ventas_producto",
     "reporte_facturas_canceladas", "reporte_estados_cuenta",
     "reporte_antiguedad_saldos", "reporte_cotizaciones",
@@ -94,6 +95,49 @@ def get_facex_default_warehouse(company: str) -> str:
     ) or ""
 
 
+def get_facex_allowed_warehouses(company: str):
+    """
+    Lista de bodegas habilitadas para frappe.session.user + company (grid
+    bodegas_habilitadas de FacEx Settings). Retorna None cuando NO hay
+    restricción — System Manager, sin fila de FacEx Settings, o fila con el
+    grid vacío — en cuyo caso el caller debe tratarlo como "todas las
+    bodegas de la compañía" (retrocompatible, igual criterio que el resto
+    de permisos de este archivo). Retorna una lista (posiblemente vacía solo
+    si la compañía no aplica) cuando sí hay restricción configurada.
+    """
+    if "System Manager" in frappe.get_roles():
+        return None
+    if not company:
+        return None
+
+    settings_name = frappe.db.get_value(
+        "FacEx Settings", {"user": frappe.session.user, "bfel_company": company}, "name"
+    )
+    if not settings_name:
+        return None
+
+    warehouses = frappe.get_all(
+        "FacEx Settings Bodega",
+        filters={"parent": settings_name, "parenttype": "FacEx Settings"},
+        pluck="warehouse",
+    )
+    return warehouses or None
+
+
+def get_facex_default_sales_partner(company: str) -> str:
+    """
+    Socio de Venta por defecto del usuario en FacEx/FacEx Screen (campo
+    socio_venta_por_defecto). Vacío si no hay registro/valor configurado.
+    """
+    if not company:
+        return ""
+    return frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "socio_venta_por_defecto",
+    ) or ""
+
+
 def get_facex_company_config(company: str) -> dict:
     """
     Retorna la configuración DIGECAM/Inventario a nivel de compañía (registro con user='').
@@ -135,6 +179,7 @@ _INVENTORY_PERM_FIELDS = [
     "puede_hacer_salidas",
     "puede_hacer_transferencias",
     "puede_cancelar_movimientos",
+    "puede_hacer_transformaciones",
     "reporte_inv_kardex",
     "reporte_inv_existencias",
     "reporte_inv_trazabilidad",
@@ -312,6 +357,7 @@ STOCK_ENTRY_NAMING_SERIES = [
     "ING-.ABBR.-.####",  # Entradas
     "SAL-.ABBR.-.####",  # Salidas (fase futura)
     "TRA-.ABBR.-.####",  # Transferencias (fase futura)
+    "TRF-.ABBR.-.####",  # Transformaciones (Listas de Materiales, modo Padre)
 ]
 
 

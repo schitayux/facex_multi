@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import frappe
 import json
+from frappe.utils import flt, cint
 from facex_multi.api.invoice import has_efast_permission, get_effective_company
+from facex_multi.api.permissions import get_facex_permissions_for_company
 
 
 def _get_selling_price_list():
@@ -122,7 +124,8 @@ def get_item(name: str, price_list: str = None, company: str = None):
         "has_serial_no":  int(doc.has_serial_no or 0),
         "has_batch_no":   int(doc.has_batch_no or 0),
         "is_stock_item":  int(doc.is_stock_item or 0),
-        "standard_price": float(price)
+        "standard_price": float(price),
+        "palabras_busqueda": doc.get("custom_facex_palabras_busqueda") or "",
     }
 
 
@@ -199,6 +202,8 @@ def create_or_update_item(data_json: str, company: str = None):
     doc.description = doc.item_name
     doc.stock_uom = data.get("stock_uom") or doc.stock_uom or "Nos"
     doc.item_group = data.get("item_group") or doc.item_group
+    if doc.meta.has_field("custom_facex_palabras_busqueda") and "palabras_busqueda" in data:
+        doc.custom_facex_palabras_busqueda = data.get("palabras_busqueda") or ""
 
     gestionado_por = (data.get("gestionado_por") or "General").strip()
     if gestionado_por == "Serie":
@@ -371,6 +376,8 @@ def get_pos_items(company: str = None, item_group: str = None, txt: str = None, 
             i.has_serial_no,
             i.is_stock_item,
             IFNULL(i.custom_tiene_adenda, 0) AS custom_tiene_adenda,
+            IFNULL(i.bfel_es_lista_materiales, 0) AS is_lista_materiales,
+            IFNULL(i.bfel_modo_stock_lista, '') AS modo_stock_lista,
             ip.price_list_rate AS rate,
             IFNULL(bn.stock_qty, 0) AS stock_qty,
             IFNULL(bc.barcodes, '') AS barcodes
@@ -406,6 +413,7 @@ def get_pos_items(company: str = None, item_group: str = None, txt: str = None, 
         r["is_stock_item"] = int(r.get("is_stock_item") or 0)
         r["custom_tiene_adenda"] = int(r.get("custom_tiene_adenda") or 0)
         r["stock_qty"] = float(r.get("stock_qty") or 0)
+        r["is_lista_materiales"] = int(r.get("is_lista_materiales") or 0)
 
     return rows
 
@@ -565,3 +573,256 @@ def sync_description_from_item_name(doc, method=None):
     """Hook Item.before_save: mantiene description = item_name para ítems FEL."""
     if getattr(doc, "bfel_company", None):
         doc.description = doc.item_name or doc.description
+
+
+# ---------------------------------------------------------------------------
+# Listas de Materiales para venta (paquetes/kits) — módulo de Inventario
+# ---------------------------------------------------------------------------
+# Un ítem "padre" puede agrupar varios productos componentes en dos modos:
+#   - Padre: el padre lleva stock propio (se carga vía Transformación, ver api/stock.py).
+#   - Hijos: el padre es solo agrupador (is_stock_item=0); el stock vive en los
+#     componentes. Para este modo NO se reinventa lógica de descuento de stock:
+#     se sincroniza un Product Bundle nativo de ERPNext, cuyo mecanismo estándar
+#     (packed_items en Sales Invoice) ya hace exactamente esto al vender.
+
+def validate_lista_materiales(doc, method=None):
+    """Hook Item.validate: valida la configuración de Lista de Materiales.
+    El sync del Product Bundle (modo Hijos) se hace aparte en on_update, después
+    de que este Item ya quedó escrito en BD — Product Bundle.validate() valida
+    is_stock_item leyendo directo de la BD, no del doc en memoria."""
+    if not doc.get("bfel_es_lista_materiales"):
+        return
+
+    modo = doc.get("bfel_modo_stock_lista")
+    if modo not in ("Padre", "Hijos"):
+        frappe.throw("Debe indicar el modo de manejo de stock (Padre o Hijos) de la Lista de Materiales.")
+
+    rows = doc.get("bfel_lista_materiales_items") or []
+    if not rows:
+        frappe.throw("Debe agregar al menos un componente a la Lista de Materiales.")
+
+    seen = set()
+    for i, row in enumerate(rows, start=1):
+        if not row.item_code:
+            frappe.throw(f"Fila {i}: falta el producto componente.")
+        if row.item_code == doc.name:
+            frappe.throw(f"Fila {i}: un producto no puede ser componente de sí mismo.")
+        if row.item_code in seen:
+            frappe.throw(f"Fila {i}: el producto '{row.item_code}' está repetido.")
+        seen.add(row.item_code)
+        if flt(row.qty) <= 0:
+            frappe.throw(f"Fila {i} ({row.item_code}): la cantidad debe ser mayor a cero.")
+        if frappe.db.get_value("Item", row.item_code, "bfel_es_lista_materiales"):
+            frappe.throw(
+                f"Fila {i}: '{row.item_code}' es a su vez una Lista de Materiales; "
+                "no se permiten kits anidados."
+            )
+
+    if modo == "Padre":
+        _apply_stock_mode_flags(doc, {"is_stock_item": 1})
+    else:  # Hijos
+        _apply_stock_mode_flags(doc, {"is_stock_item": 0, "has_serial_no": 0, "has_batch_no": 0})
+
+
+_STOCK_MODE_FIELD_LABELS = {
+    "is_stock_item": "Es un Ítem de Inventario",
+    "has_serial_no": "Maneja Número de Serie",
+    "has_batch_no": "Maneja Número de Lote",
+}
+
+
+def _apply_stock_mode_flags(doc, desired: dict):
+    """
+    Aplica los flags de manejo de stock (is_stock_item / has_serial_no /
+    has_batch_no) que exige el modo elegido de la Lista de Materiales —
+    pero antes verifica que el ítem no tenga historial de transacciones
+    incompatible con ese cambio.
+
+    Por qué no basta con dejar que ERPNext lo bloquee solo: Item.validate()
+    (que incluye su propio chequeo Item.cant_change()) corre ANTES que los
+    hooks de doc_events como este — para cuando este hook se ejecuta, el
+    valor viejo ya pasó ese chequeo sin ver el cambio que estamos por hacer,
+    así que ERPNext nunca se entera y el guardado pasaría igual dejando el
+    ítem en un estado inconsistente con su historial real. Por eso replicamos
+    aquí, ANTES de tocar los campos, el mismo chequeo que usa
+    Item.cant_change() (Item._get_linked_submitted_documents), reutilizando
+    ese método nativo en vez de reinventar qué documentos cuentan como
+    "historial".
+    """
+    if doc.is_new():
+        doc.update(desired)
+        return
+
+    current = frappe.db.get_value("Item", doc.name, list(desired.keys()), as_dict=True) or {}
+    changed_fields = [f for f in desired if cint(current.get(f)) != cint(desired[f])]
+
+    if changed_fields:
+        linked = doc._get_linked_submitted_documents(changed_fields)
+        # El propio Product Bundle que este módulo sincroniza para el modo Hijos
+        # (ver sync_lista_materiales_product_bundle) no cuenta como "historial":
+        # es un espejo que este mismo código crea/deshabilita automáticamente,
+        # no una transacción real — si lo dejamos, nunca se podría alternar de
+        # modo un ítem que alguna vez estuvo en Hijos, aunque no tenga ventas
+        # ni movimientos de inventario reales.
+        if linked and linked.get("doctype") == "Product Bundle" and linked.get("docname") == doc.name:
+            linked = None
+        if linked:
+            labels = ", ".join(_STOCK_MODE_FIELD_LABELS.get(f, f) for f in changed_fields)
+            doc_ref = (
+                f"{linked.get('doctype')} {linked.get('docname')}"
+                if linked.get("docname")
+                else linked.get("doctype")
+            )
+            frappe.throw(
+                f"No se puede cambiar el modo de esta Lista de Materiales: el producto "
+                f"'{doc.name}' ya tiene un documento registrado ({doc_ref}) que depende de "
+                f"su configuración actual ({labels}). Cree un producto nuevo para usar este "
+                f"modo en su lugar."
+            )
+
+    doc.update(desired)
+
+
+def sync_lista_materiales_product_bundle(doc, method=None):
+    """Hook Item.on_update: mantiene sincronizado un Product Bundle nativo cuando la
+    Lista de Materiales está en modo 'Hijos', para que ERPNext descargue el stock de
+    los componentes automáticamente al vender (packed_items en Sales Invoice)."""
+    es_lista = bool(doc.get("bfel_es_lista_materiales"))
+    modo = doc.get("bfel_modo_stock_lista")
+
+    if not (es_lista and modo == "Hijos"):
+        if frappe.db.exists("Product Bundle", doc.name):
+            frappe.db.set_value("Product Bundle", doc.name, "disabled", 1)
+        return
+
+    rows = doc.get("bfel_lista_materiales_items") or []
+    if frappe.db.exists("Product Bundle", doc.name):
+        pb = frappe.get_doc("Product Bundle", doc.name)
+        pb.set("items", [])
+    else:
+        pb = frappe.new_doc("Product Bundle")
+        pb.new_item_code = doc.name
+
+    pb.description = doc.item_name or doc.name
+    pb.disabled = 0
+    for row in rows:
+        pb.append("items", {
+            "item_code": row.item_code,
+            "qty": row.qty,
+            "uom": row.uom or frappe.db.get_value("Item", row.item_code, "stock_uom"),
+        })
+    pb.flags.ignore_permissions = True
+    pb.save(ignore_permissions=True)
+
+
+@frappe.whitelist()
+def save_lista_materiales(item_code: str, modo_stock: str, items_json: str, company: str = None):
+    """Crea/actualiza la configuración de Lista de Materiales (kit de venta) de un ítem
+    existente. La validación de negocio y el sync del Product Bundle corren en los
+    hooks de Item (validate_lista_materiales / sync_lista_materiales_product_bundle)."""
+    company = get_effective_company(company)
+    perms = get_facex_permissions_for_company(company)
+    if not perms.get("gestiona_listas_materiales"):
+        frappe.throw("No tiene permiso para gestionar Listas de Materiales.", frappe.PermissionError)
+
+    if not item_code or not frappe.db.exists("Item", item_code):
+        frappe.throw("Debe indicar un producto padre existente.")
+
+    item_company = frappe.db.get_value("Item", item_code, "bfel_company")
+    if item_company and item_company != company:
+        frappe.throw(f"El producto '{item_code}' pertenece a otra compañía y no puede utilizarse aquí.")
+
+    if modo_stock not in ("Padre", "Hijos"):
+        frappe.throw("El modo de stock debe ser 'Padre' o 'Hijos'.")
+
+    rows = frappe.parse_json(items_json) or []
+
+    doc = frappe.get_doc("Item", item_code)
+    doc.bfel_es_lista_materiales = 1
+    doc.bfel_modo_stock_lista = modo_stock
+    doc.set("bfel_lista_materiales_items", [])
+    for row in rows:
+        doc.append("bfel_lista_materiales_items", {
+            "item_code": row.get("item_code"),
+            "qty": flt(row.get("qty")),
+        })
+    doc.save(ignore_permissions=False)
+    frappe.db.commit()
+
+    return {"item_code": doc.name}
+
+
+@frappe.whitelist()
+def disable_lista_materiales(item_code: str, company: str = None):
+    """Desmarca un ítem como Lista de Materiales (deja de ser kit; vuelve a ser un
+    producto normal). No borra el historial: el Product Bundle asociado, si existía,
+    queda deshabilitado (ver sync_lista_materiales_product_bundle)."""
+    company = get_effective_company(company)
+    perms = get_facex_permissions_for_company(company)
+    if not perms.get("gestiona_listas_materiales"):
+        frappe.throw("No tiene permiso para gestionar Listas de Materiales.", frappe.PermissionError)
+
+    if not item_code or not frappe.db.exists("Item", item_code):
+        frappe.throw("Producto no encontrado.")
+
+    doc = frappe.get_doc("Item", item_code)
+    doc.bfel_es_lista_materiales = 0
+    doc.bfel_modo_stock_lista = ""
+    doc.set("bfel_lista_materiales_items", [])
+    doc.save(ignore_permissions=False)
+    frappe.db.commit()
+
+    return {"item_code": doc.name}
+
+
+@frappe.whitelist()
+def list_listas_materiales(company: str = None):
+    """Lista los productos configurados como Lista de Materiales (kit de venta) de la
+    compañía activa, para la pantalla de Inventario."""
+    company = get_effective_company(company)
+    perms = get_facex_permissions_for_company(company)
+    if not perms.get("gestiona_listas_materiales"):
+        frappe.throw("No tiene permiso para ver Listas de Materiales.", frappe.PermissionError)
+
+    return frappe.db.sql(
+        """
+        SELECT name AS item_code, item_name, bfel_modo_stock_lista AS modo_stock, disabled
+        FROM `tabItem`
+        WHERE bfel_es_lista_materiales = 1
+          AND (
+              bfel_company = %(company)s
+              OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
+          )
+        ORDER BY item_name ASC
+        """,
+        {"company": company},
+        as_dict=True,
+    )
+
+
+@frappe.whitelist()
+def get_lista_materiales_detail(item_code: str):
+    """Detalle de componentes de una Lista de Materiales — usado tanto por la pantalla
+    de edición en Inventario como por el popup de solo lectura en FacEx Clásico (POS).
+    Sin gate de permiso de inventario a propósito: cualquiera que pueda ver el ítem en
+    el POS debe poder ver de qué se compone."""
+    if not item_code or not frappe.db.exists("Item", item_code):
+        frappe.throw("Producto no encontrado.")
+
+    doc = frappe.get_doc("Item", item_code)
+    if not doc.get("bfel_es_lista_materiales"):
+        return {"es_lista_materiales": 0, "modo_stock": "", "items": []}
+
+    return {
+        "es_lista_materiales": 1,
+        "modo_stock": doc.get("bfel_modo_stock_lista") or "",
+        "items": [
+            {
+                "item_code": row.item_code,
+                "item_name": row.item_name,
+                "qty": flt(row.qty),
+                "uom": row.uom,
+            }
+            for row in (doc.get("bfel_lista_materiales_items") or [])
+        ],
+    }

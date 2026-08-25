@@ -72,6 +72,35 @@ def check_permission():
         frappe.throw("No tiene permisos suficientes para acceder a este reporte.", frappe.PermissionError)
 
 
+def _resolve_warehouse_filter(company: str, warehouse: str):
+    """
+    Acota el filtro de bodega a las bodegas habilitadas del usuario (FacEx
+    Settings > bodegas_habilitadas). Retorna (mode, value):
+    - ("eq", warehouse): bodega explícita, ya validada contra lo permitido.
+    - ("in", tuple_de_bodegas): sin bodega explícita pero el usuario está
+      restringido — acotar a su lista.
+    - (None, None): sin filtro que aplicar (sin restricción, o compañía
+      vacía/"Todas" — las listas permitidas son por compañía y no combinan
+      entre varias, así que en ese caso se deja sin acotar).
+    """
+    company = (company or "").strip()
+    if not company:
+        return None, None
+
+    from facex_multi.api.permissions import get_facex_allowed_warehouses
+    allowed = get_facex_allowed_warehouses(company)
+
+    if warehouse:
+        if allowed is not None and warehouse not in allowed:
+            frappe.throw(f"No tiene permiso para ver la bodega '{warehouse}' en este informe.", frappe.PermissionError)
+        return "eq", warehouse
+
+    if allowed is not None:
+        return "in", (tuple(allowed) or ("",))
+
+    return None, None
+
+
 # ---------------------------------------------------------------------------
 # 1. Informe de Ventas por Fecha
 # ---------------------------------------------------------------------------
@@ -88,10 +117,14 @@ def get_sales_by_date(start_date: str, end_date: str, customer: str = None, ware
         conditions.append("customer = %(customer)s")
         values["customer"] = customer
         
-    if warehouse:
+    wh_mode, wh_val = _resolve_warehouse_filter(company, warehouse)
+    if wh_mode == "eq":
         conditions.append("name IN (SELECT parent FROM `tabSales Invoice Item` WHERE warehouse = %(warehouse)s)")
-        values["warehouse"] = warehouse
-        
+        values["warehouse"] = wh_val
+    elif wh_mode == "in":
+        conditions.append("name IN (SELECT parent FROM `tabSales Invoice Item` WHERE warehouse IN %(allowed_warehouses)s)")
+        values["allowed_warehouses"] = wh_val
+
     if establecimiento:
         conditions.append("bfel_establecimiento = %(establecimiento)s")
         values["establecimiento"] = establecimiento
@@ -146,10 +179,14 @@ def get_sales_by_product(start_date: str, end_date: str, item_code: str = None,
         conditions.append("p.customer = %(customer)s")
         values["customer"] = customer
         
-    if warehouse:
+    wh_mode, wh_val = _resolve_warehouse_filter(company, warehouse)
+    if wh_mode == "eq":
         conditions.append("i.warehouse = %(warehouse)s")
-        values["warehouse"] = warehouse
-        
+        values["warehouse"] = wh_val
+    elif wh_mode == "in":
+        conditions.append("i.warehouse IN %(allowed_warehouses)s")
+        values["allowed_warehouses"] = wh_val
+
     if establecimiento:
         conditions.append("p.bfel_establecimiento = %(establecimiento)s")
         values["establecimiento"] = establecimiento

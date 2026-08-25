@@ -14,8 +14,17 @@ frappe.pages["facex-screen"].on_page_load = function (wrapper) {
 		title: "FacEx Screen",
 		single_column: true,
 	});
+	// Modo Enfoque es el único modo de esta pantalla (ya no hay botón para
+	// alternarlo). Frappe Desk es un SPA — el <body> persiste entre rutas —
+	// así que hay que quitar la clase apenas el usuario navega a OTRA
+	// pantalla, o el resto de ERPNext se quedaría sin navbar/sidebar.
 	$("body").addClass("facex-fullscreen-mode");
-	frappe.require(["/assets/facex_multi/js/facex_transporte_module.js", "controls.bundle.js"], function () {
+	frappe.router.on("change", () => {
+		if (frappe.get_route()[0] !== "facex-screen") {
+			$("body").removeClass("facex-fullscreen-mode");
+		}
+	});
+	frappe.require(["/assets/facex_multi/js/facex_transporte_module.js", "/assets/facex_multi/js/ef_guide.js", "controls.bundle.js"], function () {
 		wrapper.efscreen = new EFastPOSScreen(page, wrapper);
 	});
 };
@@ -111,6 +120,7 @@ class EFastPOSScreen {
 				this.doc.payment_terms_template = d.default_payment_terms_template || "";
 				this.doc.posting_date = d.posting_date || this.doc.posting_date;
 				this.doc.due_date = d.due_date || this.doc.due_date;
+				this.doc.sales_partner = d.default_sales_partner || "";
 
 				this._load_walkin_customer();
 				this._load_warehouses();
@@ -326,6 +336,8 @@ class EFastPOSScreen {
 				<div class="efs-overlay" id="efs-confirm-view" style="display:none;"></div>
 				<div class="efs-overlay" id="efs-history-view" style="display:none;"></div>
 				<div class="efs-overlay" id="efs-transporte-view" style="display:none;"></div>
+				<div class="efs-overlay" id="efs-alt-view" style="display:none;"></div>
+				<div class="efs-overlay" id="efs-keyword-view" style="display:none;"></div>
 			</div>
 		`);
 
@@ -367,6 +379,23 @@ class EFastPOSScreen {
 		this.$body.find("#efs-step-prev").on("click", () => this._step_prev());
 		this.$body.find("#efs-step-next").on("click", () => this._step_next());
 		this._bind_keyboard_shortcuts();
+		this._attach_static_hints();
+	}
+
+	// Ayudas contextuales (ⓘ tenue) siempre visibles sobre los controles
+	// permanentes de la pantalla — no requieren activar nada. Los controles
+	// dentro de vistas que se reconstruyen (ej. pago) se enganchan aparte,
+	// junto a su propio render.
+	_attach_static_hints() {
+		if (typeof EFGuide === "undefined") return;
+		EFGuide.attachHints(this.$body, [
+			{ selector: "#efs-search", text: "Escribe el nombre o código del producto. Con lector de código de barras: escanea y Enter agrega el producto solo si hay una única coincidencia." },
+			{ selector: ".efs-instock-toggle", text: "Si está activo, la grilla solo muestra productos con existencia disponible en la bodega actual." },
+			{ selector: "#efs-btn-change-customer", text: "Cliente de esta venta. Por defecto es 'Consumidor Final'; toca aquí para buscar o crear otro." },
+			{ selector: "#efs-vendor-select", text: "Selecciona el vendedor que atiende esta venta (útil para reportes de comisión)." },
+			{ selector: ".efs-ticket-header", text: "Aquí aparecen los productos agregados. Usa +/− para la cantidad, o toca la línea para más opciones (bodega, descuento, adenda)." },
+			{ selector: "#efs-btn-suspend", text: "Guarda esta venta en espera para retomarla después, sin perder lo agregado." },
+		]);
 	}
 
 	// -----------------------------------------------------------------------
@@ -374,8 +403,10 @@ class EFastPOSScreen {
 	// -----------------------------------------------------------------------
 	// Namespace propio ("efs", no "efast") para no interferir con el listener
 	// global de FacEx clásico (facex.js, keydown.efast). Se reciclan las mismas
-	// teclas que allá donde el significado es análogo (F2/F3/F4/F9/F10);
-	// F6/F7 son nuevas (no usadas en facex.js) para Suspender/Ventas en espera.
+	// teclas que allá donde el significado es análogo (F2/F3/F4/F7/F8/F9/F10);
+	// F6 es nueva (no usada en facex.js) para Suspender. Ventas en Espera usa
+	// Ctrl+H (en vez de F7) para liberar F7 = Artículos Alternativos, igual
+	// que en facex.js.
 	_bind_keyboard_shortcuts() {
 		$(document).off("keydown.efs").on("keydown.efs", (e) => {
 			if (!$(this.wrapper).is(":visible")) return;
@@ -393,9 +424,15 @@ class EFastPOSScreen {
 			} else if (e.key === "F6") {
 				e.preventDefault();
 				if ((this.doc.items || []).length) this._suspend_sale();
-			} else if (e.key === "F7") {
+			} else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "h") {
 				e.preventDefault();
 				this._show_held_view();
+			} else if (e.key === "F7") {
+				e.preventDefault();
+				this._show_alternatives_view();
+			} else if (e.key === "F8") {
+				e.preventDefault();
+				this._show_keyword_search_view();
 			} else if (e.key === "F9") {
 				e.preventDefault();
 				this._new_sale();
@@ -512,13 +549,13 @@ class EFastPOSScreen {
 			label: __("Ventas"),
 			icon: cartSvg,
 			items: [
-				{ id: "held", label: __("Ventas en espera"), hotkey: "F7", badgeId: "efs-held-badge", action: () => this._show_held_view() },
+				{ id: "held", label: __("Ventas en espera"), hotkey: "Ctrl+H", badgeId: "efs-held-badge", action: () => this._show_held_view() },
 				{ id: "history", label: __("Historial"), action: () => this._show_history_view() },
 			],
 		});
 
 		// "Transporte" — gateado por la llave maestra puede_ver_menu_transporte.
-		// A diferencia de Ventas/Sistema, esto NO es un grupo con submenú: es
+		// A diferencia de "Ventas", esto NO es un grupo con submenú: es
 		// una sola fila de acción directa (mod.action, sin mod.items) que abre
 		// el hub de tarjetas (_show_transporte_hub) en un solo click — ahí
 		// adentro cada tarjeta ya respeta su propio permiso específico (mismo
@@ -534,18 +571,10 @@ class EFastPOSScreen {
 		}
 
 		modules.push({
-			id: "sistema",
-			label: __("Sistema"),
+			id: "classic",
+			label: __("← FacEx clásico"),
 			icon: gearSvg,
-			items: [
-				{
-					id: "focus",
-					label: $("body").hasClass("facex-fullscreen-mode") ? __("Modo ERPNext") : __("Modo Enfoque"),
-					labelId: "efs-menu-focus-label",
-					action: () => this._toggle_focus_mode(),
-				},
-				{ id: "classic", label: __("← FacEx clásico"), action: () => { window.location.href = "/app/facex"; } },
-			],
+			action: () => { window.location.href = "/app/facex"; },
 		});
 
 		return modules;
@@ -938,6 +967,13 @@ class EFastPOSScreen {
 
 		this._render_cliente_card();
 		this._render_documento_card();
+
+		if (typeof EFGuide !== "undefined") {
+			EFGuide.attachHints($el, [
+				{ selector: "#efs-sec-cliente .efs-sec-title", text: "Selecciona o crea el cliente de esta factura. Toca la tarjeta para expandirla." },
+				{ selector: "#efs-sec-documento .efs-sec-title", text: "Establecimiento, serie y condiciones del documento fiscal." },
+			]);
+		}
 	}
 
 	_render_cliente_card() {
@@ -1190,20 +1226,6 @@ class EFastPOSScreen {
 		});
 	}
 
-	_toggle_focus_mode() {
-		const is_focus = $("body").hasClass("facex-fullscreen-mode");
-		if (is_focus) {
-			$("body").removeClass("facex-fullscreen-mode");
-			localStorage.setItem("facex-focus-mode", "false");
-			frappe.show_alert({ message: __("Modo Enfoque desactivado. Se muestran los marcos de ERPNext."), indicator: "info" });
-		} else {
-			$("body").addClass("facex-fullscreen-mode");
-			localStorage.setItem("facex-focus-mode", "true");
-			frappe.show_alert({ message: __("Modo Enfoque activado. Pantalla completa sin distracciones."), indicator: "green" });
-		}
-		this.$body.find("#efs-menu-focus-label").text(is_focus ? __("Modo Enfoque") : __("Modo ERPNext"));
-	}
-
 	_render_company_badge() {
 		this.$body.find("#efs-company-badge").text(this.doc.company || "");
 	}
@@ -1283,6 +1305,45 @@ class EFastPOSScreen {
 			const item_code = $(e.currentTarget).data("item-code");
 			this._show_stock_dialog(item_code);
 		});
+		$grid.find(".efs-card-lm-btn").on("click", (e) => {
+			e.stopPropagation();
+			const item_code = $(e.currentTarget).data("item-code");
+			this._show_lista_materiales_dialog(item_code);
+		});
+	}
+
+	_show_lista_materiales_dialog(item_code) {
+		const dlg = new frappe.ui.Dialog({ title: __("Lista de Materiales — {0}", [item_code]) });
+		dlg.$body.html('<div class="efs-stock-loading">Consultando detalle…</div>');
+		dlg.show();
+
+		frappe.call({
+			method: "facex_multi.api.item.get_lista_materiales_detail",
+			args: { item_code },
+			callback: (r) => {
+				const d = r.message || {};
+				const items = d.items || [];
+				const modo_label = d.modo_stock === "Padre"
+					? "El producto tiene stock propio."
+					: "El stock proviene de sus componentes.";
+				const rows = items.length
+					? items.map((it) => `
+						<tr>
+							<td>${_efs_esc(it.item_code)}</td>
+							<td>${_efs_esc(it.item_name || "")}</td>
+							<td style="text-align:right;">${_efs_fmt(it.qty)}</td>
+							<td>${_efs_esc(it.uom || "")}</td>
+						</tr>`).join("")
+					: '<tr><td colspan="4" style="text-align:center;color:var(--efs-text-muted);">Sin componentes.</td></tr>';
+				dlg.$body.html(`
+					<div style="font-size:12.5px;color:var(--efs-text-muted);margin-bottom:10px;">${_efs_esc(modo_label)}</div>
+					<table class="efs-stock-table">
+						<thead><tr><th>Código</th><th>Producto</th><th style="text-align:right;">Cantidad</th><th>UOM</th></tr></thead>
+						<tbody>${rows}</tbody>
+					</table>
+				`);
+			},
+		});
 	}
 
 	_show_stock_dialog(item_code) {
@@ -1336,10 +1397,14 @@ class EFastPOSScreen {
 			? `<img src="${_efs_esc(it.image_url)}" class="efs-card-img" />`
 			: `<div class="efs-card-placeholder">${_efs_esc(initials)}</div>`;
 		const hasStock = !!it.is_stock_item && parseFloat(it.stock_qty) > 0;
+		const lmBtn = it.is_lista_materiales
+			? `<button class="efs-card-lm-btn" data-item-code="${_efs_esc(it.item_code)}" title="Ver detalle de Lista de Materiales">▶</button>`
+			: "";
 		return `
 			<div class="efs-card ${hasStock ? "efs-card-instock" : ""}" data-item-code="${_efs_esc(it.item_code)}">
 				${qty > 0 ? `<span class="efs-card-badge">${qty}</span>` : ""}
 				<button class="efs-card-stock-btn" data-item-code="${_efs_esc(it.item_code)}" title="Ver saldos por bodega">≡</button>
+				${lmBtn}
 				${img}
 				<div class="efs-card-name">${_efs_esc(it.item_name || it.item_code)}</div>
 				<div class="efs-card-price">Q ${_efs_fmt(it.rate)}</div>
@@ -1377,6 +1442,171 @@ class EFastPOSScreen {
 		}
 		this._render_cart();
 		this._render_grid();
+		this._maybe_suggest_pair(item.item_code);
+	}
+
+	// ── Artículos en Par / Alternativos / Búsqueda por Palabras Clave ──────
+
+	_maybe_suggest_pair(item_code) {
+		frappe.call({
+			method: "facex_multi.api.item_relations.get_item_pair_suggestion",
+			args: { item_code },
+			callback: (r) => {
+				const pair = r.message;
+				if (!pair || !pair.item_code) return;
+				const alreadyInCart = (this.doc.items || []).some((row) => row.item_code === pair.item_code);
+				if (alreadyInCart) return;
+				frappe.confirm(
+					`<strong>${_efs_esc(item_code)}</strong> tiene un artículo en par configurado: <strong>${_efs_esc(pair.item_name || pair.item_code)}</strong>. ¿Agregarlo también?`,
+					() => {
+						frappe.call({
+							method: "facex_multi.api.invoice.get_item_details",
+							args: { item_code: pair.item_code, company: this.doc.company },
+							callback: (rr) => {
+								const d = rr.message || {};
+								this._add_or_prompt({
+									item_code: pair.item_code,
+									item_name: d.item_name || pair.item_name,
+									rate: d.rate || 0,
+									stock_uom: d.uom,
+									is_stock_item: d.is_stock_item,
+									has_serial_no: d.has_serial_no,
+									custom_tiene_adenda: d.custom_tiene_adenda,
+								});
+							},
+						});
+					}
+				);
+			},
+		});
+	}
+
+	_show_alternatives_view() {
+		if (!(this.doc.items || []).length) {
+			frappe.show_alert({ message: "Agregue primero un artículo al carrito.", indicator: "orange" });
+			return;
+		}
+		const idx = this.doc.items.length - 1;
+		const row = this.doc.items[idx];
+
+		frappe.call({
+			method: "facex_multi.api.item_relations.get_item_relations",
+			args: { item_code: row.item_code, tipo: "Alternativo" },
+			callback: (r) => {
+				const options = r.message || [];
+				if (!options.length) {
+					frappe.show_alert({ message: `'${row.item_code}' no tiene artículos alternativos configurados.`, indicator: "orange" });
+					return;
+				}
+				const $view = this.$body.find("#efs-alt-view");
+				$view.html(`
+					<div class="efs-wizard efs-history-wizard">
+						<div class="efs-wizard-header">
+							<button class="efs-step-nav" id="efs-alt-back">← Volver</button>
+							<div class="efs-wizard-title">Alternativos de ${_efs_esc(row.item_code)}</div>
+						</div>
+						<div class="efs-history-results" id="efs-alt-results">
+							${options.map((it) => `
+								<div class="efs-cust-row" data-code="${_efs_esc(it.item_code)}">
+									<strong>${_efs_esc(it.item_code)}</strong> — ${_efs_esc(it.item_name || "")}
+								</div>`).join("")}
+						</div>
+					</div>
+				`);
+				$view.show();
+				$view.find("#efs-alt-back").on("click", () => $view.hide());
+				$view.find("#efs-alt-results [data-code]").on("click", (e) => {
+					const item_code = $(e.currentTarget).data("code");
+					$view.hide();
+					frappe.call({
+						method: "facex_multi.api.invoice.get_item_details",
+						args: { item_code, company: this.doc.company },
+						callback: (rr) => {
+							const d = rr.message || {};
+							Object.assign(row, {
+								item_code,
+								item_name: d.item_name || item_code,
+								description: d.item_name || item_code,
+								rate: parseFloat(d.rate) || 0,
+								price_list_rate: parseFloat(d.rate) || 0,
+								uom: d.uom || row.uom,
+								is_stock_item: d.is_stock_item || 0,
+								_has_serial_no: d.has_serial_no || 0,
+								_custom_tiene_adenda: d.custom_tiene_adenda || 0,
+							});
+							this._render_cart();
+						},
+					});
+				});
+			},
+		});
+	}
+
+	_show_keyword_search_view() {
+		const $view = this.$body.find("#efs-keyword-view");
+		$view.html(`
+			<div class="efs-wizard efs-history-wizard">
+				<div class="efs-wizard-header">
+					<button class="efs-step-nav" id="efs-kw-back">← Volver</button>
+					<div class="efs-wizard-title">Buscar por Palabras Clave / Referencias</div>
+				</div>
+				<div class="efs-history-filters">
+					<div class="efs-field-row" style="flex:1;">
+						<label>Buscar</label>
+						<input type="text" id="efs-kw-search" class="efs-cust-detail-input" placeholder="Alias, número de referencia, u otro nombre..." autocomplete="off" />
+					</div>
+				</div>
+				<div class="efs-history-results" id="efs-kw-results">
+					<div class="efs-cust-details-loading">Escriba para buscar…</div>
+				</div>
+			</div>
+		`);
+		$view.show();
+		$view.find("#efs-kw-back").on("click", () => $view.hide());
+
+		let timer = null;
+		$view.find("#efs-kw-search").on("input", (e) => {
+			clearTimeout(timer);
+			const txt = e.target.value.trim();
+			const $results = $view.find("#efs-kw-results");
+			if (txt.length < 2) {
+				$results.html('<div class="efs-cust-details-loading">Escriba para buscar…</div>');
+				return;
+			}
+			timer = setTimeout(() => {
+				frappe.call({
+					method: "facex_multi.api.item_relations.search_items_by_keywords",
+					args: { txt, company: this.doc.company },
+					callback: (r) => {
+						const rows = r.message || [];
+						if (!rows.length) {
+							$results.html('<div class="efs-cust-details-loading">Sin resultados.</div>');
+							return;
+						}
+						$results.html(rows.map((it) => `
+							<div class="efs-cust-row" data-code="${_efs_esc(it.item_code)}">
+								<strong>${_efs_esc(it.item_code)}</strong> — ${_efs_esc(it.item_name || "")}
+								${it.matched_keywords ? `<br><small style="color:#6c757d;">${_efs_esc(it.matched_keywords)}</small>` : ""}
+							</div>`).join(""));
+						$results.find("[data-code]").on("click", (ev) => {
+							const item_code = $(ev.currentTarget).data("code");
+							const picked = rows.find((x) => x.item_code === item_code);
+							$view.hide();
+							this._add_or_prompt({
+								item_code,
+								item_name: picked ? picked.item_name : item_code,
+								rate: picked ? parseFloat(picked.rate) || 0 : 0,
+								stock_uom: picked ? picked.stock_uom : "Nos",
+								is_stock_item: picked ? picked.is_stock_item : 1,
+								has_serial_no: picked ? picked.has_serial_no : 0,
+								custom_tiene_adenda: 0,
+							});
+						});
+					},
+				});
+			}, 250);
+		});
+		setTimeout(() => $view.find("#efs-kw-search").trigger("focus"), 100);
 	}
 
 	_push_cart_row(item, qty = 1) {
@@ -2147,6 +2377,17 @@ class EFastPOSScreen {
 			</div>
 		`);
 		$view.show();
+
+		if (typeof EFGuide !== "undefined") {
+			EFGuide.attachHints($view, [
+				{ selector: "#efs-pay-methods", text: "Elige la forma de pago. 'Crédito' deja la factura pendiente de cobro; 'Contra Entrega' la cobra el transportista al entregar." },
+				{ selector: ".efs-pay-quick-cash", text: "Ingresa el monto que el cliente entrega en efectivo, o usa los montos rápidos (Q50, Q100...) o 'Monto exacto'." },
+				{ selector: "#efs-pay-amount-row label", text: "Monto que se aplicará con este método de pago." },
+				{ selector: "#efs-pay-reference-row label", text: "Número de autorización o referencia del pago (tarjeta, transferencia, cheque)." },
+				{ selector: "#efs-pay-add-split", text: "Si el cliente paga con más de un método (ej. parte efectivo, parte tarjeta), agrega otro método aquí." },
+				{ selector: "#efs-pay-confirm", text: "Confirma el pago y certifica la factura ante SAT (FEL)." },
+			]);
+		}
 
 		this._render_numpad($view.find("#efs-pay-numpad"), {
 			initial: "",
@@ -3690,10 +3931,13 @@ class EFastPOSScreen {
 		this.doc.bfel_establecimiento = String(((this.defaults.establishments || [])[0] || {}).establecimiento_id || "");
 		this.doc.taxes_and_charges = this.defaults.default_taxes_and_charges || "";
 		this.doc.payment_terms_template = this.defaults.default_payment_terms_template || "";
+		this.doc.sales_partner = this.defaults.default_sales_partner || "";
 		if (this.walkinCustomer) {
 			this.doc.customer = this.walkinCustomer.name;
 			this.doc.customer_name = this.walkinCustomer.customer_name;
-			this.doc.sales_partner = this.walkinCustomer.default_sales_partner || "";
+			if (!this.doc.sales_partner) {
+				this.doc.sales_partner = this.walkinCustomer.default_sales_partner || "";
+			}
 		}
 		this._render_customer_bar();
 		this._render_cart();
@@ -3732,9 +3976,9 @@ const EFS_CSS = `
   --efs-shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06);
 }
 
-body.facex-fullscreen-mode .efs-wrap { position: fixed; inset: 0; z-index: 90; }
-
-/* Modo Enfoque (pantalla completa) — oculta los marcos de ERPNext, igual que FacEx clásico */
+/* Modo Enfoque (pantalla completa) — oculta los marcos de ERPNext, igual que FacEx clásico.
+   Es el único modo de esta pantalla (sin botón para alternarlo); el listener de
+   frappe.router en on_page_load quita la clase del body al salir de la página. */
 body.facex-fullscreen-mode .navbar,
 body.facex-fullscreen-mode .page-head,
 body.facex-fullscreen-mode .layout-side-section,
@@ -3778,6 +4022,7 @@ body.facex-fullscreen-mode .main-section {
 
 .efs-wrap {
   display: flex; flex-direction: column; height: 100vh;
+  position: fixed; inset: 0; z-index: 90;
   background: var(--efs-bg); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: var(--efs-text);
 }
@@ -3802,7 +4047,7 @@ body.facex-fullscreen-mode .main-section {
 .efs-menu-panel {
   position: absolute; top: 120%; left: 0; background: var(--efs-card); border: 1px solid var(--efs-border);
   box-shadow: var(--efs-shadow-lg, 0 10px 25px rgba(0,0,0,.15)); border-radius: 10px; padding: 6px;
-  min-width: 260px; z-index: 300;
+  min-width: 260px; max-width: 90vw; max-height: calc(100vh - 80px); overflow-y: auto; z-index: 300;
 }
 .efs-menu-group + .efs-menu-group { border-top: 1px solid var(--efs-border); margin-top: 2px; padding-top: 2px; }
 .efs-menu-group-header {
@@ -3832,7 +4077,7 @@ body.facex-fullscreen-mode .main-section {
 .efs-user-menu {
   position: absolute; top: 120%; right: 0; background: var(--efs-card); border: 1px solid var(--efs-border);
   box-shadow: var(--efs-shadow-lg, 0 10px 25px rgba(0,0,0,.15)); border-radius: 10px; padding: 14px;
-  min-width: 220px; z-index: 300;
+  min-width: 220px; max-width: 90vw; max-height: calc(100vh - 80px); overflow-y: auto; z-index: 300;
 }
 .efs-user-menu-label { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--efs-text-muted); margin-bottom: 4px; }
 .efs-user-fullname { font-size: 14px; font-weight: 700; color: var(--efs-text); line-height: 1.2; }
@@ -3968,6 +4213,12 @@ body.facex-fullscreen-mode .main-section {
   font-size: 12px; line-height: 1; cursor: pointer; z-index: 2;
 }
 .efs-card-stock-btn:hover { color: var(--efs-primary); border-color: var(--efs-primary); }
+.efs-card-lm-btn {
+  position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; border-radius: 50%;
+  border: 1px solid var(--efs-border); background: rgba(255,255,255,.9); color: var(--efs-text-muted);
+  font-size: 10px; line-height: 1; cursor: pointer; z-index: 2;
+}
+.efs-card-lm-btn:hover { color: var(--efs-primary); border-color: var(--efs-primary); }
 .efs-stock-loading { padding: 16px; text-align: center; color: var(--efs-text-muted); }
 .efs-stock-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .efs-stock-table th, .efs-stock-table td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--efs-border); }
@@ -4257,4 +4508,26 @@ body.facex-fullscreen-mode .main-section {
 .efs-serial-wh { color: #888; font-size: 11px; }
 .efs-cust-name { font-weight: 600; font-size: 13px; }
 .efs-cust-nit { color: #888; font-size: 11px; }
+
+/* ── Responsive: ventana angosta / laptop chico / tablet ──────────────
+   Antes esta pantalla no tenía ni un solo @media — el panel de ticket
+   fijo (340px) exprimía la grilla de productos en ventanas angostas.
+   Debajo de 700px el ticket baja como bloque bajo la grilla en vez de
+   competir por el ancho. */
+@media (max-width: 900px) {
+  .efs-ticket { width: 300px; }
+}
+@media (max-width: 700px) {
+  .efs-body { flex-direction: column; overflow-y: auto; }
+  .efs-main { overflow: visible; }
+  .efs-grid { overflow-y: visible; }
+  .efs-ticket {
+    width: 100%; flex-shrink: 0; max-height: 55vh;
+    border-left: none; border-top: 2px solid var(--efs-border);
+  }
+  .efs-header { flex-wrap: wrap; row-gap: 8px; }
+}
+@media (max-width: 480px) {
+  .efs-company-badge { display: none; }
+}
 `;

@@ -14,3 +14,4 @@ facex_multi.patches.v1_0.add_facex_settings_transporte_permissions
 facex_multi.patches.v1_0.add_pago_contra_entrega_fields
 facex_multi.patches.v1_0.allow_on_submit_pago_contra_entrega
 facex_multi.patches.v1_0.allow_sales_manager_delete_transportista
+facex_multi.patches.v1_0.add_item_palabras_busqueda_field
