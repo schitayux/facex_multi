@@ -9171,7 +9171,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 				callback: (payRes) => {
 					const payments = payRes.message || [];
 					const totalPaid = payments.reduce((acc, curr) => acc + parseFloat(curr.amount || 0), 0.0);
-					const balance = Math.max(0.0, parseFloat(res.grand_total || 0) - totalPaid);
+					// Usar outstanding_amount (no grand_total): refleja el redondeo aplicado por ERPNext
+					const balance = Math.max(0.0, parseFloat(res.outstanding_amount || 0) - totalPaid);
 
 					this.$body.find("#ef-receipt-total-paid").text(_fmtCurrency(totalPaid, "GTQ"));
 					this.$body.find("#ef-receipt-balance").text(_fmtCurrency(balance, "GTQ"));
