@@ -7182,7 +7182,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					payment_method: "Efectivo",
 					payment_date: this.doc.posting_date || frappe.datetime.get_today(),
 					reference: "Automático x FacEx",
-					amount: parseFloat(this.doc.grand_total) || 0,
+					amount: parseFloat(this.doc.outstanding_amount) || 0,
 				}];
 			}
 			this._sync_pagado_ui();
@@ -7339,7 +7339,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			$row.find(".ef-pay-amount").off("input change").on("input change", (e) => {
 				let val = parseFloat(e.target.value) || 0;
 				// Validar que no exceda el saldo de la factura
-				const grandTotal = parseFloat(this.doc.grand_total) || 0;
+				const grandTotal = parseFloat(this.doc.outstanding_amount) || 0;
 				const currentOthers = payments.reduce((s, p, i) => s + (i !== idx ? (parseFloat(p.amount) || 0) : 0), 0);
 				const maxAllowed = grandTotal - currentOthers;
 				if (val > maxAllowed) {
@@ -7359,7 +7359,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 	_add_payment_row() {
 		if (!this.doc.custom_efast_payments) this.doc.custom_efast_payments = [];
 		const payments = this.doc.custom_efast_payments;
-		const grandTotal = parseFloat(this.doc.grand_total) || 0;
+		const grandTotal = parseFloat(this.doc.outstanding_amount) || 0;
 		const totalPaid = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
 		let balance = grandTotal - totalPaid;
 		if (balance < 0) balance = 0;
@@ -7375,7 +7375,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 	_update_payments_total() {
 		const payments = this.doc.custom_efast_payments || [];
-		const grandTotal = parseFloat(this.doc.grand_total) || 0;
+		const grandTotal = parseFloat(this.doc.outstanding_amount) || 0;
 		const totalPaid  = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
 		const balance    = grandTotal - totalPaid;
 		const currency   = this.doc.currency || "GTQ";
@@ -7411,7 +7411,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		}
 		// Si hay filas de pago, la factura se marca como pagada independientemente del toggle
 		const pagado     = payments.length > 0 ? 1 : 0;
-		const grandTotal = parseFloat(this.doc.grand_total) || 0;
+		const grandTotal = parseFloat(this.doc.outstanding_amount) || 0;
 		const totalPaid  = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
 		const diff       = Math.abs(grandTotal - totalPaid);
 		const currency   = this.doc.currency || "GTQ";
