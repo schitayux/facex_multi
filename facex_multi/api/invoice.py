@@ -254,11 +254,25 @@ def set_active_company(company: str):
 
 @frappe.whitelist()
 def get_warehouses(company: str = None):
-    """Retorna los almacenes activos de la compañía actual."""
+    """
+    Retorna los almacenes activos de la compañía actual, acotados a las
+    bodegas habilitadas del usuario en FacEx Settings (grid
+    bodegas_habilitadas). Sin restricción configurada → todas las bodegas
+    de la compañía (retrocompatible). Fuente central: la usan directo
+    facex.js/facex_screen.js y, vía get_inventory_defaults(), FacEx
+    Inventario — filtrar aquí propaga la restricción a todos esos selectores.
+    """
     company = get_effective_company(company)
+    filters = {"company": company, "is_group": 0, "disabled": 0}
+
+    from facex_multi.api.permissions import get_facex_allowed_warehouses
+    allowed = get_facex_allowed_warehouses(company)
+    if allowed is not None:
+        filters["name"] = ["in", allowed]
+
     return frappe.get_all(
         "Warehouse",
-        filters={"company": company, "is_group": 0, "disabled": 0},
+        filters=filters,
         fields=["name"],
         order_by="name asc",
         pluck="name"
@@ -320,14 +334,18 @@ def get_defaults(company: str = None):
     default_est = establishments[0]["establecimiento_id"] if establishments else None
     naming_series = filter_naming_series_for_company(naming_series, company, default_est)
 
-    # Almacén por defecto
-    default_warehouse = (
-        frappe.defaults.get_user_default("Warehouse")
-        or frappe.db.get_value("Warehouse",
-            {"company": company, "is_group": 0, "disabled": 0},
-            "name")
-        or ""
-    )
+    from facex_multi.api.permissions import get_facex_allowed_warehouses
+    allowed_warehouses = get_facex_allowed_warehouses(company)
+
+    # Almacén por defecto — acotado a las bodegas habilitadas del usuario, si aplica
+    default_warehouse = frappe.defaults.get_user_default("Warehouse") or ""
+    if default_warehouse and allowed_warehouses is not None and default_warehouse not in allowed_warehouses:
+        default_warehouse = ""
+    if not default_warehouse:
+        wh_filters = {"company": company, "is_group": 0, "disabled": 0}
+        if allowed_warehouses is not None:
+            wh_filters["name"] = ["in", allowed_warehouses]
+        default_warehouse = frappe.db.get_value("Warehouse", wh_filters, "name") or ""
 
     # Centro de costo por defecto
     default_cost_center = (
@@ -363,7 +381,7 @@ def get_defaults(company: str = None):
         get_facex_can_access_inventory_menu, get_facex_can_edit_guias_transporte,
         get_facex_can_administer_transportistas, get_facex_can_view_transporte_reportes,
         get_facex_can_upload_liquidaciones_transporte, get_facex_can_view_transporte_menu,
-        get_facex_can_view_transporte_kpis,
+        get_facex_can_view_transporte_kpis, get_facex_default_sales_partner,
     )
     permissions = get_facex_permissions_for_company(company)
     permissions["puede_eliminar_ventas_espera"] = int(get_facex_can_delete_held_sales(company))
@@ -378,6 +396,7 @@ def get_defaults(company: str = None):
     permissions["puede_ver_kpis_transporte"] = int(get_facex_can_view_transporte_kpis(company))
     company_config = get_facex_company_config(company)
     default_pos_warehouse = get_facex_default_warehouse(company)
+    default_sales_partner = get_facex_default_sales_partner(company)
 
     return {
         "company": company,
@@ -395,6 +414,7 @@ def get_defaults(company: str = None):
         "permissions": permissions,
         "company_config": company_config,
         "default_pos_warehouse": default_pos_warehouse,
+        "default_sales_partner": default_sales_partner,
     }
 
 
@@ -762,12 +782,19 @@ def _get_naming_series(doctype: str) -> list:
 
 @frappe.whitelist()
 def get_item_stock(item_code: str, company: str = None):
-    """Stock actual por bodega para un ítem, usando tabBin (snapshot rápido)."""
+    """Stock actual por bodega para un ítem, usando tabBin (snapshot rápido).
+    Acotado a las bodegas habilitadas del usuario, si aplica (vista de solo
+    lectura: no debe exponer saldos de bodegas fuera de su alcance)."""
     company = get_effective_company(company)
     if not item_code:
         return []
+
+    from facex_multi.api.permissions import get_facex_allowed_warehouses
+    allowed = get_facex_allowed_warehouses(company)
+
+    conditions = "AND b.warehouse IN %(allowed)s" if allowed is not None else ""
     return frappe.db.sql(
-        """
+        f"""
         SELECT b.warehouse, b.actual_qty, b.projected_qty, i.stock_uom, i.is_stock_item
         FROM `tabBin` b
         JOIN `tabWarehouse` w ON w.name = b.warehouse
@@ -776,9 +803,10 @@ def get_item_stock(item_code: str, company: str = None):
           AND w.company   = %(company)s
           AND w.is_group  = 0
           AND w.disabled  = 0
+          {conditions}
         ORDER BY b.actual_qty DESC
         """,
-        {"item_code": item_code, "company": company},
+        {"item_code": item_code, "company": company, "allowed": allowed or [""]},
         as_dict=True,
     )
 
@@ -837,18 +865,23 @@ def get_item_details(item_code: str, company: str = "", customer: str = "",
     if item_price:
         rate = float(item_price)
 
-    # Almacén: parámetro > item_defaults filtrado por empresa > fallback empresa
+    from facex_multi.api.permissions import get_facex_allowed_warehouses
+    allowed_warehouses = get_facex_allowed_warehouses(company)
+
+    # Almacén: parámetro > item_defaults filtrado por empresa > fallback empresa,
+    # acotado a las bodegas habilitadas del usuario, si aplica.
     item_warehouse = warehouse or ""
     if not item_warehouse and item.item_defaults:
         _row = next((d for d in item.item_defaults if d.company == company),
                     item.item_defaults[0])
         item_warehouse = _row.get("default_warehouse") or ""
+    if item_warehouse and allowed_warehouses is not None and item_warehouse not in allowed_warehouses:
+        item_warehouse = ""
     if not item_warehouse and company:
-        item_warehouse = (
-            frappe.db.get_value("Warehouse",
-                {"company": company, "is_group": 0, "disabled": 0}, "name")
-            or ""
-        )
+        wh_filters = {"company": company, "is_group": 0, "disabled": 0}
+        if allowed_warehouses is not None:
+            wh_filters["name"] = ["in", allowed_warehouses]
+        item_warehouse = frappe.db.get_value("Warehouse", wh_filters, "name") or ""
 
     # Centro de costo: selling_cost_center > buying_cost_center > fallback empresa
     item_cost_center = ""
@@ -879,6 +912,8 @@ def get_item_details(item_code: str, company: str = "", customer: str = "",
         "has_serial_no": int(item.has_serial_no or 0),
         "custom_tiene_adenda": int(getattr(item, "custom_tiene_adenda", 0) or 0),
         "item_group": item.item_group or "",
+        "is_lista_materiales": int(getattr(item, "bfel_es_lista_materiales", 0) or 0),
+        "modo_stock_lista": getattr(item, "bfel_modo_stock_lista", "") or "",
     }
 
 
@@ -1012,12 +1047,17 @@ def save_draft(doc_json: str):
 
     # Validar productos
     if "items" in data:
+        from facex_multi.api.permissions import get_facex_allowed_warehouses
+        allowed_warehouses = get_facex_allowed_warehouses(company)
         for item_row in data["items"]:
             ic = item_row.get("item_code")
             if ic:
                 item_comp = frappe.db.get_value("Item", ic, "bfel_company")
                 if item_comp and item_comp != company:
                     frappe.throw(f"El producto '{ic}' pertenece a otra compañía y no puede utilizarse en esta factura.")
+            wh = item_row.get("warehouse")
+            if wh and allowed_warehouses is not None and wh not in allowed_warehouses:
+                frappe.throw(f"No tiene permiso para utilizar la bodega '{wh}' en esta factura.")
 
     
     # Pre-procesar items para asegurar que el descuento se aplique correctamente en ERPNext

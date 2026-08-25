@@ -1,0 +1,80 @@
+{
+ "autoname": "hash",
+ "creation": "2026-08-11 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "item_code",
+  "item_relacionado",
+  "cb_relacion",
+  "tipo",
+  "two_way"
+ ],
+ "fields": [
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Artículo",
+   "options": "Item",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "item_relacionado",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Artículo Relacionado",
+   "options": "Item",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "cb_relacion",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "tipo",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Tipo de Relación",
+   "options": "Par\nAlternativo",
+   "reqd": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "two_way",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Bidireccional",
+   "description": "Si está marcado, la relación se sugiere/lista desde ambos artículos. Si no, solo desde 'Artículo' hacia 'Artículo Relacionado'."
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-11 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FacEx Multi",
+ "name": "FacEx Item Relacion",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 0,
+   "export": 1,
+   "print": 0,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 0,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

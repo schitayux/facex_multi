@@ -14,8 +14,16 @@ frappe.pages["facex"].on_page_load = function (wrapper) {
 		title: "FacEx",
 		single_column: true,
 	});
-	// Force focus mode on load immediately to hide ERPNext panel
+	// Modo Enfoque es el único modo de esta pantalla (ya no hay botón para
+	// alternarlo). Frappe Desk es un SPA — el <body> persiste entre rutas —
+	// así que hay que quitar la clase apenas el usuario navega a OTRA
+	// pantalla, o el resto de ERPNext se quedaría sin navbar/sidebar.
 	$("body").addClass("facex-fullscreen-mode");
+	frappe.router.on("change", () => {
+		if (frappe.get_route()[0] !== "facex") {
+			$("body").removeClass("facex-fullscreen-mode");
+		}
+	});
 	// controls.bundle.js provides frappe.ui.form.make_control (Link, Date, etc.)
 	// It is NOT included in desk.bundle.js, so must be required explicitly.
 	frappe.require(["/assets/facex_multi/js/facex_transporte_module.js", "/assets/facex_multi/js/ef_guide.js", "controls.bundle.js"], function () {
@@ -168,6 +176,7 @@ class EFastSalePage {
 		this.doc.naming_series = (this.defaults.naming_series || [])[0] || "SINV-.YYYY.-";
 		this.doc.taxes_and_charges = "";
 		this.doc.payment_terms_template = this.defaults.default_payment_terms_template || "";
+		this.doc.sales_partner = this.defaults.default_sales_partner || "";
 		this.doc.bfel_status = "01 Enviar";
 		this.doc.posting_date = frappe.datetime.get_today();
 		this.doc.due_date = frappe.datetime.get_today();
@@ -202,11 +211,7 @@ class EFastSalePage {
      <div class="ef-navbar-brand" style="display: flex; align-items: center; gap: 8px;">
        <svg class="ef-bolt" width="20" height="20" viewBox="0 0 24 24" fill="#153375"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
        <span style="font-weight: 800; color: #153375;">FacEx Portal</span>
-       <button id="ef-btn-toggle-fullscreen" class="ef-btn" style="margin-left: 12px; font-size: 11px; padding: 4px 10px; border-radius: 6px; display: flex; align-items: center; gap: 5px; border: 1px solid var(--ef-border); background: var(--ef-card); color: var(--ef-text);" title="Alternar Modo Enfoque (Pantalla Completa)">
-         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
-         <span id="ef-fullscreen-btn-text">Modo Enfoque</span>
-       </button>
-       <button id="ef-btn-guide" class="ef-btn" style="margin-left: 6px; font-size: 11px; padding: 4px 10px; border-radius: 6px; display: flex; align-items: center; gap: 5px; border: 1px solid var(--ef-border); background: var(--ef-card); color: var(--ef-text);" title="Guía paso a paso de esta pantalla">
+       <button id="ef-btn-guide" class="ef-btn" style="margin-left: 12px; font-size: 11px; padding: 4px 10px; border-radius: 6px; display: flex; align-items: center; gap: 5px; border: 1px solid var(--ef-border); background: var(--ef-card); color: var(--ef-text);" title="Guía paso a paso de esta pantalla">
          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 2-3 4"/><path d="M12 17h.01"/></svg>
          <span>Guía</span>
        </button>
@@ -218,48 +223,86 @@ class EFastSalePage {
      </div>
 
      <div class="ef-navbar-menu">
-       <button class="ef-nav-btn ef-nav-active" data-view="home">
+       <button class="ef-nav-btn ef-nav-active" data-view="home" title="Inicio">
          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
          <span>Inicio</span>
        </button>
-       <button class="ef-nav-btn" data-view="dashboard">
-         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
-         <span>Tablero</span>
-       </button>
-       <button class="ef-nav-btn" data-view="billing">
-         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-         <span>Facturador (FacEx)</span>
-       </button>
-       <button class="ef-nav-btn" data-view="reports">
-         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><path d="M3 20h18"/></svg>
-         <span>Reportes y Recibos</span>
-       </button>
-       <button class="ef-nav-btn" data-view="maintenance">
-         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/><circle cx="12" cy="12" r="3"/></svg>
-         <span>Mantenimiento</span>
-       </button>
-       <button class="ef-nav-btn" data-view="purchase">
-         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
-         <span>Compras</span>
-       </button>
-       <button class="ef-nav-btn" data-view="pos">
-         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/><line x1="6" y1="14" x2="10" y2="14"/></svg>
-         <span>POS</span>
-       </button>
-       <button class="ef-nav-btn" data-view="inventario">
-         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 8V21H3V8"/><path d="M1 3h22v5H1z"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
-         <span>Inventario</span>
-       </button>
-       <button class="ef-nav-btn" data-view="transporte" style="display:none;">
-         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
-         <span>Transporte</span>
-       </button>
+
+       <div class="ef-main-menu" id="ef-main-menu">
+         <button type="button" class="ef-menu-trigger" id="ef-btn-main-menu" title="Menú">
+           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+           <span id="ef-menu-trigger-label">Menú</span>
+         </button>
+         <div class="ef-menu-panel" id="ef-menu-panel" style="display:none;">
+           <div class="ef-menu-group" data-group="ventas">
+             <button type="button" class="ef-menu-group-header">
+               <span class="ef-menu-group-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>
+               <span class="ef-menu-group-label">Ventas</span>
+               <svg class="ef-menu-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+             </button>
+             <div class="ef-menu-group-items">
+               <button type="button" class="ef-nav-btn ef-menu-item" data-view="billing" title="Facturador (FacEx)">
+                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                 <span class="ef-menu-item-label">Facturador (FacEx)</span>
+               </button>
+               <button type="button" class="ef-nav-btn ef-menu-item" data-view="pos" title="POS">
+                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/><line x1="6" y1="14" x2="10" y2="14"/></svg>
+                 <span class="ef-menu-item-label">POS</span>
+               </button>
+             </div>
+           </div>
+           <div class="ef-menu-group" data-group="reportes">
+             <button type="button" class="ef-menu-group-header">
+               <span class="ef-menu-group-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg></span>
+               <span class="ef-menu-group-label">Tablero y Reportes</span>
+               <svg class="ef-menu-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+             </button>
+             <div class="ef-menu-group-items">
+               <button type="button" class="ef-nav-btn ef-menu-item" data-view="dashboard" title="Tablero">
+                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
+                 <span class="ef-menu-item-label">Tablero</span>
+               </button>
+               <button type="button" class="ef-nav-btn ef-menu-item" data-view="reports" title="Reportes y Recibos">
+                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><path d="M3 20h18"/></svg>
+                 <span class="ef-menu-item-label">Reportes y Recibos</span>
+               </button>
+             </div>
+           </div>
+           <div class="ef-menu-group" data-group="gestion">
+             <button type="button" class="ef-menu-group-header">
+               <span class="ef-menu-group-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/><circle cx="12" cy="12" r="3"/></svg></span>
+               <span class="ef-menu-group-label">Gestión</span>
+               <svg class="ef-menu-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+             </button>
+             <div class="ef-menu-group-items">
+               <button type="button" class="ef-nav-btn ef-menu-item" data-view="maintenance" title="Mantenimiento">
+                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/><circle cx="12" cy="12" r="3"/></svg>
+                 <span class="ef-menu-item-label">Mantenimiento</span>
+               </button>
+               <button type="button" class="ef-nav-btn ef-menu-item" data-view="purchase" title="Compras">
+                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+                 <span class="ef-menu-item-label">Compras</span>
+               </button>
+               <button type="button" class="ef-nav-btn ef-menu-item" data-view="inventario" title="Inventario">
+                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 8V21H3V8"/><path d="M1 3h22v5H1z"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+                 <span class="ef-menu-item-label">Inventario</span>
+               </button>
+             </div>
+           </div>
+           <div class="ef-menu-group" data-group="transporte">
+             <button type="button" class="ef-nav-btn ef-menu-item ef-menu-group-header ef-menu-group-header-direct" data-view="transporte" style="display:none;" title="Transporte">
+               <span class="ef-menu-group-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg></span>
+               <span class="ef-menu-group-label ef-menu-item-label">Transporte</span>
+             </button>
+           </div>
+         </div>
+       </div>
 
        <div class="ef-user-dropdown" style="position: relative; margin-left: 12px; display: flex; align-items: center;">
          <button id="ef-btn-user-profile" class="ef-nav-btn" style="padding: 6px 10px; border-radius: 20px; background: #f1f5f9; border: 1px solid #cbd5e1; display: flex; align-items: center; gap: 6px; cursor: pointer;" title="Perfil de Usuario">
            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#475569" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
          </button>
-         <div id="ef-user-dropdown-menu" style="display: none; position: absolute; top: 120%; right: 0; background: white; border: 1px solid var(--ef-border); box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); border-radius: 10px; padding: 14px; min-width: 200px; z-index: 1001;">
+         <div id="ef-user-dropdown-menu" style="display: none; position: absolute; top: 120%; right: 0; background: white; border: 1px solid var(--ef-border); box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); border-radius: 10px; padding: 14px; min-width: 200px; max-width: 90vw; max-height: calc(100vh - 80px); overflow-y: auto; z-index: 1001;">
             <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #64748b; margin-bottom: 4px;">Usuario Conectado</div>
             <div id="ef-active-user-fullname" style="font-size: 14px; font-weight: 700; color: #0f172a; line-height: 1.2;"></div>
             <div id="ef-active-user-email" style="font-size: 12px; color: #64748b; margin-bottom: 14px; word-break: break-all;"></div>
@@ -1141,6 +1184,9 @@ class EFastSalePage {
       <button class="ef-tab-btn ef-maint-tab-btn" data-maint-tab="productos">
         Productos
       </button>
+      <button class="ef-tab-btn ef-maint-tab-btn" data-maint-tab="listas-materiales">
+        Listas de Materiales
+      </button>
       <button class="ef-tab-btn ef-maint-tab-btn" data-maint-tab="precios">
         Precios
       </button>
@@ -1303,10 +1349,109 @@ class EFastSalePage {
               </div>
               <div id="ef-maint-item-images-body"></div>
             </div>
+            <div class="ef-field-group" style="grid-column: span 2; border-top:1px solid var(--ef-border); padding-top:14px;">
+              <label class="ef-label">Palabras de Búsqueda / Referencias <span style="color:#64748b; font-weight:400; font-size:11px;">(alias, números de referencia u otros nombres — usados por la búsqueda F8)</span></label>
+              <textarea id="ef-maint-item-keywords" class="ef-textarea" style="width:100%; height:70px;" placeholder="Ej: TRW-12345, disco freno delantero, repuesto genérico Toyota..."></textarea>
+            </div>
+            <div class="ef-field-group" id="ef-maint-item-relations-wrap" style="grid-column: span 2; border-top:1px solid var(--ef-border); padding-top:14px; display:none;">
+              <div style="display:grid; grid-template-columns: 1fr 1fr; gap:24px;">
+                <div>
+                  <label class="ef-label" style="margin-bottom:8px; display:block;">Artículos en Par <span style="color:#64748b; font-weight:400; font-size:11px;">(se sugiere agregar el par automáticamente en la venta)</span></label>
+                  <input type="text" id="ef-maint-item-par-search" class="ef-input" style="width:100%; margin-bottom:4px;" placeholder="Buscar producto para agregar como par..." autocomplete="off" />
+                  <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--ef-text); margin-bottom:8px; cursor:pointer;">
+                    <input type="checkbox" id="ef-maint-item-par-twoway" checked style="margin:0;" /> Bidireccional
+                  </label>
+                  <div class="ef-table-wrapper">
+                    <table class="ef-table" style="width:100%;">
+                      <thead><tr><th class="ef-th">Producto</th><th class="ef-th" style="width:90px; text-align:center;">Bidir.</th><th class="ef-th" style="width:36px;"></th></tr></thead>
+                      <tbody id="ef-maint-item-par-tbody"><tr><td colspan="3" style="text-align:center; color:#94a3b8; padding:14px;">Sin pares configurados.</td></tr></tbody>
+                    </table>
+                  </div>
+                </div>
+                <div>
+                  <label class="ef-label" style="margin-bottom:8px; display:block;">Artículos Alternativos <span style="color:#64748b; font-weight:400; font-size:11px;">(sustitutos equivalentes — acceso rápido F7 en la venta)</span></label>
+                  <input type="text" id="ef-maint-item-alt-search" class="ef-input" style="width:100%; margin-bottom:4px;" placeholder="Buscar producto para agregar como alternativo..." autocomplete="off" />
+                  <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--ef-text); margin-bottom:8px; cursor:pointer;">
+                    <input type="checkbox" id="ef-maint-item-alt-twoway" checked style="margin:0;" /> Bidireccional
+                  </label>
+                  <div class="ef-table-wrapper">
+                    <table class="ef-table" style="width:100%;">
+                      <thead><tr><th class="ef-th">Producto</th><th class="ef-th" style="width:90px; text-align:center;">Bidir.</th><th class="ef-th" style="width:36px;"></th></tr></thead>
+                      <tbody id="ef-maint-item-alt-tbody"><tr><td colspan="3" style="text-align:center; color:#94a3b8; padding:14px;">Sin alternativos configurados.</td></tr></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
           <div style="margin-top:20px; text-align:right;">
             <button id="ef-maint-item-btn-delete" class="ef-btn" style="background:#ef4444; color:white; padding:8px 24px; display:none; margin-right:8px;">Eliminar Producto</button>
             <button id="ef-maint-item-btn-save" class="ef-btn ef-btn-primary" style="padding:8px 24px;">Guardar Producto</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Maint Tab Content: Listas de Materiales -->
+    <div class="ef-maint-tab-content" id="ef-maint-tab-listas-materiales" style="display:none;">
+      <div style="display: grid; grid-template-columns: 320px 1fr; gap: 24px; align-items: start;">
+        <div class="ef-analytics-card" style="box-shadow: var(--ef-shadow); padding:16px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <span class="ef-analytics-card-title" style="margin:0;">Listas de Materiales</span>
+            <button id="ef-maint-lm-btn-load" class="ef-btn ef-btn-sm ef-btn-secondary" style="padding:2px 8px; font-size:10px;">Cargar Lista</button>
+          </div>
+          <input type="text" id="ef-maint-lm-search" class="ef-input" placeholder="Filtrar..." style="width:100%; margin-bottom:12px;" />
+          <div id="ef-maint-lm-list" style="max-height: 400px; overflow-y:auto; display:flex; flex-direction:column; gap:6px;"></div>
+        </div>
+        <div class="ef-analytics-card" style="box-shadow: var(--ef-shadow); padding:20px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; border-bottom:1px solid var(--ef-border); padding-bottom:10px;">
+            <span style="font-weight:700; color:var(--ef-primary); font-size:16px;" id="ef-maint-lm-title">Nueva Lista de Materiales</span>
+            <button id="ef-maint-lm-btn-new" class="ef-btn ef-btn-sm ef-btn-secondary">+ Nueva</button>
+          </div>
+
+          <div class="ef-field-group" id="ef-maint-lm-padre-group">
+            <label class="ef-label">Producto Padre <span class="ef-req">*</span></label>
+            <input type="text" id="ef-maint-lm-padre-search" class="ef-input" style="width:100%" placeholder="Buscar producto existente..." autocomplete="off" />
+            <div style="font-size:11px; color:#64748b; margin-top:4px;">Debe ser un producto ya existente. Use la pestaña Productos para crear uno nuevo.</div>
+          </div>
+
+          <div class="ef-field-group" style="margin-top:16px;">
+            <label class="ef-label">Manejo de Stock</label>
+            <div style="display:flex; gap:20px; margin-top:8px; flex-wrap:wrap;">
+              <label style="display:flex; gap:8px; align-items:flex-start; cursor:pointer; max-width:320px;">
+                <input type="radio" name="ef-maint-lm-modo" value="Padre" style="margin-top:3px;">
+                <span><strong>Padre lleva el stock</strong><br><span style="font-size:11px; color:#64748b;">El producto padre tiene existencia propia (se carga con Transformación, en Inventario).</span></span>
+              </label>
+              <label style="display:flex; gap:8px; align-items:flex-start; cursor:pointer; max-width:320px;">
+                <input type="radio" name="ef-maint-lm-modo" value="Hijos" style="margin-top:3px;">
+                <span><strong>Hijos llevan el stock</strong><br><span style="font-size:11px; color:#64748b;">El padre es solo agrupador; al venderlo se descuentan sus componentes automáticamente.</span></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="ef-field-group" style="margin-top:16px;">
+            <label class="ef-label">Agregar componente</label>
+            <input type="text" id="ef-maint-lm-comp-search" class="ef-input" style="width:100%; max-width:420px;" placeholder="Código o nombre del producto..." autocomplete="off" />
+          </div>
+
+          <div class="ef-table-wrapper" style="margin-top:14px; max-height:280px; overflow-y:auto;">
+            <table class="ef-table">
+              <thead>
+                <tr>
+                  <th class="ef-th">Producto</th>
+                  <th class="ef-th" style="width:170px;">Cantidad por unidad del padre</th>
+                  <th class="ef-th" style="width:40px;"></th>
+                </tr>
+              </thead>
+              <tbody id="ef-maint-lm-tbody">
+                <tr><td colspan="3" style="text-align:center; color:#94a3b8; padding:14px;">Busque un producto arriba para agregarlo.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div style="margin-top:20px; text-align:right;">
+            <button id="ef-maint-lm-btn-delete" class="ef-btn" style="background:#ef4444; color:white; padding:8px 24px; display:none; margin-right:8px;">Quitar de Listas de Materiales</button>
+            <button id="ef-maint-lm-btn-save" class="ef-btn ef-btn-primary" style="padding:8px 24px;">Guardar</button>
           </div>
         </div>
       </div>
@@ -1633,6 +1778,35 @@ class EFastSalePage {
 				this._switch_view(view);
 			}
 		});
+
+		this._bind_main_menu();
+	}
+
+	// Menú "Menú" agrupado del navbar — mismo patrón que #efs-menu-panel de
+	// FacEx Screen (acordeón + click afuera cierra). Los ítems reutilizan
+	// .ef-nav-btn con data-view, así que _switch_view/_apply_perms no
+	// necesitan saber si un botón vive suelto en la barra o dentro del panel.
+	_bind_main_menu() {
+		const $panel = this.$body.find("#ef-menu-panel");
+
+		this.$body.find("#ef-btn-main-menu").on("click", (e) => {
+			e.stopPropagation();
+			if ($panel.is(":hidden")) $panel.fadeIn(120);
+			else $panel.fadeOut(120);
+		});
+
+		$panel.find(".ef-menu-group-header").not(".ef-menu-group-header-direct").on("click", (e) => {
+			const $group = $(e.currentTarget).closest(".ef-menu-group");
+			const wasOpen = $group.hasClass("ef-menu-group-open");
+			$panel.find(".ef-menu-group").removeClass("ef-menu-group-open");
+			if (!wasOpen) $group.addClass("ef-menu-group-open");
+		});
+
+		$(document).on("click.ef_main_menu", (e) => {
+			if ($panel.length && !$(e.target).closest("#ef-main-menu").length) {
+				$panel.fadeOut(120);
+			}
+		});
 	}
 
 	_switch_view(view) {
@@ -1641,6 +1815,17 @@ class EFastSalePage {
 		// Toggle buttons in navbar
 		this.$body.find(".ef-nav-btn").removeClass("ef-nav-active");
 		this.$body.find(`.ef-nav-btn[data-view="${view}"]`).addClass("ef-nav-active");
+
+		// Cierra el menú "Menú" agrupado (si estaba abierto) y refleja la
+		// vista actual en el trigger, para que siga siendo obvio dónde está
+		// parado el usuario aunque los botones ya no estén sueltos en la barra.
+		const VIEW_LABELS = {
+			home: "Inicio", dashboard: "Tablero", billing: "Facturador", reports: "Reportes",
+			maintenance: "Mantenimiento", purchase: "Compras", transporte: "Transporte",
+		};
+		this.$body.find("#ef-menu-trigger-label").text(VIEW_LABELS[view] || "Menú");
+		this.$body.find("#ef-menu-panel").hide();
+		this.$body.find(".ef-menu-group").removeClass("ef-menu-group-open");
 
 		// Show action bar ONLY for billing view
 		if (view === "billing") {
@@ -2591,7 +2776,24 @@ body.facex-fullscreen-mode .ef-main-layout {
   transition: color .15s, background .15s; z-index: 1; tabindex: -1;
 }
 .ef-btn-image:hover { color: var(--ef-primary); background: #eff6ff; }
-.ef-item-code { padding-right: 40px !important; }
+.ef-item-code { padding-right: 58px !important; }
+
+/* Lista de Materiales — botón acordeón */
+.ef-btn-lm {
+  position: absolute; right: 38px; top: 50%; transform: translateY(-50%);
+  background: none; border: none; color: #94a3b8; cursor: pointer;
+  font-size: 10px; padding: 1px 4px; border-radius: 3px; line-height: 1;
+  transition: color .15s, background .15s, transform .15s; z-index: 1; tabindex: -1;
+}
+.ef-btn-lm:hover { color: var(--ef-primary); background: #eff6ff; }
+.ef-btn-lm-open { color: var(--ef-primary); transform: translateY(-50%) rotate(90deg); }
+.ef-tr-lm-detail td.ef-td-lm-detail { padding: 0; border-bottom: 1px solid var(--ef-border); }
+.ef-lm-detail-wrap { padding: 10px 16px 12px 44px; background: #f8fafc; }
+.ef-lm-detail-note { font-size: 11.5px; color: #64748b; margin-bottom: 6px; }
+.ef-lm-detail-loading { padding: 10px 16px 12px 44px; background: #f8fafc; font-size: 12px; color: #94a3b8; }
+.ef-lm-detail-table { width: 100%; max-width: 560px; border-collapse: collapse; font-size: 12px; }
+.ef-lm-detail-table th { text-align: left; padding: 4px 8px; font-size: 10.5px; color: #64748b; border-bottom: 1px solid var(--ef-border); }
+.ef-lm-detail-table td { padding: 4px 8px; border-bottom: 1px solid #eef2f7; }
 
 /* Adenda DIGECAM button */
 .ef-th-adenda { width: 80px; text-align: center; }
@@ -3040,34 +3242,47 @@ body.facex-fullscreen-mode .ef-main-layout {
 .ef-cust-result:hover { background: #f1f5f9; }
 
 /* ── Navbar superior ────────────────────────────────────────────── */
+/* Solo quedan 2-3 elementos en la barra (Inicio, botón Menú, usuario) —
+   las 8 vistas antes desplegadas en botones planos ahora viven agrupadas
+   dentro de #ef-menu-panel (ver bloque "Menú principal agrupado" abajo).
+   flex-wrap se conserva como red de seguridad ante nombres de compañía
+   largos u otros elementos que empujen el ancho disponible. */
 .ef-navbar-top {
   display: flex;
+  flex-wrap: wrap;
+  row-gap: 8px;
   justify-content: space-between;
   align-items: center;
   background: var(--ef-card);
-  border-bottom: 2px solid var(--ef-border);
-  padding: 12px 24px;
+  border-bottom: 1px solid var(--ef-border);
+  padding: 10px 24px;
   position: sticky;
   top: 0;
-  z-index: 1000;
+  z-index: 1010;
   box-shadow: var(--ef-shadow);
 }
 .ef-navbar-brand {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 800;
   color: #153375;
+  flex-shrink: 0;
 }
 .ef-navbar-menu {
   display: flex;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  justify-content: flex-end;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .ef-nav-btn {
   background: none;
   border: none;
-  padding: 8px 16px;
+  padding: 8px 14px;
   font-size: 13px;
   font-weight: 600;
   color: var(--ef-text-muted);
@@ -3076,6 +3291,7 @@ body.facex-fullscreen-mode .ef-main-layout {
   align-items: center;
   gap: 6px;
   border-radius: 6px;
+  white-space: nowrap;
   transition: all 0.15s;
 }
 .ef-nav-btn:hover {
@@ -3086,6 +3302,48 @@ body.facex-fullscreen-mode .ef-main-layout {
   background: #eef2ff;
   color: var(--ef-primary);
 }
+@media (max-width: 1150px) {
+  .ef-navbar-top { justify-content: center; }
+  .ef-navbar-menu { justify-content: center; width: 100%; }
+}
+@media (max-width: 620px) {
+  .ef-nav-btn span { display: none; }
+  .ef-nav-btn { padding: 8px 10px; }
+}
+
+/* ── Menú principal agrupado (mismo patrón que #efs-menu-panel de FacEx
+   Screen) — acordeón con grupos, un solo trigger en vez de 8 botones
+   planos que competían por ancho en la barra superior. ────────────── */
+.ef-main-menu { position: relative; display: flex; align-items: center; }
+.ef-menu-trigger {
+  display: inline-flex; align-items: center; gap: 7px; background: none; border: 1px solid var(--ef-border);
+  color: var(--ef-text); cursor: pointer; font-size: 13px; font-weight: 600; padding: 8px 14px; border-radius: 8px;
+}
+.ef-menu-trigger:hover { background: #f1f5f9; }
+.ef-menu-panel {
+  position: absolute; top: 120%; left: 0; background: var(--ef-card); border: 1px solid var(--ef-border);
+  box-shadow: 0 10px 25px rgba(0,0,0,.15); border-radius: 10px; padding: 6px;
+  min-width: 260px; max-width: 90vw; max-height: calc(100vh - 80px); overflow-y: auto; z-index: 1001;
+}
+.ef-menu-group + .ef-menu-group { border-top: 1px solid var(--ef-border); margin-top: 2px; padding-top: 2px; }
+.ef-menu-group-header {
+  width: 100%; display: flex; align-items: center; gap: 10px; background: none; border: none; cursor: pointer;
+  padding: 10px 8px; border-radius: 6px; font-size: 13px; font-weight: 700; color: var(--ef-text); text-align: left;
+}
+.ef-menu-group-header:hover { background: #f1f5f9; }
+.ef-menu-group-icon { display: inline-flex; color: var(--ef-primary); }
+.ef-menu-group-label { flex: 1; }
+.ef-menu-chevron { color: var(--ef-text-muted); transition: transform .15s; flex-shrink: 0; }
+.ef-menu-group-open > .ef-menu-group-header .ef-menu-chevron { transform: rotate(180deg); }
+.ef-menu-group-items { display: none; flex-direction: column; padding: 2px 4px 6px 30px; }
+.ef-menu-group-open > .ef-menu-group-items { display: flex; }
+.ef-menu-item {
+  display: flex; align-items: center; gap: 8px; background: none; border: none; cursor: pointer;
+  padding: 8px; border-radius: 6px; font-size: 13px; color: var(--ef-text); text-align: left; width: 100%;
+}
+.ef-menu-item:hover { background: #f1f5f9; }
+.ef-menu-item.ef-nav-active { background: #eef2ff; color: var(--ef-primary); font-weight: 700; }
+.ef-menu-item-label { flex: 1; }
 
 /* ── Dashboard & Progress Bars ───────────────────────────────────── */
 .ef-progress-bar-container {
@@ -3112,52 +3370,7 @@ body.facex-fullscreen-mode .ef-main-layout {
   transition: width 0.3s ease;
 }
 
-/* Navbar & Dashboard Styles */
-.ef-navbar-top {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  background: var(--ef-card);
-  padding: 12px 24px;
-  border-bottom: 1px solid var(--ef-border);
-  position: sticky;
-  top: 0;
-  z-index: 1010;
-  box-shadow: var(--ef-shadow);
-}
-.ef-navbar-brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 16px;
-  font-weight: 800;
-}
-.ef-navbar-menu {
-  display: flex;
-  gap: 12px;
-}
-.ef-nav-btn {
-  background: transparent;
-  border: none;
-  padding: 8px 16px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ef-text-muted);
-  border-radius: 6px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  transition: all 0.2s ease;
-}
-.ef-nav-btn:hover {
-  background: #f1f5f9;
-  color: var(--ef-primary);
-}
-.ef-nav-btn.ef-nav-active {
-  background: #eff6ff;
-  color: var(--ef-primary);
-}
+/* Dashboard Styles */
 .ef-stat-card {
   background: var(--ef-card);
   border: 1px solid var(--ef-border);
@@ -3734,6 +3947,15 @@ body.facex-fullscreen-mode .ef-main-layout {
   </select>
 </td>`;
 
+		const _lm_btn = item._is_lista_materiales
+			? `<button class="ef-btn-lm${item._lm_expanded ? " ef-btn-lm-open" : ""}" data-idx="${idx}" tabindex="-1" title="Ver detalle de Lista de Materiales">▶</button>`
+			: "";
+		const _lm_row = item._is_lista_materiales
+			? `<tr class="ef-tr-lm-detail" id="ef-row-lm-${idx}" style="display:${item._lm_expanded ? "" : "none"};">
+  <td class="ef-td-lm-detail" colspan="11">${this._lm_detail_html(item)}</td>
+</tr>`
+			: "";
+
 		return `
 <tr class="ef-tr${_no_stock_cls}" data-idx="${idx}" id="ef-row-${idx}">
   <td class="ef-td ef-td-idx">${idx + 1}</td>
@@ -3745,6 +3967,7 @@ body.facex-fullscreen-mode .ef-main-layout {
         placeholder="Código..." autocomplete="off" />
       <button class="ef-btn-image" data-idx="${idx}" tabindex="-1" title="Ver imágenes del producto">▦</button>
       <button class="ef-btn-stock" data-idx="${idx}" tabindex="-1" title="Ver saldos por bodega">≡</button>
+      ${_lm_btn}
     </div>
   </td>
   <td class="ef-td">
@@ -3786,7 +4009,7 @@ body.facex-fullscreen-mode .ef-main-layout {
   <td class="ef-td">
     <button class="ef-btn-del ef-del-row" data-idx="${idx}" title="Eliminar fila">×</button>
   </td>
-</tr>`;
+</tr>${_lm_row}`;
 	}
 
 	_bind_row_events(idx) {
@@ -3887,6 +4110,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this._show_item_images_dialog(item_code);
 		});
 
+		// Lista de Materiales — acordeón bajo demanda (no automático)
+		$row.find(".ef-btn-lm").on("click", (e) => {
+			e.stopPropagation();
+			this._toggle_lista_materiales_row(idx);
+		});
+
 		// Delete row
 		$row.find(".ef-del-row").on("click", () => this._remove_item_row(idx));
 
@@ -3971,14 +4200,197 @@ body.facex-fullscreen-mode .ef-main-layout {
 							row.bfel_multi_tipo = (this.company_config || {}).tipo_x_defecto || "";
 						}
 						row.amount = this._calc_amount(row.qty, row.rate, row.discount_percentage);
+						// Lista de Materiales: solo se guarda el flag — el detalle se consulta
+						// bajo demanda con el botón ▶ de la fila (ver _toggle_lista_materiales_row),
+						// no se muestra automáticamente al seleccionar el producto.
+						row._is_lista_materiales = !!d.is_lista_materiales;
+						row._modo_stock_lista = d.modo_stock_lista || "";
+						if (!row._is_lista_materiales) {
+							row._lm_expanded = false;
+							row._lm_detail = null;
+						}
 						this._render_items();
 						this._update_local_footer();
 						this._handle_item_serial_adenda(idx, d);
 						this._update_row_stock_flag(idx);
+						this._maybe_suggest_pair(item_code);
 					}
 				}
 			},
 		});
+	}
+
+	// ── Artículos en Par / Alternativos / Búsqueda por Palabras Clave ──────
+
+	_maybe_suggest_pair(item_code) {
+		frappe.call({
+			method: "facex_multi.api.item_relations.get_item_pair_suggestion",
+			args: { item_code },
+			callback: (r) => {
+				const pair = r.message;
+				if (!pair || !pair.item_code) return;
+				const alreadyInCart = (this.doc.items || []).some((row) => row.item_code === pair.item_code);
+				if (alreadyInCart) return;
+				frappe.confirm(
+					`<strong>${_esc(item_code)}</strong> tiene un artículo en par configurado: <strong>${_esc(pair.item_name || pair.item_code)}</strong>. ¿Agregarlo también a la factura?`,
+					() => {
+						this._add_item_row({ item_code: pair.item_code });
+						this._fetch_item_details(this.doc.items.length - 1, pair.item_code);
+					}
+				);
+			},
+		});
+	}
+
+	_show_alternatives_dialog() {
+		const $focused = $(document.activeElement).closest("[data-idx]");
+		const idx = $focused.length ? parseInt($focused.attr("data-idx")) : NaN;
+		const row = !isNaN(idx) ? this.doc.items[idx] : null;
+		if (!row || !row.item_code) {
+			frappe.show_alert({ message: "Seleccione primero una fila con un artículo.", indicator: "orange" });
+			return;
+		}
+		frappe.call({
+			method: "facex_multi.api.item_relations.get_item_relations",
+			args: { item_code: row.item_code, tipo: "Alternativo" },
+			callback: (r) => {
+				const options = r.message || [];
+				if (!options.length) {
+					frappe.show_alert({ message: `'${row.item_code}' no tiene artículos alternativos configurados.`, indicator: "orange" });
+					return;
+				}
+				this._render_item_picker_dialog({
+					title: `Alternativos de ${row.item_code}`,
+					options,
+					onPick: (item_code) => {
+						this.doc.items[idx].item_code = item_code;
+						this._fetch_item_details(idx, item_code);
+					},
+				});
+			},
+		});
+	}
+
+	_show_keyword_search_dialog() {
+		const dlg = new frappe.ui.Dialog({
+			title: "Buscar por Palabras Clave / Referencias (F8)",
+			fields: [
+				{ fieldname: "txt", fieldtype: "Data", label: "Buscar", description: "Alias, número de referencia, u otro nombre del producto" },
+				{ fieldname: "results_html", fieldtype: "HTML" },
+			],
+		});
+		const $results = () => dlg.fields_dict.results_html.$wrapper;
+		$results().html('<div style="padding:16px; color:#94a3b8; text-align:center;">Escriba para buscar…</div>');
+
+		let timer = null;
+		dlg.fields_dict.txt.$input.on("input", () => {
+			clearTimeout(timer);
+			const txt = dlg.fields_dict.txt.get_value().trim();
+			if (txt.length < 2) {
+				$results().html('<div style="padding:16px; color:#94a3b8; text-align:center;">Escriba para buscar…</div>');
+				return;
+			}
+			timer = setTimeout(() => {
+				frappe.call({
+					method: "facex_multi.api.item_relations.search_items_by_keywords",
+					args: { txt, company: this.doc.company || this.defaults.company || "" },
+					callback: (r) => {
+						const rows = r.message || [];
+						if (!rows.length) {
+							$results().html('<div style="padding:16px; color:#94a3b8; text-align:center;">Sin resultados.</div>');
+							return;
+						}
+						$results().html(rows.map((it) => `
+							<div class="ef-cust-result" data-code="${_esc(it.item_code)}" style="cursor:pointer;">
+								<strong>${_esc(it.item_code)}</strong> — ${_esc(it.item_name || "")}
+								${it.matched_keywords ? `<br><span style="color:#64748b; font-size:11px;">${_esc(it.matched_keywords)}</span>` : ""}
+							</div>`).join(""));
+						$results().find(".ef-cust-result").on("click", (e) => {
+							const item_code = $(e.currentTarget).data("code");
+							dlg.hide();
+							this._add_item_row({ item_code });
+							this._fetch_item_details(this.doc.items.length - 1, item_code);
+						});
+					},
+				});
+			}, 250);
+		});
+
+		dlg.show();
+		setTimeout(() => dlg.fields_dict.txt.$input.trigger("focus"), 100);
+	}
+
+	_render_item_picker_dialog({ title, options, onPick }) {
+		const dlg = new frappe.ui.Dialog({
+			title,
+			fields: [{ fieldname: "picker_html", fieldtype: "HTML" }],
+		});
+		const $wrap = dlg.fields_dict.picker_html.$wrapper;
+		$wrap.html(options.map((it) => `
+			<div class="ef-cust-result" data-code="${_esc(it.item_code)}" style="cursor:pointer;">
+				<strong>${_esc(it.item_code)}</strong> — ${_esc(it.item_name || "")}
+			</div>`).join(""));
+		$wrap.find(".ef-cust-result").on("click", (e) => {
+			const item_code = $(e.currentTarget).data("code");
+			dlg.hide();
+			onPick(item_code);
+		});
+		dlg.show();
+	}
+
+	_toggle_lista_materiales_row(idx) {
+		const row = this.doc.items[idx];
+		if (!row || !row._is_lista_materiales) return;
+
+		row._lm_expanded = !row._lm_expanded;
+
+		if (row._lm_expanded && !row._lm_detail && !row._lm_loading) {
+			row._lm_loading = true;
+			this._render_items();
+			frappe.call({
+				method: "facex_multi.api.item.get_lista_materiales_detail",
+				args: { item_code: row.item_code },
+				callback: (r) => {
+					row._lm_loading = false;
+					row._lm_detail = r.message || { items: [] };
+					this._render_items();
+				},
+				error: () => {
+					row._lm_loading = false;
+					this._render_items();
+				},
+			});
+		} else {
+			this._render_items();
+		}
+	}
+
+	_lm_detail_html(item) {
+		if (item._lm_loading) {
+			return `<div class="ef-lm-detail-loading">Cargando detalle…</div>`;
+		}
+		const detail = item._lm_detail;
+		if (!detail) {
+			return `<div class="ef-lm-detail-loading">—</div>`;
+		}
+		const modo_label = (detail.modo_stock || item._modo_stock_lista) === "Padre"
+			? "El producto tiene stock propio."
+			: "El stock proviene de sus componentes.";
+		const rows = (detail.items || []).map((it) => `
+			<tr>
+				<td>${_esc(it.item_code)}</td>
+				<td>${_esc(it.item_name || "")}</td>
+				<td style="text-align:right;">${_fmt(it.qty)}</td>
+				<td>${_esc(it.uom || "")}</td>
+			</tr>`).join("");
+		return `
+			<div class="ef-lm-detail-wrap">
+				<div class="ef-lm-detail-note">${_esc(modo_label)}</div>
+				<table class="ef-lm-detail-table">
+					<thead><tr><th>Código</th><th>Producto</th><th style="text-align:right;">Cantidad</th><th>UOM</th></tr></thead>
+					<tbody>${rows || '<tr><td colspan="4" style="text-align:center;color:#adb5bd;">Sin componentes.</td></tr>'}</tbody>
+				</table>
+			</div>`;
 	}
 
 	_update_row_stock_flag(idx) {
@@ -4481,7 +4893,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			puede_compras: 1, puede_validar_compras: 1, puede_cancelar_compras: 1,
 			crea_clientes: 1, modifica_clientes: 1,
 			crea_proveedores: 1, modifica_proveedores: 1,
-			crea_items: 1, modifica_items: 1, actualiza_precios: 1,
+			crea_items: 1, modifica_items: 1, actualiza_precios: 1, gestiona_listas_materiales: 1,
 			reporte_ventas_fecha: 1, reporte_ventas_producto: 1,
 			reporte_facturas_canceladas: 1, reporte_estados_cuenta: 1,
 			reporte_antiguedad_saldos: 1, reporte_cotizaciones: 1,
@@ -4556,6 +4968,16 @@ body.facex-fullscreen-mode .ef-main-layout {
 		// Si ningún reporte visible, ocultar tab Reportes del nav
 		if (!this._any_report_access()) this.$body.find(".ef-nav-btn[data-view='reports']").hide();
 
+		// Si un grupo del menú agrupado (Ventas / Tablero y Reportes / Gestión)
+		// se queda sin ningún ítem visible tras lo anterior, ocultar también
+		// su encabezado — evita mostrar un grupo vacío que no despliega nada.
+		this.$body.find("#ef-menu-panel > .ef-menu-group").not("[data-group='transporte']").each((_, grpEl) => {
+			const $grp = $(grpEl);
+			const $items = $grp.find(".ef-menu-item");
+			const allHidden = $items.length > 0 && $items.toArray().every((btn) => btn.style.display === "none");
+			$grp.toggle(!allHidden);
+		});
+
 		// --- Mantenimiento ---
 		if (!p.crea_clientes)    this.$body.find("#ef-maint-cust-btn-new").hide();
 		if (!p.modifica_clientes) {
@@ -4574,6 +4996,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 		}
 		if (!p.actualiza_precios) {
 			this.$body.find(".ef-maint-tab-btn[data-maint-tab='precios']").hide();
+		}
+		if (!p.gestiona_listas_materiales) {
+			this.$body.find(".ef-maint-tab-btn[data-maint-tab='listas-materiales']").hide();
 		}
 		if (!p.crea_proveedores && !p.modifica_proveedores) {
 			this.$body.find(".ef-maint-tab-btn[data-maint-tab='proveedores']").hide();
@@ -5898,6 +6323,16 @@ body.facex-fullscreen-mode .ef-main-layout {
 				e.preventDefault();
 				this._action_new();
 
+			// ── F7: Artículos Alternativos (fila activa) ────────────────────
+			} else if (e.key === "F7") {
+				e.preventDefault();
+				this._show_alternatives_dialog();
+
+			// ── F8: Buscar por Palabras de Búsqueda ──────────────────────────
+			} else if (e.key === "F8") {
+				e.preventDefault();
+				this._show_keyword_search_dialog();
+
 			// ── F10: Buscar / crear cliente / Ver análisis ──────────────────
 			} else if (e.key === "F10") {
 				e.preventDefault();
@@ -5914,37 +6349,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 			}
 		});
 
-		// Fullscreen focus mode toggle
-		this.$body.find("#ef-btn-toggle-fullscreen").on("click", (e) => {
-			e.preventDefault();
-			this.toggle_focus_mode();
-		});
-
 		// Guía paso a paso — tour contextual según la vista actual
 		this.$body.find("#ef-btn-guide").on("click", (e) => {
 			e.preventDefault();
 			this._start_guide_tour();
 		});
-
-		// Force clean focus mode on load immediately
-		$("body").addClass("facex-fullscreen-mode");
-		localStorage.setItem("facex-focus-mode", "true");
-		this.$body.find("#ef-fullscreen-btn-text").text("Modo ERPNext");
-	}
-
-	toggle_focus_mode() {
-		const is_focus = $("body").hasClass("facex-fullscreen-mode");
-		if (is_focus) {
-			$("body").removeClass("facex-fullscreen-mode");
-			localStorage.setItem("facex-focus-mode", "false");
-			this.$body.find("#ef-fullscreen-btn-text").text("Modo Enfoque");
-			frappe.show_alert({ message: "Modo Enfoque desactivado. Se muestran los marcos de ERPNext.", indicator: "info" });
-		} else {
-			$("body").addClass("facex-fullscreen-mode");
-			localStorage.setItem("facex-focus-mode", "true");
-			this.$body.find("#ef-fullscreen-btn-text").text("Modo ERPNext");
-			frappe.show_alert({ message: "Modo Enfoque activado. Pantalla completa sin distracciones.", indicator: "green" });
-		}
 	}
 
 	// -----------------------------------------------------------------------
@@ -7453,11 +7862,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 		if (!this.rep_warehouse_ctrl) {
 			const get_query_fn = () => {
 				const comp = get_company();
-				return {
-					filters: {
-						company: comp
-					}
-				};
+				const filters = { company: comp };
+				if ((this.warehouses || []).length) {
+					filters.name = ["in", this.warehouses];
+				}
+				return { filters };
 			};
 			this.rep_warehouse_ctrl = frappe.ui.form.make_control({
 				parent: this.$body.find("#ef-rep-warehouse-ctrl")[0],
@@ -8982,6 +9391,74 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this._save_maint_item();
 		});
 
+		// ── Listas de Materiales ──
+		let lmTimer = null;
+		this.$body.find("#ef-maint-lm-search").on("input", (e) => {
+			clearTimeout(lmTimer);
+			lmTimer = setTimeout(() => {
+				this._render_maint_lm_list($(e.target).val());
+			}, 200);
+		});
+
+		this.$body.find("#ef-maint-lm-btn-load").on("click", () => {
+			this._load_maint_listas_materiales();
+		});
+
+		this.$body.find("#ef-maint-lm-btn-new").on("click", () => {
+			this._clear_maint_lm_form();
+		});
+
+		this.$body.find("#ef-maint-lm-btn-save").on("click", () => {
+			this._save_maint_lm();
+		});
+
+		this.$body.find("#ef-maint-lm-btn-delete").on("click", () => {
+			this._delete_maint_lm();
+		});
+
+		this._setup_ac(this.$body.find("#ef-maint-lm-padre-search"), "Item", (value, description) => {
+			if (this._maint_lm_form) {
+				this._maint_lm_form.item_code = value;
+				this._maint_lm_form.item_name = description;
+			}
+		});
+
+		this._setup_ac(this.$body.find("#ef-maint-lm-comp-search"), "Item", (value, description) => {
+			this._maint_lm_add_component(value, description);
+			this.$body.find("#ef-maint-lm-comp-search").val("");
+		});
+
+		this.$body.on("change", "input[name='ef-maint-lm-modo']", (e) => {
+			if (this._maint_lm_form) this._maint_lm_form.modo_stock = e.target.value;
+		});
+
+		this.$body.on("input", ".ef-maint-lm-qty", (e) => {
+			const uid = $(e.target).closest("tr").data("row-id");
+			const row = (this._maint_lm_form.items || []).find((r) => r.uid === uid);
+			if (row) row.qty = $(e.target).val();
+		});
+
+		this.$body.on("click", ".ef-maint-lm-remove", (e) => {
+			const uid = $(e.currentTarget).data("remove");
+			this._maint_lm_form.items = (this._maint_lm_form.items || []).filter((r) => r.uid !== uid);
+			this._render_maint_lm_rows();
+		});
+
+		// ── Artículos en Par / Alternativos ──
+		this._setup_ac(this.$body.find("#ef-maint-item-par-search"), "Item", (value) => {
+			this._maint_add_relation("Par", value);
+			this.$body.find("#ef-maint-item-par-search").val("");
+		});
+
+		this._setup_ac(this.$body.find("#ef-maint-item-alt-search"), "Item", (value) => {
+			this._maint_add_relation("Alternativo", value);
+			this.$body.find("#ef-maint-item-alt-search").val("");
+		});
+
+		this.$body.on("click", ".ef-maint-relation-remove", (e) => {
+			this._maint_remove_relation($(e.currentTarget).data("remove"));
+		});
+
 		// ── Prices ──
 		let priceTimer = null;
 		this.$body.find("#ef-maint-prices-search").on("input", (e) => {
@@ -9045,6 +9522,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 		} else if (tab === "productos") {
 			this._load_maint_items();
 			this._clear_maint_item_form();
+		} else if (tab === "listas-materiales") {
+			this._load_maint_listas_materiales();
+			this._clear_maint_lm_form();
 		} else if (tab === "precios") {
 			this._load_price_lists_dropdown_then_load_prices();
 		} else if (tab === "proveedores") {
@@ -9297,8 +9777,77 @@ body.facex-fullscreen-mode .ef-main-layout {
 						.prop("disabled", isStockForced);
 					if (this.perms.modifica_items) this.$body.find("#ef-maint-item-btn-delete").show();
 					this._maint_load_item_images(it.item_code);
+					this.$body.find("#ef-maint-item-keywords").val(it.palabras_busqueda || "");
+					this.$body.find("#ef-maint-item-relations-wrap").show();
+					this._load_maint_item_relations(it.item_code);
 				}
 			}
+		});
+	}
+
+	_load_maint_item_relations(item_code) {
+		this._maint_relations = { Par: [], Alternativo: [] };
+		frappe.call({
+			method: "facex_multi.api.item_relations.get_item_relations",
+			args: { item_code },
+			callback: (r) => {
+				const rows = r.message || [];
+				this._maint_relations.Par = rows.filter((row) => row.tipo === "Par");
+				this._maint_relations.Alternativo = rows.filter((row) => row.tipo === "Alternativo");
+				this._render_maint_relation_rows("Par");
+				this._render_maint_relation_rows("Alternativo");
+			},
+		});
+	}
+
+	_render_maint_relation_rows(tipo) {
+		const rows = (this._maint_relations && this._maint_relations[tipo]) || [];
+		const $tbody = this.$body.find(tipo === "Par" ? "#ef-maint-item-par-tbody" : "#ef-maint-item-alt-tbody");
+		if (!rows.length) {
+			$tbody.html(`<tr><td colspan="3" style="text-align:center; color:#94a3b8; padding:14px;">Sin ${tipo === "Par" ? "pares" : "alternativos"} configurados.</td></tr>`);
+			return;
+		}
+		$tbody.html(rows.map((row) => `
+			<tr>
+				<td class="ef-td"><strong>${_esc(row.item_code)}</strong><br><span style="color:#64748b;font-size:11px;">${_esc(row.item_name || "")}</span></td>
+				<td class="ef-td" style="text-align:center;">${row.two_way ? "✓" : "—"}</td>
+				<td class="ef-td" style="text-align:center;"><span class="ef-maint-relation-remove" data-remove="${row.name}" style="cursor:pointer;color:#ef4444;font-weight:700;">&times;</span></td>
+			</tr>`).join(""));
+	}
+
+	_maint_add_relation(tipo, item_relacionado) {
+		const item_code = this._current_maint_item_code;
+		if (!item_code) {
+			frappe.show_alert({ message: "Guarde el producto antes de agregar relaciones.", indicator: "orange" });
+			return;
+		}
+		if (item_relacionado === item_code) {
+			frappe.show_alert({ message: "Un producto no puede relacionarse consigo mismo.", indicator: "orange" });
+			return;
+		}
+		const twoWayId = tipo === "Par" ? "#ef-maint-item-par-twoway" : "#ef-maint-item-alt-twoway";
+		const two_way = this.$body.find(twoWayId).prop("checked") ? 1 : 0;
+		frappe.call({
+			method: "facex_multi.api.item_relations.add_item_relation",
+			args: {
+				item_code, item_relacionado, tipo, two_way,
+				company: this.doc.company || this.defaults.company || "",
+			},
+			freeze: true,
+			callback: (r) => {
+				if (!r.exc) this._load_maint_item_relations(item_code);
+			},
+		});
+	}
+
+	_maint_remove_relation(name) {
+		frappe.call({
+			method: "facex_multi.api.item_relations.remove_item_relation",
+			args: { name, company: this.doc.company || this.defaults.company || "" },
+			freeze: true,
+			callback: (r) => {
+				if (!r.exc && this._current_maint_item_code) this._load_maint_item_relations(this._current_maint_item_code);
+			},
 		});
 	}
 
@@ -9358,6 +9907,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-maint-item-is-stock").prop("checked", false).prop("disabled", false);
 		this.$body.find("#ef-maint-item-btn-delete").hide();
 		this.$body.find("#ef-maint-item-list .ef-cust-result").css("background", "#ffffff");
+		this.$body.find("#ef-maint-item-keywords").val("");
+		this.$body.find("#ef-maint-item-relations-wrap").hide();
+		this._maint_relations = { Par: [], Alternativo: [] };
 	}
 
 	_save_maint_item() {
@@ -9382,6 +9934,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			description: this.$body.find("#ef-maint-item-desc").val(),
 			gestionado_por: this.$body.find("#ef-maint-item-gestionado-por").val() || "General",
 			is_stock_item:  this.$body.find("#ef-maint-item-is-stock").prop("checked") ? 1 : 0,
+			palabras_busqueda: this.$body.find("#ef-maint-item-keywords").val() || "",
 		};
 
 		frappe.call({
@@ -9400,6 +9953,187 @@ body.facex-fullscreen-mode .ef-main-layout {
 				}
 			}
 		});
+	}
+
+	// ── Listas de Materiales (paquetes/kits de venta) ──
+
+	_load_maint_listas_materiales() {
+		const $list = this.$body.find("#ef-maint-lm-list");
+		$list.html('<div style="text-align:center; padding:10px; color:#64748b;">Cargando...</div>');
+		frappe.call({
+			method: "facex_multi.api.item.list_listas_materiales",
+			args: { company: this.doc.company || this.defaults.company || "" },
+			callback: (r) => {
+				this._maint_lm_rows = r.message || [];
+				this._render_maint_lm_list(this.$body.find("#ef-maint-lm-search").val());
+			},
+		});
+	}
+
+	_render_maint_lm_list(txt = "") {
+		const $list = this.$body.find("#ef-maint-lm-list");
+		const rows = this._maint_lm_rows || [];
+		const needle = (txt || "").trim().toLowerCase();
+		const filtered = needle
+			? rows.filter((r) => `${r.item_code} ${r.item_name || ""}`.toLowerCase().includes(needle))
+			: rows;
+
+		$list.empty();
+		if (!filtered.length) {
+			$list.html('<div style="text-align:center; padding:10px; color:#64748b;">Sin Listas de Materiales. Use "Cargar Lista" o cree una nueva.</div>');
+			return;
+		}
+		filtered.forEach((row) => {
+			const $item = $(`
+				<div class="ef-cust-result" style="padding:8px 12px; cursor:pointer; border-radius:6px; border:1px solid var(--ef-border); background:#ffffff; margin-bottom: 4px;">
+					<div style="font-weight:600; color:var(--ef-text);" class="ef-maint-lm-name-lbl"></div>
+					<div style="font-size:11px; color:#64748b;" class="ef-maint-lm-code-lbl"></div>
+				</div>
+			`);
+			$item.find(".ef-maint-lm-name-lbl").text(row.item_name || row.item_code);
+			$item.find(".ef-maint-lm-code-lbl").text(
+				`Código: ${row.item_code} | Modo: ${row.modo_stock || "—"}${row.disabled ? " | Deshabilitado" : ""}`
+			);
+			$item.on("click", () => {
+				this.$body.find("#ef-maint-lm-list .ef-cust-result").css("background", "#ffffff");
+				$item.css("background", "#e0e7ff");
+				this._load_maint_lm_details(row.item_code);
+			});
+			$list.append($item);
+		});
+	}
+
+	_load_maint_lm_details(item_code) {
+		frappe.call({
+			method: "facex_multi.api.item.get_lista_materiales_detail",
+			args: { item_code },
+			freeze: true,
+			callback: (r) => {
+				const d = r.message || {};
+				this._maint_lm_form = {
+					item_code,
+					item_name: item_code,
+					modo_stock: d.modo_stock || "",
+					items: [],
+					uid_counter: 0,
+				};
+				(d.items || []).forEach((it) => {
+					this._maint_lm_form.uid_counter += 1;
+					this._maint_lm_form.items.push({
+						uid: this._maint_lm_form.uid_counter,
+						item_code: it.item_code,
+						item_name: it.item_name,
+						qty: it.qty,
+					});
+				});
+				frappe.call({
+					method: "facex_multi.api.item.get_item",
+					args: { name: item_code, company: this.doc.company || this.defaults.company || "" },
+					callback: (r2) => {
+						this._maint_lm_form.item_name = (r2.message && r2.message.item_name) || item_code;
+						this.$body.find("#ef-maint-lm-title").text(`Editar: ${this._maint_lm_form.item_name}`);
+						this.$body.find("#ef-maint-lm-padre-search").val(`${item_code} — ${this._maint_lm_form.item_name}`);
+						this.$body.find("input[name='ef-maint-lm-modo']").prop("checked", false);
+						this.$body.find(`input[name='ef-maint-lm-modo'][value='${this._maint_lm_form.modo_stock}']`).prop("checked", true);
+						this.$body.find("#ef-maint-lm-btn-delete").show();
+						this._render_maint_lm_rows();
+					},
+				});
+			},
+		});
+	}
+
+	_clear_maint_lm_form() {
+		this._maint_lm_form = { item_code: "", item_name: "", modo_stock: "", items: [], uid_counter: 0 };
+		this.$body.find("#ef-maint-lm-title").text("Nueva Lista de Materiales");
+		this.$body.find("#ef-maint-lm-padre-search").val("");
+		this.$body.find("input[name='ef-maint-lm-modo']").prop("checked", false);
+		this.$body.find("#ef-maint-lm-btn-delete").hide();
+		this.$body.find("#ef-maint-lm-list .ef-cust-result").css("background", "#ffffff");
+		this._render_maint_lm_rows();
+	}
+
+	_maint_lm_add_component(item_code, item_name) {
+		if (!this._maint_lm_form) this._maint_lm_form = { item_code: "", item_name: "", modo_stock: "", items: [], uid_counter: 0 };
+		if (!item_code) return;
+		if (this._maint_lm_form.item_code && item_code === this._maint_lm_form.item_code) {
+			frappe.show_alert({ message: "El producto padre no puede ser componente de sí mismo.", indicator: "orange" });
+			return;
+		}
+		if (this._maint_lm_form.items.some((r) => r.item_code === item_code)) {
+			frappe.show_alert({ message: "Ese componente ya fue agregado.", indicator: "orange" });
+			return;
+		}
+		this._maint_lm_form.uid_counter += 1;
+		this._maint_lm_form.items.push({ uid: this._maint_lm_form.uid_counter, item_code, item_name, qty: 1 });
+		this._render_maint_lm_rows();
+	}
+
+	_render_maint_lm_rows() {
+		const items = (this._maint_lm_form && this._maint_lm_form.items) || [];
+		const $tbody = this.$body.find("#ef-maint-lm-tbody");
+		if (!items.length) {
+			$tbody.html('<tr><td colspan="3" style="text-align:center; color:#94a3b8; padding:14px;">Busque un producto arriba para agregarlo.</td></tr>');
+			return;
+		}
+		$tbody.html(items.map((row) => `
+			<tr data-row-id="${row.uid}">
+				<td class="ef-td"><strong>${_esc(row.item_code)}</strong><br><span style="color:#64748b;font-size:11px;">${_esc(row.item_name || "")}</span></td>
+				<td class="ef-td"><input type="number" min="0" step="any" class="ef-input ef-input-num ef-maint-lm-qty" style="width:100%" value="${row.qty}"></td>
+				<td class="ef-td" style="text-align:center;"><span class="ef-maint-lm-remove" data-remove="${row.uid}" style="cursor:pointer;color:#ef4444;font-weight:700;">&times;</span></td>
+			</tr>`).join(""));
+	}
+
+	_save_maint_lm() {
+		const f = this._maint_lm_form;
+		if (!f || !f.item_code) { frappe.show_alert({ message: "Seleccione el producto padre.", indicator: "orange" }); return; }
+		if (!f.modo_stock) { frappe.show_alert({ message: "Seleccione el modo de manejo de stock.", indicator: "orange" }); return; }
+		if (!f.items.length) { frappe.show_alert({ message: "Agregue al menos un componente.", indicator: "orange" }); return; }
+		for (const row of f.items) {
+			if (!(parseFloat(row.qty) > 0)) {
+				frappe.show_alert({ message: `Cantidad inválida para '${row.item_code}'.`, indicator: "orange" });
+				return;
+			}
+		}
+
+		frappe.call({
+			method: "facex_multi.api.item.save_lista_materiales",
+			args: {
+				item_code: f.item_code,
+				modo_stock: f.modo_stock,
+				items_json: JSON.stringify(f.items.map((r) => ({ item_code: r.item_code, qty: r.qty }))),
+				company: this.doc.company || this.defaults.company || "",
+			},
+			freeze: true,
+			freeze_message: "Guardando…",
+			callback: (r) => {
+				if (!r.message) return;
+				frappe.show_alert({ message: "Lista de Materiales guardada.", indicator: "green" });
+				this._load_maint_listas_materiales();
+				this._clear_maint_lm_form();
+			},
+		});
+	}
+
+	_delete_maint_lm() {
+		const item_code = this._maint_lm_form && this._maint_lm_form.item_code;
+		if (!item_code) return;
+		frappe.confirm(
+			`¿Quitar a <strong>${_esc(item_code)}</strong> de las Listas de Materiales? Volverá a ser un producto normal.`,
+			() => {
+				frappe.call({
+					method: "facex_multi.api.item.disable_lista_materiales",
+					args: { item_code, company: this.doc.company || this.defaults.company || "" },
+					freeze: true,
+					callback: (r) => {
+						if (!r.message) return;
+						frappe.show_alert({ message: "Lista de Materiales eliminada.", indicator: "green" });
+						this._load_maint_listas_materiales();
+						this._clear_maint_lm_form();
+					},
+				});
+			}
+		);
 	}
 
 	// ── Prices Maintenance ──

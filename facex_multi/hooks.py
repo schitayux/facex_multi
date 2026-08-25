@@ -32,7 +32,9 @@ doc_events = {
         "validate": "facex_multi.api.customer.validate_customer_on_save"
     },
     "Item": {
-        "before_save": "facex_multi.api.item.sync_description_from_item_name"
+        "before_save": "facex_multi.api.item.sync_description_from_item_name",
+        "validate": "facex_multi.api.item.validate_lista_materiales",
+        "on_update": "facex_multi.api.item.sync_lista_materiales_product_bundle"
     },
     "Sales Invoice": {
         "before_insert": "facex_multi.api.invoice.fix_abbr_in_naming_series",

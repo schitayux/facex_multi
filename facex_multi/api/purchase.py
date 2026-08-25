@@ -423,6 +423,9 @@ def save_purchase_invoice(data_json: str) -> dict:
     doc.set_warehouse        = None
     doc.bfel_multi_tipo      = data.get("bfel_multi_tipo") or ""
 
+    from facex_multi.api.permissions import get_facex_allowed_warehouses
+    allowed_warehouses = get_facex_allowed_warehouses(company)
+
     for row in data.get("items", []):
         item_code = (row.get("item_code") or "").strip()
         if not item_code:
@@ -430,6 +433,11 @@ def save_purchase_invoice(data_json: str) -> dict:
         qty       = flt(row.get("qty") or 1)
         rate      = flt(row.get("rate") or 0)
         wh        = row.get("warehouse") or _resolve_item_warehouse(item_code, company)
+        if wh and allowed_warehouses is not None and wh not in allowed_warehouses:
+            if row.get("warehouse"):
+                frappe.throw(f"No tiene permiso para utilizar la bodega '{wh}' en esta compra.")
+            # bodega resuelta automáticamente desde el Item — reemplazar por la primera permitida
+            wh = allowed_warehouses[0] if allowed_warehouses else ""
         serial_no = (row.get("serial_no") or "").strip()
 
         item_info  = frappe.db.get_value(
