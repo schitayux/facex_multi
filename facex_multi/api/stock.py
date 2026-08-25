@@ -380,17 +380,29 @@ def create_stock_entry_transfer(payload: str, client_token: str = None):
 
 @frappe.whitelist()
 def get_item_stock_summary(item_code: str, company: str = None):
-    """Existencia y costo actual del ítem por almacén, para el flotante rápido del grid."""
+    """Existencia y costo actual del ítem por almacén, para el flotante rápido del
+    grid y la vista previa de componentes en Transformación. Si el usuario tiene
+    bodegas_habilitadas restringidas, no debe ver saldos de bodegas fuera de su
+    alcance (misma regla que _check_warehouse_allowed en el resto de este módulo)."""
     company = get_effective_company(company)
+    from facex_multi.api.permissions import get_facex_allowed_warehouses
+    allowed_warehouses = get_facex_allowed_warehouses(company)
+
+    conditions = "b.item_code = %(item_code)s AND w.company = %(company)s"
+    values = {"item_code": item_code, "company": company}
+    if allowed_warehouses is not None:
+        conditions += " AND b.warehouse IN %(allowed_warehouses)s"
+        values["allowed_warehouses"] = allowed_warehouses
+
     return frappe.db.sql(
-        """
+        f"""
         SELECT b.warehouse, b.actual_qty, b.valuation_rate
         FROM `tabBin` b
         INNER JOIN `tabWarehouse` w ON w.name = b.warehouse
-        WHERE b.item_code = %(item_code)s AND w.company = %(company)s
+        WHERE {conditions}
         ORDER BY b.actual_qty DESC
         """,
-        {"item_code": item_code, "company": company},
+        values,
         as_dict=True,
     )
 

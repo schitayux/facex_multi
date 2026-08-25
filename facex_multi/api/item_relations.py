@@ -20,6 +20,7 @@ from __future__ import annotations
 import frappe
 from facex_multi.api.invoice import has_efast_permission, get_effective_company
 from facex_multi.api.permissions import get_facex_permissions_for_company
+from facex_multi.api.item import _get_selling_price_list
 
 
 def _check_modify_items_permission(company: str) -> None:
@@ -149,6 +150,7 @@ def search_items_by_keywords(txt: str = "", company: str = None):
     if len(txt) < 2:
         return []
     q = f"%{txt}%"
+    price_list = _get_selling_price_list()
 
     company_cond = (
         "(i.bfel_company = %(company)s OR ((i.bfel_company IS NULL OR i.bfel_company = '') "
@@ -165,9 +167,23 @@ def search_items_by_keywords(txt: str = "", company: str = None):
             i.image AS image_url,
             i.is_stock_item,
             i.has_serial_no,
+            IFNULL(i.custom_tiene_adenda, 0) AS custom_tiene_adenda,
             i.custom_facex_palabras_busqueda AS matched_keywords,
-            (i.custom_facex_palabras_busqueda LIKE %(q)s) AS matched_by_keyword
+            (i.custom_facex_palabras_busqueda LIKE %(q)s) AS matched_by_keyword,
+            ip.price_list_rate AS rate,
+            IFNULL(bn.stock_qty, 0) AS stock_qty
         FROM `tabItem` i
+        LEFT JOIN `tabItem Price` ip
+            ON ip.item_code = i.name
+           AND ip.price_list = %(price_list)s
+           AND ip.selling = 1
+        LEFT JOIN (
+            SELECT b.item_code, SUM(b.actual_qty) AS stock_qty
+            FROM `tabBin` b
+            JOIN `tabWarehouse` w ON w.name = b.warehouse
+            WHERE w.company = %(company)s AND w.is_group = 0 AND w.disabled = 0
+            GROUP BY b.item_code
+        ) bn ON bn.item_code = i.name
         WHERE i.disabled = 0
           AND {company_cond}
           AND (
@@ -178,11 +194,14 @@ def search_items_by_keywords(txt: str = "", company: str = None):
         ORDER BY matched_by_keyword DESC, i.item_name ASC
         LIMIT 50
         """,
-        {"q": q, "company": company},
+        {"q": q, "company": company, "price_list": price_list},
         as_dict=True,
     )
     for r in rows:
         r["is_stock_item"] = int(r.get("is_stock_item") or 0)
         r["has_serial_no"] = int(r.get("has_serial_no") or 0)
+        r["custom_tiene_adenda"] = int(r.get("custom_tiene_adenda") or 0)
         r["matched_by_keyword"] = int(r.get("matched_by_keyword") or 0)
+        r["rate"] = float(r.get("rate") or 0)
+        r["stock_qty"] = float(r.get("stock_qty") or 0)
     return rows
