@@ -1694,71 +1694,83 @@ class EFastSalePage {
     <!-- Maint Tab Content: Asignación de Precios -->
     <div class="ef-maint-tab-content" id="ef-maint-tab-asignacion-precios" style="display:none;">
       <div class="ef-analytics-card" style="box-shadow: var(--ef-shadow); padding:20px; margin-bottom:16px;">
-        <div style="display:flex; align-items:center; gap:8px; margin-bottom:14px;">
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
           <span style="font-weight:700; color:var(--ef-primary); font-size:16px;">Asignación de Precios por Utilidad</span>
         </div>
-        <p style="margin:0 0 16px 0; font-size:12px; color:#64748b;">
+        <p style="margin:0 0 18px 0; font-size:12px; color:#64748b;">
           Calcula precios de venta a partir de un costo (estándar, promedio ponderado del sistema, último precio de compra o manual)
-          y un % de utilidad sobre costo. El precio neto se guarda en la lista de precios; el precio con IVA es informativo
-          (la utilidad se calcula sólo sobre el neto).
+          y un % de utilidad sobre costo. La utilidad se calcula siempre sobre el neto; el precio con IVA puede redondearse a un paso comercial.
         </p>
-        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:14px; align-items:end;">
-          <div class="ef-field-group">
-            <label class="ef-label">Lista de Precios</label>
-            <select id="ef-ap-price-list" class="ef-input" style="width:100%;"></select>
-          </div>
-          <div class="ef-field-group">
-            <label class="ef-label">Base de Costo</label>
-            <select id="ef-ap-cost-basis" class="ef-input" style="width:100%;">
-              <option value="estandar">Costo Estándar (ficha)</option>
-              <option value="ponderado">Promedio Ponderado (sistema)</option>
-              <option value="ultima_compra">Último Precio de Compra</option>
-            </select>
-          </div>
-          <div class="ef-field-group">
-            <label class="ef-label">% Utilidad (global)</label>
-            <input type="number" id="ef-ap-util-global" class="ef-input" style="width:100%;" min="0" step="any" value="0" />
-          </div>
-          <div class="ef-field-group">
-            <label class="ef-label">Tasa IVA %</label>
-            <input type="number" id="ef-ap-iva" class="ef-input" style="width:100%;" min="0" step="any" value="12" />
-          </div>
-          <div class="ef-field-group">
-            <label class="ef-label">Redondear precio c/IVA a</label>
-            <select id="ef-ap-round-step" class="ef-input" style="width:100%;">
-              <option value="0">Ninguno (2 decimales)</option>
-              <option value="0.05">0.05</option>
-              <option value="0.10">0.10</option>
-              <option value="0.25">0.25</option>
-              <option value="0.50">0.50</option>
-              <option value="1">1.00</option>
-            </select>
-          </div>
-          <div class="ef-field-group">
-            <label class="ef-label">Dirección de redondeo</label>
-            <select id="ef-ap-round-mode" class="ef-input" style="width:100%;">
-              <option value="up">Hacia arriba</option>
-              <option value="nearest">Al más cercano</option>
-              <option value="down">Hacia abajo</option>
-            </select>
-          </div>
-          <div class="ef-field-group">
-            <label class="ef-label">Proveedor</label>
-            <div id="ef-ap-supplier-ctrl" class="ef-link-ctrl" style="min-height:32px;"></div>
-          </div>
-          <div class="ef-field-group">
-            <label class="ef-label">Grupo de Artículos</label>
-            <div id="ef-ap-group-ctrl" class="ef-link-ctrl" style="min-height:32px;"></div>
-          </div>
-          <div class="ef-field-group">
-            <label class="ef-label">Ítem</label>
-            <div id="ef-ap-item-ctrl" class="ef-link-ctrl" style="min-height:32px;"></div>
-          </div>
-          <div class="ef-field-group">
-            <button id="ef-ap-btn-search" class="ef-btn ef-btn-primary" style="width:100%;">Buscar</button>
+
+        <!-- Bloque 1: Buscar productos -->
+        <div style="border:1px solid var(--ef-border); border-radius:8px; padding:14px; margin-bottom:14px;">
+          <div style="font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; color:var(--ef-text-muted); margin-bottom:10px;">1 · Buscar productos</div>
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:14px; align-items:end;">
+            <div class="ef-field-group">
+              <label class="ef-label">Proveedor</label>
+              <div id="ef-ap-supplier-ctrl" class="ef-link-ctrl" style="min-height:32px;"></div>
+            </div>
+            <div class="ef-field-group">
+              <label class="ef-label">Grupo de Artículos</label>
+              <div id="ef-ap-group-ctrl" class="ef-link-ctrl" style="min-height:32px;"></div>
+            </div>
+            <div class="ef-field-group">
+              <label class="ef-label">Ítem</label>
+              <div id="ef-ap-item-ctrl" class="ef-link-ctrl" style="min-height:32px;"></div>
+            </div>
+            <div class="ef-field-group">
+              <button id="ef-ap-btn-search" class="ef-btn ef-btn-primary" style="width:100%;">Buscar</button>
+            </div>
           </div>
         </div>
-        <div id="ef-ap-status" style="font-size:11px; color:#64748b; margin-top:10px; min-height:14px;"></div>
+
+        <!-- Bloque 2: Parámetros de cálculo -->
+        <div style="border:1px solid var(--ef-border); border-radius:8px; padding:14px;">
+          <div style="font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; color:var(--ef-text-muted); margin-bottom:10px;">2 · Parámetros de cálculo</div>
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:14px; align-items:end;">
+            <div class="ef-field-group">
+              <label class="ef-label">Lista de Precios</label>
+              <select id="ef-ap-price-list" class="ef-input" style="width:100%;"></select>
+            </div>
+            <div class="ef-field-group">
+              <label class="ef-label">Base de Costo</label>
+              <select id="ef-ap-cost-basis" class="ef-input" style="width:100%;">
+                <option value="estandar">Costo Estándar (ficha)</option>
+                <option value="ponderado">Promedio Ponderado (sistema)</option>
+                <option value="ultima_compra">Último Precio de Compra</option>
+              </select>
+            </div>
+            <div class="ef-field-group">
+              <label class="ef-label">% Utilidad (global)</label>
+              <input type="number" id="ef-ap-util-global" class="ef-input" style="width:100%;" min="0" step="any" value="0" />
+            </div>
+            <div class="ef-field-group">
+              <label class="ef-label">Tasa IVA % <span style="color:#94a3b8; font-weight:400; font-size:11px;">(según la compañía)</span></label>
+              <input type="number" id="ef-ap-iva" class="ef-input" style="width:100%; background:#f1f5f9; color:#64748b;" readonly tabindex="-1" />
+            </div>
+            <div class="ef-field-group">
+              <label class="ef-label">Redondear precio c/IVA a</label>
+              <select id="ef-ap-round-step" class="ef-input" style="width:100%;">
+                <option value="0">Ninguno (2 decimales)</option>
+                <option value="0.05">0.05</option>
+                <option value="0.10">0.10</option>
+                <option value="0.25">0.25</option>
+                <option value="0.50">0.50</option>
+                <option value="1">1.00</option>
+              </select>
+            </div>
+            <div class="ef-field-group">
+              <label class="ef-label">Dirección de redondeo</label>
+              <select id="ef-ap-round-mode" class="ef-input" style="width:100%;">
+                <option value="up">Hacia arriba</option>
+                <option value="nearest">Al más cercano</option>
+                <option value="down">Hacia abajo</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div id="ef-ap-status" style="font-size:11px; color:#64748b; margin-top:12px; min-height:14px;"></div>
         <div id="ef-ap-store-hint" style="font-size:11.5px; margin-top:4px;"></div>
       </div>
 
@@ -1767,7 +1779,7 @@ class EFastSalePage {
           <div>
             <button id="ef-ap-mark-all" class="ef-btn ef-btn-sm ef-btn-secondary">Marcar todos</button>
             <button id="ef-ap-unmark-all" class="ef-btn ef-btn-sm ef-btn-secondary">Desmarcar todos</button>
-            <button id="ef-ap-apply-util" class="ef-btn ef-btn-sm ef-btn-secondary" title="Aplica el % de utilidad global y la base de costo a todas las filas">Recalcular con % global</button>
+            <button id="ef-ap-apply-util" class="ef-btn ef-btn-sm ef-btn-secondary" title="Reinicia 'Costo a usar' con la base de costo elegida y '% Util' con el % global, en todas las filas">Recalcular con % global</button>
           </div>
           <div style="display:flex; align-items:center; gap:12px;">
             <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--ef-text); cursor:pointer;">
@@ -1778,25 +1790,32 @@ class EFastSalePage {
             <button id="ef-ap-btn-apply" class="ef-btn ef-btn-sm ef-btn-primary">Aplicar precios seleccionados</button>
           </div>
         </div>
-        <div class="ef-table-wrapper" style="max-height:620px; overflow-y:auto;">
+        <div class="ef-table-wrapper" style="max-height:620px; overflow-y:auto; overflow-x:auto;">
           <table class="ef-table">
             <thead>
               <tr>
-                <th class="ef-th" style="width:34px; text-align:center;"><input type="checkbox" id="ef-ap-select-all" /></th>
-                <th class="ef-th" style="width:140px;">Código</th>
-                <th class="ef-th">Nombre</th>
-                <th class="ef-th ef-td-num" style="width:110px;">Costo Estándar</th>
-                <th class="ef-th ef-td-num" style="width:110px;">Prom. Ponderado</th>
-                <th class="ef-th ef-td-num" style="width:110px;">Últ. Compra</th>
-                <th class="ef-th ef-td-num" style="width:120px;">Costo a usar</th>
-                <th class="ef-th ef-td-num" style="width:90px;">% Util</th>
-                <th class="ef-th ef-td-num" style="width:120px;">Precio Neto</th>
-                <th class="ef-th ef-td-num" style="width:120px;">Precio c/IVA</th>
-                <th class="ef-th ef-td-num" style="width:110px;">Precio Actual</th>
+                <th class="ef-th" rowspan="2" style="width:34px; text-align:center; vertical-align:bottom;"><input type="checkbox" id="ef-ap-select-all" /></th>
+                <th class="ef-th" rowspan="2" style="width:130px; vertical-align:bottom;">Código</th>
+                <th class="ef-th" rowspan="2" style="vertical-align:bottom;">Nombre</th>
+                <th class="ef-th" colspan="3" style="text-align:center;">Costos de referencia</th>
+                <th class="ef-th" colspan="4" style="text-align:center; background:#eef2ff;">Nuevo precio a asignar</th>
+                <th class="ef-th" colspan="3" style="text-align:center; background:#f1f5f9;">Situación actual</th>
+              </tr>
+              <tr>
+                <th class="ef-th ef-td-num" style="width:95px;">Estándar</th>
+                <th class="ef-th ef-td-num" style="width:95px;">Ponderado</th>
+                <th class="ef-th ef-td-num" style="width:95px;">Últ. compra</th>
+                <th class="ef-th ef-td-num" style="width:110px; background:#eef2ff;">Costo a usar</th>
+                <th class="ef-th ef-td-num" style="width:78px; background:#eef2ff;">% Util</th>
+                <th class="ef-th ef-td-num" style="width:110px; background:#eef2ff;">Neto</th>
+                <th class="ef-th ef-td-num" style="width:110px; background:#eef2ff;">c/IVA</th>
+                <th class="ef-th ef-td-num" style="width:100px; background:#f1f5f9;">Precio actual</th>
+                <th class="ef-th ef-td-num" style="width:100px; background:#f1f5f9;">Costo (base)</th>
+                <th class="ef-th ef-td-num" style="width:100px; background:#f1f5f9;">Utilidad actual</th>
               </tr>
             </thead>
             <tbody id="ef-ap-tbody">
-              <tr><td colspan="11" style="text-align:center; color:#94a3b8; padding:20px;">Filtre por proveedor, grupo de artículos o ítem y presione Buscar.</td></tr>
+              <tr><td colspan="13" style="text-align:center; color:#94a3b8; padding:20px;">Filtre por proveedor, grupo de artículos o ítem y presione Buscar.</td></tr>
             </tbody>
           </table>
         </div>
@@ -10060,7 +10079,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.on("input", ".ef-ap-cost-input, .ef-ap-util-input", (e) => {
 			this._recalc_pricing_row($(e.currentTarget).closest("tr"));
 		});
-		this.$body.on("change", "#ef-ap-iva, #ef-ap-round-step, #ef-ap-round-mode", () => {
+		// El cambio de base de costo / redondeo re-evalúa la 'Situación actual' y los
+		// precios calculados de todas las filas (sin tocar lo que el usuario ya editó).
+		this.$body.on("change", "#ef-ap-round-step, #ef-ap-round-mode, #ef-ap-cost-basis", () => {
 			this.$body.find("#ef-ap-tbody tr[data-item]").each((_, tr) => this._recalc_pricing_row($(tr)));
 		});
 		this.$body.on("change", "#ef-ap-tbody .ef-ap-row-check", () => this._update_ap_selected_count());
@@ -10402,7 +10423,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const $select = this.$body.find("#ef-ap-price-list");
 		$select.empty().append('<option value="">Cargando listas...</option>');
 		this.$body.find("#ef-ap-tbody").html(
-			'<tr><td colspan="11" style="text-align:center; color:#94a3b8; padding:20px;">Filtre por proveedor, grupo de artículos o ítem y presione Buscar.</td></tr>'
+			'<tr><td colspan="13" style="text-align:center; color:#94a3b8; padding:20px;">Filtre por proveedor, grupo de artículos o ítem y presione Buscar.</td></tr>'
 		);
 		this.$body.find("#ef-ap-status").text("");
 		this.$body.find("#ef-ap-util-global").val(0);
@@ -10477,15 +10498,17 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-ap-select-all").prop("checked", false);
 
 		if (!rows.length) {
-			$tbody.html('<tr><td colspan="11" style="text-align:center; color:#94a3b8; padding:20px;">Sin resultados.</td></tr>');
+			$tbody.html('<tr><td colspan="13" style="text-align:center; color:#94a3b8; padding:20px;">Sin resultados.</td></tr>');
 			this._update_ap_selected_count();
 			return;
 		}
 
+		const gs = "background:#eef2ff;";   // grupo "Nuevo precio"
+		const as = "background:#f8fafc;";   // grupo "Situación actual"
 		$tbody.html(rows.map((r) => {
 			const baseKey = { estandar: r.costo_estandar, ponderado: r.costo_ponderado, ultima_compra: r.costo_ultima_compra }[basis] || 0;
 			return `
-			<tr data-item="${_esc(r.item_code)}" data-cur="${_esc(cur)}"
+			<tr data-item="${_esc(r.item_code)}" data-cur="${_esc(cur)}" data-precio-actual="${r.precio_actual}"
 				data-costo-estandar="${r.costo_estandar}" data-costo-ponderado="${r.costo_ponderado}" data-costo-ultima_compra="${r.costo_ultima_compra}">
 				<td class="ef-td" style="text-align:center;"><input type="checkbox" class="ef-ap-row-check" /></td>
 				<td class="ef-td" style="font-weight:600;">${_esc(r.item_code)}</td>
@@ -10493,11 +10516,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 				<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(r.costo_estandar, cur)}</td>
 				<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(r.costo_ponderado, cur)}</td>
 				<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(r.costo_ultima_compra, cur)}</td>
-				<td class="ef-td ef-td-num"><input type="number" class="ef-input ef-ap-cost-input" style="width:100px; text-align:right; font-size:12px; padding:3px 6px;" min="0" step="any" value="${baseKey ? Number(baseKey).toFixed(4) : ''}" /></td>
-				<td class="ef-td ef-td-num"><input type="number" class="ef-input ef-ap-util-input" style="width:70px; text-align:right; font-size:12px; padding:3px 6px;" min="0" step="any" value="${globalUtil}" /></td>
-				<td class="ef-td ef-td-num ef-ap-neto" style="font-family:monospace; font-weight:700;">—</td>
-				<td class="ef-td ef-td-num ef-ap-iva-val" style="font-family:monospace; color:var(--ef-text-muted);">—</td>
-				<td class="ef-td ef-td-num" style="font-family:monospace; color:#64748b;">${_fmtCurrency(r.precio_actual, cur)}</td>
+				<td class="ef-td ef-td-num" style="${gs}"><input type="number" class="ef-input ef-ap-cost-input" style="width:100px; text-align:right; font-size:12px; padding:3px 6px;" min="0" step="any" value="${baseKey ? Number(baseKey).toFixed(4) : ''}" /></td>
+				<td class="ef-td ef-td-num" style="${gs}"><input type="number" class="ef-input ef-ap-util-input" style="width:66px; text-align:right; font-size:12px; padding:3px 6px;" min="0" step="any" value="${globalUtil}" /></td>
+				<td class="ef-td ef-td-num ef-ap-neto" style="font-family:monospace; font-weight:700; ${gs}">—</td>
+				<td class="ef-td ef-td-num ef-ap-iva-val" style="font-family:monospace; font-weight:700; ${gs}">—</td>
+				<td class="ef-td ef-td-num ef-ap-actual" style="font-family:monospace; color:#64748b; ${as}">${_fmtCurrency(r.precio_actual, cur)}</td>
+				<td class="ef-td ef-td-num ef-ap-costo-base" style="font-family:monospace; color:#64748b; ${as}">—</td>
+				<td class="ef-td ef-td-num ef-ap-util-actual" style="font-family:monospace; ${as}">—</td>
 			</tr>`;
 		}).join(""));
 
@@ -10516,8 +10541,23 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const neto = factor ? conIva / factor : conIva;   // deriva del con-IVA ya redondeado
 		$tr.attr("data-neto", neto);
 		$tr.attr("data-con-iva", conIva);
+		$tr.attr("data-costo", cost);
 		$tr.find(".ef-ap-neto").text(cost ? _fmtCurrency(neto, cur) : "—");
 		$tr.find(".ef-ap-iva-val").text(cost ? _fmtCurrency(conIva, cur) : "—");
+
+		// ── Grupo "Situación actual": costo de la base elegida y utilidad vigente ──
+		const basis = this.$body.find("#ef-ap-cost-basis").val();
+		const costoBase = parseFloat($tr.attr(`data-costo-${basis}`)) || 0;
+		const precioActual = parseFloat($tr.attr("data-precio-actual")) || 0;
+		const precioActualNeto = (this._ap_iva_inclusive && factor) ? precioActual / factor : precioActual;
+		$tr.find(".ef-ap-costo-base").text(costoBase ? _fmtCurrency(costoBase, cur) : "—");
+		if (costoBase > 0 && precioActual > 0) {
+			const utilActual = (precioActualNeto - costoBase) / costoBase * 100;
+			const col = utilActual < 0 ? "var(--ef-danger)" : (utilActual < 5 ? "#b45309" : "var(--ef-success)");
+			$tr.find(".ef-ap-util-actual").text(_fmt(utilActual) + "%").css({ color: col, "font-weight": 700 });
+		} else {
+			$tr.find(".ef-ap-util-actual").text("—").css({ color: "#94a3b8", "font-weight": 400 });
+		}
 	}
 
 	_update_ap_selected_count() {
@@ -10537,13 +10577,20 @@ body.facex-fullscreen-mode .ef-main-layout {
 			if (!$tr.find(".ef-ap-row-check").prop("checked")) return;
 			const costo = parseFloat($tr.find(".ef-ap-cost-input").val()) || 0;
 			const util_pct = parseFloat($tr.find(".ef-ap-util-input").val()) || 0;
-			rows.push({ item_code: $tr.attr("data-item"), costo, util_pct });
+			const neto = parseFloat($tr.attr("data-neto")) || 0;
+			rows.push({ item_code: $tr.attr("data-item"), costo, util_pct, neto });
 		});
 		if (!rows.length) {
 			frappe.show_alert({ message: "Marque al menos un producto.", indicator: "orange" });
 			return;
 		}
 		const sinCosto = rows.filter((r) => !(r.costo > 0)).length;
+		if (sinCosto === rows.length) {
+			frappe.show_alert({ message: "Ninguna fila seleccionada tiene un costo válido (> 0).", indicator: "orange" });
+			return;
+		}
+		// Ítems que quedarían al costo (utilidad 0) o por debajo — requieren confirmación explícita.
+		const alCosto = rows.filter((r) => r.costo > 0 && r.neto <= r.costo + 0.005).map((r) => r.item_code);
 		const guardar = this.$body.find("#ef-ap-save-cost").prop("checked") ? 1 : 0;
 		const round_step = parseFloat(this.$body.find("#ef-ap-round-step").val()) || 0;
 		const round_mode = this.$body.find("#ef-ap-round-mode").val() || "nearest";
@@ -10552,8 +10599,15 @@ body.facex-fullscreen-mode .ef-main-layout {
 			? "el precio <b>CON IVA</b> (redondeado)"
 			: "el precio <b>NETO</b> (derivado del precio con IVA redondeado)";
 
+		const warnAlCosto = alCosto.length
+			? `<div style="color:#b91c1c; font-weight:700;">⚠ ${alCosto.length === 1 ? "Este ítem quedaría" : "Estos ítems quedarían"} al costo (utilidad 0) o por debajo:</div>`
+			+ `<div style="margin:3px 0 6px; font-family:monospace;">${alCosto.map(_esc).join(", ")}</div>`
+			+ `<div>¿Está seguro de venderlo${alCosto.length === 1 ? "" : "s"} así?</div><hr style="margin:10px 0; border:none; border-top:1px solid var(--ef-border);">`
+			: "";
+
 		frappe.confirm(
-			`Se asignará ${queGraba} a <b>${rows.length - sinCosto}</b> producto(s) en la lista <b>${_esc(price_list)}</b>.`
+			warnAlCosto
+			+ `Se asignará ${queGraba} a <b>${rows.length - sinCosto}</b> producto(s) en la lista <b>${_esc(price_list)}</b>.`
 			+ (round_step > 0 ? `<br>El precio con IVA se redondea a <b>${round_step.toFixed(2)}</b> ${modeLbl}.` : `<br>El precio con IVA se deja a 2 decimales.`)
 			+ (sinCosto ? `<br><span style="color:#b45309;">${sinCosto} fila(s) sin costo válido se omitirán.</span>` : "")
 			+ (guardar ? `<br>También se guardará el costo usado como Costo Estándar del producto.` : ""),
