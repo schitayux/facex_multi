@@ -11,7 +11,17 @@ import frappe
 from frappe.utils import today, cint, flt, get_first_day, get_last_day
 
 from facex_multi.api.invoice import get_effective_company, get_user_companies, get_warehouses
-from facex_multi.api.permissions import get_facex_inventory_permissions, get_facex_permissions_for_company
+from facex_multi.api.item import _variantes_layout_teclado
+from facex_multi.api.permissions import (
+    get_facex_can_administer_transportistas,
+    get_facex_can_edit_guias_transporte,
+    get_facex_can_upload_liquidaciones_transporte,
+    get_facex_can_view_transporte_kpis,
+    get_facex_can_view_transporte_menu,
+    get_facex_can_view_transporte_reportes,
+    get_facex_inventory_permissions,
+    get_facex_permissions_for_company,
+)
 from facex_multi.api.si_carga import _get_establishments
 
 
@@ -143,11 +153,24 @@ def get_default_expense_account(item_code: str, company: str = None):
 
 @frappe.whitelist()
 def search_items_for_stock(txt: str = None, company: str = None):
-    """Busca ítems para el módulo de Inventario, incluyendo flags de lote/serie."""
+    """Busca ítems para el módulo de Inventario, incluyendo flags de lote/serie.
+
+    Prueba también variantes del texto que compensan el típico error de layout
+    de teclado de los lectores de código de barras/QR (guion '-' <-> comilla "'"),
+    para que un código escaneado como "CT'M'D2" encuentre igual "CT-M-D2".
+    """
     company = get_effective_company(company)
-    q = f"%{(txt or '').strip()}%"
+    txt = (txt or "").strip()
+    variantes = _variantes_layout_teclado(txt) if txt else [""]
+
+    params = {"company": company, "txt": txt}
+    like_clauses = []
+    for i, variante in enumerate(variantes):
+        params[f"q{i}"] = f"%{variante}%"
+        like_clauses.append(f"name LIKE %(q{i})s OR item_name LIKE %(q{i})s")
+
     return frappe.db.sql(
-        """
+        f"""
         SELECT name, item_code, item_name, stock_uom, has_batch_no, has_serial_no
         FROM `tabItem`
         WHERE disabled = 0
@@ -156,11 +179,11 @@ def search_items_for_stock(txt: str = None, company: str = None):
               bfel_company = %(company)s
               OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
           )
-          AND (%(txt)s = '' OR name LIKE %(q)s OR item_name LIKE %(q)s)
+          AND (%(txt)s = '' OR ({" OR ".join(like_clauses)}))
         ORDER BY item_name ASC
         LIMIT 50
         """,
-        {"q": q, "company": company, "txt": (txt or "").strip()},
+        params,
         as_dict=True,
     )
 
@@ -684,13 +707,21 @@ def get_inventory_defaults(company: str = None):
         company = allowed_companies[0]
 
     permissions = get_facex_inventory_permissions(company)
+    general_perms = get_facex_permissions_for_company(company)
     # "Listas de Materiales" es un permiso general (Mantenimiento, default ON —
     # crea_items/modifica_items), no deny-by-default como el resto de Inventario;
     # se mezcla aquí para que la tarjeta en Inventario use la misma fuente de verdad
     # que el tab de Mantenimiento en FacEx Clásico.
-    permissions["gestiona_listas_materiales"] = get_facex_permissions_for_company(company).get(
-        "gestiona_listas_materiales", 0
-    )
+    permissions["gestiona_listas_materiales"] = general_perms.get("gestiona_listas_materiales", 0)
+    # Transporte (menú aéreo, mismo módulo compartido con FacEx clásico/Screen):
+    # cada permiso tiene su propia función dedicada en permissions.py (no
+    # forman parte de get_facex_permissions_for_company / _ALL_PERM_FIELDS).
+    permissions["puede_ver_menu_transporte"] = int(get_facex_can_view_transporte_menu(company))
+    permissions["puede_editar_guias_transporte"] = int(get_facex_can_edit_guias_transporte(company))
+    permissions["puede_administrar_transportistas"] = int(get_facex_can_administer_transportistas(company))
+    permissions["puede_ver_reportes_transporte"] = int(get_facex_can_view_transporte_reportes(company))
+    permissions["puede_cargar_liquidaciones_transporte"] = int(get_facex_can_upload_liquidaciones_transporte(company))
+    permissions["puede_ver_kpis_transporte"] = int(get_facex_can_view_transporte_kpis(company))
     warehouses = get_warehouses(company) if permissions.get("puede_ver_inventario") else []
     establishments = _get_establishments(company) if permissions.get("puede_ver_inventario") else []
     warehouses_meta = get_warehouses_meta(company) if permissions.get("puede_ver_inventario") else []

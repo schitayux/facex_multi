@@ -4,6 +4,11 @@
  * Toda la lógica fiscal/contable permanece en ERPNext core.
  */
 
+const EF_MAINT_CUST_PAGE_LENGTH = 15;
+const EF_MAINT_ITEM_PAGE_LENGTH = 15;
+const EF_MAINT_SUPP_PAGE_LENGTH = 15;
+const EF_MAINT_LM_PAGE_LENGTH = 15;
+
 // ---------------------------------------------------------------------------
 // Page lifecycle hooks
 // ---------------------------------------------------------------------------
@@ -28,12 +33,17 @@ frappe.pages["facex"].on_page_load = function (wrapper) {
 	// It is NOT included in desk.bundle.js, so must be required explicitly.
 	frappe.require(["/assets/facex_multi/js/facex_transporte_module.js", "/assets/facex_multi/js/ef_guide.js", "controls.bundle.js"], function () {
 		wrapper.efast = new EFastSalePage(page, wrapper);
+		facex_multi.setup_back_guard({ to: "/app", is_dirty: () => wrapper.efast._dirty });
 	});
 };
 
 frappe.pages["facex"].on_page_show = function (wrapper) {
 	$("body").addClass("facex-fullscreen-mode");
 	if (!wrapper.efast) return;
+	// Rearmar en cada re-entrada: on_page_load solo corre una vez por sesión
+	// de pestaña (ver history_guard.js), así que sin esto el guard del botón
+	// Atrás dejaría de funcionar después de la primera visita a esta página.
+	facex_multi.setup_back_guard({ to: "/app", is_dirty: () => wrapper.efast._dirty });
 	const params = frappe.urllib.get_dict();
 	if (params.invoice) {
 		wrapper.efast.load_invoice(params.invoice);
@@ -210,14 +220,13 @@ class EFastSalePage {
   <div class="ef-navbar-top">
      <div class="ef-navbar-brand" style="display: flex; align-items: center; gap: 8px;">
        <svg class="ef-bolt" width="20" height="20" viewBox="0 0 24 24" fill="#153375"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-       <span style="font-weight: 800; color: #153375;">FacEx Portal</span>
        <button id="ef-btn-guide" class="ef-btn" style="margin-left: 12px; font-size: 11px; padding: 4px 10px; border-radius: 6px; display: flex; align-items: center; gap: 5px; border: 1px solid var(--ef-border); background: var(--ef-card); color: var(--ef-text);" title="Guía paso a paso de esta pantalla">
          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 2-3 4"/><path d="M12 17h.01"/></svg>
          <span>Guía</span>
        </button>
      </div>
-     
-     <div id="ef-navbar-company-badge" style="display: none; align-items: center; gap: 6px; background: #eef2ff; color: #4361ee; padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 700; border: 1px solid #c7d2fe; box-shadow: 0 1px 2px rgba(0,0,0,0.05); text-transform: uppercase; letter-spacing: 0.5px;">
+
+     <div id="ef-navbar-company-badge" style="display: none; align-items: center; gap: 6px; background: #eef2ff; color: #4361ee; padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 700; border: 1px solid #c7d2fe; box-shadow: 0 1px 2px rgba(0,0,0,0.05); text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer;" title="Ir al menú principal">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"></path><path d="M9 8h1"></path><path d="M9 12h1"></path><path d="M9 16h1"></path><path d="M14 8h1"></path><path d="M14 12h1"></path><path d="M14 16h1"></path><path d="M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16"></path></svg>
         <span id="ef-active-company-name"></span>
      </div>
@@ -289,11 +298,29 @@ class EFastSalePage {
                </button>
              </div>
            </div>
-           <div class="ef-menu-group" data-group="transporte">
-             <button type="button" class="ef-nav-btn ef-menu-item ef-menu-group-header ef-menu-group-header-direct" data-view="transporte" style="display:none;" title="Transporte">
+           <div class="ef-menu-group" data-group="transporte" id="ef-menu-group-transporte" style="display:none;">
+             <button type="button" class="ef-menu-group-header">
                <span class="ef-menu-group-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg></span>
-               <span class="ef-menu-group-label ef-menu-item-label">Transporte</span>
+               <span class="ef-menu-group-label">Transporte</span>
+               <svg class="ef-menu-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
              </button>
+             <div class="ef-menu-group-items">
+               <button type="button" class="ef-nav-btn ef-menu-item" data-view="transporte" data-transporte-section="transportistas" id="ef-menu-transporte-transportistas" title="Transportistas">
+                 <span class="ef-menu-item-label">Transportistas</span>
+               </button>
+               <button type="button" class="ef-nav-btn ef-menu-item" data-view="transporte" data-transporte-section="pendientes" id="ef-menu-transporte-pendientes" title="Envíos Pendientes">
+                 <span class="ef-menu-item-label">Envíos Pendientes</span>
+               </button>
+               <button type="button" class="ef-nav-btn ef-menu-item" data-view="transporte" data-transporte-section="guias" id="ef-menu-transporte-guias" title="Guías">
+                 <span class="ef-menu-item-label">Guías</span>
+               </button>
+               <button type="button" class="ef-nav-btn ef-menu-item" data-view="transporte" data-transporte-section="liquidaciones" id="ef-menu-transporte-liquidaciones" title="Liquidaciones">
+                 <span class="ef-menu-item-label">Liquidaciones</span>
+               </button>
+               <button type="button" class="ef-nav-btn ef-menu-item" data-view="transporte" data-transporte-section="reportes" id="ef-menu-transporte-reportes" title="Reportes de Transporte">
+                 <span class="ef-menu-item-label">Reportes de Transporte</span>
+               </button>
+             </div>
            </div>
          </div>
        </div>
@@ -341,6 +368,7 @@ class EFastSalePage {
         </div>
         <div class="ef-home-session" id="ef-home-session"></div>
       </div>
+      <div class="ef-home-quote" id="ef-home-quote"></div>
       <div class="ef-home-cards" id="ef-home-cards"></div>
       <div class="ef-home-footer" id="ef-home-footer"></div>
     </div>
@@ -701,9 +729,13 @@ class EFastSalePage {
       <div class="ef-items-section">
         <div class="ef-items-header">
           <span class="ef-section-title">Detalle de Productos / Servicios</span>
-          <button id="ef-add-row" class="ef-btn ef-btn-sm ef-btn-secondary">
-            <span>+</span> Agregar Línea
-          </button>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <input type="text" id="ef-barcode-scan" class="ef-input" style="width:220px;"
+              placeholder="Escanear código de barras / QR..." autocomplete="off" title="Escanee un código de barras o QR para agregar el producto (o sumar cantidad si ya está en la lista)." />
+            <button id="ef-add-row" class="ef-btn ef-btn-sm ef-btn-secondary">
+              <span>+</span> Agregar Línea
+            </button>
+          </div>
         </div>
 
         <div class="ef-table-wrapper">
@@ -1199,17 +1231,30 @@ class EFastSalePage {
     <div class="ef-maint-tab-content" id="ef-maint-tab-clientes">
       <div style="display: grid; grid-template-columns: 320px 1fr; gap: 24px; align-items: start;">
         <div class="ef-analytics-card" style="box-shadow: var(--ef-shadow); padding:16px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-            <span class="ef-analytics-card-title" style="margin:0;">Listado de Clientes</span>
-            <button id="ef-maint-cust-btn-load" class="ef-btn ef-btn-sm ef-btn-secondary" style="padding:2px 8px; font-size:10px;">Cargar Lista</button>
+          <div style="margin-bottom:10px;">
+            <span class="ef-analytics-card-title" style="margin:0;">Buscar Cliente</span>
           </div>
-          <input type="text" id="ef-maint-cust-search" class="ef-input" placeholder="Buscar cliente..." style="width:100%; margin-bottom:12px;" />
-          <div id="ef-maint-cust-list" style="max-height: 400px; overflow-y:auto; display:flex; flex-direction:column; gap:6px;"></div>
+          <div class="ef-field-group" style="margin-bottom:10px;">
+            <label class="ef-label">Buscar por</label>
+            <select id="ef-maint-cust-search-field" class="ef-input" style="width:100%;">
+              <option value="nombre">Nombre</option>
+              <option value="nit">NIT / Identificación</option>
+              <option value="codigo">Código de cliente</option>
+              <option value="grupo">Grupo de cliente</option>
+            </select>
+          </div>
+          <div class="ef-field-group" style="margin-bottom:12px;">
+            <label class="ef-label">Texto a buscar</label>
+            <input type="text" id="ef-maint-cust-search" class="ef-input" placeholder="Escriba y presione Buscar..." style="width:100%;" />
+          </div>
+          <button id="ef-maint-cust-btn-search" class="ef-btn ef-btn-primary" style="width:100%; margin-bottom:8px;">Buscar</button>
+          <button id="ef-maint-cust-btn-all" class="ef-btn ef-btn-sm ef-btn-secondary" style="width:100%; margin-bottom:8px;">Ver todos los clientes</button>
+          <div id="ef-maint-cust-search-status" style="font-size:11px; color:#64748b; text-align:center; min-height:14px;"></div>
         </div>
         <div class="ef-analytics-card" style="box-shadow: var(--ef-shadow); padding:20px;">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; border-bottom:1px solid var(--ef-border); padding-bottom:10px;">
-            <span style="font-weight:700; color:var(--ef-primary); font-size:16px;" id="ef-maint-cust-title">Nuevo Cliente</span>
-            <button id="ef-maint-cust-btn-new" class="ef-btn ef-btn-sm ef-btn-secondary">+ Nuevo</button>
+            <span style="font-weight:700; color:var(--ef-primary); font-size:16px;" id="ef-maint-cust-title">Búsqueda de clientes</span>
+            <button id="ef-maint-cust-btn-new" class="ef-btn ef-btn-sm ef-btn-secondary">+ Crear</button>
           </div>
           <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 16px;">
             <div class="ef-field-group">
@@ -1229,6 +1274,10 @@ class EFastSalePage {
             <div class="ef-field-group">
               <label class="ef-label">ID Receptor (FEL)</label>
               <input type="text" id="ef-maint-cust-receptor" class="ef-input" style="width:100%" />
+            </div>
+            <div class="ef-field-group">
+              <label class="ef-label">Grupo de cliente</label>
+              <div id="ef-maint-cust-group-ctrl" class="ef-link-ctrl" style="min-height: 32px;"></div>
             </div>
             <div class="ef-field-group" style="grid-column: span 2;">
               <details id="ef-maint-cust-contacto-section" style="border:1px solid var(--ef-border); border-radius:8px; padding:10px 14px;">
@@ -1268,13 +1317,28 @@ class EFastSalePage {
                 </div>
               </details>
             </div>
-            <div class="ef-field-group">
-              <label class="ef-label">Lista de precios</label>
-              <div id="ef-maint-cust-price-list-ctrl" class="ef-link-ctrl" style="min-height: 32px;"></div>
-            </div>
-            <div class="ef-field-group">
-              <label class="ef-label">Condiciones de pago</label>
-              <div id="ef-maint-cust-payment-terms-ctrl" class="ef-link-ctrl" style="min-height: 32px;"></div>
+            <div class="ef-field-group" style="grid-column: span 2;">
+              <details id="ef-maint-cust-terminos-section" open style="border:1px solid var(--ef-border); border-radius:8px; padding:10px 14px;">
+                <summary style="cursor:pointer; font-weight:700; color:var(--ef-primary); font-size:13px;">Términos y condiciones</summary>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-top:14px;">
+                  <div class="ef-field-group">
+                    <label class="ef-label">Lista de precios</label>
+                    <div id="ef-maint-cust-price-list-ctrl" class="ef-link-ctrl" style="min-height: 32px;"></div>
+                  </div>
+                  <div class="ef-field-group">
+                    <label class="ef-label">Condiciones de pago</label>
+                    <div id="ef-maint-cust-payment-terms-ctrl" class="ef-link-ctrl" style="min-height: 32px;"></div>
+                  </div>
+                  <div class="ef-field-group">
+                    <label class="ef-label">Vendedor</label>
+                    <div id="ef-maint-cust-sales-partner-ctrl" class="ef-link-ctrl" style="min-height: 32px;"></div>
+                  </div>
+                  <div class="ef-field-group">
+                    <label class="ef-label">Límite de Crédito <span style="color:#64748b; font-weight:400; font-size:11px;">(para la compañía activa)</span></label>
+                    <input type="number" id="ef-maint-cust-credit-limit" class="ef-input" style="width:100%" min="0" step="any" placeholder="0.00" />
+                  </div>
+                </div>
+              </details>
             </div>
           </div>
           <div style="margin-top:20px; text-align:right;">
@@ -1289,17 +1353,29 @@ class EFastSalePage {
     <div class="ef-maint-tab-content" id="ef-maint-tab-productos" style="display:none;">
       <div style="display: grid; grid-template-columns: 320px 1fr; gap: 24px; align-items: start;">
         <div class="ef-analytics-card" style="box-shadow: var(--ef-shadow); padding:16px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-            <span class="ef-analytics-card-title" style="margin:0;">Listado de Productos</span>
-            <button id="ef-maint-item-btn-load" class="ef-btn ef-btn-sm ef-btn-secondary" style="padding:2px 8px; font-size:10px;">Cargar Lista</button>
+          <div style="margin-bottom:10px;">
+            <span class="ef-analytics-card-title" style="margin:0;">Buscar Producto</span>
           </div>
-          <input type="text" id="ef-maint-item-search" class="ef-input" placeholder="Buscar producto..." style="width:100%; margin-bottom:12px;" />
-          <div id="ef-maint-item-list" style="max-height: 400px; overflow-y:auto; display:flex; flex-direction:column; gap:6px;"></div>
+          <div class="ef-field-group" style="margin-bottom:10px;">
+            <label class="ef-label">Buscar por</label>
+            <select id="ef-maint-item-search-field" class="ef-input" style="width:100%;">
+              <option value="nombre">Nombre</option>
+              <option value="codigo">Código</option>
+              <option value="grupo">Grupo de artículos</option>
+            </select>
+          </div>
+          <div class="ef-field-group" style="margin-bottom:12px;">
+            <label class="ef-label">Texto a buscar</label>
+            <input type="text" id="ef-maint-item-search" class="ef-input" placeholder="Escriba y presione Buscar..." style="width:100%;" />
+          </div>
+          <button id="ef-maint-item-btn-search" class="ef-btn ef-btn-primary" style="width:100%; margin-bottom:8px;">Buscar</button>
+          <button id="ef-maint-item-btn-all" class="ef-btn ef-btn-sm ef-btn-secondary" style="width:100%; margin-bottom:8px;">Ver todos los productos</button>
+          <div id="ef-maint-item-search-status" style="font-size:11px; color:#64748b; text-align:center; min-height:14px;"></div>
         </div>
         <div class="ef-analytics-card" style="box-shadow: var(--ef-shadow); padding:20px;">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; border-bottom:1px solid var(--ef-border); padding-bottom:10px;">
-            <span style="font-weight:700; color:var(--ef-primary); font-size:16px;" id="ef-maint-item-title">Nuevo Producto</span>
-            <button id="ef-maint-item-btn-new" class="ef-btn ef-btn-sm ef-btn-secondary">+ Nuevo</button>
+            <span style="font-weight:700; color:var(--ef-primary); font-size:16px;" id="ef-maint-item-title">Búsqueda de productos</span>
+            <button id="ef-maint-item-btn-new" class="ef-btn ef-btn-sm ef-btn-secondary">+ Crear</button>
           </div>
           <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 16px;">
             <div class="ef-field-group" id="ef-maint-item-code-group">
@@ -1385,6 +1461,7 @@ class EFastSalePage {
             </div>
           </div>
           <div style="margin-top:20px; text-align:right;">
+            <button id="ef-maint-item-btn-print-label" class="ef-btn ef-btn-secondary" style="padding:8px 24px; display:none; margin-right:8px;" title="Imprimir etiqueta del producto (eTIBA)">e-Imprimir</button>
             <button id="ef-maint-item-btn-delete" class="ef-btn" style="background:#ef4444; color:white; padding:8px 24px; display:none; margin-right:8px;">Eliminar Producto</button>
             <button id="ef-maint-item-btn-save" class="ef-btn ef-btn-primary" style="padding:8px 24px;">Guardar Producto</button>
           </div>
@@ -1396,17 +1473,28 @@ class EFastSalePage {
     <div class="ef-maint-tab-content" id="ef-maint-tab-listas-materiales" style="display:none;">
       <div style="display: grid; grid-template-columns: 320px 1fr; gap: 24px; align-items: start;">
         <div class="ef-analytics-card" style="box-shadow: var(--ef-shadow); padding:16px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-            <span class="ef-analytics-card-title" style="margin:0;">Listas de Materiales</span>
-            <button id="ef-maint-lm-btn-load" class="ef-btn ef-btn-sm ef-btn-secondary" style="padding:2px 8px; font-size:10px;">Cargar Lista</button>
+          <div style="margin-bottom:10px;">
+            <span class="ef-analytics-card-title" style="margin:0;">Buscar Lista de Materiales</span>
           </div>
-          <input type="text" id="ef-maint-lm-search" class="ef-input" placeholder="Filtrar..." style="width:100%; margin-bottom:12px;" />
-          <div id="ef-maint-lm-list" style="max-height: 400px; overflow-y:auto; display:flex; flex-direction:column; gap:6px;"></div>
+          <div class="ef-field-group" style="margin-bottom:10px;">
+            <label class="ef-label">Buscar por</label>
+            <select id="ef-maint-lm-search-field" class="ef-input" style="width:100%;">
+              <option value="nombre">Nombre</option>
+              <option value="codigo">Código</option>
+            </select>
+          </div>
+          <div class="ef-field-group" style="margin-bottom:12px;">
+            <label class="ef-label">Texto a buscar</label>
+            <input type="text" id="ef-maint-lm-search" class="ef-input" placeholder="Escriba y presione Buscar..." style="width:100%;" />
+          </div>
+          <button id="ef-maint-lm-btn-search" class="ef-btn ef-btn-primary" style="width:100%; margin-bottom:8px;">Buscar</button>
+          <button id="ef-maint-lm-btn-all" class="ef-btn ef-btn-sm ef-btn-secondary" style="width:100%; margin-bottom:8px;">Ver todas las Listas de Materiales</button>
+          <div id="ef-maint-lm-search-status" style="font-size:11px; color:#64748b; text-align:center; min-height:14px;"></div>
         </div>
         <div class="ef-analytics-card" style="box-shadow: var(--ef-shadow); padding:20px;">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; border-bottom:1px solid var(--ef-border); padding-bottom:10px;">
-            <span style="font-weight:700; color:var(--ef-primary); font-size:16px;" id="ef-maint-lm-title">Nueva Lista de Materiales</span>
-            <button id="ef-maint-lm-btn-new" class="ef-btn ef-btn-sm ef-btn-secondary">+ Nueva</button>
+            <span style="font-weight:700; color:var(--ef-primary); font-size:16px;" id="ef-maint-lm-title">Búsqueda de Listas de Materiales</span>
+            <button id="ef-maint-lm-btn-new" class="ef-btn ef-btn-sm ef-btn-secondary">+ Crear</button>
           </div>
 
           <div class="ef-field-group" id="ef-maint-lm-padre-group">
@@ -1461,43 +1549,52 @@ class EFastSalePage {
     <div class="ef-maint-tab-content" id="ef-maint-tab-proveedores" style="display:none;">
       <div style="display: grid; grid-template-columns: 320px 1fr; gap: 24px; align-items: start;">
         <div class="ef-analytics-card" style="box-shadow: var(--ef-shadow); padding:16px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-            <span class="ef-analytics-card-title" style="margin:0;">Listado de Proveedores</span>
-            <button id="ef-maint-supp-btn-load" class="ef-btn ef-btn-sm ef-btn-secondary" style="padding:2px 8px; font-size:10px;">Cargar Lista</button>
+          <div style="margin-bottom:10px;">
+            <span class="ef-analytics-card-title" style="margin:0;">Buscar Proveedor</span>
           </div>
-          <input type="text" id="ef-maint-supp-search" class="ef-input" placeholder="Buscar proveedor..." style="width:100%; margin-bottom:12px;" />
-          <div id="ef-maint-supp-list" style="max-height: 400px; overflow-y:auto; display:flex; flex-direction:column; gap:6px;"></div>
+          <div class="ef-field-group" style="margin-bottom:10px;">
+            <label class="ef-label">Buscar por</label>
+            <select id="ef-maint-supp-search-field" class="ef-input" style="width:100%;">
+              <option value="nombre">Nombre</option>
+              <option value="codigo">Código</option>
+              <option value="nit">NIT / ID Fiscal</option>
+            </select>
+          </div>
+          <div class="ef-field-group" style="margin-bottom:12px;">
+            <label class="ef-label">Texto a buscar</label>
+            <input type="text" id="ef-maint-supp-search" class="ef-input" placeholder="Escriba y presione Buscar..." style="width:100%;" />
+          </div>
+          <button id="ef-maint-supp-btn-search" class="ef-btn ef-btn-primary" style="width:100%; margin-bottom:8px;">Buscar</button>
+          <button id="ef-maint-supp-btn-all" class="ef-btn ef-btn-sm ef-btn-secondary" style="width:100%; margin-bottom:8px;">Ver todos los proveedores</button>
+          <div id="ef-maint-supp-search-status" style="font-size:11px; color:#64748b; text-align:center; min-height:14px;"></div>
         </div>
         <div class="ef-analytics-card" style="box-shadow: var(--ef-shadow); padding:20px;">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; border-bottom:1px solid var(--ef-border); padding-bottom:10px;">
-            <span id="ef-maint-supp-form-title" style="font-weight:700; color:var(--ef-primary); font-size:16px;">Selecciona o crea un proveedor</span>
-            <div style="display:flex; gap:8px;">
-              <button id="ef-maint-supp-btn-new" class="ef-btn ef-btn-sm" style="background:#10b981;color:#fff;">+ Nuevo</button>
-              <button id="ef-maint-supp-btn-save" class="ef-btn ef-btn-sm ef-btn-primary" style="display:none;">Guardar</button>
-              <button id="ef-maint-supp-btn-delete" class="ef-btn ef-btn-sm" style="display:none;background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;">Eliminar</button>
+            <span id="ef-maint-supp-form-title" style="font-weight:700; color:var(--ef-primary); font-size:16px;">Búsqueda de proveedores</span>
+            <button id="ef-maint-supp-btn-new" class="ef-btn ef-btn-sm ef-btn-secondary">+ Crear</button>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
+            <div style="grid-column:1/-1;">
+              <label class="ef-label">Nombre del Proveedor <span class="ef-req">*</span></label>
+              <input type="text" id="ef-maint-supp-name" class="ef-input" style="width:100%" placeholder="Nombre comercial o razón social"/>
+            </div>
+            <div>
+              <label class="ef-label">NIT / ID Fiscal</label>
+              <input type="text" id="ef-maint-supp-nit" class="ef-input" style="width:100%" placeholder="Ej: 12345678-9"/>
+            </div>
+            <div>
+              <label class="ef-label">Teléfono</label>
+              <input type="text" id="ef-maint-supp-phone" class="ef-input" style="width:100%" placeholder="Ej: 2222-3333"/>
+            </div>
+            <div style="grid-column:1/-1;">
+              <label class="ef-label">Dirección</label>
+              <input type="text" id="ef-maint-supp-address" class="ef-input" style="width:100%" placeholder="Dirección fiscal"/>
             </div>
           </div>
-          <div id="ef-maint-supp-form" style="display:none;">
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
-              <div style="grid-column:1/-1;">
-                <label class="ef-label">Nombre del Proveedor <span class="ef-req">*</span></label>
-                <input type="text" id="ef-maint-supp-name" class="ef-input" style="width:100%" placeholder="Nombre comercial o razón social"/>
-              </div>
-              <div>
-                <label class="ef-label">NIT / ID Fiscal</label>
-                <input type="text" id="ef-maint-supp-nit" class="ef-input" style="width:100%" placeholder="Ej: 12345678-9"/>
-              </div>
-              <div>
-                <label class="ef-label">Teléfono</label>
-                <input type="text" id="ef-maint-supp-phone" class="ef-input" style="width:100%" placeholder="Ej: 2222-3333"/>
-              </div>
-              <div style="grid-column:1/-1;">
-                <label class="ef-label">Dirección</label>
-                <input type="text" id="ef-maint-supp-address" class="ef-input" style="width:100%" placeholder="Dirección fiscal"/>
-              </div>
-            </div>
+          <div style="margin-top:20px; text-align:right;">
+            <button id="ef-maint-supp-btn-delete" class="ef-btn" style="background:#ef4444; color:white; padding:8px 24px; display:none; margin-right:8px;">Eliminar Proveedor</button>
+            <button id="ef-maint-supp-btn-save" class="ef-btn ef-btn-primary" style="padding:8px 24px;">Guardar Proveedor</button>
           </div>
-          <div id="ef-maint-supp-empty" style="color:#94a3b8; font-size:13px; padding:20px 0;">Selecciona un proveedor de la lista o haz clic en <strong>+ Nuevo</strong>.</div>
         </div>
       </div>
     </div>
@@ -1510,17 +1607,38 @@ class EFastSalePage {
             <span style="font-weight:700; color:var(--ef-primary); font-size:16px;">Mantenimiento de Precios</span>
             <select id="ef-maint-price-list-select" class="ef-select" style="width:240px; padding: 4px 8px; font-size: 13px;"></select>
           </div>
-          <input type="text" id="ef-maint-prices-search" class="ef-input" placeholder="Filtrar por nombre..." style="width:220px;" />
+          <div id="ef-maint-prices-status" style="font-size:11px; color:#64748b;"></div>
         </div>
-        <div class="ef-table-wrapper" style="max-height: 400px; overflow-y: auto;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+          <div>
+            <button id="ef-maint-prices-btn-mark-all" class="ef-btn ef-btn-sm ef-btn-secondary">Marcar todos</button>
+            <button id="ef-maint-prices-btn-unmark-all" class="ef-btn ef-btn-sm ef-btn-secondary">Desmarcar todos</button>
+          </div>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span id="ef-maint-prices-selected-count" style="font-size:12px; color:#64748b;">0 seleccionado(s)</span>
+            <button id="ef-maint-prices-btn-export" class="ef-btn ef-btn-sm ef-btn-primary">Exportar seleccionados a Excel</button>
+          </div>
+        </div>
+        <div class="ef-table-wrapper" style="max-height: 640px; overflow-y: auto;">
           <table class="ef-table">
             <thead>
               <tr>
+                <th class="ef-th" style="width:36px; text-align:center;"><input type="checkbox" id="ef-maint-prices-select-all" title="Seleccionar todos" /></th>
                 <th class="ef-th" style="width:150px;">Código</th>
                 <th class="ef-th">Nombre Producto</th>
+                <th class="ef-th" style="width:160px;">Grupo de Productos</th>
                 <th class="ef-th" style="width:100px;">UOM</th>
                 <th class="ef-th" style="width:180px; text-align:right;">Precio Standard</th>
                 <th class="ef-th" style="width:120px;"></th>
+              </tr>
+              <tr class="ef-cust-popup-filter-row">
+                <td></td>
+                <td><input type="text" id="ef-maint-prices-f-codigo" class="ef-input ef-maint-prices-filter" placeholder="Filtrar..." style="width:100%; font-size:11px; padding:3px 6px;" /></td>
+                <td><input type="text" id="ef-maint-prices-f-nombre" class="ef-input ef-maint-prices-filter" placeholder="Filtrar..." style="width:100%; font-size:11px; padding:3px 6px;" /></td>
+                <td><input type="text" id="ef-maint-prices-f-grupo" class="ef-input ef-maint-prices-filter" placeholder="Filtrar..." style="width:100%; font-size:11px; padding:3px 6px;" /></td>
+                <td></td>
+                <td></td>
+                <td></td>
               </tr>
             </thead>
             <tbody id="ef-maint-prices-tbody">
@@ -1764,7 +1882,8 @@ class EFastSalePage {
 
 		// Bind navbar actions
 		this.$body.on("click", ".ef-nav-btn", (e) => {
-			const view = $(e.currentTarget).attr("data-view");
+			const $el = $(e.currentTarget);
+			const view = $el.attr("data-view");
 			if (view === "pos") {
 				// Navegación completa (no es un view interno de este page) —
 				// recarga limpia de FacEx Screen, sin arrastrar estado de esta
@@ -1775,9 +1894,12 @@ class EFastSalePage {
 			} else if (view === "billing" && (!this.doc.name || this.doc.name === "new")) {
 				this._action_new();
 			} else {
-				this._switch_view(view);
+				this._switch_view(view, { section: $el.attr("data-transporte-section") });
 			}
 		});
+
+		// Icono de compañía (navbar): un click lleva siempre al menú principal.
+		this.$body.find("#ef-navbar-company-badge").on("click", () => this._switch_view("home"));
 
 		this._bind_main_menu();
 	}
@@ -1809,7 +1931,7 @@ class EFastSalePage {
 		});
 	}
 
-	_switch_view(view) {
+	_switch_view(view, opts = {}) {
 		this._current_view = view;
 
 		// Toggle buttons in navbar
@@ -1879,7 +2001,18 @@ class EFastSalePage {
 		} else if (view === "transporte") {
 			this.$body.find("#ef-transporte-view").show();
 			frappe.set_route("facex", "", { view: "transporte" });
-			this._transporte_module().showHub();
+			// Ítems del acordeón "Transporte" del menú aéreo saltan directo a su
+			// sección (data-transporte-section); sin sección (tarjeta de Inicio,
+			// o el propio grupo del menú) cae al hub de tarjetas de siempre.
+			const TRANSPORTE_SECTIONS = {
+				transportistas: "showTransportistas",
+				pendientes: "showPendingGuias",
+				guias: "showGuias",
+				liquidaciones: "showLiquidaciones",
+				reportes: "showReportes",
+			};
+			const method = TRANSPORTE_SECTIONS[opts.section] || "showHub";
+			this._transporte_module()[method]();
 		}
 	}
 
@@ -1902,6 +2035,200 @@ class EFastSalePage {
 		return this._transporteModuleInstance;
 	}
 
+	// Mismas frases (y misma fórmula de "una por día") que _get_daily_motivational_message()
+	// en facex_screen.js, para que el mensaje del día sea consistente entre
+	// FacEx Clásico y FacEx Screen.
+	_HOME_MOTIVATIONAL_MESSAGES = [
+		"Cada cliente que atiendes hoy es una oportunidad de dejar una gran impresión.",
+		"Un buen día empieza con una sonrisa — la tuya cuenta más de lo que crees.",
+		"La constancia de hoy es el resultado de mañana.",
+		"Gracias por hacer que cada venta sea una buena experiencia para alguien.",
+		"Pequeños detalles, grandes resultados. ¡Vamos con todo hoy!",
+		"Tu trabajo hace que esta empresa avance un paso más cada día.",
+		"Hoy es una nueva oportunidad para superar el día de ayer.",
+		"La actitud correcta convierte un día común en uno extraordinario.",
+		"Cada factura bien hecha es un cliente satisfecho.",
+		"El buen servicio se nota, y tú lo brindas todos los días.",
+		"Un equipo que suma esfuerzos, multiplica resultados.",
+		"La paciencia y la buena energía son tus mejores herramientas hoy.",
+		"Celebra los pequeños logros del día — todos cuentan.",
+		"Hoy puedes marcar la diferencia en la experiencia de alguien más.",
+		"El esfuerzo constante siempre encuentra su recompensa.",
+		"Buen ánimo, buen servicio, buenos resultados.",
+		"Cada 'gracias' de un cliente es una señal de que vas por buen camino.",
+		"La organización de hoy facilita el éxito de mañana.",
+		"Trabajar con calidad es la mejor forma de dejar huella.",
+		"Un problema resuelto a tiempo es una confianza ganada.",
+		"Tu buena disposición hoy puede alegrar el día de alguien más.",
+		"La excelencia es la suma de pequeños esfuerzos repetidos cada día.",
+		"Hoy es un buen día para hacer bien las cosas.",
+		"La confianza se construye con cada atención bien hecha.",
+		"Ser puntual y claro con el cliente siempre suma.",
+		"Cada día trae una nueva oportunidad de mejorar.",
+		"El buen trabajo en equipo hace que todo fluya mejor.",
+		"Tu esfuerzo de hoy es la base del éxito de mañana.",
+		"Una actitud positiva es contagiosa — compártela hoy.",
+		"Gracias por tu dedicación, se nota en cada detalle.",
+		"La sonrisa que ofreces hoy puede ser el mejor regalo para un cliente.",
+		"Cada reto de hoy es una oportunidad disfrazada de aprendizaje.",
+		"Tu compromiso diario construye la reputación de la empresa.",
+		"Un cliente bien atendido siempre regresa.",
+		"La honestidad en cada venta genera clientes para toda la vida.",
+		"Hoy es el día perfecto para superar tus propias expectativas.",
+		"La disciplina de hoy es la libertad de mañana.",
+		"Cada tarea bien hecha suma a un gran resultado.",
+		"El buen humor multiplica la productividad del equipo.",
+		"Escuchar al cliente es el primer paso para servirlo bien.",
+		"La empatía transforma una transacción en una relación.",
+		"Cada meta cumplida es un paso más cerca del éxito.",
+		"Tu profesionalismo deja huella en cada interacción.",
+		"La proactividad de hoy evita los problemas de mañana.",
+		"Un 'buenos días' sincero puede cambiar el rumbo de un día difícil.",
+		"La colaboración hace que los grandes proyectos parezcan sencillos.",
+		"Cada minuto bien invertido hoy se multiplica mañana.",
+		"La claridad en la comunicación evita malos entendidos.",
+		"Aprender algo nuevo cada día te hace mejor profesional.",
+		"El respeto mutuo es la base de un gran equipo.",
+		"Cada cliente satisfecho es la mejor publicidad que existe.",
+		"La perseverancia convierte los obstáculos en logros.",
+		"Hoy tienes la oportunidad de hacer algo memorable.",
+		"Un ambiente positivo se construye con actitudes positivas.",
+		"La responsabilidad de hoy es el reconocimiento de mañana.",
+		"Cada 'sí se puede' empieza con una decisión personal.",
+		"El buen trato es gratis y su impacto es invaluable.",
+		"La curiosidad de aprender más te acerca a la excelencia.",
+		"Cada venta es una oportunidad de generar confianza duradera.",
+		"Ser amable no cuesta nada y vale mucho.",
+		"La gratitud diaria mejora el ambiente de todo el equipo.",
+		"Cada día es una página en blanco para escribir un buen resultado.",
+		"La energía positiva se contagia — repártela hoy.",
+		"El buen ejemplo inspira más que cualquier discurso.",
+		"Cada esfuerzo, por pequeño que sea, construye grandes logros.",
+		"La confianza se gana con hechos, no con palabras.",
+		"Un equipo unido supera cualquier desafío.",
+		"Hoy es un buen día para aprender de los errores de ayer.",
+		"La paciencia con un cliente difícil siempre da frutos.",
+		"Cada detalle cuenta cuando se trata de dar un buen servicio.",
+		"La actitud de servicio transforma cualquier trabajo en vocación.",
+		"El compromiso con la calidad nunca pasa desapercibido.",
+		"Cada meta compartida se logra más rápido en equipo.",
+		"La puntualidad es una forma silenciosa de respeto.",
+		"Hoy puedes ser la razón por la que alguien sonría.",
+		"La resiliencia de hoy forja el carácter de mañana.",
+		"Cada cliente merece tu mejor versión, no solo tu atención.",
+		"El orden y la organización ahorran tiempo y energía.",
+		"La buena comunicación evita el 90% de los problemas.",
+		"Cada logro del equipo es motivo de celebración.",
+		"Hoy es una nueva oportunidad de dar lo mejor de ti.",
+		"La confianza en uno mismo abre puertas inesperadas.",
+		"Cada palabra amable puede alegrar el día de otra persona.",
+		"El trabajo bien hecho siempre encuentra su reconocimiento.",
+		"La flexibilidad ante el cambio es una gran fortaleza.",
+		"Cada cliente satisfecho refuerza la confianza en la marca.",
+		"El esfuerzo silencioso también construye grandes resultados.",
+		"Hoy es un buen momento para agradecer a quien te apoya.",
+		"La iniciativa propia abre camino a nuevas oportunidades.",
+		"Cada aprendizaje de hoy te prepara para el reto de mañana.",
+		"La calidad en el detalle diferencia a los mejores equipos.",
+		"Un problema resuelto con calma vale más que uno resuelto con prisa.",
+		"Cada venta bien cerrada es el resultado de un buen proceso.",
+		"La confianza del cliente se construye con cada interacción honesta.",
+		"Hoy puedes marcar la diferencia con solo una buena actitud.",
+		"El trabajo en equipo multiplica las capacidades individuales.",
+		"Cada nueva idea puede mejorar la forma en que trabajamos.",
+		"La constancia vence lo que la intensidad no logra sola.",
+		"Un cliente escuchado es un cliente que confía.",
+		"Hoy es el momento ideal para dar el siguiente paso.",
+		"La calma frente a la presión es una habilidad que se entrena.",
+		"Cada acierto de hoy suma experiencia para el futuro.",
+		"El buen servicio empieza con una buena disposición.",
+		"La transparencia genera confianza duradera.",
+		"Cada día que mejoras un poco, te acercas a la excelencia.",
+		"El buen ánimo es una decisión, no una casualidad.",
+		"Hoy es un gran día para fortalecer una relación con un cliente.",
+		"La organización de las tareas facilita alcanzar las metas.",
+		"Cada pequeño avance cuenta en el camino al éxito.",
+		"La empatía con el equipo fortalece la confianza mutua.",
+		"Un buen trato genera clientes leales, no solo ventas.",
+		"Hoy puedes convertir un problema en una oportunidad.",
+		"La actitud con la que empiezas el día define cómo lo terminas.",
+		"Cada esfuerzo consciente construye una mejor versión de ti mismo.",
+		"El respeto al tiempo de los demás también es profesionalismo.",
+		"La confianza del equipo se construye día a día.",
+		"Cada cliente fiel es el resultado de un buen servicio constante.",
+		"Hoy es un buen día para escuchar más y hablar menos.",
+		"La determinación convierte los sueños en metas alcanzables.",
+		"El buen humor en el trabajo hace más ligera cualquier carga.",
+		"Cada decisión bien pensada evita muchos problemas después.",
+		"La generosidad con el conocimiento hace crecer a todo el equipo.",
+		"Hoy tienes la oportunidad de aprender algo que no sabías ayer.",
+		"La calidad del servicio se refleja en los detalles más pequeños.",
+		"Cada cliente satisfecho recomienda sin que se lo pidas.",
+		"El buen liderazgo se demuestra con el ejemplo diario.",
+		"Hoy es un buen momento para reconocer el esfuerzo de un compañero.",
+		"La paciencia es una herramienta poderosa en la atención al cliente.",
+		"Cada tarea cumplida a tiempo genera confianza en el equipo.",
+		"El entusiasmo de hoy contagia el ánimo de mañana.",
+		"Cada tropiezo es una lección disfrazada de dificultad.",
+		"La buena actitud transforma el trabajo rutinario en algo especial.",
+		"Hoy puedes ser el motivo por el que el equipo avance más rápido.",
+		"La confianza se construye poco a poco, con cada acción correcta.",
+		"Cada cliente que regresa confirma que vas por buen camino.",
+		"El compromiso silencioso también deja huella.",
+		"Hoy es un buen día para dar las gracias sin esperar nada a cambio.",
+		"La calidad no es un accidente, es el resultado del esfuerzo diario.",
+		"Cada meta lograda merece ser celebrada, aunque sea pequeña.",
+		"La disposición a ayudar fortalece cualquier equipo de trabajo.",
+		"Hoy puedes sorprender a alguien con un excelente servicio.",
+		"La perseverancia es la diferencia entre intentarlo y lograrlo.",
+		"Cada buena decisión de hoy facilita el trabajo de mañana.",
+		"El respeto y la cortesía nunca pasan de moda.",
+		"Hoy es un buen día para ser la mejor versión de ti mismo.",
+		"La confianza mutua hace que el trabajo en equipo fluya mejor.",
+		"Cada cliente merece sentirse escuchado y valorado.",
+		"El esfuerzo constante siempre deja resultados visibles.",
+		"Hoy puedes construir una relación de confianza con solo ser honesto.",
+		"La buena energía se nota incluso en los días más ocupados.",
+		"Cada logro individual fortalece al equipo completo.",
+		"La responsabilidad con cada tarea construye una gran reputación.",
+		"Hoy es un buen día para simplificar algo que era complicado.",
+		"La cortesía en cada llamada o mensaje también es servicio.",
+		"Cada aprendizaje compartido hace más fuerte al equipo.",
+		"El buen trabajo no necesita anunciarse, se nota solo.",
+		"Hoy puedes ser el ejemplo de una gran actitud de servicio.",
+		"La confianza del cliente se gana con consistencia, no con promesas.",
+		"Cada día trae la oportunidad de hacer las cosas un poco mejor.",
+		"El entusiasmo por aprender abre muchas puertas.",
+		"Hoy es un buen momento para revisar los detalles con calma.",
+		"La generosidad con el tiempo de los demás también cuenta.",
+		"Cada cliente atendido con calidez recordará esa experiencia.",
+		"La responsabilidad compartida hace más liviana la carga.",
+		"Hoy puedes dar un paso más hacia tu mejor versión profesional.",
+		"La confianza se refuerza cumpliendo lo que se promete.",
+		"Cada pequeño gesto de cortesía construye grandes relaciones.",
+		"El buen ánimo del equipo se refleja en la atención al cliente.",
+		"Hoy es un buen día para aprender de quienes tienen más experiencia.",
+		"La calma y la claridad resuelven más que la prisa.",
+		"Cada cliente bien atendido es una inversión en el futuro del negocio.",
+		"La actitud de mejora continua nunca pasa de moda.",
+		"Hoy puedes fortalecer la confianza de un cliente con solo cumplir tu palabra.",
+		"El buen trabajo en equipo convierte metas difíciles en alcanzables.",
+		"Cada día es una nueva oportunidad de superarte a ti mismo.",
+		"La empatía y el buen servicio siempre van de la mano.",
+		"Hoy es un buen momento para celebrar los avances, por pequeños que sean.",
+		"La confianza se construye con acciones consistentes, día tras día.",
+		"Cada cliente satisfecho es un embajador silencioso de tu trabajo.",
+		"Hoy tienes todo lo necesario para hacer un gran trabajo.",
+	];
+
+	_get_daily_motivational_message() {
+		const list = this._HOME_MOTIVATIONAL_MESSAGES;
+		const now = new Date();
+		const start = new Date(now.getFullYear(), 0, 0);
+		const dayOfYear = Math.floor((now - start) / 86400000);
+		return list[dayOfYear % list.length];
+	}
+
 	// Pantalla de aterrizaje ("Inicio"): saludo, reloj/fecha en vivo y
 	// tarjetas de navegación filtradas por permiso — mismo patrón que
 	// _show_home() en facex_screen.js, adaptado a los ef-* tokens y a las
@@ -1914,6 +2241,7 @@ class EFastSalePage {
 			`Conectado como <strong>${_esc(fullname)}</strong> (${_esc(frappe.session.user)})` +
 			(company ? ` — Compañía: <strong>${_esc(company)}</strong>` : "")
 		);
+		this.$body.find("#ef-home-quote").text(this._get_daily_motivational_message());
 
 		// Logo real de la compañía activa (BFEL Establecimientos.logo /
 		// Company.company_logo, resuelto por get_defaults) + logo de CHAPPSA —
@@ -2270,6 +2598,12 @@ class EFastSalePage {
 .ef-home-datetime { margin-top: 8px; font-size: 15px; color: var(--ef-text-muted); font-weight: 600; text-transform: capitalize; }
 .ef-home-time-sep { margin: 0 6px; }
 .ef-home-session { margin-top: 6px; font-size: 12px; color: var(--ef-text-muted); }
+.ef-home-quote {
+  max-width: 640px; margin: 0 auto 28px; padding: 14px 20px; text-align: center; font-size: 14px; font-style: italic;
+  color: var(--ef-primary); background: #eef2ff; border: 1px solid #c7d2fe; border-radius: var(--ef-radius);
+  animation: ef-home-quote-fade .5s ease;
+}
+@keyframes ef-home-quote-fade { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 .ef-home-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; }
 .ef-home-card {
   display: flex; flex-direction: column; align-items: flex-start; gap: 10px; text-align: left;
@@ -3898,6 +4232,51 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 	_setup_item_table() {
 		this.$body.find("#ef-add-row").on("click", () => this._add_item_row());
+
+		// Escaneo de código de barras / QR: agrega la línea automáticamente,
+		// o suma 1 a la cantidad si el producto ya está en la lista.
+		this.$body.find("#ef-barcode-scan").on("keydown", (e) => {
+			if (e.key !== "Enter") return;
+			e.preventDefault();
+			const $input = this.$body.find("#ef-barcode-scan");
+			const code = $input.val().trim();
+			if (!code) return;
+			$input.prop("disabled", true);
+			frappe.call({
+				method: "facex_multi.api.item.find_item_by_code",
+				args: { txt: code, company: this.doc.company || this.defaults.company || "" },
+				callback: (r) => {
+					$input.val("").prop("disabled", false).trigger("focus");
+					if (!r.message) {
+						frappe.show_alert({ message: __("Producto no encontrado para el código {0}.", [code]), indicator: "orange" });
+						return;
+					}
+					this._add_or_increment_item(r.message);
+				},
+				error: () => {
+					$input.prop("disabled", false).trigger("focus");
+				},
+			});
+		});
+	}
+
+	// Agrega una nueva línea para el ítem escaneado, o suma 1 a la cantidad
+	// si ya existe en la lista (salvo que maneje número de serie).
+	_add_or_increment_item(it) {
+		if (!it.has_serial_no) {
+			const idx = this.doc.items.findIndex((row) => row.item_code === it.item_code);
+			if (idx !== -1) {
+				this.doc.items[idx].qty = (parseFloat(this.doc.items[idx].qty) || 0) + 1;
+				this._render_items();
+				this._update_local_footer();
+				this._mark_dirty();
+				this.$body.find(`#ef-row-${idx} .ef-qty`).trigger("focus");
+				return;
+			}
+		}
+		this._add_item_row({ item_code: it.item_code });
+		const newIdx = this.doc.items.length - 1;
+		this._fetch_item_details(newIdx, it.item_code);
 	}
 
 	_render_items() {
@@ -4946,11 +5325,19 @@ body.facex-fullscreen-mode .ef-main-layout {
 		else this.$body.find(".ef-nav-btn[data-view='pos']").hide();
 		if (p.puede_ver_menu_inventario) this.$body.find(".ef-nav-btn[data-view='inventario']").show();
 		else this.$body.find(".ef-nav-btn[data-view='inventario']").hide();
-		// Transporte: el tab solo aparece si puede_ver_menu_transporte está
-		// activo Y al menos un sub-permiso específico también lo está.
+		// Transporte: el grupo del menú solo aparece si puede_ver_menu_transporte
+		// está activo Y al menos un sub-permiso específico también lo está; cada
+		// ítem del acordeón se muestra/oculta además según su propio permiso
+		// (mismo criterio que ya usan las tarjetas del hub en FacexTransporteModule).
 		const hasTransporteAccess = this._has_transporte_access();
-		if (hasTransporteAccess) this.$body.find(".ef-nav-btn[data-view='transporte']").show();
-		else this.$body.find(".ef-nav-btn[data-view='transporte']").hide();
+		this.$body.find("#ef-menu-group-transporte").toggle(hasTransporteAccess);
+		if (hasTransporteAccess) {
+			this.$body.find("#ef-menu-transporte-transportistas").toggle(!!p.puede_administrar_transportistas);
+			this.$body.find("#ef-menu-transporte-pendientes").toggle(!!p.puede_editar_guias_transporte);
+			this.$body.find("#ef-menu-transporte-guias").toggle(!!p.puede_editar_guias_transporte);
+			this.$body.find("#ef-menu-transporte-liquidaciones").toggle(!!p.puede_cargar_liquidaciones_transporte);
+			this.$body.find("#ef-menu-transporte-reportes").toggle(!!p.puede_ver_reportes_transporte);
+		}
 
 		// --- Reportes: ocultar tabs no permitidos ---
 		const REPORT_PERM = this._report_perm_map();
@@ -6412,7 +6799,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		};
 		return [
 			{ before: goTo, selector: "#ef-maint-item-btn-new", title: "Nuevo producto",
-				text: "Haz clic en '+ Nuevo' para iniciar un producto desde cero." },
+				text: "Haz clic en '+ Crear' para iniciar un producto desde cero." },
 			{ selector: "#ef-maint-item-auto-code-label", title: "Código del ítem",
 				text: "Deja 'Código Automático' activo para que el sistema lo asigne, o desactívalo para escribir uno propio." },
 			{ selector: "#ef-maint-item-name", title: "Nombre",
@@ -6436,8 +6823,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 		return [
 			{ before: goTo, selector: "#ef-maint-price-list-select", title: "Lista de precios",
 				text: "Elige la Lista de Precios que quieres revisar o editar." },
-			{ selector: "#ef-maint-prices-search", title: "Buscar producto",
-				text: "Filtra por nombre para encontrar el producto más rápido." },
+			{ selector: "#ef-maint-prices-f-nombre", title: "Buscar producto",
+				text: "Filtra por código, nombre o grupo directamente desde los encabezados de la tabla para encontrar el producto más rápido." },
 			{ selector: "#ef-maint-tab-precios .ef-table", title: "Editar precio",
 				text: "Haz clic sobre el precio de un producto en la tabla para editarlo directamente; se guarda al confirmar." },
 		];
@@ -9268,6 +9655,41 @@ body.facex-fullscreen-mode .ef-main-layout {
 			});
 			this.maint_cust_payment_terms_ctrl.refresh();
 		}
+
+		if (!this.maint_cust_sales_partner_ctrl) {
+			this.maint_cust_sales_partner_ctrl = frappe.ui.form.make_control({
+				parent: this.$body.find("#ef-maint-cust-sales-partner-ctrl")[0],
+				df: {
+					only_select: 1,
+					label: "Vendedor",
+					fieldtype: "Link",
+					fieldname: "default_sales_partner",
+					options: "Sales Partner",
+					reqd: 0,
+				},
+				render_input: true,
+				only_input: false,
+			});
+			this.maint_cust_sales_partner_ctrl.refresh();
+		}
+
+		if (!this.maint_cust_group_ctrl) {
+			this.maint_cust_group_ctrl = frappe.ui.form.make_control({
+				parent: this.$body.find("#ef-maint-cust-group-ctrl")[0],
+				df: {
+					only_select: 1,
+					label: "Grupo de cliente",
+					fieldtype: "Link",
+					fieldname: "customer_group",
+					options: "Customer Group",
+					reqd: 0,
+				},
+				render_input: true,
+				only_input: false,
+			});
+			this.maint_cust_group_ctrl.refresh();
+		}
+
 		if (!this.maint_item_uom_ctrl) {
 			this.maint_item_uom_ctrl = frappe.ui.form.make_control({
 				parent: this.$body.find("#ef-maint-item-uom-ctrl")[0],
@@ -9349,22 +9771,25 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this._on_maint_tab_switch(tab);
 		});
 
-		// ── Customers ──
-		let custTimer = null;
-		this.$body.find("#ef-maint-cust-search").on("input", (e) => {
-			clearTimeout(custTimer);
-			custTimer = setTimeout(() => {
-				this._load_maint_customers($(e.target).val());
-			}, 250);
+		// ── Customers (búsqueda-primero, estilo SAP) ──
+		this.$body.find("#ef-maint-cust-btn-search").on("click", () => {
+			this._search_maint_customers();
 		});
 
-		this.$body.find("#ef-maint-cust-btn-load").on("click", () => {
-			const txt = this.$body.find("#ef-maint-cust-search").val();
-			this._load_maint_customers(txt);
+		this.$body.find("#ef-maint-cust-search").on("keydown", (e) => {
+			if (e.key === "Enter") {
+				e.preventDefault();
+				this._search_maint_customers();
+			}
+		});
+
+		this.$body.find("#ef-maint-cust-btn-all").on("click", () => {
+			this._view_all_maint_customers();
 		});
 
 		this.$body.find("#ef-maint-cust-btn-new").on("click", () => {
 			this._clear_maint_cust_form();
+			this._set_maint_cust_form_mode("create");
 		});
 
 		this.$body.find("#ef-maint-cust-btn-save").on("click", () => {
@@ -9375,43 +9800,50 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this._lookup_maint_cust_name(e.target.value);
 		});
 
-		// ── Products ──
-		let itemTimer = null;
-		this.$body.find("#ef-maint-item-search").on("input", (e) => {
-			clearTimeout(itemTimer);
-			itemTimer = setTimeout(() => {
-				this._load_maint_items($(e.target).val());
-			}, 250);
+		// ── Products (búsqueda-primero, estilo SAP) ──
+		this.$body.find("#ef-maint-item-btn-search").on("click", () => {
+			this._search_maint_items();
 		});
 
-		this.$body.find("#ef-maint-item-btn-load").on("click", () => {
-			const txt = this.$body.find("#ef-maint-item-search").val();
-			this._load_maint_items(txt);
+		this.$body.find("#ef-maint-item-search").on("keydown", (e) => {
+			if (e.key === "Enter") {
+				e.preventDefault();
+				this._search_maint_items();
+			}
+		});
+
+		this.$body.find("#ef-maint-item-btn-all").on("click", () => {
+			this._view_all_maint_items();
 		});
 
 		this.$body.find("#ef-maint-item-btn-new").on("click", () => {
 			this._clear_maint_item_form();
+			this._set_maint_item_form_mode("create");
 		});
 
 		this.$body.find("#ef-maint-item-btn-save").on("click", () => {
 			this._save_maint_item();
 		});
 
-		// ── Listas de Materiales ──
-		let lmTimer = null;
-		this.$body.find("#ef-maint-lm-search").on("input", (e) => {
-			clearTimeout(lmTimer);
-			lmTimer = setTimeout(() => {
-				this._render_maint_lm_list($(e.target).val());
-			}, 200);
+		// ── Listas de Materiales (búsqueda-primero, estilo SAP) ──
+		this.$body.find("#ef-maint-lm-btn-search").on("click", () => {
+			this._search_maint_lms();
 		});
 
-		this.$body.find("#ef-maint-lm-btn-load").on("click", () => {
-			this._load_maint_listas_materiales();
+		this.$body.find("#ef-maint-lm-search").on("keydown", (e) => {
+			if (e.key === "Enter") {
+				e.preventDefault();
+				this._search_maint_lms();
+			}
+		});
+
+		this.$body.find("#ef-maint-lm-btn-all").on("click", () => {
+			this._view_all_maint_lms();
 		});
 
 		this.$body.find("#ef-maint-lm-btn-new").on("click", () => {
 			this._clear_maint_lm_form();
+			this._set_maint_lm_form_mode("create");
 		});
 
 		this.$body.find("#ef-maint-lm-btn-save").on("click", () => {
@@ -9467,15 +9899,40 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		// ── Prices ──
 		let priceTimer = null;
-		this.$body.find("#ef-maint-prices-search").on("input", (e) => {
+		this.$body.find(".ef-maint-prices-filter").on("input", () => {
 			clearTimeout(priceTimer);
 			priceTimer = setTimeout(() => {
-				this._load_maint_prices($(e.target).val());
+				this._load_maint_prices();
 			}, 250);
 		});
 
 		this.$body.find("#ef-maint-price-list-select").on("change", () => {
 			this._load_maint_prices();
+		});
+
+		this.$body.find("#ef-maint-prices-select-all").on("change", (e) => {
+			const checked = $(e.target).prop("checked");
+			this.$body.find(".ef-price-chk").prop("checked", checked);
+			this._update_maint_prices_selected_count();
+		});
+
+		this.$body.find("#ef-maint-prices-btn-mark-all").on("click", () => {
+			this.$body.find(".ef-price-chk, #ef-maint-prices-select-all").prop("checked", true);
+			this._update_maint_prices_selected_count();
+		});
+
+		this.$body.find("#ef-maint-prices-btn-unmark-all").on("click", () => {
+			this.$body.find(".ef-price-chk, #ef-maint-prices-select-all").prop("checked", false);
+			this._update_maint_prices_selected_count();
+		});
+
+		this.$body.find("#ef-maint-prices-btn-export").on("click", () => {
+			const names = this.$body.find(".ef-price-chk:checked").map((_, el) => $(el).data("code")).get();
+			if (!names.length) {
+				frappe.show_alert({ message: "Seleccione al menos un producto para exportar.", indicator: "orange" });
+				return;
+			}
+			this._export_maint_prices_excel(names);
 		});
 
 		this.$body.find("#ef-maint-cust-btn-delete").on("click", () => {
@@ -9486,21 +9943,29 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this._delete_maint_item();
 		});
 
-		// ── Suppliers ──
-		let suppTimer = null;
-		this.$body.find("#ef-maint-supp-search").on("input", (e) => {
-			clearTimeout(suppTimer);
-			suppTimer = setTimeout(() => {
-				this._load_maint_suppliers($(e.target).val());
-			}, 250);
+		this.$body.find("#ef-maint-item-btn-print-label").on("click", () => {
+			this._imprimir_etiqueta_maint_item();
 		});
 
-		this.$body.find("#ef-maint-supp-btn-load").on("click", () => {
-			this._load_maint_suppliers(this.$body.find("#ef-maint-supp-search").val());
+		// ── Suppliers (búsqueda-primero, estilo SAP) ──
+		this.$body.find("#ef-maint-supp-btn-search").on("click", () => {
+			this._search_maint_suppliers();
+		});
+
+		this.$body.find("#ef-maint-supp-search").on("keydown", (e) => {
+			if (e.key === "Enter") {
+				e.preventDefault();
+				this._search_maint_suppliers();
+			}
+		});
+
+		this.$body.find("#ef-maint-supp-btn-all").on("click", () => {
+			this._view_all_maint_suppliers();
 		});
 
 		this.$body.find("#ef-maint-supp-btn-new").on("click", () => {
 			this._clear_maint_supp_form();
+			this._set_maint_supp_form_mode("create");
 		});
 
 		this.$body.find("#ef-maint-supp-btn-save").on("click", () => {
@@ -9523,19 +9988,19 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 	_on_maint_tab_switch(tab) {
 		if (tab === "clientes") {
-			this._load_maint_customers();
 			this._clear_maint_cust_form();
+			this._set_maint_cust_form_mode("search");
 		} else if (tab === "productos") {
-			this._load_maint_items();
 			this._clear_maint_item_form();
+			this._set_maint_item_form_mode("search");
 		} else if (tab === "listas-materiales") {
-			this._load_maint_listas_materiales();
 			this._clear_maint_lm_form();
+			this._set_maint_lm_form_mode("search");
 		} else if (tab === "precios") {
 			this._load_price_lists_dropdown_then_load_prices();
 		} else if (tab === "proveedores") {
-			this._load_maint_suppliers();
 			this._clear_maint_supp_form();
+			this._set_maint_supp_form_mode("search");
 		}
 	}
 
@@ -9574,41 +10039,300 @@ body.facex-fullscreen-mode .ef-main-layout {
 		});
 	}
 
-	// ── Customers Maintenance ──
+	// ── Customers Maintenance (búsqueda-primero, estilo SAP) ──
 
-	_load_maint_customers(txt = "") {
-		const $list = this.$body.find("#ef-maint-cust-list");
-		$list.html('<div style="text-align:center; padding:10px; color:#64748b;">Cargando...</div>');
+	_search_maint_customers() {
+		const txt = (this.$body.find("#ef-maint-cust-search").val() || "").trim();
+		const field = this.$body.find("#ef-maint-cust-search-field").val() || "nombre";
+
+		if (!txt) {
+			frappe.show_alert({ message: "Escriba un texto para buscar.", indicator: "orange" });
+			return;
+		}
+
+		const filters = {};
+		filters[field] = txt;
+		this._open_maint_cust_browser(filters);
+	}
+
+	_view_all_maint_customers() {
+		this.$body.find("#ef-maint-cust-search").val("");
+		this._open_maint_cust_browser({});
+	}
+
+	// Abre (o reinicia) el buscador paginado de clientes: navega de a
+	// EF_MAINT_CUST_PAGE_LENGTH resultados usando los botones Anterior/Siguiente,
+	// y permite refinar por cualquier combinación de columnas desde la fila de
+	// filtros del propio popup, sin tener que volver a abrirlo.
+	_open_maint_cust_browser(filters) {
+		this._maint_cust_browser_filters = Object.assign(
+			{ nombre: "", codigo: "", nit: "", grupo: "", celular: "", vendedor: "" },
+			filters
+		);
+		this._maint_cust_browser_start = 0;
+		this._maint_cust_browser_selected = new Set();
+		this._maint_cust_active_filter_key = null;
+		if (this._maint_cust_browser_dialog) {
+			this._maint_cust_browser_dialog.hide();
+			this._maint_cust_browser_dialog = null;
+		}
+		this._fetch_and_render_maint_cust_page();
+	}
+
+	_fetch_and_render_maint_cust_page() {
+		const filters = this._maint_cust_browser_filters;
+		const start = this._maint_cust_browser_start;
+		const $status = this.$body.find("#ef-maint-cust-search-status");
+		$status.text("Buscando...");
 
 		frappe.call({
-			method: "facex_multi.api.item.get_customers_list",
-			args: { txt, company: this.doc.company || this.defaults.company || "" },
+			method: "facex_multi.api.customer.search_customers_maintenance",
+			args: {
+				...filters,
+				company: this.doc.company || this.defaults.company || "",
+				start,
+				page_length: EF_MAINT_CUST_PAGE_LENGTH,
+			},
 			callback: (r) => {
-				$list.empty();
-				const customers = r.message || [];
-				if (customers.length === 0) {
-					$list.html('<div style="text-align:center; padding:10px; color:#64748b;">Sin clientes. Use "Cargar Lista" o busque.</div>');
-					return;
-				}
-				customers.forEach((c) => {
-					const $item = $(`
-						<div class="ef-cust-result" style="padding:8px 12px; cursor:pointer; border-radius:6px; border:1px solid var(--ef-border); background:#ffffff; margin-bottom: 4px;">
-							<div style="font-weight:600; color:var(--ef-text);" class="ef-maint-cust-name-lbl"></div>
-							<div style="font-size:11px; color:#64748b;" class="ef-maint-cust-id-lbl"></div>
-						</div>
-					`);
-					$item.find(".ef-maint-cust-name-lbl").text(c.customer_name || c.name);
-					$item.find(".ef-maint-cust-id-lbl").text(`${c.name} ${c.tax_id ? `| NIT: ${c.tax_id}` : ""}`);
-					
-					$item.on("click", () => {
-						this.$body.find("#ef-maint-cust-list .ef-cust-result").css("background", "#ffffff");
-						$item.css("background", "#e0e7ff");
-						this._load_maint_customer_details(c.name);
-					});
-					$list.append($item);
-				});
+				const res = r.message || { rows: [], total: 0 };
+				$status.text(res.total ? `${res.total} resultado(s).` : "Sin resultados.");
+				this._render_maint_cust_results_popup(res.rows, res.total, start);
 			}
 		});
+	}
+
+	_mark_all_maint_customers() {
+		const filters = this._maint_cust_browser_filters;
+		frappe.call({
+			method: "facex_multi.api.customer.search_customers_maintenance",
+			args: {
+				...filters,
+				company: this.doc.company || this.defaults.company || "",
+				start: 0,
+				page_length: 5000,
+			},
+			freeze: true,
+			freeze_message: "Marcando todos los resultados...",
+			callback: (r) => {
+				const res = r.message || { rows: [] };
+				res.rows.forEach((c) => this._maint_cust_browser_selected.add(c.name));
+				this._fetch_and_render_maint_cust_page();
+			}
+		});
+	}
+
+	_render_maint_cust_results_popup(rows, total, start) {
+		const page_length = EF_MAINT_CUST_PAGE_LENGTH;
+		const totalPages = Math.max(1, Math.ceil(total / page_length));
+		const currentPage = Math.floor(start / page_length) + 1;
+		const filters = this._maint_cust_browser_filters;
+
+		if (!this._maint_cust_browser_dialog) {
+			const dialog = new frappe.ui.Dialog({
+				title: "Resultados de búsqueda",
+				size: "extra-large",
+				fields: [{ fieldtype: "HTML", fieldname: "results_html" }],
+				primary_action_label: "Exportar seleccionados a Excel",
+				primary_action: () => {
+					const selected = Array.from(this._maint_cust_browser_selected);
+					if (!selected.length) {
+						frappe.show_alert({ message: "Seleccione al menos un cliente para exportar.", indicator: "orange" });
+						return;
+					}
+					this._export_maint_customers_excel(selected);
+				},
+			});
+			dialog.$wrapper.on("hidden.bs.modal", () => {
+				this._maint_cust_browser_dialog = null;
+				clearTimeout(this._maint_cust_filter_timer);
+			});
+			this._maint_cust_browser_dialog = dialog;
+			dialog.show();
+		}
+
+		const dialog = this._maint_cust_browser_dialog;
+		dialog.set_title(`Resultados de búsqueda (${total})`);
+
+		const filterCell = (key) => `
+			<td><input type="text" class="ef-input ef-cust-popup-filter" data-key="${key}"
+				placeholder="Filtrar..." value="${_esc(filters[key] || "")}"
+				style="width:100%; font-size:11px; padding:3px 6px;" /></td>
+		`;
+
+		const rowsHtml = rows.length ? rows.map((c) => `
+			<tr>
+				<td style="text-align:center;"><input type="checkbox" class="ef-cust-popup-chk" data-name="${_esc(c.name)}" ${this._maint_cust_browser_selected.has(c.name) ? "checked" : ""} /></td>
+				<td>${_esc(c.customer_name || "")}</td>
+				<td>${_esc(c.name || "")}</td>
+				<td>${_esc(c.tax_id || c.bfel_id_receptor || "")}</td>
+				<td>${_esc(c.customer_group || "")}</td>
+				<td>${_esc(c.mobile_no || "")}</td>
+				<td>${_esc(c.default_sales_partner || "")}</td>
+				<td>${c.disabled ? '<span style="color:#ef4444;">Sí</span>' : "No"}</td>
+				<td style="text-align:center;">
+					<button class="ef-btn ef-btn-sm ef-btn-secondary ef-cust-popup-edit" data-name="${_esc(c.name)}">Editar</button>
+				</td>
+			</tr>
+		`).join("") : `<tr><td colspan="9" style="text-align:center; padding:14px; color:#64748b;">Sin resultados con estos filtros.</td></tr>`;
+
+		dialog.fields_dict.results_html.$wrapper.html(`
+			<div style="overflow-x:auto;">
+				<table class="ef-table" style="width:100%;">
+					<thead>
+						<tr>
+							<th style="width:36px; text-align:center;"><input type="checkbox" id="ef-cust-popup-select-all" title="Seleccionar todos en esta página" /></th>
+							<th>Nombre</th>
+							<th>Código</th>
+							<th>NIT / Identificación</th>
+							<th>Grupo</th>
+							<th>Celular</th>
+							<th>Vendedor</th>
+							<th>Deshabilitado</th>
+							<th style="width:80px;"></th>
+						</tr>
+						<tr class="ef-cust-popup-filter-row">
+							<td></td>
+							${filterCell("nombre")}
+							${filterCell("codigo")}
+							${filterCell("nit")}
+							${filterCell("grupo")}
+							${filterCell("celular")}
+							${filterCell("vendedor")}
+							<td></td>
+							<td></td>
+						</tr>
+					</thead>
+					<tbody>${rowsHtml}</tbody>
+				</table>
+			</div>
+			<div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; flex-wrap:wrap; gap:8px;">
+				<div>
+					<button class="ef-btn ef-btn-sm ef-btn-secondary" id="ef-cust-popup-mark-all">Marcar todos (${total})</button>
+					<button class="ef-btn ef-btn-sm ef-btn-secondary" id="ef-cust-popup-unmark-all">Desmarcar todos</button>
+				</div>
+				<div style="display:flex; align-items:center; gap:10px;">
+					<button class="ef-btn ef-btn-sm ef-btn-secondary" id="ef-cust-popup-prev" ${currentPage <= 1 ? "disabled" : ""}>&laquo; Anterior</button>
+					<span style="font-size:12px; color:#64748b;">Página ${currentPage} de ${totalPages} &mdash; ${this._maint_cust_browser_selected.size} seleccionado(s)</span>
+					<button class="ef-btn ef-btn-sm ef-btn-secondary" id="ef-cust-popup-next" ${currentPage >= totalPages ? "disabled" : ""}>Siguiente &raquo;</button>
+				</div>
+			</div>
+		`);
+
+		dialog.$wrapper.find("#ef-cust-popup-select-all").on("change", (e) => {
+			const checked = $(e.target).prop("checked");
+			dialog.$wrapper.find(".ef-cust-popup-chk").each((_, el) => {
+				$(el).prop("checked", checked);
+				const name = $(el).data("name");
+				if (checked) this._maint_cust_browser_selected.add(name);
+				else this._maint_cust_browser_selected.delete(name);
+			});
+			this._render_maint_cust_results_popup(rows, total, start);
+		});
+
+		dialog.$wrapper.find("tbody tr").on("click", (e) => {
+			if ($(e.target).is("button, input") || $(e.target).closest("button").length) return;
+			const $chk = $(e.currentTarget).find(".ef-cust-popup-chk");
+			if (!$chk.length) return;
+			$chk.prop("checked", !$chk.prop("checked")).trigger("change");
+		});
+
+		dialog.$wrapper.find(".ef-cust-popup-chk").on("change", (e) => {
+			const name = $(e.currentTarget).data("name");
+			if ($(e.currentTarget).prop("checked")) this._maint_cust_browser_selected.add(name);
+			else this._maint_cust_browser_selected.delete(name);
+			dialog.$wrapper.find("#ef-cust-popup-prev, #ef-cust-popup-next").siblings("span")
+				.text(`Página ${currentPage} de ${totalPages} — ${this._maint_cust_browser_selected.size} seleccionado(s)`);
+		});
+
+		dialog.$wrapper.find(".ef-cust-popup-edit").on("click", (e) => {
+			e.stopPropagation();
+			const name = $(e.currentTarget).data("name");
+			dialog.hide();
+			this._maint_cust_browser_dialog = null;
+			this._load_maint_customer_details(name);
+		});
+
+		dialog.$wrapper.find("#ef-cust-popup-prev").on("click", () => {
+			this._maint_cust_browser_start = Math.max(0, start - page_length);
+			this._fetch_and_render_maint_cust_page();
+		});
+		dialog.$wrapper.find("#ef-cust-popup-next").on("click", () => {
+			this._maint_cust_browser_start = start + page_length;
+			this._fetch_and_render_maint_cust_page();
+		});
+
+		dialog.$wrapper.find("#ef-cust-popup-mark-all").on("click", () => {
+			this._mark_all_maint_customers();
+		});
+		dialog.$wrapper.find("#ef-cust-popup-unmark-all").on("click", () => {
+			this._maint_cust_browser_selected.clear();
+			this._render_maint_cust_results_popup(rows, total, start);
+		});
+
+		dialog.$wrapper.find(".ef-cust-popup-filter").on("input", (e) => {
+			const key = $(e.currentTarget).data("key");
+			this._maint_cust_browser_filters[key] = $(e.currentTarget).val();
+			this._maint_cust_active_filter_key = key;
+			clearTimeout(this._maint_cust_filter_timer);
+			this._maint_cust_filter_timer = setTimeout(() => {
+				this._maint_cust_browser_start = 0;
+				this._fetch_and_render_maint_cust_page();
+			}, 350);
+		});
+
+		if (this._maint_cust_active_filter_key) {
+			const $input = dialog.$wrapper.find(`.ef-cust-popup-filter[data-key="${this._maint_cust_active_filter_key}"]`);
+			if ($input.length) {
+				$input.trigger("focus");
+				const val = $input.val() || "";
+				$input[0].setSelectionRange(val.length, val.length);
+			}
+		}
+	}
+
+	_export_maint_customers_excel(names) {
+		const company = this.doc.company || this.defaults.company || "";
+		const url = `/api/method/facex_multi.api.customer.export_customers_excel?names_json=${encodeURIComponent(JSON.stringify(names))}&company=${encodeURIComponent(company)}`;
+		window.open(url, "_blank");
+	}
+
+	_set_maint_cust_form_mode(mode) {
+		this._maint_cust_mode = mode;
+		const enable = mode !== "search";
+
+		this.$body.find(
+			"#ef-maint-cust-name, #ef-maint-cust-ident, #ef-maint-cust-receptor, " +
+			"#ef-maint-cust-contact-nombre, #ef-maint-cust-contact-apellido, " +
+			"#ef-maint-cust-contact-email, #ef-maint-cust-contact-telefono, " +
+			"#ef-maint-cust-addr, #ef-maint-cust-dept, #ef-maint-cust-credit-limit"
+		).prop("disabled", !enable);
+
+		[
+			this.maint_cust_group_ctrl,
+			this.maint_cust_price_list_ctrl,
+			this.maint_cust_payment_terms_ctrl,
+			this.maint_cust_sales_partner_ctrl,
+		].forEach((ctrl) => {
+			if (!ctrl) return;
+			ctrl.df.read_only = !enable;
+			ctrl.refresh();
+		});
+
+		const $save = this.$body.find("#ef-maint-cust-btn-save");
+		const $delete = this.$body.find("#ef-maint-cust-btn-delete");
+
+		if (mode === "search") {
+			$save.hide();
+			$delete.hide();
+			this.$body.find("#ef-maint-cust-title").text("Búsqueda de clientes");
+		} else if (mode === "create") {
+			$save.show().text("Crear Cliente");
+			$delete.hide();
+			this.$body.find("#ef-maint-cust-title").text("Nuevo Cliente");
+		} else if (mode === "edit") {
+			$save.show().text("Guardar Cambios");
+			if (this.perms.modifica_clientes) $delete.show(); else $delete.hide();
+		}
 	}
 
 	_lookup_maint_cust_name(idReceptor) {
@@ -9631,7 +10355,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 	_load_maint_customer_details(name) {
 		frappe.call({
 			method: "facex_multi.api.customer.get_customer",
-			args: { name },
+			args: { name, company: this.doc.company || this.defaults.company || "" },
 			callback: (r) => {
 				if (r.message) {
 					const c = r.message;
@@ -9646,13 +10370,20 @@ body.facex-fullscreen-mode .ef-main-layout {
 					this.$body.find("#ef-maint-cust-contact-apellido").val(c.contacto_apellido);
 					this.$body.find("#ef-maint-cust-contact-email").val(c.contacto_email);
 					this.$body.find("#ef-maint-cust-contact-telefono").val(c.contacto_telefono);
+					this.$body.find("#ef-maint-cust-credit-limit").val(c.credit_limit || 0);
 					if (this.maint_cust_price_list_ctrl) {
 						this.maint_cust_price_list_ctrl.set_value(c.default_price_list || "");
 					}
 					if (this.maint_cust_payment_terms_ctrl) {
 						this.maint_cust_payment_terms_ctrl.set_value(c.payment_terms || "");
 					}
-					if (this.perms.modifica_clientes) this.$body.find("#ef-maint-cust-btn-delete").show();
+					if (this.maint_cust_sales_partner_ctrl) {
+						this.maint_cust_sales_partner_ctrl.set_value(c.default_sales_partner || "");
+					}
+					if (this.maint_cust_group_ctrl) {
+						this.maint_cust_group_ctrl.set_value(c.customer_group || "");
+					}
+					this._set_maint_cust_form_mode("edit");
 				}
 			}
 		});
@@ -9660,7 +10391,6 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 	_clear_maint_cust_form() {
 		this._current_maint_cust_name = null;
-		this.$body.find("#ef-maint-cust-title").text("Nuevo Cliente");
 		this.$body.find("#ef-maint-cust-name").val("");
 		this.$body.find("#ef-maint-cust-ident").val("");
 		this.$body.find("#ef-maint-cust-receptor").val("");
@@ -9670,14 +10400,20 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-maint-cust-contact-apellido").val("");
 		this.$body.find("#ef-maint-cust-contact-email").val("");
 		this.$body.find("#ef-maint-cust-contact-telefono").val("");
+		this.$body.find("#ef-maint-cust-credit-limit").val("");
 		if (this.maint_cust_price_list_ctrl) {
 			this.maint_cust_price_list_ctrl.set_value("");
 		}
 		if (this.maint_cust_payment_terms_ctrl) {
 			this.maint_cust_payment_terms_ctrl.set_value("");
 		}
+		if (this.maint_cust_sales_partner_ctrl) {
+			this.maint_cust_sales_partner_ctrl.set_value("");
+		}
+		if (this.maint_cust_group_ctrl) {
+			this.maint_cust_group_ctrl.set_value("");
+		}
 		this.$body.find("#ef-maint-cust-btn-delete").hide();
-		this.$body.find("#ef-maint-cust-list .ef-cust-result").css("background", "#ffffff");
 	}
 
 	_save_maint_customer() {
@@ -9700,19 +10436,23 @@ body.facex-fullscreen-mode .ef-main-layout {
 			contacto_email: this.$body.find("#ef-maint-cust-contact-email").val(),
 			contacto_telefono: this.$body.find("#ef-maint-cust-contact-telefono").val(),
 			default_price_list: this.maint_cust_price_list_ctrl ? this.maint_cust_price_list_ctrl.get_value() : "",
-			payment_terms: this.maint_cust_payment_terms_ctrl ? this.maint_cust_payment_terms_ctrl.get_value() : ""
+			payment_terms: this.maint_cust_payment_terms_ctrl ? this.maint_cust_payment_terms_ctrl.get_value() : "",
+			default_sales_partner: this.maint_cust_sales_partner_ctrl ? this.maint_cust_sales_partner_ctrl.get_value() : "",
+			customer_group: this.maint_cust_group_ctrl ? this.maint_cust_group_ctrl.get_value() : "",
+			credit_limit: parseFloat(this.$body.find("#ef-maint-cust-credit-limit").val()) || 0,
 		};
+		const company = this.doc.company || this.defaults.company || "";
 
 		frappe.call({
 			method: "facex_multi.api.customer.create_or_update_customer",
-			args: { data_json: JSON.stringify(data) },
+			args: { data_json: JSON.stringify(data), company },
 			freeze: true,
 			freeze_message: "Guardando cliente...",
 			callback: (r) => {
 				if (!r.exc) {
 					frappe.show_alert({ message: "Cliente guardado exitosamente", indicator: "green" });
-					this._load_maint_customers();
 					this._clear_maint_cust_form();
+					this._set_maint_cust_form_mode("search");
 				}
 			}
 		});
@@ -9720,39 +10460,285 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 	// ── Products Maintenance ──
 
-	_load_maint_items(txt = "") {
-		const $list = this.$body.find("#ef-maint-item-list");
-		$list.html('<div style="text-align:center; padding:10px; color:#64748b;">Cargando...</div>');
+	_search_maint_items() {
+		const txt = (this.$body.find("#ef-maint-item-search").val() || "").trim();
+		const field = this.$body.find("#ef-maint-item-search-field").val() || "nombre";
+
+		if (!txt) {
+			frappe.show_alert({ message: "Escriba un texto para buscar.", indicator: "orange" });
+			return;
+		}
+
+		const filters = {};
+		filters[field] = txt;
+		this._open_maint_item_browser(filters);
+	}
+
+	_view_all_maint_items() {
+		this.$body.find("#ef-maint-item-search").val("");
+		this._open_maint_item_browser({});
+	}
+
+	_open_maint_item_browser(filters) {
+		this._maint_item_browser_filters = Object.assign({ nombre: "", codigo: "", grupo: "" }, filters);
+		this._maint_item_browser_start = 0;
+		this._maint_item_browser_selected = new Set();
+		this._maint_item_active_filter_key = null;
+		if (this._maint_item_browser_dialog) {
+			this._maint_item_browser_dialog.hide();
+			this._maint_item_browser_dialog = null;
+		}
+		this._fetch_and_render_maint_item_page();
+	}
+
+	_fetch_and_render_maint_item_page() {
+		const filters = this._maint_item_browser_filters;
+		const start = this._maint_item_browser_start;
+		const $status = this.$body.find("#ef-maint-item-search-status");
+		$status.text("Buscando...");
 
 		frappe.call({
-			method: "facex_multi.api.item.search_items",
-			args: { txt, company: this.doc.company || this.defaults.company || "" },
+			method: "facex_multi.api.item.search_items_maintenance",
+			args: {
+				...filters,
+				company: this.doc.company || this.defaults.company || "",
+				start,
+				page_length: EF_MAINT_ITEM_PAGE_LENGTH,
+			},
 			callback: (r) => {
-				$list.empty();
-				const items = r.message || [];
-				if (items.length === 0) {
-					$list.html('<div style="text-align:center; padding:10px; color:#64748b;">Sin productos. Use "Cargar Lista" o busque.</div>');
-					return;
-				}
-				items.forEach((it) => {
-					const $item = $(`
-						<div class="ef-cust-result" style="padding:8px 12px; cursor:pointer; border-radius:6px; border:1px solid var(--ef-border); background:#ffffff; margin-bottom: 4px;">
-							<div style="font-weight:600; color:var(--ef-text);" class="ef-maint-item-name-lbl"></div>
-							<div style="font-size:11px; color:#64748b;" class="ef-maint-item-code-lbl"></div>
-						</div>
-					`);
-					$item.find(".ef-maint-item-name-lbl").text(it.item_name || it.name);
-					$item.find(".ef-maint-item-code-lbl").text(`Código: ${it.name} | UOM: ${it.stock_uom}`);
-					
-					$item.on("click", () => {
-						this.$body.find("#ef-maint-item-list .ef-cust-result").css("background", "#ffffff");
-						$item.css("background", "#e0e7ff");
-						this._load_maint_item_details(it.name);
-					});
-					$list.append($item);
-				});
+				const res = r.message || { rows: [], total: 0 };
+				$status.text(res.total ? `${res.total} resultado(s).` : "Sin resultados.");
+				this._render_maint_item_results_popup(res.rows, res.total, start);
 			}
 		});
+	}
+
+	_mark_all_maint_items() {
+		const filters = this._maint_item_browser_filters;
+		frappe.call({
+			method: "facex_multi.api.item.search_items_maintenance",
+			args: {
+				...filters,
+				company: this.doc.company || this.defaults.company || "",
+				start: 0,
+				page_length: 5000,
+			},
+			freeze: true,
+			freeze_message: "Marcando todos los resultados...",
+			callback: (r) => {
+				const res = r.message || { rows: [] };
+				res.rows.forEach((it) => this._maint_item_browser_selected.add(it.name));
+				this._fetch_and_render_maint_item_page();
+			}
+		});
+	}
+
+	_render_maint_item_results_popup(rows, total, start) {
+		const page_length = EF_MAINT_ITEM_PAGE_LENGTH;
+		const totalPages = Math.max(1, Math.ceil(total / page_length));
+		const currentPage = Math.floor(start / page_length) + 1;
+		const filters = this._maint_item_browser_filters;
+
+		if (!this._maint_item_browser_dialog) {
+			const dialog = new frappe.ui.Dialog({
+				title: "Resultados de búsqueda",
+				size: "extra-large",
+				fields: [{ fieldtype: "HTML", fieldname: "results_html" }],
+				primary_action_label: "Exportar seleccionados a Excel",
+				primary_action: () => {
+					const selected = Array.from(this._maint_item_browser_selected);
+					if (!selected.length) {
+						frappe.show_alert({ message: "Seleccione al menos un producto para exportar.", indicator: "orange" });
+						return;
+					}
+					this._export_maint_items_excel(selected);
+				},
+			});
+			dialog.$wrapper.on("hidden.bs.modal", () => {
+				this._maint_item_browser_dialog = null;
+				clearTimeout(this._maint_item_filter_timer);
+			});
+			this._maint_item_browser_dialog = dialog;
+			dialog.show();
+		}
+
+		const dialog = this._maint_item_browser_dialog;
+		dialog.set_title(`Resultados de búsqueda (${total})`);
+
+		const filterCell = (key) => `
+			<td><input type="text" class="ef-input ef-item-popup-filter" data-key="${key}"
+				placeholder="Filtrar..." value="${_esc(filters[key] || "")}"
+				style="width:100%; font-size:11px; padding:3px 6px;" /></td>
+		`;
+
+		const rowsHtml = rows.length ? rows.map((it) => `
+			<tr>
+				<td style="text-align:center;"><input type="checkbox" class="ef-item-popup-chk" data-name="${_esc(it.name)}" ${this._maint_item_browser_selected.has(it.name) ? "checked" : ""} /></td>
+				<td>${_esc(it.item_name || "")}</td>
+				<td>${_esc(it.name || "")}</td>
+				<td>${_esc(it.item_group || "")}</td>
+				<td>${_esc(it.stock_uom || "")}</td>
+				<td>${_esc(it.gestionado_por || "General")}</td>
+				<td>${it.is_stock_item ? "Sí" : "No"}</td>
+				<td>${it.disabled ? '<span style="color:#ef4444;">Sí</span>' : "No"}</td>
+				<td style="text-align:center;">
+					<button class="ef-btn ef-btn-sm ef-btn-secondary ef-item-popup-edit" data-name="${_esc(it.name)}">Editar</button>
+				</td>
+			</tr>
+		`).join("") : `<tr><td colspan="9" style="text-align:center; padding:14px; color:#64748b;">Sin resultados con estos filtros.</td></tr>`;
+
+		dialog.fields_dict.results_html.$wrapper.html(`
+			<div style="overflow-x:auto;">
+				<table class="ef-table" style="width:100%;">
+					<thead>
+						<tr>
+							<th style="width:36px; text-align:center;"><input type="checkbox" id="ef-item-popup-select-all" title="Seleccionar todos en esta página" /></th>
+							<th>Nombre</th>
+							<th>Código</th>
+							<th>Grupo</th>
+							<th>UOM</th>
+							<th>Gestionado por</th>
+							<th>Inventariable</th>
+							<th>Deshabilitado</th>
+							<th style="width:80px;"></th>
+						</tr>
+						<tr class="ef-cust-popup-filter-row">
+							<td></td>
+							${filterCell("nombre")}
+							${filterCell("codigo")}
+							${filterCell("grupo")}
+							<td></td>
+							<td></td>
+							<td></td>
+							<td></td>
+							<td></td>
+						</tr>
+					</thead>
+					<tbody>${rowsHtml}</tbody>
+				</table>
+			</div>
+			<div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; flex-wrap:wrap; gap:8px;">
+				<div>
+					<button class="ef-btn ef-btn-sm ef-btn-secondary" id="ef-item-popup-mark-all">Marcar todos (${total})</button>
+					<button class="ef-btn ef-btn-sm ef-btn-secondary" id="ef-item-popup-unmark-all">Desmarcar todos</button>
+				</div>
+				<div style="display:flex; align-items:center; gap:10px;">
+					<button class="ef-btn ef-btn-sm ef-btn-secondary" id="ef-item-popup-prev" ${currentPage <= 1 ? "disabled" : ""}>&laquo; Anterior</button>
+					<span style="font-size:12px; color:#64748b;">Página ${currentPage} de ${totalPages} &mdash; ${this._maint_item_browser_selected.size} seleccionado(s)</span>
+					<button class="ef-btn ef-btn-sm ef-btn-secondary" id="ef-item-popup-next" ${currentPage >= totalPages ? "disabled" : ""}>Siguiente &raquo;</button>
+				</div>
+			</div>
+		`);
+
+		dialog.$wrapper.find("#ef-item-popup-select-all").on("change", (e) => {
+			const checked = $(e.target).prop("checked");
+			dialog.$wrapper.find(".ef-item-popup-chk").each((_, el) => {
+				$(el).prop("checked", checked);
+				const name = $(el).data("name");
+				if (checked) this._maint_item_browser_selected.add(name);
+				else this._maint_item_browser_selected.delete(name);
+			});
+			this._render_maint_item_results_popup(rows, total, start);
+		});
+
+		dialog.$wrapper.find("tbody tr").on("click", (e) => {
+			if ($(e.target).is("button, input") || $(e.target).closest("button").length) return;
+			const $chk = $(e.currentTarget).find(".ef-item-popup-chk");
+			if (!$chk.length) return;
+			$chk.prop("checked", !$chk.prop("checked")).trigger("change");
+		});
+
+		dialog.$wrapper.find(".ef-item-popup-chk").on("change", (e) => {
+			const name = $(e.currentTarget).data("name");
+			if ($(e.currentTarget).prop("checked")) this._maint_item_browser_selected.add(name);
+			else this._maint_item_browser_selected.delete(name);
+			dialog.$wrapper.find("#ef-item-popup-prev, #ef-item-popup-next").siblings("span")
+				.text(`Página ${currentPage} de ${totalPages} — ${this._maint_item_browser_selected.size} seleccionado(s)`);
+		});
+
+		dialog.$wrapper.find(".ef-item-popup-edit").on("click", (e) => {
+			e.stopPropagation();
+			const name = $(e.currentTarget).data("name");
+			dialog.hide();
+			this._maint_item_browser_dialog = null;
+			this._load_maint_item_details(name);
+		});
+
+		dialog.$wrapper.find("#ef-item-popup-prev").on("click", () => {
+			this._maint_item_browser_start = Math.max(0, start - page_length);
+			this._fetch_and_render_maint_item_page();
+		});
+		dialog.$wrapper.find("#ef-item-popup-next").on("click", () => {
+			this._maint_item_browser_start = start + page_length;
+			this._fetch_and_render_maint_item_page();
+		});
+
+		dialog.$wrapper.find("#ef-item-popup-mark-all").on("click", () => {
+			this._mark_all_maint_items();
+		});
+		dialog.$wrapper.find("#ef-item-popup-unmark-all").on("click", () => {
+			this._maint_item_browser_selected.clear();
+			this._render_maint_item_results_popup(rows, total, start);
+		});
+
+		dialog.$wrapper.find(".ef-item-popup-filter").on("input", (e) => {
+			const key = $(e.currentTarget).data("key");
+			this._maint_item_browser_filters[key] = $(e.currentTarget).val();
+			this._maint_item_active_filter_key = key;
+			clearTimeout(this._maint_item_filter_timer);
+			this._maint_item_filter_timer = setTimeout(() => {
+				this._maint_item_browser_start = 0;
+				this._fetch_and_render_maint_item_page();
+			}, 350);
+		});
+
+		if (this._maint_item_active_filter_key) {
+			const $input = dialog.$wrapper.find(`.ef-item-popup-filter[data-key="${this._maint_item_active_filter_key}"]`);
+			if ($input.length) {
+				$input.trigger("focus");
+				const val = $input.val() || "";
+				$input[0].setSelectionRange(val.length, val.length);
+			}
+		}
+	}
+
+	_export_maint_items_excel(names) {
+		const company = this.doc.company || this.defaults.company || "";
+		const url = `/api/method/facex_multi.api.item.export_items_excel?names_json=${encodeURIComponent(JSON.stringify(names))}&company=${encodeURIComponent(company)}`;
+		window.open(url, "_blank");
+	}
+
+	_set_maint_item_form_mode(mode) {
+		this._maint_item_mode = mode;
+		const enable = mode !== "search";
+
+		this.$body.find(
+			"#ef-maint-item-name, #ef-maint-item-auto-code, #ef-maint-item-gestionado-por, " +
+			"#ef-maint-item-is-stock, #ef-maint-item-desc, #ef-maint-item-keywords"
+		).prop("disabled", !enable);
+
+		[this.maint_item_uom_ctrl, this.maint_item_group_ctrl].forEach((ctrl) => {
+			if (!ctrl) return;
+			ctrl.df.read_only = !enable;
+			ctrl.refresh();
+		});
+
+		const $save = this.$body.find("#ef-maint-item-btn-save");
+		const $delete = this.$body.find("#ef-maint-item-btn-delete");
+
+		if (mode === "search") {
+			$save.hide();
+			$delete.hide();
+			this.$body.find("#ef-maint-item-btn-print-label").hide();
+			this.$body.find("#ef-maint-item-title").text("Búsqueda de productos");
+		} else if (mode === "create") {
+			$save.show().text("Crear Producto");
+			$delete.hide();
+			this.$body.find("#ef-maint-item-title").text("Nuevo Producto");
+		} else if (mode === "edit") {
+			$save.show().text("Guardar Cambios");
+			if (this.perms.modifica_items) $delete.show(); else $delete.hide();
+		}
 	}
 
 	_load_maint_item_details(name) {
@@ -9764,6 +10750,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 				if (r.message) {
 					const it = r.message;
 					this._current_maint_item_code = it.item_code;
+					this._set_maint_item_form_mode("edit");
 					this.$body.find("#ef-maint-item-title").text(`Editar: ${it.item_name}`);
 					this.$body.find("#ef-maint-item-auto-code-label").hide();
 					this.$body.find("#ef-maint-item-code").val(it.item_code).prop("disabled", true);
@@ -9781,7 +10768,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					this.$body.find("#ef-maint-item-is-stock")
 						.prop("checked", isStockForced || !!it.is_stock_item)
 						.prop("disabled", isStockForced);
-					if (this.perms.modifica_items) this.$body.find("#ef-maint-item-btn-delete").show();
+					if (frappe.boot.versions && frappe.boot.versions.etiba) this.$body.find("#ef-maint-item-btn-print-label").show();
 					this._maint_load_item_images(it.item_code);
 					this.$body.find("#ef-maint-item-keywords").val(it.palabras_busqueda || "");
 					this.$body.find("#ef-maint-item-relations-wrap").show();
@@ -9894,10 +10881,86 @@ body.facex-fullscreen-mode .ef-main-layout {
 		});
 	}
 
+	_imprimir_etiqueta_maint_item() {
+		const item_code = this._current_maint_item_code;
+		if (!item_code) {
+			frappe.show_alert({ message: "Guarde el producto antes de imprimir la etiqueta.", indicator: "orange" });
+			return;
+		}
+		frappe.call({
+			method: "facex_multi.api.item.get_label_print_config",
+			args: { item_code, company: this.doc.company || this.defaults.company || "" },
+			freeze: true,
+			callback: (r) => {
+				const cfg = r.message || {};
+				const formatos = cfg.formatos || [];
+				if (!formatos.length) {
+					frappe.msgprint("No hay formatos de etiqueta activos configurados en eTIBA.");
+					return;
+				}
+				const fields = [
+					{
+						label: "Formato", fieldname: "formato", fieldtype: "Select",
+						options: formatos.map((f) => f.name), default: cfg.formato_sugerido || formatos[0].name, reqd: 1,
+					},
+					{
+						label: "Cantidad", fieldname: "cantidad", fieldtype: "Int",
+						default: cfg.cantidad_por_defecto || 1, reqd: 1,
+					},
+				];
+				if (cfg.requiere_serie) {
+					fields.push({
+						label: "Serie", fieldname: "serie", fieldtype: "Link", options: "Serial No", reqd: 1,
+						get_query: () => ({ filters: { item_code, status: "Active" } }),
+					});
+				}
+				const d = new frappe.ui.Dialog({
+					title: `Imprimir Etiqueta — ${item_code}`,
+					fields,
+					primary_action_label: "Imprimir",
+					primary_action: (values) => {
+						d.hide();
+						this._enviar_etiqueta_a_imprimir(item_code, values, cfg.print_service_url);
+					},
+				});
+				d.show();
+			},
+		});
+	}
+
+	_enviar_etiqueta_a_imprimir(item_code, values, print_service_url) {
+		frappe.call({
+			method: "facex_multi.api.item.imprimir_etiqueta_item",
+			args: {
+				item_code, formato: values.formato, cantidad: values.cantidad, serie: values.serie || "",
+				company: this.doc.company || this.defaults.company || "",
+			},
+			freeze: true,
+			callback: (r) => {
+				const zplcode = r.message;
+				if (!zplcode) return;
+				fetch(print_service_url, {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ zplcode }),
+				})
+					.then((response) => {
+						if (response.ok) {
+							frappe.show_alert({ message: __("Etiqueta enviada a imprimir."), indicator: "green" });
+						} else {
+							frappe.msgprint("El servicio de impresión de etiquetas respondió con un error.");
+						}
+					})
+					.catch(() => {
+						frappe.msgprint("No se pudo conectar con el servicio de impresión de etiquetas (¿está corriendo en este equipo?).");
+					});
+			},
+		});
+	}
+
 	_clear_maint_item_form() {
 		this._current_maint_item_code = null;
 		this._maint_load_item_images(null);
-		this.$body.find("#ef-maint-item-title").text("Nuevo Producto");
 		this.$body.find("#ef-maint-item-auto-code-label").show();
 		this.$body.find("#ef-maint-item-auto-code").prop("checked", true);
 		this.$body.find("#ef-maint-item-code").val("").prop("disabled", true).attr("placeholder", "(Código Automático)");
@@ -9912,7 +10975,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-maint-item-gestionado-por").val("General");
 		this.$body.find("#ef-maint-item-is-stock").prop("checked", false).prop("disabled", false);
 		this.$body.find("#ef-maint-item-btn-delete").hide();
-		this.$body.find("#ef-maint-item-list .ef-cust-result").css("background", "#ffffff");
+		this.$body.find("#ef-maint-item-btn-print-label").hide();
 		this.$body.find("#ef-maint-item-keywords").val("");
 		this.$body.find("#ef-maint-item-relations-wrap").hide();
 		this._maint_relations = { Par: [], Alternativo: [] };
@@ -9954,8 +11017,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 			callback: (r) => {
 				if (!r.exc) {
 					frappe.show_alert({ message: "Producto guardado exitosamente", indicator: "green" });
-					this._load_maint_items();
 					this._clear_maint_item_form();
+					this._set_maint_item_form_mode("search");
 				}
 			}
 		});
@@ -9963,50 +11026,276 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 	// ── Listas de Materiales (paquetes/kits de venta) ──
 
-	_load_maint_listas_materiales() {
-		const $list = this.$body.find("#ef-maint-lm-list");
-		$list.html('<div style="text-align:center; padding:10px; color:#64748b;">Cargando...</div>');
+	_search_maint_lms() {
+		const txt = (this.$body.find("#ef-maint-lm-search").val() || "").trim();
+		const field = this.$body.find("#ef-maint-lm-search-field").val() || "nombre";
+
+		if (!txt) {
+			frappe.show_alert({ message: "Escriba un texto para buscar.", indicator: "orange" });
+			return;
+		}
+
+		const filters = {};
+		filters[field] = txt;
+		this._open_maint_lm_browser(filters);
+	}
+
+	_view_all_maint_lms() {
+		this.$body.find("#ef-maint-lm-search").val("");
+		this._open_maint_lm_browser({});
+	}
+
+	_open_maint_lm_browser(filters) {
+		this._maint_lm_browser_filters = Object.assign({ nombre: "", codigo: "", modo: "" }, filters);
+		this._maint_lm_browser_start = 0;
+		this._maint_lm_browser_selected = new Set();
+		this._maint_lm_active_filter_key = null;
+		if (this._maint_lm_browser_dialog) {
+			this._maint_lm_browser_dialog.hide();
+			this._maint_lm_browser_dialog = null;
+		}
+		this._fetch_and_render_maint_lm_page();
+	}
+
+	_fetch_and_render_maint_lm_page() {
+		const filters = this._maint_lm_browser_filters;
+		const start = this._maint_lm_browser_start;
+		const $status = this.$body.find("#ef-maint-lm-search-status");
+		$status.text("Buscando...");
+
 		frappe.call({
-			method: "facex_multi.api.item.list_listas_materiales",
-			args: { company: this.doc.company || this.defaults.company || "" },
-			callback: (r) => {
-				this._maint_lm_rows = r.message || [];
-				this._render_maint_lm_list(this.$body.find("#ef-maint-lm-search").val());
+			method: "facex_multi.api.item.search_listas_materiales_maintenance",
+			args: {
+				...filters,
+				company: this.doc.company || this.defaults.company || "",
+				start,
+				page_length: EF_MAINT_LM_PAGE_LENGTH,
 			},
+			callback: (r) => {
+				const res = r.message || { rows: [], total: 0 };
+				$status.text(res.total ? `${res.total} resultado(s).` : "Sin resultados.");
+				this._render_maint_lm_results_popup(res.rows, res.total, start);
+			}
 		});
 	}
 
-	_render_maint_lm_list(txt = "") {
-		const $list = this.$body.find("#ef-maint-lm-list");
-		const rows = this._maint_lm_rows || [];
-		const needle = (txt || "").trim().toLowerCase();
-		const filtered = needle
-			? rows.filter((r) => `${r.item_code} ${r.item_name || ""}`.toLowerCase().includes(needle))
-			: rows;
-
-		$list.empty();
-		if (!filtered.length) {
-			$list.html('<div style="text-align:center; padding:10px; color:#64748b;">Sin Listas de Materiales. Use "Cargar Lista" o cree una nueva.</div>');
-			return;
-		}
-		filtered.forEach((row) => {
-			const $item = $(`
-				<div class="ef-cust-result" style="padding:8px 12px; cursor:pointer; border-radius:6px; border:1px solid var(--ef-border); background:#ffffff; margin-bottom: 4px;">
-					<div style="font-weight:600; color:var(--ef-text);" class="ef-maint-lm-name-lbl"></div>
-					<div style="font-size:11px; color:#64748b;" class="ef-maint-lm-code-lbl"></div>
-				</div>
-			`);
-			$item.find(".ef-maint-lm-name-lbl").text(row.item_name || row.item_code);
-			$item.find(".ef-maint-lm-code-lbl").text(
-				`Código: ${row.item_code} | Modo: ${row.modo_stock || "—"}${row.disabled ? " | Deshabilitado" : ""}`
-			);
-			$item.on("click", () => {
-				this.$body.find("#ef-maint-lm-list .ef-cust-result").css("background", "#ffffff");
-				$item.css("background", "#e0e7ff");
-				this._load_maint_lm_details(row.item_code);
-			});
-			$list.append($item);
+	_mark_all_maint_lms() {
+		const filters = this._maint_lm_browser_filters;
+		frappe.call({
+			method: "facex_multi.api.item.search_listas_materiales_maintenance",
+			args: {
+				...filters,
+				company: this.doc.company || this.defaults.company || "",
+				start: 0,
+				page_length: 5000,
+			},
+			freeze: true,
+			freeze_message: "Marcando todos los resultados...",
+			callback: (r) => {
+				const res = r.message || { rows: [] };
+				res.rows.forEach((row) => this._maint_lm_browser_selected.add(row.name));
+				this._fetch_and_render_maint_lm_page();
+			}
 		});
+	}
+
+	_render_maint_lm_results_popup(rows, total, start) {
+		const page_length = EF_MAINT_LM_PAGE_LENGTH;
+		const totalPages = Math.max(1, Math.ceil(total / page_length));
+		const currentPage = Math.floor(start / page_length) + 1;
+		const filters = this._maint_lm_browser_filters;
+
+		if (!this._maint_lm_browser_dialog) {
+			const dialog = new frappe.ui.Dialog({
+				title: "Resultados de búsqueda",
+				size: "extra-large",
+				fields: [{ fieldtype: "HTML", fieldname: "results_html" }],
+				primary_action_label: "Exportar seleccionados a Excel",
+				primary_action: () => {
+					const selected = Array.from(this._maint_lm_browser_selected);
+					if (!selected.length) {
+						frappe.show_alert({ message: "Seleccione al menos una Lista de Materiales para exportar.", indicator: "orange" });
+						return;
+					}
+					this._export_maint_lms_excel(selected);
+				},
+			});
+			dialog.$wrapper.on("hidden.bs.modal", () => {
+				this._maint_lm_browser_dialog = null;
+				clearTimeout(this._maint_lm_filter_timer);
+			});
+			this._maint_lm_browser_dialog = dialog;
+			dialog.show();
+		}
+
+		const dialog = this._maint_lm_browser_dialog;
+		dialog.set_title(`Resultados de búsqueda (${total})`);
+
+		const filterCell = (key) => `
+			<td><input type="text" class="ef-input ef-lm-popup-filter" data-key="${key}"
+				placeholder="Filtrar..." value="${_esc(filters[key] || "")}"
+				style="width:100%; font-size:11px; padding:3px 6px;" /></td>
+		`;
+
+		const rowsHtml = rows.length ? rows.map((row) => `
+			<tr>
+				<td style="text-align:center;"><input type="checkbox" class="ef-lm-popup-chk" data-name="${_esc(row.name)}" ${this._maint_lm_browser_selected.has(row.name) ? "checked" : ""} /></td>
+				<td>${_esc(row.item_name || "")}</td>
+				<td>${_esc(row.name || "")}</td>
+				<td>${_esc(row.modo_stock || "")}</td>
+				<td style="text-align:center;">${row.num_componentes || 0}</td>
+				<td>${row.disabled ? '<span style="color:#ef4444;">Sí</span>' : "No"}</td>
+				<td style="text-align:center;">
+					<button class="ef-btn ef-btn-sm ef-btn-secondary ef-lm-popup-edit" data-name="${_esc(row.name)}">Editar</button>
+				</td>
+			</tr>
+		`).join("") : `<tr><td colspan="7" style="text-align:center; padding:14px; color:#64748b;">Sin resultados con estos filtros.</td></tr>`;
+
+		dialog.fields_dict.results_html.$wrapper.html(`
+			<div style="overflow-x:auto;">
+				<table class="ef-table" style="width:100%;">
+					<thead>
+						<tr>
+							<th style="width:36px; text-align:center;"><input type="checkbox" id="ef-lm-popup-select-all" title="Seleccionar todos en esta página" /></th>
+							<th>Nombre</th>
+							<th>Código</th>
+							<th>Modo de Stock</th>
+							<th>Componentes</th>
+							<th>Deshabilitado</th>
+							<th style="width:80px;"></th>
+						</tr>
+						<tr class="ef-cust-popup-filter-row">
+							<td></td>
+							${filterCell("nombre")}
+							${filterCell("codigo")}
+							<td>
+								<select class="ef-input ef-lm-popup-filter" data-key="modo" style="width:100%; font-size:11px; padding:3px 6px;">
+									<option value="">Todos</option>
+									<option value="Padre" ${filters.modo === "Padre" ? "selected" : ""}>Padre</option>
+									<option value="Hijos" ${filters.modo === "Hijos" ? "selected" : ""}>Hijos</option>
+								</select>
+							</td>
+							<td></td>
+							<td></td>
+							<td></td>
+						</tr>
+					</thead>
+					<tbody>${rowsHtml}</tbody>
+				</table>
+			</div>
+			<div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; flex-wrap:wrap; gap:8px;">
+				<div>
+					<button class="ef-btn ef-btn-sm ef-btn-secondary" id="ef-lm-popup-mark-all">Marcar todos (${total})</button>
+					<button class="ef-btn ef-btn-sm ef-btn-secondary" id="ef-lm-popup-unmark-all">Desmarcar todos</button>
+				</div>
+				<div style="display:flex; align-items:center; gap:10px;">
+					<button class="ef-btn ef-btn-sm ef-btn-secondary" id="ef-lm-popup-prev" ${currentPage <= 1 ? "disabled" : ""}>&laquo; Anterior</button>
+					<span style="font-size:12px; color:#64748b;">Página ${currentPage} de ${totalPages} &mdash; ${this._maint_lm_browser_selected.size} seleccionado(s)</span>
+					<button class="ef-btn ef-btn-sm ef-btn-secondary" id="ef-lm-popup-next" ${currentPage >= totalPages ? "disabled" : ""}>Siguiente &raquo;</button>
+				</div>
+			</div>
+		`);
+
+		dialog.$wrapper.find("#ef-lm-popup-select-all").on("change", (e) => {
+			const checked = $(e.target).prop("checked");
+			dialog.$wrapper.find(".ef-lm-popup-chk").each((_, el) => {
+				$(el).prop("checked", checked);
+				const name = $(el).data("name");
+				if (checked) this._maint_lm_browser_selected.add(name);
+				else this._maint_lm_browser_selected.delete(name);
+			});
+			this._render_maint_lm_results_popup(rows, total, start);
+		});
+
+		dialog.$wrapper.find("tbody tr").on("click", (e) => {
+			if ($(e.target).is("button, input, select") || $(e.target).closest("button").length) return;
+			const $chk = $(e.currentTarget).find(".ef-lm-popup-chk");
+			if (!$chk.length) return;
+			$chk.prop("checked", !$chk.prop("checked")).trigger("change");
+		});
+
+		dialog.$wrapper.find(".ef-lm-popup-chk").on("change", (e) => {
+			const name = $(e.currentTarget).data("name");
+			if ($(e.currentTarget).prop("checked")) this._maint_lm_browser_selected.add(name);
+			else this._maint_lm_browser_selected.delete(name);
+			dialog.$wrapper.find("#ef-lm-popup-prev, #ef-lm-popup-next").siblings("span")
+				.text(`Página ${currentPage} de ${totalPages} — ${this._maint_lm_browser_selected.size} seleccionado(s)`);
+		});
+
+		dialog.$wrapper.find(".ef-lm-popup-edit").on("click", (e) => {
+			e.stopPropagation();
+			const name = $(e.currentTarget).data("name");
+			dialog.hide();
+			this._maint_lm_browser_dialog = null;
+			this._load_maint_lm_details(name);
+		});
+
+		dialog.$wrapper.find("#ef-lm-popup-prev").on("click", () => {
+			this._maint_lm_browser_start = Math.max(0, start - page_length);
+			this._fetch_and_render_maint_lm_page();
+		});
+		dialog.$wrapper.find("#ef-lm-popup-next").on("click", () => {
+			this._maint_lm_browser_start = start + page_length;
+			this._fetch_and_render_maint_lm_page();
+		});
+
+		dialog.$wrapper.find("#ef-lm-popup-mark-all").on("click", () => {
+			this._mark_all_maint_lms();
+		});
+		dialog.$wrapper.find("#ef-lm-popup-unmark-all").on("click", () => {
+			this._maint_lm_browser_selected.clear();
+			this._render_maint_lm_results_popup(rows, total, start);
+		});
+
+		dialog.$wrapper.find(".ef-lm-popup-filter").on("input change", (e) => {
+			const key = $(e.currentTarget).data("key");
+			this._maint_lm_browser_filters[key] = $(e.currentTarget).val();
+			this._maint_lm_active_filter_key = $(e.currentTarget).is("select") ? null : key;
+			clearTimeout(this._maint_lm_filter_timer);
+			this._maint_lm_filter_timer = setTimeout(() => {
+				this._maint_lm_browser_start = 0;
+				this._fetch_and_render_maint_lm_page();
+			}, 350);
+		});
+
+		if (this._maint_lm_active_filter_key) {
+			const $input = dialog.$wrapper.find(`.ef-lm-popup-filter[data-key="${this._maint_lm_active_filter_key}"]`);
+			if ($input.length) {
+				$input.trigger("focus");
+				const val = $input.val() || "";
+				$input[0].setSelectionRange(val.length, val.length);
+			}
+		}
+	}
+
+	_export_maint_lms_excel(names) {
+		const company = this.doc.company || this.defaults.company || "";
+		const url = `/api/method/facex_multi.api.item.export_listas_materiales_excel?names_json=${encodeURIComponent(JSON.stringify(names))}&company=${encodeURIComponent(company)}`;
+		window.open(url, "_blank");
+	}
+
+	_set_maint_lm_form_mode(mode) {
+		this._maint_lm_mode = mode;
+		const enable = mode !== "search";
+
+		this.$body.find("#ef-maint-lm-comp-search, input[name='ef-maint-lm-modo']").prop("disabled", !enable);
+		this.$body.find("#ef-maint-lm-padre-search").prop("disabled", !enable || mode === "edit");
+
+		const $save = this.$body.find("#ef-maint-lm-btn-save");
+		const $delete = this.$body.find("#ef-maint-lm-btn-delete");
+
+		if (mode === "search") {
+			$save.hide();
+			$delete.hide();
+			this.$body.find("#ef-maint-lm-title").text("Búsqueda de Listas de Materiales");
+		} else if (mode === "create") {
+			$save.show();
+			$delete.hide();
+			this.$body.find("#ef-maint-lm-title").text("Nueva Lista de Materiales");
+		} else if (mode === "edit") {
+			$save.show();
+			if (this.perms.gestiona_listas_materiales) $delete.show(); else $delete.hide();
+		}
 	}
 
 	_load_maint_lm_details(item_code) {
@@ -10037,11 +11326,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 					args: { name: item_code, company: this.doc.company || this.defaults.company || "" },
 					callback: (r2) => {
 						this._maint_lm_form.item_name = (r2.message && r2.message.item_name) || item_code;
+						this._set_maint_lm_form_mode("edit");
 						this.$body.find("#ef-maint-lm-title").text(`Editar: ${this._maint_lm_form.item_name}`);
 						this.$body.find("#ef-maint-lm-padre-search").val(`${item_code} — ${this._maint_lm_form.item_name}`);
 						this.$body.find("input[name='ef-maint-lm-modo']").prop("checked", false);
 						this.$body.find(`input[name='ef-maint-lm-modo'][value='${this._maint_lm_form.modo_stock}']`).prop("checked", true);
-						this.$body.find("#ef-maint-lm-btn-delete").show();
 						this._render_maint_lm_rows();
 					},
 				});
@@ -10051,11 +11340,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 	_clear_maint_lm_form() {
 		this._maint_lm_form = { item_code: "", item_name: "", modo_stock: "", items: [], uid_counter: 0 };
-		this.$body.find("#ef-maint-lm-title").text("Nueva Lista de Materiales");
 		this.$body.find("#ef-maint-lm-padre-search").val("");
 		this.$body.find("input[name='ef-maint-lm-modo']").prop("checked", false);
 		this.$body.find("#ef-maint-lm-btn-delete").hide();
-		this.$body.find("#ef-maint-lm-list .ef-cust-result").css("background", "#ffffff");
 		this._render_maint_lm_rows();
 	}
 
@@ -10115,8 +11402,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 			callback: (r) => {
 				if (!r.message) return;
 				frappe.show_alert({ message: "Lista de Materiales guardada.", indicator: "green" });
-				this._load_maint_listas_materiales();
 				this._clear_maint_lm_form();
+				this._set_maint_lm_form_mode("search");
 			},
 		});
 	}
@@ -10134,8 +11421,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 					callback: (r) => {
 						if (!r.message) return;
 						frappe.show_alert({ message: "Lista de Materiales eliminada.", indicator: "green" });
-						this._load_maint_listas_materiales();
 						this._clear_maint_lm_form();
+						this._set_maint_lm_form_mode("search");
 					},
 				});
 			}
@@ -10144,32 +11431,42 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 	// ── Prices Maintenance ──
 
-	_load_maint_prices(txt = "") {
+	_load_maint_prices() {
 		const $tbody = this.$body.find("#ef-maint-prices-tbody");
+		const $status = this.$body.find("#ef-maint-prices-status");
 		const plist = this.$body.find("#ef-maint-price-list-select").val();
+		const txt = this.$body.find("#ef-maint-prices-f-nombre").val() || "";
+		const codigo = this.$body.find("#ef-maint-prices-f-codigo").val() || "";
+		const grupo = this.$body.find("#ef-maint-prices-f-grupo").val() || "";
 
 		if (!plist) {
-			$tbody.html('<tr><td colspan="5" style="text-align:center; padding:10px; color:#64748b;">Seleccione una Lista de Precios primero</td></tr>');
+			$tbody.html('<tr><td colspan="7" style="text-align:center; padding:10px; color:#64748b;">Seleccione una Lista de Precios primero</td></tr>');
+			this._update_maint_prices_selected_count();
 			return;
 		}
 
-		$tbody.html('<tr><td colspan="5" style="text-align:center; padding:10px; color:#64748b;">Cargando precios...</td></tr>');
+		$tbody.html('<tr><td colspan="7" style="text-align:center; padding:10px; color:#64748b;">Cargando precios...</td></tr>');
 
 		frappe.call({
 			method: "facex_multi.api.item.get_all_prices",
-			args: { price_list: plist, txt, company: this.doc.company || this.defaults.company || "" },
+			args: { price_list: plist, txt, codigo, grupo, company: this.doc.company || this.defaults.company || "" },
 			callback: (r) => {
 				$tbody.empty();
 				const items = r.message || [];
+				$status.text(items.length ? `${items.length} producto(s).` : "");
+				this.$body.find("#ef-maint-prices-select-all").prop("checked", false);
 				if (items.length === 0) {
-					$tbody.html('<tr><td colspan="5" style="text-align:center; padding:10px; color:#64748b;">Sin productos</td></tr>');
+					$tbody.html('<tr><td colspan="7" style="text-align:center; padding:10px; color:#64748b;">Sin productos</td></tr>');
+					this._update_maint_prices_selected_count();
 					return;
 				}
 				items.forEach((it) => {
 					const $row = $(`
 						<tr class="ef-tr">
+							<td class="ef-td" style="text-align:center;"><input type="checkbox" class="ef-price-chk" data-code="${_esc(it.item_code)}" /></td>
 							<td class="ef-td font-weight-bold ef-lbl-code"></td>
 							<td class="ef-td ef-lbl-name"></td>
+							<td class="ef-td ef-lbl-group"></td>
 							<td class="ef-td ef-lbl-uom"></td>
 							<td class="ef-td" style="text-align:right;">
 								<span style="font-size:12px; font-weight:600; color:#64748b; margin-right:4px;" class="ef-lbl-currency"></span>
@@ -10182,9 +11479,14 @@ body.facex-fullscreen-mode .ef-main-layout {
 					`);
 					$row.find(".ef-lbl-code").text(it.item_code);
 					$row.find(".ef-lbl-name").text(it.item_name);
+					$row.find(".ef-lbl-group").text(it.item_group || "");
 					$row.find(".ef-lbl-uom").text(it.stock_uom);
 					$row.find(".ef-lbl-currency").text(it.currency || "GTQ");
-					
+
+					$row.find(".ef-price-chk").on("change", () => {
+						this._update_maint_prices_selected_count();
+					});
+
 					$row.find(".ef-btn-save-price").on("click", () => {
 						const priceVal = parseFloat($row.find(".ef-price-input").val()) || 0;
 						frappe.call({
@@ -10207,8 +11509,21 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 					$tbody.append($row);
 				});
+				this._update_maint_prices_selected_count();
 			}
 		});
+	}
+
+	_update_maint_prices_selected_count() {
+		const n = this.$body.find(".ef-price-chk:checked").length;
+		this.$body.find("#ef-maint-prices-selected-count").text(`${n} seleccionado(s)`);
+	}
+
+	_export_maint_prices_excel(names) {
+		const plist = this.$body.find("#ef-maint-price-list-select").val() || "";
+		const company = this.doc.company || this.defaults.company || "";
+		const url = `/api/method/facex_multi.api.item.export_item_prices_excel?names_json=${encodeURIComponent(JSON.stringify(names))}&price_list=${encodeURIComponent(plist)}&company=${encodeURIComponent(company)}`;
+		window.open(url, "_blank");
 	}
 
 	_delete_maint_customer() {
@@ -10226,8 +11541,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 					callback: (r) => {
 						if (!r.exc) {
 							frappe.show_alert({ message: "Cliente eliminado exitosamente", indicator: "green" });
-							this._load_maint_customers();
 							this._clear_maint_cust_form();
+							this._set_maint_cust_form_mode("search");
 						}
 					}
 				});
@@ -10250,8 +11565,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 					callback: (r) => {
 						if (!r.exc) {
 							frappe.show_alert({ message: "Producto eliminado exitosamente", indicator: "green" });
-							this._load_maint_items();
 							this._clear_maint_item_form();
+							this._set_maint_item_form_mode("search");
 						}
 					}
 				});
@@ -10261,42 +11576,282 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 	// ─── Supplier maintenance ───────────────────────────────────────────────
 
-	_load_maint_suppliers(txt = "") {
-		const company = this.doc.company || this.defaults.company || "";
+	_search_maint_suppliers() {
+		const txt = (this.$body.find("#ef-maint-supp-search").val() || "").trim();
+		const field = this.$body.find("#ef-maint-supp-search-field").val() || "nombre";
+
+		if (!txt) {
+			frappe.show_alert({ message: "Escriba un texto para buscar.", indicator: "orange" });
+			return;
+		}
+
+		const filters = {};
+		filters[field] = txt;
+		this._open_maint_supp_browser(filters);
+	}
+
+	_view_all_maint_suppliers() {
+		this.$body.find("#ef-maint-supp-search").val("");
+		this._open_maint_supp_browser({});
+	}
+
+	_open_maint_supp_browser(filters) {
+		this._maint_supp_browser_filters = Object.assign({ nombre: "", codigo: "", nit: "", telefono: "" }, filters);
+		this._maint_supp_browser_start = 0;
+		this._maint_supp_browser_selected = new Set();
+		this._maint_supp_active_filter_key = null;
+		if (this._maint_supp_browser_dialog) {
+			this._maint_supp_browser_dialog.hide();
+			this._maint_supp_browser_dialog = null;
+		}
+		this._fetch_and_render_maint_supp_page();
+	}
+
+	_fetch_and_render_maint_supp_page() {
+		const filters = this._maint_supp_browser_filters;
+		const start = this._maint_supp_browser_start;
+		const $status = this.$body.find("#ef-maint-supp-search-status");
+		$status.text("Buscando...");
+
 		frappe.call({
-			method: "facex_multi.api.purchase.search_suppliers_maint",
-			args:   { txt, company },
-			callback: (r) => {
-				if (r.exc) return;
-				const $list = this.$body.find("#ef-maint-supp-list");
-				$list.empty();
-				const rows = r.message || [];
-				if (!rows.length) {
-					$list.html('<div style="color:#94a3b8;font-size:12px;padding:8px 0;">Sin proveedores.</div>');
-					return;
-				}
-				rows.forEach(s => {
-					const $item = $(`<div style="padding:8px 10px;border:1px solid var(--ef-border);border-radius:6px;cursor:pointer;background:#fff;">
-						<div style="font-weight:600;color:#1e3a5f;font-size:13px;">${_esc(s.supplier_name)}</div>
-						<div style="font-size:11px;color:#64748b;">${_esc(s.name)}${s.tax_id ? ` · NIT: ${_esc(s.tax_id)}` : ""}</div>
-					</div>`);
-					$item.on("click", () => this._load_maint_supp_form(s.name));
-					$list.append($item);
-				});
+			method: "facex_multi.api.purchase.search_suppliers_maintenance",
+			args: {
+				...filters,
+				company: this.doc.company || this.defaults.company || "",
+				start,
+				page_length: EF_MAINT_SUPP_PAGE_LENGTH,
 			},
+			callback: (r) => {
+				const res = r.message || { rows: [], total: 0 };
+				$status.text(res.total ? `${res.total} resultado(s).` : "Sin resultados.");
+				this._render_maint_supp_results_popup(res.rows, res.total, start);
+			}
 		});
 	}
 
-	_clear_maint_supp_form(suppName = "") {
+	_mark_all_maint_suppliers() {
+		const filters = this._maint_supp_browser_filters;
+		frappe.call({
+			method: "facex_multi.api.purchase.search_suppliers_maintenance",
+			args: {
+				...filters,
+				company: this.doc.company || this.defaults.company || "",
+				start: 0,
+				page_length: 5000,
+			},
+			freeze: true,
+			freeze_message: "Marcando todos los resultados...",
+			callback: (r) => {
+				const res = r.message || { rows: [] };
+				res.rows.forEach((s) => this._maint_supp_browser_selected.add(s.name));
+				this._fetch_and_render_maint_supp_page();
+			}
+		});
+	}
+
+	_render_maint_supp_results_popup(rows, total, start) {
+		const page_length = EF_MAINT_SUPP_PAGE_LENGTH;
+		const totalPages = Math.max(1, Math.ceil(total / page_length));
+		const currentPage = Math.floor(start / page_length) + 1;
+		const filters = this._maint_supp_browser_filters;
+
+		if (!this._maint_supp_browser_dialog) {
+			const dialog = new frappe.ui.Dialog({
+				title: "Resultados de búsqueda",
+				size: "extra-large",
+				fields: [{ fieldtype: "HTML", fieldname: "results_html" }],
+				primary_action_label: "Exportar seleccionados a Excel",
+				primary_action: () => {
+					const selected = Array.from(this._maint_supp_browser_selected);
+					if (!selected.length) {
+						frappe.show_alert({ message: "Seleccione al menos un proveedor para exportar.", indicator: "orange" });
+						return;
+					}
+					this._export_maint_suppliers_excel(selected);
+				},
+			});
+			dialog.$wrapper.on("hidden.bs.modal", () => {
+				this._maint_supp_browser_dialog = null;
+				clearTimeout(this._maint_supp_filter_timer);
+			});
+			this._maint_supp_browser_dialog = dialog;
+			dialog.show();
+		}
+
+		const dialog = this._maint_supp_browser_dialog;
+		dialog.set_title(`Resultados de búsqueda (${total})`);
+
+		const filterCell = (key) => `
+			<td><input type="text" class="ef-input ef-supp-popup-filter" data-key="${key}"
+				placeholder="Filtrar..." value="${_esc(filters[key] || "")}"
+				style="width:100%; font-size:11px; padding:3px 6px;" /></td>
+		`;
+
+		const rowsHtml = rows.length ? rows.map((s) => `
+			<tr>
+				<td style="text-align:center;"><input type="checkbox" class="ef-supp-popup-chk" data-name="${_esc(s.name)}" ${this._maint_supp_browser_selected.has(s.name) ? "checked" : ""} /></td>
+				<td>${_esc(s.supplier_name || "")}</td>
+				<td>${_esc(s.name || "")}</td>
+				<td>${_esc(s.tax_id || "")}</td>
+				<td>${_esc(s.custom_telefono || "")}</td>
+				<td>${_esc(s.custom_direccion || "")}</td>
+				<td>${s.disabled ? '<span style="color:#ef4444;">Sí</span>' : "No"}</td>
+				<td style="text-align:center;">
+					<button class="ef-btn ef-btn-sm ef-btn-secondary ef-supp-popup-edit" data-name="${_esc(s.name)}">Editar</button>
+				</td>
+			</tr>
+		`).join("") : `<tr><td colspan="8" style="text-align:center; padding:14px; color:#64748b;">Sin resultados con estos filtros.</td></tr>`;
+
+		dialog.fields_dict.results_html.$wrapper.html(`
+			<div style="overflow-x:auto;">
+				<table class="ef-table" style="width:100%;">
+					<thead>
+						<tr>
+							<th style="width:36px; text-align:center;"><input type="checkbox" id="ef-supp-popup-select-all" title="Seleccionar todos en esta página" /></th>
+							<th>Nombre</th>
+							<th>Código</th>
+							<th>NIT / ID Fiscal</th>
+							<th>Teléfono</th>
+							<th>Dirección</th>
+							<th>Deshabilitado</th>
+							<th style="width:80px;"></th>
+						</tr>
+						<tr class="ef-cust-popup-filter-row">
+							<td></td>
+							${filterCell("nombre")}
+							${filterCell("codigo")}
+							${filterCell("nit")}
+							${filterCell("telefono")}
+							<td></td>
+							<td></td>
+							<td></td>
+						</tr>
+					</thead>
+					<tbody>${rowsHtml}</tbody>
+				</table>
+			</div>
+			<div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; flex-wrap:wrap; gap:8px;">
+				<div>
+					<button class="ef-btn ef-btn-sm ef-btn-secondary" id="ef-supp-popup-mark-all">Marcar todos (${total})</button>
+					<button class="ef-btn ef-btn-sm ef-btn-secondary" id="ef-supp-popup-unmark-all">Desmarcar todos</button>
+				</div>
+				<div style="display:flex; align-items:center; gap:10px;">
+					<button class="ef-btn ef-btn-sm ef-btn-secondary" id="ef-supp-popup-prev" ${currentPage <= 1 ? "disabled" : ""}>&laquo; Anterior</button>
+					<span style="font-size:12px; color:#64748b;">Página ${currentPage} de ${totalPages} &mdash; ${this._maint_supp_browser_selected.size} seleccionado(s)</span>
+					<button class="ef-btn ef-btn-sm ef-btn-secondary" id="ef-supp-popup-next" ${currentPage >= totalPages ? "disabled" : ""}>Siguiente &raquo;</button>
+				</div>
+			</div>
+		`);
+
+		dialog.$wrapper.find("#ef-supp-popup-select-all").on("change", (e) => {
+			const checked = $(e.target).prop("checked");
+			dialog.$wrapper.find(".ef-supp-popup-chk").each((_, el) => {
+				$(el).prop("checked", checked);
+				const name = $(el).data("name");
+				if (checked) this._maint_supp_browser_selected.add(name);
+				else this._maint_supp_browser_selected.delete(name);
+			});
+			this._render_maint_supp_results_popup(rows, total, start);
+		});
+
+		dialog.$wrapper.find("tbody tr").on("click", (e) => {
+			if ($(e.target).is("button, input") || $(e.target).closest("button").length) return;
+			const $chk = $(e.currentTarget).find(".ef-supp-popup-chk");
+			if (!$chk.length) return;
+			$chk.prop("checked", !$chk.prop("checked")).trigger("change");
+		});
+
+		dialog.$wrapper.find(".ef-supp-popup-chk").on("change", (e) => {
+			const name = $(e.currentTarget).data("name");
+			if ($(e.currentTarget).prop("checked")) this._maint_supp_browser_selected.add(name);
+			else this._maint_supp_browser_selected.delete(name);
+			dialog.$wrapper.find("#ef-supp-popup-prev, #ef-supp-popup-next").siblings("span")
+				.text(`Página ${currentPage} de ${totalPages} — ${this._maint_supp_browser_selected.size} seleccionado(s)`);
+		});
+
+		dialog.$wrapper.find(".ef-supp-popup-edit").on("click", (e) => {
+			e.stopPropagation();
+			const name = $(e.currentTarget).data("name");
+			dialog.hide();
+			this._maint_supp_browser_dialog = null;
+			this._load_maint_supp_form(name);
+		});
+
+		dialog.$wrapper.find("#ef-supp-popup-prev").on("click", () => {
+			this._maint_supp_browser_start = Math.max(0, start - page_length);
+			this._fetch_and_render_maint_supp_page();
+		});
+		dialog.$wrapper.find("#ef-supp-popup-next").on("click", () => {
+			this._maint_supp_browser_start = start + page_length;
+			this._fetch_and_render_maint_supp_page();
+		});
+
+		dialog.$wrapper.find("#ef-supp-popup-mark-all").on("click", () => {
+			this._mark_all_maint_suppliers();
+		});
+		dialog.$wrapper.find("#ef-supp-popup-unmark-all").on("click", () => {
+			this._maint_supp_browser_selected.clear();
+			this._render_maint_supp_results_popup(rows, total, start);
+		});
+
+		dialog.$wrapper.find(".ef-supp-popup-filter").on("input", (e) => {
+			const key = $(e.currentTarget).data("key");
+			this._maint_supp_browser_filters[key] = $(e.currentTarget).val();
+			this._maint_supp_active_filter_key = key;
+			clearTimeout(this._maint_supp_filter_timer);
+			this._maint_supp_filter_timer = setTimeout(() => {
+				this._maint_supp_browser_start = 0;
+				this._fetch_and_render_maint_supp_page();
+			}, 350);
+		});
+
+		if (this._maint_supp_active_filter_key) {
+			const $input = dialog.$wrapper.find(`.ef-supp-popup-filter[data-key="${this._maint_supp_active_filter_key}"]`);
+			if ($input.length) {
+				$input.trigger("focus");
+				const val = $input.val() || "";
+				$input[0].setSelectionRange(val.length, val.length);
+			}
+		}
+	}
+
+	_export_maint_suppliers_excel(names) {
+		const company = this.doc.company || this.defaults.company || "";
+		const url = `/api/method/facex_multi.api.purchase.export_suppliers_excel?names_json=${encodeURIComponent(JSON.stringify(names))}&company=${encodeURIComponent(company)}`;
+		window.open(url, "_blank");
+	}
+
+	_set_maint_supp_form_mode(mode) {
+		this._maint_supp_mode = mode;
+		const enable = mode !== "search";
+
+		this.$body.find(
+			"#ef-maint-supp-name, #ef-maint-supp-nit, #ef-maint-supp-phone, #ef-maint-supp-address"
+		).prop("disabled", !enable);
+
+		const $save = this.$body.find("#ef-maint-supp-btn-save");
+		const $delete = this.$body.find("#ef-maint-supp-btn-delete");
+
+		if (mode === "search") {
+			$save.hide();
+			$delete.hide();
+			this.$body.find("#ef-maint-supp-form-title").text("Búsqueda de proveedores");
+		} else if (mode === "create") {
+			$save.show();
+			$delete.hide();
+			this.$body.find("#ef-maint-supp-form-title").text("Nuevo Proveedor");
+		} else if (mode === "edit") {
+			$save.show();
+			if (this.perms.modifica_proveedores) $delete.show(); else $delete.hide();
+		}
+	}
+
+	_clear_maint_supp_form() {
 		this._current_maint_supp = "";
-		this.$body.find("#ef-maint-supp-form-title").text("Nuevo Proveedor");
 		this.$body.find("#ef-maint-supp-name").val("");
 		this.$body.find("#ef-maint-supp-nit").val("");
 		this.$body.find("#ef-maint-supp-phone").val("");
 		this.$body.find("#ef-maint-supp-address").val("");
-		this.$body.find("#ef-maint-supp-form").show();
-		this.$body.find("#ef-maint-supp-empty").hide();
-		this.$body.find("#ef-maint-supp-btn-save").show();
 		this.$body.find("#ef-maint-supp-btn-delete").hide();
 	}
 
@@ -10309,15 +11864,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 				if (r.exc || !r.message) return;
 				const d = r.message;
 				this._current_maint_supp = d.name;
-				this.$body.find("#ef-maint-supp-form-title").text(d.supplier_name);
+				this._set_maint_supp_form_mode("edit");
+				this.$body.find("#ef-maint-supp-form-title").text(`Editar: ${d.supplier_name}`);
 				this.$body.find("#ef-maint-supp-name").val(d.supplier_name);
 				this.$body.find("#ef-maint-supp-nit").val(d.tax_id || "");
 				this.$body.find("#ef-maint-supp-phone").val(d.custom_telefono || "");
 				this.$body.find("#ef-maint-supp-address").val(d.custom_direccion || "");
-				this.$body.find("#ef-maint-supp-form").show();
-				this.$body.find("#ef-maint-supp-empty").hide();
-				this.$body.find("#ef-maint-supp-btn-save").show();
-				this.$body.find("#ef-maint-supp-btn-delete").show();
 			},
 		});
 	}
@@ -10343,8 +11895,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 			callback: (r) => {
 				if (!r.exc && r.message) {
 					frappe.show_alert({ message: `Proveedor <strong>${r.message.supplier_name}</strong> guardado.`, indicator: "green" });
-					this._load_maint_suppliers();
-					this._load_maint_supp_form(r.message.name);
+					this._clear_maint_supp_form();
+					this._set_maint_supp_form_mode("search");
 				}
 			},
 		});
@@ -10363,8 +11915,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 					callback: (r) => {
 						if (!r.exc) {
 							frappe.show_alert({ message: "Proveedor eliminado.", indicator: "green" });
-							this._load_maint_suppliers();
 							this._clear_maint_supp_form();
+							this._set_maint_supp_form_mode("search");
 						}
 					},
 				});

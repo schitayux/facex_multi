@@ -64,6 +64,12 @@ def get_login_branding():
 		if doc.allowed_email_domains:
 			allowed_domains = [d.strip() for d in doc.allowed_email_domains.split(",") if d.strip()]
 
+		# Only expose internal (relative) paths as a post-login redirect target,
+		# to avoid turning this into an open-redirect vector.
+		redirect_after_login = (doc.get("redirect_after_login") or "").strip()
+		if not redirect_after_login.startswith("/") or redirect_after_login.startswith("//"):
+			redirect_after_login = ""
+
 		return {
 			"enabled": True,
 			"domain": doc.domain,
@@ -71,6 +77,7 @@ def get_login_branding():
 			"logo": logo_url,
 			"primary_color": doc.primary_color or "",
 			"welcome_text": doc.welcome_text or "",
+			"redirect_after_login": redirect_after_login,
 			"allowed_email_domains": allowed_domains
 		}
 	else:

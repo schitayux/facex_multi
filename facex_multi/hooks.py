@@ -12,6 +12,11 @@ override_doctype_class = {
     "Supplier": "facex_multi.overrides.supplier.FacexSupplier"
 }
 
+# Guardia de botón "Atrás" del navegador para las Pages FacEx / FacEx Screen /
+# FacEx Inventario (ver public/js/history_guard.js) — solo define
+# facex_multi.setup_back_guard, sin efecto hasta que cada Page lo invoca.
+app_include_js = "/assets/facex_multi/js/history_guard.js"
+
 doctype_js = {
     "Item": "public/js/item.js"
 }

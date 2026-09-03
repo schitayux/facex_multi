@@ -7,7 +7,23 @@ from __future__ import annotations
 
 import frappe
 import json
+from frappe.utils import flt
 from facex_multi.api.invoice import get_effective_company, has_efast_permission
+
+
+def _get_credit_limit_for_company(doc, company: str) -> float:
+    for row in doc.get("credit_limits") or []:
+        if row.company == company:
+            return flt(row.credit_limit)
+    return 0.0
+
+
+def _set_credit_limit_for_company(doc, company: str, credit_limit: float):
+    for row in doc.get("credit_limits") or []:
+        if row.company == company:
+            row.credit_limit = credit_limit
+            return
+    doc.append("credit_limits", {"company": company, "credit_limit": credit_limit})
 
 
 def _get_linked_address(customer_name: str):
@@ -162,6 +178,128 @@ def search_customer(txt: str, company: str = None):
 
 
 @frappe.whitelist()
+def search_customers_maintenance(company: str = None, start: int = 0, page_length: int = 15,
+                                   nombre: str = None, codigo: str = None, nit: str = None,
+                                   grupo: str = None, celular: str = None, vendedor: str = None):
+    """Búsqueda/paginación de clientes para el Mantenimiento de Clientes (modo
+    búsqueda-primero). Cada parámetro filtra una columna distinta y se combinan
+    con AND, para soportar tanto el buscador rápido del panel izquierdo (un solo
+    filtro) como la fila de filtros por columna del popup de resultados (varios
+    a la vez). Sin ningún filtro, lista TODOS los clientes de la compañía activa
+    ("Ver todos"). Incluye deshabilitados para poder ubicarlos y
+    reactivarlos/editarlos desde el mantenimiento.
+
+    Retorna {"rows": [...], "total": N} para el paginador del popup."""
+    company = get_effective_company(company)
+
+    conditions = []
+    params = {"company": company}
+
+    nombre = (nombre or "").strip()
+    if nombre:
+        conditions.append("customer_name LIKE %(nombre)s")
+        params["nombre"] = f"%{nombre}%"
+
+    codigo = (codigo or "").strip()
+    if codigo:
+        conditions.append("name LIKE %(codigo)s")
+        params["codigo"] = f"%{codigo}%"
+
+    nit = (nit or "").strip()
+    if nit:
+        conditions.append("(tax_id LIKE %(nit)s OR bfel_id_receptor LIKE %(nit)s)")
+        params["nit"] = f"%{nit}%"
+
+    grupo = (grupo or "").strip()
+    if grupo:
+        conditions.append("customer_group LIKE %(grupo)s")
+        params["grupo"] = f"%{grupo}%"
+
+    celular = (celular or "").strip()
+    if celular:
+        conditions.append("mobile_no LIKE %(celular)s")
+        params["celular"] = f"%{celular}%"
+
+    vendedor = (vendedor or "").strip()
+    if vendedor:
+        conditions.append("default_sales_partner LIKE %(vendedor)s")
+        params["vendedor"] = f"%{vendedor}%"
+
+    company_filter = """(
+              bfel_company = %(company)s
+              OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
+          )"""
+    where = " AND ".join([company_filter] + conditions)
+
+    total = frappe.db.sql(f"SELECT COUNT(*) FROM `tabCustomer` WHERE {where}", params)[0][0]
+
+    rows = frappe.db.sql(
+        f"""
+        SELECT name, customer_name, tax_id, bfel_id_receptor, customer_group, mobile_no,
+               default_price_list, payment_terms, default_sales_partner, disabled
+        FROM `tabCustomer`
+        WHERE {where}
+        ORDER BY customer_name ASC
+        LIMIT %(page_length)s OFFSET %(start)s
+        """,
+        {**params, "page_length": int(page_length), "start": int(start)},
+        as_dict=True,
+    )
+    for row in rows:
+        nit_val = row.get("bfel_id_receptor") or row.get("tax_id") or ""
+        row["tax_id"] = nit_val
+        row["bfel_id_receptor"] = nit_val
+    return {"rows": rows, "total": total}
+
+
+@frappe.whitelist()
+def export_customers_excel(names_json: str, company: str = None):
+    """Exporta a Excel los clientes marcados en el popup de resultados del
+    Mantenimiento de Clientes. Vuelve a filtrar por compañía activa por si el
+    listado de nombres fue manipulado desde el cliente."""
+    names = json.loads(names_json) if isinstance(names_json, str) else names_json
+    if not names:
+        frappe.throw("Debe seleccionar al menos un cliente.")
+    company = get_effective_company(company)
+
+    placeholders = ", ".join(["%s"] * len(names))
+    rows = frappe.db.sql(
+        f"""
+        SELECT name, customer_name, tax_id, bfel_id_receptor, customer_group, mobile_no,
+               default_price_list, payment_terms, default_sales_partner, disabled
+        FROM `tabCustomer`
+        WHERE name IN ({placeholders})
+          AND (
+              bfel_company = %s
+              OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
+          )
+        """,
+        tuple(names) + (company,),
+        as_dict=True,
+    )
+
+    from frappe.utils.xlsxutils import make_xlsx
+
+    headers = [
+        "Código", "Nombre", "NIT / Identificación", "Grupo de Cliente", "Celular",
+        "Lista de Precios", "Condiciones de Pago", "Vendedor", "Deshabilitado",
+    ]
+    data = [headers]
+    for r in rows:
+        nit = r.get("bfel_id_receptor") or r.get("tax_id") or ""
+        data.append([
+            r.name, r.customer_name, nit, r.customer_group or "", r.mobile_no or "",
+            r.default_price_list or "", r.payment_terms or "",
+            r.default_sales_partner or "", "Sí" if r.disabled else "No",
+        ])
+
+    xlsx_file = make_xlsx(data, "Clientes")
+    frappe.response["filename"] = "clientes.xlsx"
+    frappe.response["filecontent"] = xlsx_file.getvalue()
+    frappe.response["type"] = "binary"
+
+
+@frappe.whitelist()
 def get_customer(name: str, company: str = None):
     """Retorna los campos relevantes del cliente para el diálogo con validación de compañía."""
     doc = frappe.get_doc("Customer", name)
@@ -193,6 +331,8 @@ def get_customer(name: str, company: str = None):
         "payment_terms": doc.get("payment_terms") or "",
         "default_price_list": doc.get("default_price_list") or "",
         "default_sales_partner": doc.get("default_sales_partner") or "",
+        "customer_group": doc.get("customer_group") or "",
+        "credit_limit": _get_credit_limit_for_company(doc, company),
     }
 
 
@@ -225,14 +365,22 @@ def create_or_update_customer(data_json: str, company: str = None):
     editable = [
         "customer_name", "bfel_identificacion", "bfel_id_receptor",
         "payment_terms", "default_price_list", "default_sales_partner",
+        "customer_group",
     ]
     for field in editable:
         if field in data:
+            # customer_group ya recibe un valor por defecto al crear el cliente
+            # (ver arriba); no lo pisamos con "" si el usuario no eligió uno.
+            if field == "customer_group" and not data[field]:
+                continue
             setattr(doc, field, data[field])
 
     # Forzar que bfel_company no sea alterada
     if doc.meta.has_field("bfel_company"):
         doc.bfel_company = company
+
+    if "credit_limit" in data:
+        _set_credit_limit_for_company(doc, company, flt(data.get("credit_limit")))
 
     # Sincronizar tax_id y bfel_id_receptor
     if doc.meta.has_field("bfel_id_receptor"):

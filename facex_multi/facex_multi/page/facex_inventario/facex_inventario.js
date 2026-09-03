@@ -22,11 +22,21 @@ frappe.pages["facex-inventario"].on_page_load = function (wrapper) {
 			$("body").removeClass("facex-fullscreen-mode");
 		}
 	});
-	new FacexInventario(page, wrapper);
+	// facex_transporte_module.js: mismo módulo compartido con FacEx clásico y
+	// FacEx Screen para el menú aéreo de Transporte (ver _open_transporte).
+	frappe.require(["/assets/facex_multi/js/facex_transporte_module.js"], function () {
+		wrapper.facexInventario = new FacexInventario(page, wrapper);
+		facex_multi.setup_back_guard({ to: "/app", is_dirty: () => (wrapper.facexInventario.entry_rows || []).length > 0 });
+	});
 };
 
 frappe.pages["facex-inventario"].on_page_show = function (wrapper) {
 	$("body").addClass("facex-fullscreen-mode");
+	if (!wrapper.facexInventario) return;
+	// Rearmar en cada re-entrada: on_page_load solo corre una vez por sesión
+	// de pestaña (ver history_guard.js), así que sin esto el guard del botón
+	// Atrás dejaría de funcionar después de la primera visita a esta página.
+	facex_multi.setup_back_guard({ to: "/app", is_dirty: () => (wrapper.facexInventario.entry_rows || []).length > 0 });
 };
 
 const INV_MOVEMENTS = [
@@ -118,7 +128,7 @@ class FacexInventario {
 <style>${INV_TOPBAR_STYLES}</style>
 <div class="inv-topbar">
 	<div class="inv-topbar-left">
-		<span class="inv-topbar-logo">
+		<span class="inv-topbar-logo" id="inv-topbar-logo" title="Ir al menú principal" style="cursor:pointer;">
 			<svg width="18" height="18" viewBox="0 0 24 24" fill="#153375"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
 			FacEx <span class="inv-topbar-sub">Inventario</span>
 		</span>
@@ -126,6 +136,13 @@ class FacexInventario {
 	<div class="inv-topbar-right">
 		<button type="button" class="inv-topbar-link" id="inv-topbar-billing">Facturador</button>
 		<button type="button" class="inv-topbar-link" id="inv-topbar-pos">POS</button>
+		<div class="inv-transporte-dropdown" id="inv-transporte-dropdown" style="display:none;">
+			<button type="button" class="inv-topbar-link inv-transporte-btn" id="inv-btn-transporte" title="Transporte">
+				Transporte
+				<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+			</button>
+			<div class="inv-transporte-menu" id="inv-transporte-menu"></div>
+		</div>
 		<div class="inv-user-dropdown" id="inv-user-dropdown">
 			<button class="inv-user-btn" id="inv-btn-user-profile" title="Perfil de Usuario">
 				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#475569" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
@@ -151,6 +168,30 @@ class FacexInventario {
 
 		this.$page_root.find("#inv-topbar-billing").on("click", () => { window.location.href = "/app/facex"; });
 		this.$page_root.find("#inv-topbar-pos").on("click", () => { window.location.href = "/app/facex-screen"; });
+
+		// Logo (icono de compañía): un click lleva siempre al menú principal
+		// de Inventario, mismo criterio que el icono de compañía en FacEx
+		// clásico y FacEx Screen. Ignorado mientras this.defaults todavía no
+		// ha terminado de cargar (primer render, antes de _load_defaults).
+		this.$page_root.find("#inv-topbar-logo").on("click", () => {
+			if (this.defaults) this._render_shell();
+		});
+
+		// Menú aéreo de Transporte — mismo patrón de dropdown flotante que el
+		// perfil de usuario (toggle + cierre al hacer click afuera), poblado
+		// una vez que this.defaults.permissions esté listo (ver _render_transporte_menu).
+		this.$page_root.find("#inv-btn-transporte").on("click", (e) => {
+			e.stopPropagation();
+			const $menu = this.$page_root.find("#inv-transporte-menu");
+			if ($menu.is(":hidden")) $menu.fadeIn(150);
+			else $menu.fadeOut(150);
+		});
+		$(document).off(".invTransporteMenu").on("click.invTransporteMenu", (e) => {
+			const $menu = this.$page_root.find("#inv-transporte-menu");
+			if ($menu.length && !$(e.target).closest("#inv-transporte-dropdown").length) {
+				$menu.fadeOut(150);
+			}
+		});
 
 		this.$page_root.find("#inv-btn-user-profile").on("click", (e) => {
 			e.stopPropagation();
@@ -251,6 +292,63 @@ class FacexInventario {
 		dlg.show();
 	}
 
+	// ──────────────────────────────────────────────
+	// Transporte — menú aéreo de la topbar. Reutiliza FacexTransporteModule
+	// (mismo módulo compartido con FacEx clásico / FacEx Screen); cada ítem
+	// salta directo a su sección, gateado por su propio permiso específico
+	// (mismo criterio que ya usan las tarjetas del hub del módulo).
+	// ──────────────────────────────────────────────
+
+	_has_transporte_access() {
+		const p = (this.defaults && this.defaults.permissions) || {};
+		if (!p.puede_ver_menu_transporte) return false;
+		return !!(p.puede_editar_guias_transporte || p.puede_administrar_transportistas
+			|| p.puede_ver_reportes_transporte || p.puede_cargar_liquidaciones_transporte || p.puede_ver_kpis_transporte);
+	}
+
+	_render_transporte_menu() {
+		const hasAccess = this._has_transporte_access();
+		this.$page_root.find("#inv-transporte-dropdown").toggle(hasAccess);
+		if (!hasAccess) return;
+
+		const p = this.defaults.permissions || {};
+		const items = [];
+		if (p.puede_administrar_transportistas) items.push({ label: "Transportistas", method: "showTransportistas" });
+		if (p.puede_editar_guias_transporte) {
+			items.push({ label: "Envíos Pendientes", method: "showPendingGuias" });
+			items.push({ label: "Guías", method: "showGuias" });
+		}
+		if (p.puede_cargar_liquidaciones_transporte) items.push({ label: "Liquidaciones", method: "showLiquidaciones" });
+		if (p.puede_ver_reportes_transporte) items.push({ label: "Reportes de Transporte", method: "showReportes" });
+
+		const $menu = this.$page_root.find("#inv-transporte-menu");
+		$menu.html(items.map((it) =>
+			`<button type="button" class="inv-transporte-menu-item" data-method="${it.method}">${frappe.utils.escape_html(it.label)}</button>`
+		).join(""));
+		$menu.find(".inv-transporte-menu-item").on("click", (e) => {
+			$menu.fadeOut(150);
+			this._open_transporte($(e.currentTarget).data("method"));
+		});
+	}
+
+	_transporte_module() {
+		const ctx = { perms: this.defaults.permissions || {}, company: this.defaults.company };
+		if (!this._transporteModuleInstance) {
+			this._transporteModuleInstance = new FacexTransporteModule({
+				$container: this.$body,
+				...ctx,
+				onBack: () => this._render_shell(),
+			});
+		} else {
+			this._transporteModuleInstance.setContext(ctx);
+		}
+		return this._transporteModuleInstance;
+	}
+
+	_open_transporte(method) {
+		this._transporte_module()[method]();
+	}
+
 	_init() {
 		this._render_loading();
 		this._load_defaults();
@@ -268,6 +366,7 @@ class FacexInventario {
 			args: { company: company || null },
 			callback: (r) => {
 				this.defaults = r.message || {};
+				this._render_transporte_menu();
 				this._render_shell();
 			},
 			error: () => {
@@ -722,6 +821,31 @@ class FacexInventario {
 			this._movement_add_row($d.data("item"));
 			$body.find("#inv-e-item-search").val("").focus();
 			$body.find("#inv-e-item-results").hide();
+		});
+		// Escaneo de código de barras / QR: Enter agrega el producto directamente
+		// por coincidencia exacta (corrige además el guion/comilla mal leído por el lector).
+		$body.on("keydown", "#inv-e-item-search", (e) => {
+			if (e.key !== "Enter") return;
+			e.preventDefault();
+			clearTimeout(_item_timer);
+			const $input = $body.find("#inv-e-item-search");
+			const code = $input.val().trim();
+			if (!code) return;
+			$input.prop("disabled", true);
+			frappe.call({
+				method: "facex_multi.api.item.find_item_by_code",
+				args: { txt: code, company: this.defaults.company },
+				callback: (r) => {
+					$input.prop("disabled", false).val("").focus();
+					$body.find("#inv-e-item-results").hide();
+					if (!r.message) {
+						frappe.show_alert({ message: __("Producto no encontrado para el código {0}.", [code]), indicator: "orange" });
+						return;
+					}
+					this._movement_add_row(r.message);
+				},
+				error: () => $input.prop("disabled", false).focus(),
+			});
 		});
 		$(document).on("click.facexInv", (e) => {
 			if (!$(e.target).closest("#inv-e-item-search, #inv-e-item-results").length)
@@ -2726,6 +2850,12 @@ body.facex-fullscreen-mode .main-section {
 .inv-topbar-sub { font-weight:600;font-size:13px;color:#6c757d; }
 .inv-topbar-link { background:none;border:none;padding:6px 10px;border-radius:4px;font-size:13px;font-weight:500;color:#495057;cursor:pointer; }
 .inv-topbar-link:hover { background:#f1f5f9;color:#153375; }
+
+.inv-transporte-dropdown { position:relative;display:flex;align-items:center; }
+.inv-transporte-btn { display:flex;align-items:center;gap:4px; }
+.inv-transporte-menu { display:none;position:absolute;top:120%;left:0;background:#fff;border:1px solid #d1d8dd;box-shadow:0 10px 15px -3px rgba(0,0,0,.1);border-radius:10px;padding:6px;min-width:220px;max-width:90vw;max-height:calc(100vh - 80px);overflow-y:auto;z-index:1001; }
+.inv-transporte-menu-item { display:block;width:100%;text-align:left;background:none;border:none;padding:9px 12px;border-radius:6px;font-size:13px;color:#333;cursor:pointer; }
+.inv-transporte-menu-item:hover { background:#f1f5f9;color:#153375; }
 
 .inv-user-dropdown { position:relative;display:flex;align-items:center; }
 .inv-user-btn { padding:6px 10px;border-radius:20px;background:#f1f5f9;border:1px solid #cbd5e1;display:flex;align-items:center;gap:6px;cursor:pointer; }

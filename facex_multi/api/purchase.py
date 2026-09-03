@@ -278,6 +278,101 @@ def search_suppliers_maint(txt: str = "", company: str = None) -> list:
 
 
 @frappe.whitelist()
+def search_suppliers_maintenance(company: str = None, start: int = 0, page_length: int = 15,
+                                   nombre: str = None, codigo: str = None, nit: str = None,
+                                   telefono: str = None):
+    """Búsqueda/paginación de proveedores para el Mantenimiento de Proveedores (modo
+    búsqueda-primero, igual que search_customers_maintenance en customer.py). Cada
+    parámetro filtra una columna distinta y se combinan con AND. Sin filtros, lista
+    TODOS los proveedores de la compañía activa ("Ver todos"). Incluye deshabilitados
+    para poder ubicarlos y reactivarlos/editarlos desde el mantenimiento.
+
+    Retorna {"rows": [...], "total": N} para el paginador del popup."""
+    from facex_multi.api.invoice import get_effective_company
+    company = get_effective_company(company)
+
+    conditions = []
+    params = {"company": company}
+
+    nombre = (nombre or "").strip()
+    if nombre:
+        conditions.append("supplier_name LIKE %(nombre)s")
+        params["nombre"] = f"%{nombre}%"
+
+    codigo = (codigo or "").strip()
+    if codigo:
+        conditions.append("name LIKE %(codigo)s")
+        params["codigo"] = f"%{codigo}%"
+
+    nit = (nit or "").strip()
+    if nit:
+        conditions.append("tax_id LIKE %(nit)s")
+        params["nit"] = f"%{nit}%"
+
+    telefono = (telefono or "").strip()
+    if telefono:
+        conditions.append("custom_telefono LIKE %(telefono)s")
+        params["telefono"] = f"%{telefono}%"
+
+    company_filter = "(bfel_company = %(company)s OR (bfel_company IS NULL OR bfel_company = ''))"
+    where = " AND ".join([company_filter] + conditions)
+
+    total = frappe.db.sql(f"SELECT COUNT(*) FROM `tabSupplier` WHERE {where}", params)[0][0]
+
+    rows = frappe.db.sql(
+        f"""
+        SELECT name, supplier_name, tax_id, custom_telefono, custom_direccion, disabled
+        FROM `tabSupplier`
+        WHERE {where}
+        ORDER BY supplier_name ASC
+        LIMIT %(page_length)s OFFSET %(start)s
+        """,
+        {**params, "page_length": int(page_length), "start": int(start)},
+        as_dict=True,
+    )
+    return {"rows": rows, "total": total}
+
+
+@frappe.whitelist()
+def export_suppliers_excel(names_json: str, company: str = None):
+    """Exporta a Excel los proveedores marcados en el popup de resultados del
+    Mantenimiento de Proveedores. Vuelve a filtrar por compañía activa por si el
+    listado de nombres fue manipulado desde el cliente."""
+    from facex_multi.api.invoice import get_effective_company
+    names = json.loads(names_json) if isinstance(names_json, str) else names_json
+    if not names:
+        frappe.throw("Debe seleccionar al menos un proveedor.")
+    company = get_effective_company(company)
+
+    placeholders = ", ".join(["%s"] * len(names))
+    rows = frappe.db.sql(
+        f"""
+        SELECT name, supplier_name, tax_id, custom_telefono, custom_direccion, disabled
+        FROM `tabSupplier`
+        WHERE name IN ({placeholders})
+          AND (bfel_company = %s OR (bfel_company IS NULL OR bfel_company = ''))
+        """,
+        tuple(names) + (company,),
+        as_dict=True,
+    )
+
+    from frappe.utils.xlsxutils import make_xlsx
+
+    headers = ["Código", "Nombre", "NIT / ID Fiscal", "Teléfono", "Dirección", "Deshabilitado"]
+    data = [headers]
+    for r in rows:
+        data.append([
+            r.name, r.supplier_name or "", r.tax_id or "",
+            r.custom_telefono or "", r.custom_direccion or "", "Sí" if r.disabled else "No",
+        ])
+
+    xlsx_file = make_xlsx(data, "Proveedores")
+    frappe.response["filename"] = "proveedores.xlsx"
+    frappe.response["filecontent"] = xlsx_file.getvalue()
+    frappe.response["type"] = "binary"
+
+
+@frappe.whitelist()
 def get_supplier(name: str, company: str = None) -> dict:
     """Retorna los campos relevantes del proveedor para el formulario de mantenimiento."""
     from facex_multi.api.invoice import get_effective_company

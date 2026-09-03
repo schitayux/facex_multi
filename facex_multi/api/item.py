@@ -95,6 +95,110 @@ def search_items(txt: str = None, company: str = None):
 
 
 @frappe.whitelist()
+def search_items_maintenance(company: str = None, start: int = 0, page_length: int = 15,
+                               nombre: str = None, codigo: str = None, grupo: str = None):
+    """Búsqueda/paginación de productos para el Mantenimiento de Productos (modo
+    búsqueda-primero, igual que search_customers_maintenance en customer.py). Cada
+    parámetro filtra una columna distinta y se combinan con AND. Sin filtros, lista
+    TODOS los productos de la compañía activa ("Ver todos"). Incluye deshabilitados
+    para poder ubicarlos y reactivarlos/editarlos desde el mantenimiento.
+
+    Retorna {"rows": [...], "total": N} para el paginador del popup."""
+    if not has_efast_permission():
+        frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
+
+    company = get_effective_company(company)
+
+    conditions = []
+    params = {"company": company}
+
+    nombre = (nombre or "").strip()
+    if nombre:
+        conditions.append("item_name LIKE %(nombre)s")
+        params["nombre"] = f"%{nombre}%"
+
+    codigo = (codigo or "").strip()
+    if codigo:
+        conditions.append("name LIKE %(codigo)s")
+        params["codigo"] = f"%{codigo}%"
+
+    grupo = (grupo or "").strip()
+    if grupo:
+        conditions.append("item_group LIKE %(grupo)s")
+        params["grupo"] = f"%{grupo}%"
+
+    company_filter = """(
+              bfel_company = %(company)s
+              OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
+          )"""
+    where = " AND ".join([company_filter] + conditions)
+
+    total = frappe.db.sql(f"SELECT COUNT(*) FROM `tabItem` WHERE {where}", params)[0][0]
+
+    rows = frappe.db.sql(
+        f"""
+        SELECT name, item_name, item_group, stock_uom, has_serial_no, has_batch_no,
+               is_stock_item, disabled
+        FROM `tabItem`
+        WHERE {where}
+        ORDER BY item_name ASC
+        LIMIT %(page_length)s OFFSET %(start)s
+        """,
+        {**params, "page_length": int(page_length), "start": int(start)},
+        as_dict=True,
+    )
+    for row in rows:
+        row["gestionado_por"] = "Serie" if row.get("has_serial_no") else ("Lote" if row.get("has_batch_no") else "General")
+    return {"rows": rows, "total": total}
+
+
+@frappe.whitelist()
+def export_items_excel(names_json: str, company: str = None):
+    """Exporta a Excel los productos marcados en el popup de resultados del
+    Mantenimiento de Productos. Vuelve a filtrar por compañía activa por si el
+    listado de nombres fue manipulado desde el cliente."""
+    if not has_efast_permission():
+        frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
+
+    names = json.loads(names_json) if isinstance(names_json, str) else names_json
+    if not names:
+        frappe.throw("Debe seleccionar al menos un producto.")
+    company = get_effective_company(company)
+
+    placeholders = ", ".join(["%s"] * len(names))
+    rows = frappe.db.sql(
+        f"""
+        SELECT name, item_name, item_group, stock_uom, has_serial_no, has_batch_no,
+               is_stock_item, disabled
+        FROM `tabItem`
+        WHERE name IN ({placeholders})
+          AND (
+              bfel_company = %s
+              OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
+          )
+        """,
+        tuple(names) + (company,),
+        as_dict=True,
+    )
+
+    from frappe.utils.xlsxutils import make_xlsx
+
+    headers = ["Código", "Nombre", "Grupo de Artículos", "UOM", "Gestionado por", "Inventariable", "Deshabilitado"]
+    data = [headers]
+    for r in rows:
+        gestionado = "Serie" if r.has_serial_no else ("Lote" if r.has_batch_no else "General")
+        data.append([
+            r.name, r.item_name or "", r.item_group or "", r.stock_uom or "",
+            gestionado, "Sí" if r.is_stock_item else "No", "Sí" if r.disabled else "No",
+        ])
+
+    xlsx_file = make_xlsx(data, "Productos")
+    frappe.response["filename"] = "productos.xlsx"
+    frappe.response["filecontent"] = xlsx_file.getvalue()
+    frappe.response["type"] = "binary"
+
+
+@frappe.whitelist()
 def get_item(name: str, price_list: str = None, company: str = None):
     """Obtiene los detalles de un ítem y su precio con validación de compañía."""
     if not has_efast_permission():
@@ -127,6 +231,119 @@ def get_item(name: str, price_list: str = None, company: str = None):
         "standard_price": float(price),
         "palabras_busqueda": doc.get("custom_facex_palabras_busqueda") or "",
     }
+
+
+def _variantes_layout_teclado(txt: str):
+    """Variantes de 'txt' para compensar el layout de teclado del lector de
+    código de barras (modo teclado/HID) cuando no coincide con el del SO.
+
+    El caso más común: lector configurado en layout US contra un SO en
+    Español/Latinoamérica hace que el guion '-' llegue como comilla simple "'".
+    """
+    variantes = [txt]
+    if "'" in txt:
+        variantes.append(txt.replace("'", "-"))
+    if "-" in txt:
+        variantes.append(txt.replace("-", "'"))
+    return variantes
+
+
+@frappe.whitelist()
+def find_item_by_code(txt: str, company: str = None):
+    """Busca un único ítem por código de barras exacto o por código de producto exacto.
+
+    Pensado para el escaneo con lector de código de barras / QR: a diferencia de
+    search_items (que hace LIKE y puede devolver varias coincidencias), esta
+    devuelve como máximo un resultado exacto, listo para agregar a la línea.
+    """
+    if not has_efast_permission():
+        frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
+
+    company = get_effective_company(company)
+    txt = (txt or "").strip()
+    if not txt:
+        return None
+
+    item_code = None
+    for candidato in _variantes_layout_teclado(txt):
+        item_code = frappe.db.get_value("Item Barcode", {"barcode": candidato}, "parent")
+        if not item_code and frappe.db.exists("Item", candidato):
+            item_code = candidato
+        if item_code:
+            break
+    if not item_code:
+        return None
+
+    item = frappe.db.get_value(
+        "Item", item_code,
+        ["name", "disabled", "bfel_company"],
+        as_dict=True,
+    )
+    if not item or item.disabled:
+        return None
+    if item.bfel_company and item.bfel_company != company:
+        return None
+
+    return get_item(item_code, company=company)
+
+
+def _get_item_for_company(item_code: str, company: str):
+    item = frappe.db.get_value("Item", item_code, ["name", "bfel_company"], as_dict=True)
+    if not item:
+        frappe.throw(f"El producto '{item_code}' no existe.")
+    if item.bfel_company and item.bfel_company != company:
+        frappe.throw(f"El producto '{item_code}' pertenece a otra compañía y no puede ser accedido.")
+    return item
+
+
+@frappe.whitelist()
+def get_label_print_config(item_code: str, company: str = None):
+    """Configuración de impresión de etiquetas (app eTIBA) para un producto."""
+    if not has_efast_permission():
+        frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
+
+    company = get_effective_company(company)
+    _get_item_for_company(item_code, company)
+
+    try:
+        from etiba.api.imprimir_etiquetas import obtener_formato_sugerido
+    except ImportError:
+        frappe.throw("La aplicación eTIBA no está instalada en este sitio.")
+
+    sugerido = obtener_formato_sugerido(item_code)
+
+    return {
+        "formato_sugerido": sugerido.get("formato_sugerido"),
+        "requiere_serie": sugerido.get("requiere_serie"),
+        "print_service_url": frappe.db.get_single_value("Etiba Settings", "print_service_url")
+            or "http://localhost:5001/ImpresionEtiquetas",
+        "cantidad_por_defecto": cint(frappe.db.get_single_value("Etiba Settings", "cantidad_por_defecto")) or 1,
+        "formatos": frappe.get_all(
+            "Etiba Formato", filters={"activo": 1}, fields=["name", "lenguaje"], order_by="name asc"
+        ),
+    }
+
+
+@frappe.whitelist()
+def imprimir_etiqueta_item(item_code: str, formato: str, cantidad=1, company: str = None, serie: str = None):
+    """Genera el ZPL/TSPL (vía eTIBA) para imprimir etiquetas de un producto.
+
+    Usa 'serie' como identificador si el formato lo requiere (Número de Serie);
+    de lo contrario usa el código de producto.
+    """
+    if not has_efast_permission():
+        frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
+
+    company = get_effective_company(company)
+    _get_item_for_company(item_code, company)
+
+    try:
+        from etiba.api.imprimir_etiquetas import obtener_valores
+    except ImportError:
+        frappe.throw("La aplicación eTIBA no está instalada en este sitio.")
+
+    identificador = serie or item_code
+    return obtener_valores(identificador=identificador, formato=formato, codigo_producto=item_code, cantidad=cantidad)
 
 
 @frappe.whitelist()
@@ -237,30 +454,52 @@ def create_or_update_item(data_json: str, company: str = None):
 
 
 @frappe.whitelist()
-def get_all_prices(price_list: str, txt: str = None, company: str = None):
-    """Obtiene una lista de productos filtrados por compañía con sus precios."""
+def get_all_prices(price_list: str, txt: str = None, codigo: str = None, grupo: str = None, company: str = None):
+    """Obtiene una lista de productos filtrados por compañía con sus precios, para el
+    Mantenimiento de Precios. txt/codigo/grupo filtran nombre/código/grupo de artículos
+    respectivamente y se combinan con AND — alimentan los campos de filtro en los
+    encabezados de columna de esa pantalla."""
     if not has_efast_permission():
         frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
 
     company = get_effective_company(company)
-    
-    txt_filter = f"AND item_name LIKE %(txt)s" if txt else ""
-    items = frappe.db.sql(
-        f"""
-        SELECT name, item_name, stock_uom
-        FROM `tabItem`
-        WHERE disabled = 0
-          AND (
+
+    conditions = []
+    params = {"company": company}
+
+    txt = (txt or "").strip()
+    if txt:
+        conditions.append("item_name LIKE %(txt)s")
+        params["txt"] = f"%{txt}%"
+
+    codigo = (codigo or "").strip()
+    if codigo:
+        conditions.append("name LIKE %(codigo)s")
+        params["codigo"] = f"%{codigo}%"
+
+    grupo = (grupo or "").strip()
+    if grupo:
+        conditions.append("item_group LIKE %(grupo)s")
+        params["grupo"] = f"%{grupo}%"
+
+    company_filter = """(
               bfel_company = %(company)s
               OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
-          )
-          {txt_filter}
-        LIMIT 50
+          )"""
+    where = " AND ".join(["disabled = 0", company_filter] + conditions)
+
+    items = frappe.db.sql(
+        f"""
+        SELECT name, item_name, item_group, stock_uom
+        FROM `tabItem`
+        WHERE {where}
+        ORDER BY item_name ASC
+        LIMIT 200
         """,
-        {"company": company, "txt": f"%{txt}%" if txt else ""},
+        params,
         as_dict=True,
     )
-    
+
     # Obtener moneda de la lista de precios
     currency = frappe.db.get_value("Price List", price_list, "currency") or "GTQ"
 
@@ -274,6 +513,7 @@ def get_all_prices(price_list: str, txt: str = None, company: str = None):
         res.append({
             "item_code": it["name"],
             "item_name": it["item_name"],
+            "item_group": it["item_group"] or "",
             "stock_uom": it["stock_uom"],
             "price": float(price),
             "currency": currency
@@ -449,6 +689,55 @@ def update_item_price(item_code: str, rate: float | str, price_list: str, compan
 
     frappe.db.commit()
     return {"item_code": item_code, "rate": rate_val}
+
+
+@frappe.whitelist()
+def export_item_prices_excel(names_json: str, price_list: str, company: str = None):
+    """Exporta a Excel los productos marcados en la grilla del Mantenimiento de
+    Precios, con su precio vigente en la lista de precios activa. Vuelve a filtrar
+    por compañía activa por si el listado de nombres fue manipulado desde el cliente."""
+    if not has_efast_permission():
+        frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
+
+    names = json.loads(names_json) if isinstance(names_json, str) else names_json
+    if not names:
+        frappe.throw("Debe seleccionar al menos un producto.")
+    company = get_effective_company(company)
+
+    placeholders = ", ".join(["%s"] * len(names))
+    rows = frappe.db.sql(
+        f"""
+        SELECT name, item_name, item_group, stock_uom
+        FROM `tabItem`
+        WHERE name IN ({placeholders})
+          AND (
+              bfel_company = %s
+              OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
+          )
+        ORDER BY item_name ASC
+        """,
+        tuple(names) + (company,),
+        as_dict=True,
+    )
+
+    currency = frappe.db.get_value("Price List", price_list, "currency") or "GTQ"
+
+    from frappe.utils.xlsxutils import make_xlsx
+
+    headers = ["Código", "Nombre", "Grupo de Productos", "UOM", "Lista de Precios", "Precio", "Moneda"]
+    data = [headers]
+    for r in rows:
+        price = frappe.db.get_value(
+            "Item Price",
+            {"item_code": r.name, "price_list": price_list},
+            "price_list_rate"
+        ) or 0.0
+        data.append([r.name, r.item_name or "", r.item_group or "", r.stock_uom or "", price_list, float(price), currency])
+
+    xlsx_file = make_xlsx(data, "Precios")
+    frappe.response["filename"] = "precios.xlsx"
+    frappe.response["filecontent"] = xlsx_file.getvalue()
+    frappe.response["type"] = "binary"
 
 
 @frappe.whitelist()
@@ -798,6 +1087,118 @@ def list_listas_materiales(company: str = None):
         {"company": company},
         as_dict=True,
     )
+
+
+@frappe.whitelist()
+def search_listas_materiales_maintenance(company: str = None, start: int = 0, page_length: int = 15,
+                                           nombre: str = None, codigo: str = None, modo: str = None):
+    """Búsqueda/paginación de Listas de Materiales para su Mantenimiento (modo
+    búsqueda-primero, igual que search_customers_maintenance en customer.py). Cada
+    parámetro filtra una columna distinta y se combinan con AND. Sin filtros, lista
+    TODAS las Listas de Materiales de la compañía activa ("Ver todas"). Incluye
+    deshabilitadas para poder ubicarlas y reactivarlas/editarlas desde el mantenimiento.
+
+    Retorna {"rows": [...], "total": N} para el paginador del popup."""
+    company = get_effective_company(company)
+    perms = get_facex_permissions_for_company(company)
+    if not perms.get("gestiona_listas_materiales"):
+        frappe.throw("No tiene permiso para ver Listas de Materiales.", frappe.PermissionError)
+
+    conditions = ["bfel_es_lista_materiales = 1"]
+    params = {"company": company}
+
+    nombre = (nombre or "").strip()
+    if nombre:
+        conditions.append("item_name LIKE %(nombre)s")
+        params["nombre"] = f"%{nombre}%"
+
+    codigo = (codigo or "").strip()
+    if codigo:
+        conditions.append("name LIKE %(codigo)s")
+        params["codigo"] = f"%{codigo}%"
+
+    modo = (modo or "").strip()
+    if modo:
+        conditions.append("bfel_modo_stock_lista = %(modo)s")
+        params["modo"] = modo
+
+    company_filter = """(
+              bfel_company = %(company)s
+              OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
+          )"""
+    where = " AND ".join([company_filter] + conditions)
+
+    total = frappe.db.sql(f"SELECT COUNT(*) FROM `tabItem` WHERE {where}", params)[0][0]
+
+    rows = frappe.db.sql(
+        f"""
+        SELECT name, item_name, bfel_modo_stock_lista AS modo_stock, disabled,
+               (SELECT COUNT(*) FROM `tabFacEx Lista Materiales Item` c WHERE c.parent = `tabItem`.name) AS num_componentes
+        FROM `tabItem`
+        WHERE {where}
+        ORDER BY item_name ASC
+        LIMIT %(page_length)s OFFSET %(start)s
+        """,
+        {**params, "page_length": int(page_length), "start": int(start)},
+        as_dict=True,
+    )
+    return {"rows": rows, "total": total}
+
+
+@frappe.whitelist()
+def export_listas_materiales_excel(names_json: str, company: str = None):
+    """Exporta a Excel las Listas de Materiales marcadas en el popup de resultados de
+    su Mantenimiento. Vuelve a filtrar por compañía activa por si el listado de
+    nombres fue manipulado desde el cliente. Cada componente aparece en su propia fila
+    bajo el mismo producto padre, para que el detalle quede legible en la hoja."""
+    company = get_effective_company(company)
+    perms = get_facex_permissions_for_company(company)
+    if not perms.get("gestiona_listas_materiales"):
+        frappe.throw("No tiene permiso para ver Listas de Materiales.", frappe.PermissionError)
+
+    names = json.loads(names_json) if isinstance(names_json, str) else names_json
+    if not names:
+        frappe.throw("Debe seleccionar al menos una Lista de Materiales.")
+
+    placeholders = ", ".join(["%s"] * len(names))
+    rows = frappe.db.sql(
+        f"""
+        SELECT name, item_name, bfel_modo_stock_lista AS modo_stock, disabled
+        FROM `tabItem`
+        WHERE name IN ({placeholders})
+          AND bfel_es_lista_materiales = 1
+          AND (
+              bfel_company = %s
+              OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
+          )
+        ORDER BY item_name ASC
+        """,
+        tuple(names) + (company,),
+        as_dict=True,
+    )
+
+    from frappe.utils.xlsxutils import make_xlsx
+
+    headers = ["Código Padre", "Nombre Padre", "Modo de Stock", "Deshabilitado", "Componente", "Cantidad"]
+    data = [headers]
+    for r in rows:
+        componentes = frappe.get_all(
+            "FacEx Lista Materiales Item",
+            filters={"parent": r.name},
+            fields=["item_code", "qty"],
+            order_by="idx asc",
+        )
+        base = [r.name, r.item_name or "", r.modo_stock or "", "Sí" if r.disabled else "No"]
+        if not componentes:
+            data.append(base + ["", ""])
+        else:
+            for c in componentes:
+                data.append(base + [c.item_code, c.qty])
+
+    xlsx_file = make_xlsx(data, "Listas de Materiales")
+    frappe.response["filename"] = "listas_materiales.xlsx"
+    frappe.response["filecontent"] = xlsx_file.getvalue()
+    frappe.response["type"] = "binary"
 
 
 @frappe.whitelist()

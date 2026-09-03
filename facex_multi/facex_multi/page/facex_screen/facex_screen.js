@@ -26,11 +26,17 @@ frappe.pages["facex-screen"].on_page_load = function (wrapper) {
 	});
 	frappe.require(["/assets/facex_multi/js/facex_transporte_module.js", "/assets/facex_multi/js/ef_guide.js", "controls.bundle.js"], function () {
 		wrapper.efscreen = new EFastPOSScreen(page, wrapper);
+		facex_multi.setup_back_guard({ to: "/app", is_dirty: () => (wrapper.efscreen.doc.items || []).length > 0 });
 	});
 };
 
-frappe.pages["facex-screen"].on_page_show = function () {
+frappe.pages["facex-screen"].on_page_show = function (wrapper) {
 	$("body").addClass("facex-fullscreen-mode");
+	if (!wrapper.efscreen) return;
+	// Rearmar en cada re-entrada: on_page_load solo corre una vez por sesión
+	// de pestaña (ver history_guard.js), así que sin esto el guard del botón
+	// Atrás dejaría de funcionar después de la primera visita a esta página.
+	facex_multi.setup_back_guard({ to: "/app", is_dirty: () => (wrapper.efscreen.doc.items || []).length > 0 });
 };
 
 function _efs_esc(str) {
@@ -255,8 +261,11 @@ class EFastPOSScreen {
 							</button>
 							<div class="efs-menu-panel" id="efs-menu-panel" style="display:none;"></div>
 						</div>
-						<span class="efs-logo">FacEx Screen</span>
-						<span class="efs-company-badge" id="efs-company-badge"></span>
+						<span class="efs-logo"><svg class="ef-bolt" width="20" height="20" viewBox="0 0 24 24" fill="#153375"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>
+						<span class="efs-company-badge" id="efs-company-badge" title="Ir al menú principal">
+							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"></path><path d="M9 8h1"></path><path d="M9 12h1"></path><path d="M9 16h1"></path><path d="M14 8h1"></path><path d="M14 12h1"></path><path d="M14 16h1"></path><path d="M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16"></path></svg>
+							<span id="efs-active-company-name"></span>
+						</span>
 					</div>
 					<div class="efs-header-right">
 						<div class="efs-customer-pill" id="efs-customer-pill">
@@ -355,12 +364,12 @@ class EFastPOSScreen {
 			const matches = this._filtered_items();
 			if (matches.length === 1) {
 				this._add_or_prompt(matches[0]);
-				this.searchTxt = "";
-				const $search = this.$body.find("#efs-search");
-				$search.val("");
-				$search.trigger("focus");
-			} else if (matches.length === 0) {
-				frappe.show_alert({ message: __("Producto no encontrado."), indicator: "orange" });
+				this._clear_efs_search();
+			} else {
+				// 0 coincidencias locales (filtro de grupo activo, etc.) o varias
+				// coincidencias por texto parcial: se intenta una resolución
+				// exacta por código de barras / código de producto en el servidor.
+				this._resolve_scanned_code(this.searchTxt);
 			}
 		});
 		this.$body.find("#efs-filter-instock").on("change", (e) => {
@@ -374,6 +383,8 @@ class EFastPOSScreen {
 			this._render_vendor_bar();
 		});
 		this.$body.find("#efs-btn-suspend").on("click", () => this._suspend_sale());
+		// Icono de compañía (header): un click lleva siempre al menú principal.
+		this.$body.find("#efs-company-badge").on("click", () => this._show_home());
 		this._bind_user_menu();
 		this._bind_main_menu();
 		this.$body.find("#efs-step-prev").on("click", () => this._step_prev());
@@ -389,7 +400,7 @@ class EFastPOSScreen {
 	_attach_static_hints() {
 		if (typeof EFGuide === "undefined") return;
 		EFGuide.attachHints(this.$body, [
-			{ selector: "#efs-search", text: "Escribe el nombre o código del producto. Con lector de código de barras: escanea y Enter agrega el producto solo si hay una única coincidencia." },
+			{ selector: "#efs-search", text: "Escribe el nombre o código del producto. Con lector de código de barras / QR: escanea y Enter agrega el producto automáticamente (o suma 1 a la cantidad si ya está en el carrito)." },
 			{ selector: ".efs-instock-toggle", text: "Si está activo, la grilla solo muestra productos con existencia disponible en la bodega actual." },
 			{ selector: "#efs-btn-change-customer", text: "Cliente de esta venta. Por defecto es 'Consumidor Final'; toca aquí para buscar o crear otro." },
 			{ selector: "#efs-vendor-select", text: "Selecciona el vendedor que atiende esta venta (útil para reportes de comisión)." },
@@ -554,19 +565,31 @@ class EFastPOSScreen {
 			],
 		});
 
-		// "Transporte" — gateado por la llave maestra puede_ver_menu_transporte.
-		// A diferencia de "Ventas", esto NO es un grupo con submenú: es
-		// una sola fila de acción directa (mod.action, sin mod.items) que abre
-		// el hub de tarjetas (_show_transporte_hub) en un solo click — ahí
-		// adentro cada tarjeta ya respeta su propio permiso específico (mismo
-		// criterio que antes gobernaba cada entrada del submenú).
+		// "Transporte" — gateado por la llave maestra puede_ver_menu_transporte,
+		// grupo con submenú (menú aéreo, mismo patrón que "Ventas"): cada ítem
+		// se muestra solo si el permiso específico correspondiente está activo
+		// (mismo criterio que ya usan las tarjetas del hub en FacexTransporteModule).
 		if (this._has_transporte_access()) {
+			const transporteItems = [];
+			if (p.puede_administrar_transportistas) {
+				transporteItems.push({ id: "transportistas", label: __("Transportistas"), action: () => this._open_transporte("showTransportistas") });
+			}
+			if (p.puede_editar_guias_transporte) {
+				transporteItems.push({ id: "pendientes", label: __("Envíos Pendientes"), action: () => this._open_transporte("showPendingGuias") });
+				transporteItems.push({ id: "guias", label: __("Guías"), action: () => this._open_transporte("showGuias") });
+			}
+			if (p.puede_cargar_liquidaciones_transporte) {
+				transporteItems.push({ id: "liquidaciones", label: __("Liquidaciones"), action: () => this._open_transporte("showLiquidaciones") });
+			}
+			if (p.puede_ver_reportes_transporte) {
+				transporteItems.push({ id: "reportes", label: __("Reportes de Transporte"), action: () => this._open_transporte("showReportes") });
+			}
 			modules.push({
 				id: "transporte",
 				label: __("Transporte"),
 				icon: truckSvg,
 				badgeId: "efs-transporte-menu-badge",
-				action: () => this._show_transporte_hub(),
+				items: transporteItems,
 			});
 		}
 
@@ -740,6 +763,156 @@ class EFastPOSScreen {
 		"Tu esfuerzo de hoy es la base del éxito de mañana.",
 		"Una actitud positiva es contagiosa — compártela hoy.",
 		"Gracias por tu dedicación, se nota en cada detalle.",
+		"La sonrisa que ofreces hoy puede ser el mejor regalo para un cliente.",
+		"Cada reto de hoy es una oportunidad disfrazada de aprendizaje.",
+		"Tu compromiso diario construye la reputación de la empresa.",
+		"Un cliente bien atendido siempre regresa.",
+		"La honestidad en cada venta genera clientes para toda la vida.",
+		"Hoy es el día perfecto para superar tus propias expectativas.",
+		"La disciplina de hoy es la libertad de mañana.",
+		"Cada tarea bien hecha suma a un gran resultado.",
+		"El buen humor multiplica la productividad del equipo.",
+		"Escuchar al cliente es el primer paso para servirlo bien.",
+		"La empatía transforma una transacción en una relación.",
+		"Cada meta cumplida es un paso más cerca del éxito.",
+		"Tu profesionalismo deja huella en cada interacción.",
+		"La proactividad de hoy evita los problemas de mañana.",
+		"Un 'buenos días' sincero puede cambiar el rumbo de un día difícil.",
+		"La colaboración hace que los grandes proyectos parezcan sencillos.",
+		"Cada minuto bien invertido hoy se multiplica mañana.",
+		"La claridad en la comunicación evita malos entendidos.",
+		"Aprender algo nuevo cada día te hace mejor profesional.",
+		"El respeto mutuo es la base de un gran equipo.",
+		"Cada cliente satisfecho es la mejor publicidad que existe.",
+		"La perseverancia convierte los obstáculos en logros.",
+		"Hoy tienes la oportunidad de hacer algo memorable.",
+		"Un ambiente positivo se construye con actitudes positivas.",
+		"La responsabilidad de hoy es el reconocimiento de mañana.",
+		"Cada 'sí se puede' empieza con una decisión personal.",
+		"El buen trato es gratis y su impacto es invaluable.",
+		"La curiosidad de aprender más te acerca a la excelencia.",
+		"Cada venta es una oportunidad de generar confianza duradera.",
+		"Ser amable no cuesta nada y vale mucho.",
+		"La gratitud diaria mejora el ambiente de todo el equipo.",
+		"Cada día es una página en blanco para escribir un buen resultado.",
+		"La energía positiva se contagia — repártela hoy.",
+		"El buen ejemplo inspira más que cualquier discurso.",
+		"Cada esfuerzo, por pequeño que sea, construye grandes logros.",
+		"La confianza se gana con hechos, no con palabras.",
+		"Un equipo unido supera cualquier desafío.",
+		"Hoy es un buen día para aprender de los errores de ayer.",
+		"La paciencia con un cliente difícil siempre da frutos.",
+		"Cada detalle cuenta cuando se trata de dar un buen servicio.",
+		"La actitud de servicio transforma cualquier trabajo en vocación.",
+		"El compromiso con la calidad nunca pasa desapercibido.",
+		"Cada meta compartida se logra más rápido en equipo.",
+		"La puntualidad es una forma silenciosa de respeto.",
+		"Hoy puedes ser la razón por la que alguien sonría.",
+		"La resiliencia de hoy forja el carácter de mañana.",
+		"Cada cliente merece tu mejor versión, no solo tu atención.",
+		"El orden y la organización ahorran tiempo y energía.",
+		"La buena comunicación evita el 90% de los problemas.",
+		"Cada logro del equipo es motivo de celebración.",
+		"Hoy es una nueva oportunidad de dar lo mejor de ti.",
+		"La confianza en uno mismo abre puertas inesperadas.",
+		"Cada palabra amable puede alegrar el día de otra persona.",
+		"El trabajo bien hecho siempre encuentra su reconocimiento.",
+		"La flexibilidad ante el cambio es una gran fortaleza.",
+		"Cada cliente satisfecho refuerza la confianza en la marca.",
+		"El esfuerzo silencioso también construye grandes resultados.",
+		"Hoy es un buen momento para agradecer a quien te apoya.",
+		"La iniciativa propia abre camino a nuevas oportunidades.",
+		"Cada aprendizaje de hoy te prepara para el reto de mañana.",
+		"La calidad en el detalle diferencia a los mejores equipos.",
+		"Un problema resuelto con calma vale más que uno resuelto con prisa.",
+		"Cada venta bien cerrada es el resultado de un buen proceso.",
+		"La confianza del cliente se construye con cada interacción honesta.",
+		"Hoy puedes marcar la diferencia con solo una buena actitud.",
+		"El trabajo en equipo multiplica las capacidades individuales.",
+		"Cada nueva idea puede mejorar la forma en que trabajamos.",
+		"La constancia vence lo que la intensidad no logra sola.",
+		"Un cliente escuchado es un cliente que confía.",
+		"Hoy es el momento ideal para dar el siguiente paso.",
+		"La calma frente a la presión es una habilidad que se entrena.",
+		"Cada acierto de hoy suma experiencia para el futuro.",
+		"El buen servicio empieza con una buena disposición.",
+		"La transparencia genera confianza duradera.",
+		"Cada día que mejoras un poco, te acercas a la excelencia.",
+		"El buen ánimo es una decisión, no una casualidad.",
+		"Hoy es un gran día para fortalecer una relación con un cliente.",
+		"La organización de las tareas facilita alcanzar las metas.",
+		"Cada pequeño avance cuenta en el camino al éxito.",
+		"La empatía con el equipo fortalece la confianza mutua.",
+		"Un buen trato genera clientes leales, no solo ventas.",
+		"Hoy puedes convertir un problema en una oportunidad.",
+		"La actitud con la que empiezas el día define cómo lo terminas.",
+		"Cada esfuerzo consciente construye una mejor versión de ti mismo.",
+		"El respeto al tiempo de los demás también es profesionalismo.",
+		"La confianza del equipo se construye día a día.",
+		"Cada cliente fiel es el resultado de un buen servicio constante.",
+		"Hoy es un buen día para escuchar más y hablar menos.",
+		"La determinación convierte los sueños en metas alcanzables.",
+		"El buen humor en el trabajo hace más ligera cualquier carga.",
+		"Cada decisión bien pensada evita muchos problemas después.",
+		"La generosidad con el conocimiento hace crecer a todo el equipo.",
+		"Hoy tienes la oportunidad de aprender algo que no sabías ayer.",
+		"La calidad del servicio se refleja en los detalles más pequeños.",
+		"Cada cliente satisfecho recomienda sin que se lo pidas.",
+		"El buen liderazgo se demuestra con el ejemplo diario.",
+		"Hoy es un buen momento para reconocer el esfuerzo de un compañero.",
+		"La paciencia es una herramienta poderosa en la atención al cliente.",
+		"Cada tarea cumplida a tiempo genera confianza en el equipo.",
+		"El entusiasmo de hoy contagia el ánimo de mañana.",
+		"Cada tropiezo es una lección disfrazada de dificultad.",
+		"La buena actitud transforma el trabajo rutinario en algo especial.",
+		"Hoy puedes ser el motivo por el que el equipo avance más rápido.",
+		"La confianza se construye poco a poco, con cada acción correcta.",
+		"Cada cliente que regresa confirma que vas por buen camino.",
+		"El compromiso silencioso también deja huella.",
+		"Hoy es un buen día para dar las gracias sin esperar nada a cambio.",
+		"La calidad no es un accidente, es el resultado del esfuerzo diario.",
+		"Cada meta lograda merece ser celebrada, aunque sea pequeña.",
+		"La disposición a ayudar fortalece cualquier equipo de trabajo.",
+		"Hoy puedes sorprender a alguien con un excelente servicio.",
+		"La perseverancia es la diferencia entre intentarlo y lograrlo.",
+		"Cada buena decisión de hoy facilita el trabajo de mañana.",
+		"El respeto y la cortesía nunca pasan de moda.",
+		"Hoy es un buen día para ser la mejor versión de ti mismo.",
+		"La confianza mutua hace que el trabajo en equipo fluya mejor.",
+		"Cada cliente merece sentirse escuchado y valorado.",
+		"El esfuerzo constante siempre deja resultados visibles.",
+		"Hoy puedes construir una relación de confianza con solo ser honesto.",
+		"La buena energía se nota incluso en los días más ocupados.",
+		"Cada logro individual fortalece al equipo completo.",
+		"La responsabilidad con cada tarea construye una gran reputación.",
+		"Hoy es un buen día para simplificar algo que era complicado.",
+		"La cortesía en cada llamada o mensaje también es servicio.",
+		"Cada aprendizaje compartido hace más fuerte al equipo.",
+		"El buen trabajo no necesita anunciarse, se nota solo.",
+		"Hoy puedes ser el ejemplo de una gran actitud de servicio.",
+		"La confianza del cliente se gana con consistencia, no con promesas.",
+		"Cada día trae la oportunidad de hacer las cosas un poco mejor.",
+		"El entusiasmo por aprender abre muchas puertas.",
+		"Hoy es un buen momento para revisar los detalles con calma.",
+		"La generosidad con el tiempo de los demás también cuenta.",
+		"Cada cliente atendido con calidez recordará esa experiencia.",
+		"La responsabilidad compartida hace más liviana la carga.",
+		"Hoy puedes dar un paso más hacia tu mejor versión profesional.",
+		"La confianza se refuerza cumpliendo lo que se promete.",
+		"Cada pequeño gesto de cortesía construye grandes relaciones.",
+		"El buen ánimo del equipo se refleja en la atención al cliente.",
+		"Hoy es un buen día para aprender de quienes tienen más experiencia.",
+		"La calma y la claridad resuelven más que la prisa.",
+		"Cada cliente bien atendido es una inversión en el futuro del negocio.",
+		"La actitud de mejora continua nunca pasa de moda.",
+		"Hoy puedes fortalecer la confianza de un cliente con solo cumplir tu palabra.",
+		"El buen trabajo en equipo convierte metas difíciles en alcanzables.",
+		"Cada día es una nueva oportunidad de superarte a ti mismo.",
+		"La empatía y el buen servicio siempre van de la mano.",
+		"Hoy es un buen momento para celebrar los avances, por pequeños que sean.",
+		"La confianza se construye con acciones consistentes, día tras día.",
+		"Cada cliente satisfecho es un embajador silencioso de tu trabajo.",
+		"Hoy tienes todo lo necesario para hacer un gran trabajo.",
 	];
 
 	_get_daily_motivational_message() {
@@ -1227,7 +1400,7 @@ class EFastPOSScreen {
 	}
 
 	_render_company_badge() {
-		this.$body.find("#efs-company-badge").text(this.doc.company || "");
+		this.$body.find("#efs-active-company-name").text(this.doc.company || "");
 	}
 
 	_render_customer_bar() {
@@ -1272,6 +1445,31 @@ class EFastPOSScreen {
 			$wrap.find(".efs-cat-tab").removeClass("efs-cat-tab-active");
 			$(e.currentTarget).addClass("efs-cat-tab-active");
 			this._render_grid();
+		});
+	}
+
+	_clear_efs_search() {
+		this.searchTxt = "";
+		const $search = this.$body.find("#efs-search");
+		$search.val("");
+		$search.trigger("focus");
+	}
+
+	_resolve_scanned_code(code) {
+		if (!code) return;
+		frappe.call({
+			method: "facex_multi.api.item.find_item_by_code",
+			args: { txt: code, company: this.doc.company || this.defaults.company || "" },
+			callback: (r) => {
+				if (!r.message) {
+					frappe.show_alert({ message: __("Producto no encontrado."), indicator: "orange" });
+					return;
+				}
+				const found = r.message;
+				const local = this.allItems.find((it) => it.item_code === found.item_code);
+				this._add_or_prompt(local || Object.assign({}, found, { rate: found.standard_price }));
+				this._clear_efs_search();
+			},
 		});
 	}
 
@@ -3592,6 +3790,14 @@ class EFastPOSScreen {
 		this._transporte_module().showHub();
 	}
 
+	// Ítems del submenú "Transporte" del menú aéreo saltan directo a su
+	// sección (ver _get_menu_modules); la tarjeta "Transporte" de Inicio
+	// sigue usando _show_transporte_hub() (el hub de tarjetas de siempre).
+	_open_transporte(method) {
+		this.$body.find("#efs-transporte-view").show();
+		this._transporte_module()[method]();
+	}
+
 	// Badges de Envíos Pendientes fuera del módulo (menú principal, tarjeta
 	// de Inicio) — el badge dentro del hub del módulo se resuelve solo, ver
 	// FacexTransporteModule#showHub.
@@ -4032,8 +4238,14 @@ body.facex-fullscreen-mode .main-section {
   padding: 10px 20px; background: var(--efs-card); border-bottom: 1px solid var(--efs-border);
 }
 .efs-header-left, .efs-header-right { display: flex; align-items: center; gap: 14px; }
-.efs-logo { font-weight: 800; font-size: 18px; color: var(--efs-primary); }
-.efs-company-badge { font-size: 12px; color: var(--efs-text-muted); background: #eef2ff; padding: 3px 10px; border-radius: 20px; }
+.efs-logo { display: flex; align-items: center; }
+.efs-logo .ef-bolt { flex-shrink: 0; }
+.efs-company-badge {
+  display: flex; align-items: center; gap: 6px; cursor: pointer;
+  font-size: 13px; font-weight: 700; color: #4361ee; background: #eef2ff;
+  padding: 6px 14px; border-radius: 20px; border: 1px solid #c7d2fe;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
 .efs-btn-link { background: none; border: none; color: var(--efs-primary); cursor: pointer; font-size: 13px; text-decoration: none; }
 .efs-customer-pill { display: flex; align-items: center; gap: 8px; font-size: 13px; background: #f1f5f9; padding: 5px 12px; border-radius: 20px; }
 .efs-pill-missing { background: #fff7ed; color: #c2410c; }

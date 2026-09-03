@@ -11,6 +11,7 @@
   "allowed_email_domains",
   "primary_color",
   "welcome_text",
+  "redirect_after_login",
   "notes",
   "auto_configure",
   "auto_configure_summary",
@@ -62,6 +63,12 @@
    "description": "Custom message above the login form"
   },
   {
+   "fieldname": "redirect_after_login",
+   "fieldtype": "Data",
+   "label": "Redirect After Login",
+   "description": "Internal path to send users to after a successful login from this domain, e.g. /app/facex. Leave empty to use Frappe's default landing page. Ignored unless Enabled is checked."
+  },
+  {
    "fieldname": "notes",
    "fieldtype": "Small Text",
    "label": "Notes"
@@ -109,7 +116,7 @@
  "index_web_pages_for_search": 0,
  "istable": 0,
  "links": [],
- "modified": "2026-06-02 23:30:00.000000",
+ "modified": "2026-09-01 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Domain Branding",

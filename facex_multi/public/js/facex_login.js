@@ -120,6 +120,35 @@
 		}
 	}
 
+	// If this domain is configured with a post-login landing path, inject it as
+	// the standard Frappe `redirect-to` query arg so login.js sends the user there
+	// on a successful login. Only registered users of this site can log in, so
+	// this effectively only redirects them. A `redirect-to` already present (e.g.
+	// the user deep-linked to a page while logged out) is always respected.
+	function maybeSetPostLoginRedirect(data) {
+		if (!data || !data.enabled) return;
+
+		var target = (data.redirect_after_login || "").trim();
+		// internal absolute paths only ("/app/facex"), never protocol-relative ("//evil")
+		if (target.charAt(0) !== '/' || target.charAt(1) === '/') return;
+
+		var existing = "";
+		try { existing = frappe.utils.get_url_arg('redirect-to') || ""; } catch (e) {}
+		if (existing) {
+			console.log("[FacEx Branding] redirect-to already set, keeping:", existing);
+			return;
+		}
+
+		try {
+			var url = new URL(window.location.href);
+			url.searchParams.set('redirect-to', target);
+			window.history.replaceState(null, '', url.toString());
+			console.log("[FacEx Branding] Post-login redirect set to:", target);
+		} catch (e) {
+			console.warn("[FacEx Branding] Could not set post-login redirect:", e);
+		}
+	}
+
 	var retries = 0;
 	function initBranding() {
 		if (typeof frappe === 'undefined' || !frappe.call) {
@@ -140,6 +169,7 @@
 			callback: function(r) {
 				console.log("[FacEx Branding] API response:", r);
 				if (r.message) {
+					maybeSetPostLoginRedirect(r.message);
 					brandingData = r.message.enabled ? r.message : null;
 					applyBranding(brandingData);
 
