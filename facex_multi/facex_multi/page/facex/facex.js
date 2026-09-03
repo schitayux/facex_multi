@@ -1799,7 +1799,7 @@ class EFastSalePage {
                 <th class="ef-th" rowspan="2" style="vertical-align:bottom;">Nombre</th>
                 <th class="ef-th" colspan="3" style="text-align:center;">Costos de referencia</th>
                 <th class="ef-th" colspan="4" style="text-align:center; background:#eef2ff;">Nuevo precio a asignar</th>
-                <th class="ef-th" colspan="3" style="text-align:center; background:#f1f5f9;">Situación actual</th>
+                <th class="ef-th" colspan="4" style="text-align:center; background:#f1f5f9;">Situación actual</th>
               </tr>
               <tr>
                 <th class="ef-th ef-td-num" style="width:95px;">Estándar</th>
@@ -1809,13 +1809,14 @@ class EFastSalePage {
                 <th class="ef-th ef-td-num" style="width:78px; background:#eef2ff;">% Util</th>
                 <th class="ef-th ef-td-num" style="width:110px; background:#eef2ff;">Neto</th>
                 <th class="ef-th ef-td-num" style="width:110px; background:#eef2ff;">c/IVA</th>
-                <th class="ef-th ef-td-num" style="width:100px; background:#f1f5f9;">Precio actual</th>
-                <th class="ef-th ef-td-num" style="width:100px; background:#f1f5f9;">Costo (base)</th>
-                <th class="ef-th ef-td-num" style="width:100px; background:#f1f5f9;">Utilidad actual</th>
+                <th class="ef-th ef-td-num" style="width:100px; background:#f1f5f9;">Precio actual (neto)</th>
+                <th class="ef-th ef-td-num" style="width:100px; background:#f1f5f9;">Precio actual c/IVA</th>
+                <th class="ef-th ef-td-num" style="width:95px; background:#f1f5f9;">Costo (base)</th>
+                <th class="ef-th ef-td-num" style="width:95px; background:#f1f5f9;">Utilidad actual</th>
               </tr>
             </thead>
             <tbody id="ef-ap-tbody">
-              <tr><td colspan="13" style="text-align:center; color:#94a3b8; padding:20px;">Filtre por proveedor, grupo de artículos o ítem y presione Buscar.</td></tr>
+              <tr><td colspan="14" style="text-align:center; color:#94a3b8; padding:20px;">Filtre por proveedor, grupo de artículos o ítem y presione Buscar.</td></tr>
             </tbody>
           </table>
         </div>
@@ -10423,7 +10424,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const $select = this.$body.find("#ef-ap-price-list");
 		$select.empty().append('<option value="">Cargando listas...</option>');
 		this.$body.find("#ef-ap-tbody").html(
-			'<tr><td colspan="13" style="text-align:center; color:#94a3b8; padding:20px;">Filtre por proveedor, grupo de artículos o ítem y presione Buscar.</td></tr>'
+			'<tr><td colspan="14" style="text-align:center; color:#94a3b8; padding:20px;">Filtre por proveedor, grupo de artículos o ítem y presione Buscar.</td></tr>'
 		);
 		this.$body.find("#ef-ap-status").text("");
 		this.$body.find("#ef-ap-util-global").val(0);
@@ -10498,7 +10499,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-ap-select-all").prop("checked", false);
 
 		if (!rows.length) {
-			$tbody.html('<tr><td colspan="13" style="text-align:center; color:#94a3b8; padding:20px;">Sin resultados.</td></tr>');
+			$tbody.html('<tr><td colspan="14" style="text-align:center; color:#94a3b8; padding:20px;">Sin resultados.</td></tr>');
 			this._update_ap_selected_count();
 			return;
 		}
@@ -10520,7 +10521,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 				<td class="ef-td ef-td-num" style="${gs}"><input type="number" class="ef-input ef-ap-util-input" style="width:66px; text-align:right; font-size:12px; padding:3px 6px;" min="0" step="any" value="${globalUtil}" /></td>
 				<td class="ef-td ef-td-num ef-ap-neto" style="font-family:monospace; font-weight:700; ${gs}">—</td>
 				<td class="ef-td ef-td-num ef-ap-iva-val" style="font-family:monospace; font-weight:700; ${gs}">—</td>
-				<td class="ef-td ef-td-num ef-ap-actual" style="font-family:monospace; color:#64748b; ${as}">${_fmtCurrency(r.precio_actual, cur)}</td>
+				<td class="ef-td ef-td-num ef-ap-actual-neto" style="font-family:monospace; color:#64748b; ${as}">—</td>
+				<td class="ef-td ef-td-num ef-ap-actual-iva" style="font-family:monospace; color:#64748b; ${as}">—</td>
 				<td class="ef-td ef-td-num ef-ap-costo-base" style="font-family:monospace; color:#64748b; ${as}">—</td>
 				<td class="ef-td ef-td-num ef-ap-util-actual" style="font-family:monospace; ${as}">—</td>
 			</tr>`;
@@ -10545,11 +10547,15 @@ body.facex-fullscreen-mode .ef-main-layout {
 		$tr.find(".ef-ap-neto").text(cost ? _fmtCurrency(neto, cur) : "—");
 		$tr.find(".ef-ap-iva-val").text(cost ? _fmtCurrency(conIva, cur) : "—");
 
-		// ── Grupo "Situación actual": costo de la base elegida y utilidad vigente ──
+		// ── Grupo "Situación actual": precio vigente (neto y c/IVA), costo base y utilidad ──
 		const basis = this.$body.find("#ef-ap-cost-basis").val();
 		const costoBase = parseFloat($tr.attr(`data-costo-${basis}`)) || 0;
 		const precioActual = parseFloat($tr.attr("data-precio-actual")) || 0;
+		// Item Price guarda c/IVA si la lista es inclusiva; si no, guarda el neto.
 		const precioActualNeto = (this._ap_iva_inclusive && factor) ? precioActual / factor : precioActual;
+		const precioActualConIva = (this._ap_iva_inclusive) ? precioActual : precioActual * factor;
+		$tr.find(".ef-ap-actual-neto").text(precioActual ? _fmtCurrency(precioActualNeto, cur) : "—");
+		$tr.find(".ef-ap-actual-iva").text(precioActual ? _fmtCurrency(precioActualConIva, cur) : "—");
 		$tr.find(".ef-ap-costo-base").text(costoBase ? _fmtCurrency(costoBase, cur) : "—");
 		if (costoBase > 0 && precioActual > 0) {
 			const utilActual = (precioActualNeto - costoBase) / costoBase * 100;
