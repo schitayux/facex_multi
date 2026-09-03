@@ -1066,9 +1066,9 @@ class EFastSalePage {
           <!-- solo con precio filter (utility analysis) -->
           <div class="ef-rep-filter ef-filter-solo-precio" style="display: flex; flex-direction: column; gap: 4px; justify-content: flex-end;">
             <label class="ef-label" style="font-weight: 700; font-size: 10px;">&nbsp;</label>
-            <label style="display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ef-text); cursor: pointer; height: 32px;">
+            <label style="display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ef-text); cursor: pointer; height: 32px; white-space: nowrap;">
               <input type="checkbox" id="ef-rep-solo-con-precio" style="margin: 0; width: 15px; height: 15px;" />
-              Solo con precio ya asignado
+              Ver únicamente ítems con precio
             </label>
           </div>
 
@@ -8344,9 +8344,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 		});
 
 		// Cambiar lista de precios / base de costo / "solo con precio" recarga el Análisis de Utilidad
-		this.$body.find("#ef-rep-price-list, #ef-rep-cost-basis, #ef-rep-solo-con-precio").off("change").on("change", () => {
-			if (this._active_report === "utility_analysis") this._run_active_report();
-		});
+		this.$body.find("#ef-rep-price-list, #ef-rep-cost-basis, #ef-rep-solo-con-precio")
+			.off("change.utilrep")
+			.on("change.utilrep", () => {
+				if (this._active_report === "utility_analysis") this._run_active_report();
+			});
 
 		this.$body.find("#ef-rep-btn-apply").off("click").on("click", () => {
 			this._run_active_report();
