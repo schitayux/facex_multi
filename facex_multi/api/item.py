@@ -229,6 +229,7 @@ def get_item(name: str, price_list: str = None, company: str = None):
         "has_batch_no":   int(doc.has_batch_no or 0),
         "is_stock_item":  int(doc.is_stock_item or 0),
         "standard_price": float(price),
+        "costo_estandar": float(doc.get("custom_costo_estandar") or 0),
         "palabras_busqueda": doc.get("custom_facex_palabras_busqueda") or "",
     }
 
@@ -421,6 +422,8 @@ def create_or_update_item(data_json: str, company: str = None):
     doc.item_group = data.get("item_group") or doc.item_group
     if doc.meta.has_field("custom_facex_palabras_busqueda") and "palabras_busqueda" in data:
         doc.custom_facex_palabras_busqueda = data.get("palabras_busqueda") or ""
+    if doc.meta.has_field("custom_costo_estandar") and "costo_estandar" in data:
+        doc.custom_costo_estandar = flt(data.get("costo_estandar") or 0)
 
     gestionado_por = (data.get("gestionado_por") or "General").strip()
     if gestionado_por == "Serie":

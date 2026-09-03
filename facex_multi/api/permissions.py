@@ -15,12 +15,12 @@ _ALL_PERM_FIELDS = [
     "crea_clientes", "modifica_clientes",
     "crea_proveedores", "modifica_proveedores",
     "crea_items", "modifica_items", "actualiza_precios", "puede_editar_precio",
-    "gestiona_listas_materiales",
+    "gestiona_listas_materiales", "asignacion_precios",
     "reporte_ventas_fecha", "reporte_ventas_producto",
     "reporte_facturas_canceladas", "reporte_estados_cuenta",
     "reporte_antiguedad_saldos", "reporte_cotizaciones",
     "reporte_recibos_pagos", "reporte_crecimiento_ventas",
-    "reporte_imprimir_recibo",
+    "reporte_imprimir_recibo", "reporte_analisis_utilidad",
 ]
 
 def _full_access() -> dict:

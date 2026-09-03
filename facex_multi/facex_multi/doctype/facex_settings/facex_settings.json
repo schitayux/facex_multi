@@ -26,6 +26,7 @@
   "actualiza_precios",
   "puede_editar_precio",
   "gestiona_listas_materiales",
+  "asignacion_precios",
   "puede_eliminar_ventas_espera",
   "puede_anular_facturas",
   "sb_reportes",
@@ -42,6 +43,7 @@
   "reporte_crecimiento_ventas",
   "cb_rep4",
   "reporte_imprimir_recibo",
+  "reporte_analisis_utilidad",
   "sb_compras",
   "puede_compras",
   "puede_validar_compras",
@@ -234,6 +236,13 @@
    "description": "Permite crear y editar los paquetes/kits de venta (Listas de Materiales) y su configuración de manejo de stock, desde Mantenimiento (FacEx Clásico) y desde el módulo de Inventario."
   },
   {
+   "default": "1",
+   "fieldname": "asignacion_precios",
+   "fieldtype": "Check",
+   "label": "Asignación de Precios por Utilidad",
+   "description": "Permite usar la pestaña \"Asignación de Precios\" de Mantenimiento: calcular precios de venta a partir del costo (estándar / promedio ponderado / última compra o manual) y un % de utilidad, y guardarlos en la lista de precios."
+  },
+  {
    "default": "0",
    "fieldname": "puede_eliminar_ventas_espera",
    "fieldtype": "Check",
@@ -321,6 +330,13 @@
    "fieldname": "reporte_imprimir_recibo",
    "fieldtype": "Check",
    "label": "Imprimir Recibo"
+  },
+  {
+   "default": "1",
+   "fieldname": "reporte_analisis_utilidad",
+   "fieldtype": "Check",
+   "label": "Análisis de Utilidad",
+   "description": "Permite ver el informe \"Análisis de Utilidad\" (portal de Reportes → Rentabilidad): utilidad Q y % de cada producto contra el costo estándar, el promedio ponderado del sistema o el último precio de compra."
   },
   {
    "fieldname": "sb_compras",
@@ -621,7 +637,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-07-21 03:00:00.000000",
+ "modified": "2026-09-02 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Settings",

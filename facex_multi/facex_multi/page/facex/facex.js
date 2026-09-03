@@ -955,6 +955,21 @@ class EFastSalePage {
              nav principal, junto con Maestros y Documentos — ver
              #ef-transporte-view / FacexTransporteModule#showReportes. -->
 
+        <!-- Group: Rentabilidad -->
+        <div class="ef-report-group" data-group="rentabilidad">
+          <button class="ef-report-group-header" data-group="rentabilidad">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+            <span>Rentabilidad</span>
+            <svg class="ef-group-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ef-report-group-items" data-group-items="rentabilidad">
+            <button class="ef-report-nav-btn" data-report="utility_analysis">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>
+              <span>Análisis de Utilidad</span>
+            </button>
+          </div>
+        </div>
+
         <div style="border-top: 1px solid var(--ef-border); margin: 8px 0;"></div>
 
         <button class="ef-report-nav-btn" data-report="print_receipt" style="color: var(--ef-warning);">
@@ -1024,6 +1039,22 @@ class EFastSalePage {
           <div class="ef-rep-filter ef-filter-item-group" style="display: flex; flex-direction: column; gap: 4px; width: 150px;">
             <label class="ef-label" style="font-weight: 700; font-size: 10px;">Grupo de Items</label>
             <div id="ef-rep-item-group-ctrl" class="ef-link-ctrl" style="min-height: 32px;"></div>
+          </div>
+
+          <!-- supplier filter (utility analysis) -->
+          <div class="ef-rep-filter ef-filter-supplier" style="display: flex; flex-direction: column; gap: 4px; width: 200px;">
+            <label class="ef-label" style="font-weight: 700; font-size: 10px;">Proveedor</label>
+            <div id="ef-rep-supplier-ctrl" class="ef-link-ctrl" style="min-height: 32px;"></div>
+          </div>
+
+          <!-- cost basis filter (utility analysis) -->
+          <div class="ef-rep-filter ef-filter-cost-basis" style="display: flex; flex-direction: column; gap: 4px; width: 200px;">
+            <label class="ef-label" style="font-weight: 700; font-size: 10px;">Base de Costo</label>
+            <select id="ef-rep-cost-basis" class="ef-select" style="padding: 6px 10px;">
+              <option value="estandar">Costo Estándar (ficha)</option>
+              <option value="ponderado">Promedio Ponderado (sistema)</option>
+              <option value="ultima_compra">Último Precio de Compra</option>
+            </select>
           </div>
 
           <!-- warehouse filter -->
@@ -1226,6 +1257,9 @@ class EFastSalePage {
       <button class="ef-tab-btn ef-maint-tab-btn" data-maint-tab="precios">
         Precios
       </button>
+      <button class="ef-tab-btn ef-maint-tab-btn" data-maint-tab="asignacion-precios">
+        Asignación de Precios
+      </button>
       <button class="ef-tab-btn ef-maint-tab-btn" data-maint-tab="proveedores">
         Proveedores
       </button>
@@ -1417,6 +1451,10 @@ class EFastSalePage {
                 <input type="checkbox" id="ef-maint-item-is-stock" style="width:16px; height:16px; margin:0; accent-color:var(--ef-primary);" />
                 <span>Inventariable</span>
               </label>
+            </div>
+            <div class="ef-field-group">
+              <label class="ef-label">Costo Estándar <span style="color:#64748b; font-weight:400; font-size:11px;">(usado por el Análisis de Utilidad)</span></label>
+              <input type="number" id="ef-maint-item-costo-estandar" class="ef-input" style="width:100%" min="0" step="any" placeholder="0.00" />
             </div>
             <div class="ef-field-group" style="grid-column: span 2;">
               <label class="ef-label">Descripción FEL <span style="color:#64748b; font-weight:400; font-size:11px;">(max. 500 · se llena automáticamente desde el Nombre)</span></label>
@@ -1647,6 +1685,98 @@ class EFastSalePage {
             </thead>
             <tbody id="ef-maint-prices-tbody">
               <!-- Dynamically loaded -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Maint Tab Content: Asignación de Precios -->
+    <div class="ef-maint-tab-content" id="ef-maint-tab-asignacion-precios" style="display:none;">
+      <div class="ef-analytics-card" style="box-shadow: var(--ef-shadow); padding:20px; margin-bottom:16px;">
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:14px;">
+          <span style="font-weight:700; color:var(--ef-primary); font-size:16px;">Asignación de Precios por Utilidad</span>
+        </div>
+        <p style="margin:0 0 16px 0; font-size:12px; color:#64748b;">
+          Calcula precios de venta a partir de un costo (estándar, promedio ponderado del sistema, último precio de compra o manual)
+          y un % de utilidad sobre costo. El precio neto se guarda en la lista de precios; el precio con IVA es informativo
+          (la utilidad se calcula sólo sobre el neto).
+        </p>
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:14px; align-items:end;">
+          <div class="ef-field-group">
+            <label class="ef-label">Lista de Precios</label>
+            <select id="ef-ap-price-list" class="ef-input" style="width:100%;"></select>
+          </div>
+          <div class="ef-field-group">
+            <label class="ef-label">Base de Costo</label>
+            <select id="ef-ap-cost-basis" class="ef-input" style="width:100%;">
+              <option value="estandar">Costo Estándar (ficha)</option>
+              <option value="ponderado">Promedio Ponderado (sistema)</option>
+              <option value="ultima_compra">Último Precio de Compra</option>
+            </select>
+          </div>
+          <div class="ef-field-group">
+            <label class="ef-label">% Utilidad (global)</label>
+            <input type="number" id="ef-ap-util-global" class="ef-input" style="width:100%;" min="0" step="any" value="30" />
+          </div>
+          <div class="ef-field-group">
+            <label class="ef-label">Tasa IVA %</label>
+            <input type="number" id="ef-ap-iva" class="ef-input" style="width:100%;" min="0" step="any" value="12" />
+          </div>
+          <div class="ef-field-group">
+            <label class="ef-label">Proveedor</label>
+            <div id="ef-ap-supplier-ctrl" class="ef-link-ctrl" style="min-height:32px;"></div>
+          </div>
+          <div class="ef-field-group">
+            <label class="ef-label">Grupo de Artículos</label>
+            <div id="ef-ap-group-ctrl" class="ef-link-ctrl" style="min-height:32px;"></div>
+          </div>
+          <div class="ef-field-group">
+            <label class="ef-label">Ítem</label>
+            <div id="ef-ap-item-ctrl" class="ef-link-ctrl" style="min-height:32px;"></div>
+          </div>
+          <div class="ef-field-group">
+            <button id="ef-ap-btn-search" class="ef-btn ef-btn-primary" style="width:100%;">Buscar</button>
+          </div>
+        </div>
+        <div id="ef-ap-status" style="font-size:11px; color:#64748b; margin-top:10px; min-height:14px;"></div>
+      </div>
+
+      <div class="ef-analytics-card" style="box-shadow: var(--ef-shadow); padding:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+          <div>
+            <button id="ef-ap-mark-all" class="ef-btn ef-btn-sm ef-btn-secondary">Marcar todos</button>
+            <button id="ef-ap-unmark-all" class="ef-btn ef-btn-sm ef-btn-secondary">Desmarcar todos</button>
+            <button id="ef-ap-apply-util" class="ef-btn ef-btn-sm ef-btn-secondary" title="Aplica el % de utilidad global y la base de costo a todas las filas">Recalcular con % global</button>
+          </div>
+          <div style="display:flex; align-items:center; gap:12px;">
+            <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--ef-text); cursor:pointer;">
+              <input type="checkbox" id="ef-ap-save-cost" style="margin:0;" />
+              Guardar costo usado como Costo Estándar del producto
+            </label>
+            <span id="ef-ap-selected-count" style="font-size:12px; color:#64748b;">0 seleccionado(s)</span>
+            <button id="ef-ap-btn-apply" class="ef-btn ef-btn-sm ef-btn-primary">Aplicar precios seleccionados</button>
+          </div>
+        </div>
+        <div class="ef-table-wrapper" style="max-height:620px; overflow-y:auto;">
+          <table class="ef-table">
+            <thead>
+              <tr>
+                <th class="ef-th" style="width:34px; text-align:center;"><input type="checkbox" id="ef-ap-select-all" /></th>
+                <th class="ef-th" style="width:140px;">Código</th>
+                <th class="ef-th">Nombre</th>
+                <th class="ef-th ef-td-num" style="width:110px;">Costo Estándar</th>
+                <th class="ef-th ef-td-num" style="width:110px;">Prom. Ponderado</th>
+                <th class="ef-th ef-td-num" style="width:110px;">Últ. Compra</th>
+                <th class="ef-th ef-td-num" style="width:120px;">Costo a usar</th>
+                <th class="ef-th ef-td-num" style="width:90px;">% Util</th>
+                <th class="ef-th ef-td-num" style="width:120px;">Precio Neto</th>
+                <th class="ef-th ef-td-num" style="width:120px;">Precio c/IVA</th>
+                <th class="ef-th ef-td-num" style="width:110px;">Precio Actual</th>
+              </tr>
+            </thead>
+            <tbody id="ef-ap-tbody">
+              <tr><td colspan="11" style="text-align:center; color:#94a3b8; padding:20px;">Filtre por proveedor, grupo de artículos o ítem y presione Buscar.</td></tr>
             </tbody>
           </table>
         </div>
@@ -5280,11 +5410,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 			crea_clientes: 1, modifica_clientes: 1,
 			crea_proveedores: 1, modifica_proveedores: 1,
 			crea_items: 1, modifica_items: 1, actualiza_precios: 1, gestiona_listas_materiales: 1,
+			asignacion_precios: 1,
 			reporte_ventas_fecha: 1, reporte_ventas_producto: 1,
 			reporte_facturas_canceladas: 1, reporte_estados_cuenta: 1,
 			reporte_antiguedad_saldos: 1, reporte_cotizaciones: 1,
 			reporte_recibos_pagos: 1, reporte_crecimiento_ventas: 1,
-			reporte_imprimir_recibo: 1,
+			reporte_imprimir_recibo: 1, reporte_analisis_utilidad: 1,
 		};
 	}
 
@@ -5302,6 +5433,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			payments_report:       "reporte_recibos_pagos",
 			sales_growth_analysis: "reporte_crecimiento_ventas",
 			print_receipt:         "reporte_imprimir_recibo",
+			utility_analysis:      "reporte_analisis_utilidad",
 		};
 	}
 
@@ -5390,6 +5522,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 		}
 		if (!p.actualiza_precios) {
 			this.$body.find(".ef-maint-tab-btn[data-maint-tab='precios']").hide();
+		}
+		if (!p.asignacion_precios) {
+			this.$body.find(".ef-maint-tab-btn[data-maint-tab='asignacion-precios']").hide();
 		}
 		if (!p.gestiona_listas_materiales) {
 			this.$body.find(".ef-maint-tab-btn[data-maint-tab='listas-materiales']").hide();
@@ -8106,6 +8241,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 				title: "Crecimiento de Ventas (Comparativo)",
 				desc: "Análisis del año actual contra el año anterior graficado mes a mes sin dependencias externas."
 			},
+			utility_analysis: {
+				title: "Análisis de Utilidad",
+				desc: "Utilidad Q y % de cada producto: precio de venta neto contra el costo estándar, el promedio ponderado del sistema o el último precio de compra."
+			},
 			print_receipt: {
 				title: "Imprimir Recibo de Pago",
 				desc: "Busque cualquier factura del sistema para reimprimir su comprobante de pago personalizado."
@@ -8256,6 +8395,23 @@ body.facex-fullscreen-mode .ef-main-layout {
 			});
 			this.rep_item_group_ctrl.get_query = get_query_fn;
 			this.rep_item_group_ctrl.refresh();
+		}
+
+		if (!this.rep_supplier_ctrl) {
+			this.rep_supplier_ctrl = frappe.ui.form.make_control({
+				parent: this.$body.find("#ef-rep-supplier-ctrl")[0],
+				df: {
+					only_select: 1,
+					label: "Proveedor",
+					fieldtype: "Link",
+					fieldname: "rep_supplier",
+					options: "Supplier",
+					reqd: 0,
+				},
+				render_input: true,
+				only_input: false,
+			});
+			this.rep_supplier_ctrl.refresh();
 		}
 
 		if (!this.rep_warehouse_ctrl) {
@@ -8410,6 +8566,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 		} else if (report_id === "sales_growth_analysis") {
 			this.$body.find(".ef-filter-company, .ef-filter-year, .ef-filter-month, .ef-filter-establecimiento").show();
 			this.$body.find("#ef-report-chart-container").show();
+		} else if (report_id === "utility_analysis") {
+			this.$body.find(".ef-filter-company, .ef-filter-cost-basis, .ef-filter-item, .ef-filter-item-group, .ef-filter-supplier").show();
 		} else if (report_id === "print_receipt") {
 			this.$body.find("#ef-report-filters").hide();
 			this.$body.find("#ef-report-btn-export").hide();
@@ -8434,6 +8592,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const year = this.$body.find("#ef-rep-year").val() || new Date().getFullYear();
 		const month = this.$body.find("#ef-rep-month").val() || (new Date().getMonth() + 1);
 		const establecimiento = this.$body.find("#ef-rep-establecimiento").val();
+		const cost_basis = this.$body.find("#ef-rep-cost-basis").val() || "estandar";
+		const supplier = this.rep_supplier_ctrl ? this.rep_supplier_ctrl.get_value() : "";
 
 		if (report_id === "customer_statement" && !customer) {
 			frappe.msgprint({
@@ -8474,6 +8634,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 		} else if (report_id === "sales_growth_analysis") {
 			method = "facex_multi.api.reports.get_sales_growth_analysis";
 			args = { year, month, establecimiento };
+		} else if (report_id === "utility_analysis") {
+			method = "facex_multi.api.utilidad.get_utility_analysis";
+			args = { cost_basis, item_code, item_group, supplier };
 		}
 
 		// Si el filtro de compañía está en "Todas" (vacío), el backend resolverá por permisos del usuario
@@ -9047,6 +9210,71 @@ body.facex-fullscreen-mode .ef-main-layout {
 					</tr>
 				`);
 			});
+
+		} else if (report_id === "utility_analysis") {
+			const rows = data.rows || [];
+			const sum = data.summary || {};
+			const cur = sum.currency || "GTQ";
+			const basisLabels = {
+				estandar: "Costo Estándar", ponderado: "Promedio Ponderado", ultima_compra: "Último Precio de Compra"
+			};
+			const utilProm = sum.util_pct_promedio || 0;
+			const utilPromColor = utilProm >= 0 ? "var(--ef-success)" : "var(--ef-danger)";
+
+			$kpis.append(`
+				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-primary); cursor: default;">
+					<div class="ef-stat-label">Productos Analizados</div>
+					<div class="ef-stat-value">${sum.count || 0} ítems</div>
+				</div>
+				<div class="ef-stat-card" style="border-left: 4px solid ${utilPromColor}; cursor: default;">
+					<div class="ef-stat-label">Utilidad % Promedio (${basisLabels[sum.cost_basis] || ""})</div>
+					<div class="ef-stat-value" style="color:${utilPromColor}; font-family:monospace;">${_fmt(utilProm)}%</div>
+				</div>
+				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-danger); cursor: default;">
+					<div class="ef-stat-label">Con Utilidad Negativa</div>
+					<div class="ef-stat-value" style="color: var(--ef-danger);">${sum.con_utilidad_negativa || 0} ítems</div>
+				</div>
+				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-text-muted); cursor: default;">
+					<div class="ef-stat-label">Lista de Precios · IVA</div>
+					<div class="ef-stat-value" style="font-size:13px;">${_esc(sum.price_list || "")} · ${_fmt(sum.iva_rate || 0)}%</div>
+				</div>
+			`);
+
+			if (rows.length === 0) {
+				$empty.show();
+				return;
+			}
+
+			$thead.append(`
+				<tr>
+					<th class="ef-th">Código</th>
+					<th class="ef-th">Nombre</th>
+					<th class="ef-th">Grupo</th>
+					<th class="ef-th ef-td-num">Precio Neto</th>
+					<th class="ef-th ef-td-num">Precio c/IVA</th>
+					<th class="ef-th ef-td-num">Costo (${basisLabels[sum.cost_basis] || "base"})</th>
+					<th class="ef-th ef-td-num">Utilidad Q</th>
+					<th class="ef-th ef-td-num">Utilidad %</th>
+				</tr>
+			`);
+
+			rows.forEach(r => {
+				const negativo = r.precio_neto > 0 && r.utilidad_q < 0;
+				const sinCosto = !(r.costo > 0);
+				const utilColor = negativo ? "var(--ef-danger)" : "var(--ef-success)";
+				$tbody.append(`
+					<tr${negativo ? ' style="background:#fff5f5;"' : ''}>
+						<td class="ef-td" style="font-weight:600;">${_esc(r.item_code)}</td>
+						<td class="ef-td">${_esc(r.item_name)}</td>
+						<td class="ef-td">${_esc(r.item_group)}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(r.precio_neto, cur)}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace; color:var(--ef-text-muted);">${_fmtCurrency(r.precio_con_iva, cur)}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace;">${sinCosto ? '<span style="color:var(--ef-warning);">sin costo</span>' : _fmtCurrency(r.costo, cur)}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700; color:${utilColor};">${sinCosto ? "—" : _fmtCurrency(r.utilidad_q, cur)}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700; color:${utilColor};">${sinCosto ? "—" : _fmt(r.utilidad_pct) + "%"}</td>
+					</tr>
+				`);
+			});
 		}
 
 		$tbody.off("click", ".ef-inv-load-link").on("click", ".ef-inv-load-link", (e) => {
@@ -9528,6 +9756,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 			(data.chart_data || []).forEach(m => {
 				csvContent += `"${m.month_name}",${m.previous_year},${m.current_year},${m.growth}\n`;
 			});
+		} else if (report_id === "utility_analysis") {
+			csvContent += "Codigo,Nombre,Grupo,Precio Neto,Precio c/IVA,Costo Estandar,Costo Prom Ponderado,Ultimo Precio Compra,Costo Usado,Utilidad Q,Utilidad %,Margen s/Precio %\n";
+			(data.rows || []).forEach(r => {
+				csvContent += `"${r.item_code}","${(r.item_name || '').replace(/"/g, '""')}","${r.item_group}",${r.precio_neto},${r.precio_con_iva},${r.costo_estandar},${r.costo_ponderado},${r.costo_ultima_compra},${r.costo},${r.utilidad_q},${r.utilidad_pct.toFixed(2)},${r.margen_sobre_precio_pct.toFixed(2)}\n`;
+			});
 		} else {
 			return;
 		}
@@ -9742,6 +9975,75 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this.maint_item_group_ctrl.get_query = get_query_fn;
 			this.maint_item_group_ctrl.refresh();
 		}
+
+		// ── Asignación de Precios: controles de filtro ──
+		if (!this.ap_supplier_ctrl) {
+			this.ap_supplier_ctrl = frappe.ui.form.make_control({
+				parent: this.$body.find("#ef-ap-supplier-ctrl")[0],
+				df: { only_select: 1, label: "Proveedor", fieldtype: "Link", fieldname: "ap_supplier", options: "Supplier", reqd: 0 },
+				render_input: true, only_input: false,
+			});
+			this.ap_supplier_ctrl.refresh();
+		}
+		if (!this.ap_group_ctrl) {
+			const gq = () => {
+				const comp = this.doc.company || this.defaults.company || "";
+				return { or_filters: [["bfel_company", "=", comp], ["bfel_company_null", "=", 0]] };
+			};
+			this.ap_group_ctrl = frappe.ui.form.make_control({
+				parent: this.$body.find("#ef-ap-group-ctrl")[0],
+				df: { only_select: 1, label: "Grupo de artículos", fieldtype: "Link", fieldname: "ap_group", options: "Item Group", reqd: 0, get_query: gq },
+				render_input: true, only_input: false,
+			});
+			this.ap_group_ctrl.get_query = gq;
+			this.ap_group_ctrl.refresh();
+		}
+		if (!this.ap_item_ctrl) {
+			const gq = () => {
+				const comp = this.doc.company || this.defaults.company || "";
+				return { or_filters: [["Item", "bfel_company", "=", comp], ["Item", "bfel_company_null", "=", 0]] };
+			};
+			this.ap_item_ctrl = frappe.ui.form.make_control({
+				parent: this.$body.find("#ef-ap-item-ctrl")[0],
+				df: { only_select: 1, label: "Ítem", fieldtype: "Link", fieldname: "ap_item", options: "Item", reqd: 0, get_query: gq },
+				render_input: true, only_input: false,
+			});
+			this.ap_item_ctrl.get_query = gq;
+			this.ap_item_ctrl.refresh();
+		}
+
+		this.$body.find("#ef-ap-btn-search").off("click").on("click", () => this._search_pricing_rows());
+		this.$body.find("#ef-ap-btn-apply").off("click").on("click", () => this._apply_pricing_prices());
+		this.$body.find("#ef-ap-mark-all").off("click").on("click", () => {
+			this.$body.find("#ef-ap-tbody .ef-ap-row-check").prop("checked", true);
+			this._update_ap_selected_count();
+		});
+		this.$body.find("#ef-ap-unmark-all").off("click").on("click", () => {
+			this.$body.find("#ef-ap-tbody .ef-ap-row-check").prop("checked", false);
+			this._update_ap_selected_count();
+		});
+		this.$body.find("#ef-ap-select-all").off("change").on("change", (e) => {
+			this.$body.find("#ef-ap-tbody .ef-ap-row-check").prop("checked", $(e.currentTarget).prop("checked"));
+			this._update_ap_selected_count();
+		});
+		this.$body.find("#ef-ap-apply-util").off("click").on("click", () => {
+			const g = parseFloat(this.$body.find("#ef-ap-util-global").val()) || 0;
+			const basis = this.$body.find("#ef-ap-cost-basis").val();
+			this.$body.find("#ef-ap-tbody tr[data-item]").each((_, tr) => {
+				const $tr = $(tr);
+				const baseCost = parseFloat($tr.attr(`data-costo-${basis}`)) || 0;
+				$tr.find(".ef-ap-cost-input").val(baseCost ? baseCost.toFixed(4) : "");
+				$tr.find(".ef-ap-util-input").val(g);
+				this._recalc_pricing_row($tr);
+			});
+		});
+		this.$body.on("input", ".ef-ap-cost-input, .ef-ap-util-input", (e) => {
+			this._recalc_pricing_row($(e.currentTarget).closest("tr"));
+		});
+		this.$body.on("change", "#ef-ap-iva", () => {
+			this.$body.find("#ef-ap-tbody tr[data-item]").each((_, tr) => this._recalc_pricing_row($(tr)));
+		});
+		this.$body.on("change", "#ef-ap-tbody .ef-ap-row-check", () => this._update_ap_selected_count());
 
 		// Bind automatic item code checkbox logic
 		this.$body.on("change", "#ef-maint-item-auto-code", (e) => {
@@ -10005,6 +10307,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this._set_maint_lm_form_mode("search");
 		} else if (tab === "precios") {
 			this._load_price_lists_dropdown_then_load_prices();
+		} else if (tab === "asignacion-precios") {
+			this._load_pricing_assignment();
 		} else if (tab === "proveedores") {
 			this._clear_maint_supp_form();
 			this._set_maint_supp_form_mode("search");
@@ -10044,6 +10348,186 @@ body.facex-fullscreen-mode .ef-main-layout {
 				this._load_maint_prices();
 			}
 		});
+	}
+
+	// ── Asignación de Precios por Utilidad ──
+
+	_ap_company() {
+		return this.doc.company || this.defaults.company || "";
+	}
+
+	_load_pricing_assignment() {
+		const $select = this.$body.find("#ef-ap-price-list");
+		$select.empty().append('<option value="">Cargando listas...</option>');
+		this.$body.find("#ef-ap-tbody").html(
+			'<tr><td colspan="11" style="text-align:center; color:#94a3b8; padding:20px;">Filtre por proveedor, grupo de artículos o ítem y presione Buscar.</td></tr>'
+		);
+		this.$body.find("#ef-ap-status").text("");
+		this._update_ap_selected_count();
+
+		frappe.call({
+			method: "facex_multi.api.item.get_price_lists",
+			args: { company: this._ap_company() },
+			callback: (r) => {
+				$select.empty();
+				const lists = (r.message || []).filter((l) => l.selling || !l.buying);
+				const src = lists.length ? lists : (r.message || []);
+				if (!src.length) {
+					$select.append('<option value="">Sin listas activas</option>');
+				} else {
+					src.forEach((l) => $select.append(`<option value="${_esc(l.name)}">${_esc(l.name)} (${_esc(l.currency)})</option>`));
+				}
+				frappe.call({
+					method: "facex_multi.api.utilidad.get_pricing_context",
+					args: { company: this._ap_company() },
+					callback: (cr) => {
+						const ctx = cr.message || {};
+						if (ctx.iva_rate != null) this.$body.find("#ef-ap-iva").val(ctx.iva_rate);
+						if (ctx.default_price_list && $select.find(`option[value="${ctx.default_price_list}"]`).length) {
+							$select.val(ctx.default_price_list);
+						}
+					},
+				});
+			},
+		});
+	}
+
+	_search_pricing_rows() {
+		const supplier = this.ap_supplier_ctrl ? this.ap_supplier_ctrl.get_value() : "";
+		const item_group = this.ap_group_ctrl ? this.ap_group_ctrl.get_value() : "";
+		const item_code = this.ap_item_ctrl ? this.ap_item_ctrl.get_value() : "";
+		const price_list = this.$body.find("#ef-ap-price-list").val();
+
+		if (!supplier && !item_group && !item_code) {
+			frappe.show_alert({ message: "Indique un proveedor, un grupo de artículos o un ítem.", indicator: "orange" });
+			return;
+		}
+
+		const $status = this.$body.find("#ef-ap-status");
+		$status.text("Buscando...");
+
+		frappe.call({
+			method: "facex_multi.api.utilidad.get_pricing_rows",
+			args: { company: this._ap_company(), supplier, item_group, item_code, price_list },
+			freeze: true,
+			freeze_message: "Cargando productos...",
+			callback: (r) => {
+				const data = r.message || { rows: [] };
+				$status.text(data.rows.length ? `${data.rows.length} producto(s).` : "Sin productos para el filtro.");
+				this._render_pricing_rows(data);
+			},
+		});
+	}
+
+	_render_pricing_rows(data) {
+		const $tbody = this.$body.find("#ef-ap-tbody");
+		const rows = data.rows || [];
+		const cur = data.currency || "GTQ";
+		const basis = this.$body.find("#ef-ap-cost-basis").val();
+		const globalUtil = parseFloat(this.$body.find("#ef-ap-util-global").val()) || 0;
+		if (data.iva_rate != null) this.$body.find("#ef-ap-iva").val(data.iva_rate);
+		this.$body.find("#ef-ap-select-all").prop("checked", false);
+
+		if (!rows.length) {
+			$tbody.html('<tr><td colspan="11" style="text-align:center; color:#94a3b8; padding:20px;">Sin resultados.</td></tr>');
+			this._update_ap_selected_count();
+			return;
+		}
+
+		$tbody.html(rows.map((r) => {
+			const baseKey = { estandar: r.costo_estandar, ponderado: r.costo_ponderado, ultima_compra: r.costo_ultima_compra }[basis] || 0;
+			return `
+			<tr data-item="${_esc(r.item_code)}" data-cur="${_esc(cur)}"
+				data-costo-estandar="${r.costo_estandar}" data-costo-ponderado="${r.costo_ponderado}" data-costo-ultima_compra="${r.costo_ultima_compra}">
+				<td class="ef-td" style="text-align:center;"><input type="checkbox" class="ef-ap-row-check" /></td>
+				<td class="ef-td" style="font-weight:600;">${_esc(r.item_code)}</td>
+				<td class="ef-td">${_esc(r.item_name)}</td>
+				<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(r.costo_estandar, cur)}</td>
+				<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(r.costo_ponderado, cur)}</td>
+				<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(r.costo_ultima_compra, cur)}</td>
+				<td class="ef-td ef-td-num"><input type="number" class="ef-input ef-ap-cost-input" style="width:100px; text-align:right; font-size:12px; padding:3px 6px;" min="0" step="any" value="${baseKey ? Number(baseKey).toFixed(4) : ''}" /></td>
+				<td class="ef-td ef-td-num"><input type="number" class="ef-input ef-ap-util-input" style="width:70px; text-align:right; font-size:12px; padding:3px 6px;" min="0" step="any" value="${globalUtil}" /></td>
+				<td class="ef-td ef-td-num ef-ap-neto" style="font-family:monospace; font-weight:700;">—</td>
+				<td class="ef-td ef-td-num ef-ap-iva-val" style="font-family:monospace; color:var(--ef-text-muted);">—</td>
+				<td class="ef-td ef-td-num" style="font-family:monospace; color:#64748b;">${_fmtCurrency(r.precio_actual, cur)}</td>
+			</tr>`;
+		}).join(""));
+
+		$tbody.find("tr[data-item]").each((_, tr) => this._recalc_pricing_row($(tr)));
+		this._update_ap_selected_count();
+	}
+
+	_recalc_pricing_row($tr) {
+		const cost = parseFloat($tr.find(".ef-ap-cost-input").val()) || 0;
+		const util = parseFloat($tr.find(".ef-ap-util-input").val()) || 0;
+		const iva = parseFloat(this.$body.find("#ef-ap-iva").val()) || 0;
+		const cur = $tr.attr("data-cur") || "GTQ";
+		const neto = cost * (1 + util / 100);
+		const conIva = neto * (1 + iva / 100);
+		$tr.attr("data-neto", neto);
+		$tr.find(".ef-ap-neto").text(cost ? _fmtCurrency(neto, cur) : "—");
+		$tr.find(".ef-ap-iva-val").text(cost ? _fmtCurrency(conIva, cur) : "—");
+	}
+
+	_update_ap_selected_count() {
+		const n = this.$body.find("#ef-ap-tbody .ef-ap-row-check:checked").length;
+		this.$body.find("#ef-ap-selected-count").text(`${n} seleccionado(s)`);
+	}
+
+	_apply_pricing_prices() {
+		const price_list = this.$body.find("#ef-ap-price-list").val();
+		if (!price_list) {
+			frappe.show_alert({ message: "Seleccione una lista de precios.", indicator: "orange" });
+			return;
+		}
+		const rows = [];
+		this.$body.find("#ef-ap-tbody tr[data-item]").each((_, tr) => {
+			const $tr = $(tr);
+			if (!$tr.find(".ef-ap-row-check").prop("checked")) return;
+			const costo = parseFloat($tr.find(".ef-ap-cost-input").val()) || 0;
+			const util_pct = parseFloat($tr.find(".ef-ap-util-input").val()) || 0;
+			rows.push({ item_code: $tr.attr("data-item"), costo, util_pct });
+		});
+		if (!rows.length) {
+			frappe.show_alert({ message: "Marque al menos un producto.", indicator: "orange" });
+			return;
+		}
+		const sinCosto = rows.filter((r) => !(r.costo > 0)).length;
+		const guardar = this.$body.find("#ef-ap-save-cost").prop("checked") ? 1 : 0;
+
+		frappe.confirm(
+			`Se asignará el precio neto calculado a <b>${rows.length - sinCosto}</b> producto(s) en la lista <b>${_esc(price_list)}</b>.`
+			+ (sinCosto ? `<br><span style="color:#b45309;">${sinCosto} fila(s) sin costo válido se omitirán.</span>` : "")
+			+ (guardar ? `<br>También se guardará el costo usado como Costo Estándar del producto.` : ""),
+			() => {
+				frappe.call({
+					method: "facex_multi.api.utilidad.apply_utility_prices",
+					args: {
+						rows_json: JSON.stringify(rows),
+						price_list,
+						company: this._ap_company(),
+						guardar_costo_estandar: guardar,
+					},
+					freeze: true,
+					freeze_message: "Aplicando precios...",
+					callback: (r) => {
+						const res = r.message || { updated: [], errors: [] };
+						frappe.show_alert({
+							message: `${res.updated.length} precio(s) actualizado(s).` + (res.errors.length ? ` ${res.errors.length} con error.` : ""),
+							indicator: res.errors.length ? "orange" : "green",
+						}, 7);
+						if (res.errors.length) {
+							frappe.msgprint({
+								title: "Errores al asignar precios",
+								message: res.errors.map((e) => `<b>${_esc(e.item_code)}</b>: ${_esc(e.error)}`).join("<br>"),
+								indicator: "orange",
+							});
+						}
+						this._search_pricing_rows();
+					},
+				});
+			}
+		);
 	}
 
 	// ── Customers Maintenance (búsqueda-primero, estilo SAP) ──
@@ -10721,7 +11205,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		this.$body.find(
 			"#ef-maint-item-name, #ef-maint-item-auto-code, #ef-maint-item-gestionado-por, " +
-			"#ef-maint-item-is-stock, #ef-maint-item-desc, #ef-maint-item-keywords"
+			"#ef-maint-item-is-stock, #ef-maint-item-desc, #ef-maint-item-keywords, #ef-maint-item-costo-estandar"
 		).prop("disabled", !enable);
 
 		[this.maint_item_uom_ctrl, this.maint_item_group_ctrl].forEach((ctrl) => {
@@ -10778,6 +11262,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					if (frappe.boot.versions && frappe.boot.versions.etiba) this.$body.find("#ef-maint-item-btn-print-label").show();
 					this._maint_load_item_images(it.item_code);
 					this.$body.find("#ef-maint-item-keywords").val(it.palabras_busqueda || "");
+					this.$body.find("#ef-maint-item-costo-estandar").val(it.costo_estandar || "");
 					this.$body.find("#ef-maint-item-relations-wrap").show();
 					this._load_maint_item_relations(it.item_code);
 				}
@@ -10984,6 +11469,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-maint-item-btn-delete").hide();
 		this.$body.find("#ef-maint-item-btn-print-label").hide();
 		this.$body.find("#ef-maint-item-keywords").val("");
+		this.$body.find("#ef-maint-item-costo-estandar").val("");
 		this.$body.find("#ef-maint-item-relations-wrap").hide();
 		this._maint_relations = { Par: [], Alternativo: [] };
 	}
@@ -11011,6 +11497,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			gestionado_por: this.$body.find("#ef-maint-item-gestionado-por").val() || "General",
 			is_stock_item:  this.$body.find("#ef-maint-item-is-stock").prop("checked") ? 1 : 0,
 			palabras_busqueda: this.$body.find("#ef-maint-item-keywords").val() || "",
+			costo_estandar: parseFloat(this.$body.find("#ef-maint-item-costo-estandar").val()) || 0,
 		};
 
 		frappe.call({
