@@ -1063,6 +1063,15 @@ class EFastSalePage {
             <select id="ef-rep-price-list" class="ef-select" style="padding: 6px 10px;"></select>
           </div>
 
+          <!-- solo con precio filter (utility analysis) -->
+          <div class="ef-rep-filter ef-filter-solo-precio" style="display: flex; flex-direction: column; gap: 4px; justify-content: flex-end;">
+            <label class="ef-label" style="font-weight: 700; font-size: 10px;">&nbsp;</label>
+            <label style="display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ef-text); cursor: pointer; height: 32px;">
+              <input type="checkbox" id="ef-rep-solo-con-precio" style="margin: 0; width: 15px; height: 15px;" />
+              Solo con precio ya asignado
+            </label>
+          </div>
+
           <!-- warehouse filter -->
           <div class="ef-rep-filter ef-filter-warehouse" style="display: flex; flex-direction: column; gap: 4px; width: 160px;">
             <label class="ef-label" style="font-weight: 700; font-size: 10px;">Bodega / Almacén</label>
@@ -8289,7 +8298,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			},
 			utility_analysis: {
 				title: "Análisis de Utilidad",
-				desc: "Utilidad Q y % de cada producto: precio de venta neto contra el costo estándar, el promedio ponderado del sistema o el último precio de compra."
+				desc: "Utilidad Q y % de cada producto (precio de venta neto contra el costo estándar, el promedio ponderado del sistema o el último precio de compra). Sólo incluye productos de venta e inventariables."
 			},
 			print_receipt: {
 				title: "Imprimir Recibo de Pago",
@@ -8334,8 +8343,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this._run_active_report();
 		});
 
-		// Cambiar lista de precios / base de costo recarga el Análisis de Utilidad
-		this.$body.find("#ef-rep-price-list, #ef-rep-cost-basis").off("change").on("change", () => {
+		// Cambiar lista de precios / base de costo / "solo con precio" recarga el Análisis de Utilidad
+		this.$body.find("#ef-rep-price-list, #ef-rep-cost-basis, #ef-rep-solo-con-precio").off("change").on("change", () => {
 			if (this._active_report === "utility_analysis") this._run_active_report();
 		});
 
@@ -8644,7 +8653,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this.$body.find(".ef-filter-company, .ef-filter-year, .ef-filter-month, .ef-filter-establecimiento").show();
 			this.$body.find("#ef-report-chart-container").show();
 		} else if (report_id === "utility_analysis") {
-			this.$body.find(".ef-filter-company, .ef-filter-price-list, .ef-filter-cost-basis, .ef-filter-item, .ef-filter-item-group, .ef-filter-supplier").show();
+			this.$body.find(".ef-filter-company, .ef-filter-price-list, .ef-filter-cost-basis, .ef-filter-solo-precio, .ef-filter-item, .ef-filter-item-group, .ef-filter-supplier").show();
 		} else if (report_id === "print_receipt") {
 			this.$body.find("#ef-report-filters").hide();
 			this.$body.find("#ef-report-btn-export").hide();
@@ -8672,6 +8681,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const cost_basis = this.$body.find("#ef-rep-cost-basis").val() || "estandar";
 		const supplier = this.rep_supplier_ctrl ? this.rep_supplier_ctrl.get_value() : "";
 		const rep_price_list = this.$body.find("#ef-rep-price-list").val() || "";
+		const solo_con_precio = this.$body.find("#ef-rep-solo-con-precio").prop("checked") ? 1 : 0;
 
 		if (report_id === "customer_statement" && !customer) {
 			frappe.msgprint({
@@ -8714,7 +8724,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			args = { year, month, establecimiento };
 		} else if (report_id === "utility_analysis") {
 			method = "facex_multi.api.utilidad.get_utility_analysis";
-			args = { cost_basis, item_code, item_group, supplier, price_list: rep_price_list };
+			args = { cost_basis, item_code, item_group, supplier, price_list: rep_price_list, solo_con_precio };
 		}
 
 		// Si el filtro de compañía está en "Todas" (vacío), el backend resolverá por permisos del usuario
@@ -9300,6 +9310,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 			};
 			const utilProm = sum.util_pct_promedio || 0;
 			const utilPromColor = utilProm >= 0 ? "var(--ef-success)" : "var(--ef-danger)";
+
+			this.$body.find("#ef-report-desc").html(
+				`Sólo productos <b>de venta e inventariables</b>. `
+				+ `Costo: <b>${basisLabels[sum.cost_basis] || ""}</b> · Lista: <b>${_esc(sum.price_list || "")}</b>`
+				+ (sum.iva_inclusive ? ` (guarda precio c/IVA)` : ``)
+				+ (sum.solo_con_precio ? ` · <b>solo ítems con precio asignado</b>` : ` · incluye ítems sin precio`)
+			);
 
 			$kpis.append(`
 				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-primary); cursor: default;">

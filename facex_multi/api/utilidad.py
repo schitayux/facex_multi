@@ -263,8 +263,18 @@ def _items_for_supplier(company: str, supplier: str) -> set:
 
 def _fetch_items(company: str, item_group: str = None, item_code: str = None,
                  supplier: str = None, limit: int = 500) -> list:
-    """Ítems de la compañía filtrados por grupo / código / proveedor."""
-    conditions = ["disabled = 0", _company_item_filter()]
+    """Ítems de la compañía filtrados por grupo / código / proveedor.
+
+    Sólo considera productos **de venta e inventariables** (``is_sales_item = 1``
+    y ``is_stock_item = 1``): la utilidad y la asignación de precios aplican a lo
+    que realmente se vende y se maneja en stock.
+    """
+    conditions = [
+        "disabled = 0",
+        "is_sales_item = 1",
+        "is_stock_item = 1",
+        _company_item_filter(),
+    ]
     params = {"company": company}
 
     if item_code:
@@ -331,14 +341,21 @@ def _costs_for_items(items: list, company: str, supplier: str = None) -> dict:
 @frappe.whitelist()
 def get_utility_analysis(cost_basis: str = "estandar", company: str = None,
                          item_group: str = None, item_code: str = None,
-                         supplier: str = None, price_list: str = None) -> dict:
-    """Informe Análisis de Utilidad."""
+                         supplier: str = None, price_list: str = None,
+                         solo_con_precio: int = 0) -> dict:
+    """Informe Análisis de Utilidad.
+
+    Sólo productos de venta e inventariables (ver ``_fetch_items``).
+    Con ``solo_con_precio=1`` deja únicamente los ítems que ya tienen un precio
+    (> 0) asignado en la lista de precios seleccionada.
+    """
     if not has_efast_permission():
         frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
 
     company = get_effective_company(company)
     _check_report_permission(company)
 
+    solo_con_precio = int(solo_con_precio or 0)
     cost_basis = cost_basis if cost_basis in COST_BASES else "estandar"
     price_list = price_list or _get_selling_price_list()
     iva_cfg = _get_iva_config(company)
@@ -359,6 +376,8 @@ def get_utility_analysis(cost_basis: str = "estandar", company: str = None,
         c = costs.get(code, {})
         costo = flt(c.get(cost_basis))
         rate = flt(rates.get(code, 0.0))
+        if solo_con_precio and rate <= 0:
+            continue
         # Item Price guarda el con-IVA cuando la plantilla es inclusiva → derivar el neto.
         if iva_inclusive and iva_rate:
             neto = rate / (1 + iva_rate / 100.0)
@@ -398,6 +417,7 @@ def get_utility_analysis(cost_basis: str = "estandar", company: str = None,
             "util_pct_promedio": (suma_pct / n_pct) if n_pct else 0.0,
             "iva_rate": iva_rate,
             "iva_inclusive": iva_inclusive,
+            "solo_con_precio": solo_con_precio,
             "price_list": price_list,
             "currency": currency,
             "cost_basis": cost_basis,
@@ -542,9 +562,11 @@ def apply_utility_prices(rows_json: str, price_list: str = None, company: str = 
 @frappe.whitelist()
 def export_utility_analysis_excel(cost_basis: str = "estandar", company: str = None,
                                   item_group: str = None, item_code: str = None,
-                                  supplier: str = None, price_list: str = None):
+                                  supplier: str = None, price_list: str = None,
+                                  solo_con_precio: int = 0):
     """Exporta el Análisis de Utilidad a XLSX."""
-    data = get_utility_analysis(cost_basis, company, item_group, item_code, supplier, price_list)
+    data = get_utility_analysis(cost_basis, company, item_group, item_code, supplier,
+                                price_list, solo_con_precio)
     rows = data["rows"]
     if not rows:
         frappe.throw("No hay datos para exportar con los filtros seleccionados.")
