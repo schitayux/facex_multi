@@ -1057,6 +1057,12 @@ class EFastSalePage {
             </select>
           </div>
 
+          <!-- price list filter (utility analysis) -->
+          <div class="ef-rep-filter ef-filter-price-list" style="display: flex; flex-direction: column; gap: 4px; width: 200px;">
+            <label class="ef-label" style="font-weight: 700; font-size: 10px;">Lista de Precios</label>
+            <select id="ef-rep-price-list" class="ef-select" style="padding: 6px 10px;"></select>
+          </div>
+
           <!-- warehouse filter -->
           <div class="ef-rep-filter ef-filter-warehouse" style="display: flex; flex-direction: column; gap: 4px; width: 160px;">
             <label class="ef-label" style="font-weight: 700; font-size: 10px;">Bodega / Almacén</label>
@@ -8324,7 +8330,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		// Company change reloads the report
 		this.$body.find("#ef-rep-company").off("change").on("change", () => {
+			this._populate_rep_price_lists();
 			this._run_active_report();
+		});
+
+		// Cambiar lista de precios / base de costo recarga el Análisis de Utilidad
+		this.$body.find("#ef-rep-price-list, #ef-rep-cost-basis").off("change").on("change", () => {
+			if (this._active_report === "utility_analysis") this._run_active_report();
 		});
 
 		this.$body.find("#ef-rep-btn-apply").off("click").on("click", () => {
@@ -8556,6 +8568,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 			});
 		}
 
+		this._populate_rep_price_lists();
+
 		// Populate establishment selector
 		const $repEst = this.$body.find("#ef-rep-establecimiento");
 		if ($repEst.length) {
@@ -8570,6 +8584,29 @@ body.facex-fullscreen-mode .ef-main-layout {
 				$repEst.val(prev_val);
 			}
 		}
+	}
+
+	_populate_rep_price_lists() {
+		const $sel = this.$body.find("#ef-rep-price-list");
+		if (!$sel.length) return;
+		const company = this.$body.find("#ef-rep-company").val() || this.doc.company || this.defaults.company || "";
+		const prev = $sel.val();
+		frappe.call({
+			method: "facex_multi.api.item.get_price_lists",
+			args: { company },
+			callback: (r) => {
+				const lists = (r.message || []).filter((l) => l.selling || !l.buying);
+				const src = lists.length ? lists : (r.message || []);
+				$sel.empty();
+				if (!src.length) {
+					$sel.append('<option value="">(lista de venta por defecto)</option>');
+					return;
+				}
+				$sel.append('<option value="">(lista de venta por defecto)</option>');
+				src.forEach((l) => $sel.append(`<option value="${_esc(l.name)}">${_esc(l.name)} (${_esc(l.currency)})</option>`));
+				if (prev && $sel.find(`option[value="${prev}"]`).length) $sel.val(prev);
+			},
+		});
 	}
 
 	_update_filter_visibility(report_id) {
@@ -8607,7 +8644,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this.$body.find(".ef-filter-company, .ef-filter-year, .ef-filter-month, .ef-filter-establecimiento").show();
 			this.$body.find("#ef-report-chart-container").show();
 		} else if (report_id === "utility_analysis") {
-			this.$body.find(".ef-filter-company, .ef-filter-cost-basis, .ef-filter-item, .ef-filter-item-group, .ef-filter-supplier").show();
+			this.$body.find(".ef-filter-company, .ef-filter-price-list, .ef-filter-cost-basis, .ef-filter-item, .ef-filter-item-group, .ef-filter-supplier").show();
 		} else if (report_id === "print_receipt") {
 			this.$body.find("#ef-report-filters").hide();
 			this.$body.find("#ef-report-btn-export").hide();
@@ -8634,6 +8671,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const establecimiento = this.$body.find("#ef-rep-establecimiento").val();
 		const cost_basis = this.$body.find("#ef-rep-cost-basis").val() || "estandar";
 		const supplier = this.rep_supplier_ctrl ? this.rep_supplier_ctrl.get_value() : "";
+		const rep_price_list = this.$body.find("#ef-rep-price-list").val() || "";
 
 		if (report_id === "customer_statement" && !customer) {
 			frappe.msgprint({
@@ -8676,7 +8714,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			args = { year, month, establecimiento };
 		} else if (report_id === "utility_analysis") {
 			method = "facex_multi.api.utilidad.get_utility_analysis";
-			args = { cost_basis, item_code, item_group, supplier };
+			args = { cost_basis, item_code, item_group, supplier, price_list: rep_price_list };
 		}
 
 		// Si el filtro de compañía está en "Todas" (vacío), el backend resolverá por permisos del usuario
