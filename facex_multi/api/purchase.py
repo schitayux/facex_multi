@@ -19,20 +19,29 @@ def _get_abbr(company: str) -> str:
     return frappe.db.get_value("Company", company, "abbr") or ""
 
 
-def _resolve_item_warehouse(item_code: str, company: str) -> str:
-    """Bodega para recepción: Item Default → patrón por grupo de ítem."""
+def _resolve_item_warehouse(item_code: str, company: str, allowed_warehouses=None) -> str:
+    """Bodega para recepción: Item Default → patrón por grupo de ítem.
+
+    Si `allowed_warehouses` viene definido (usuario con bodegas_habilitadas
+    restringidas), la bodega resuelta se acota a esa lista — así el picker
+    del Facturador nunca sugiere/precarga de entrada una bodega fuera del
+    alcance del usuario, y save_purchase_invoice() solo necesita rechazar
+    con error una bodega que el usuario haya elegido a mano."""
     wh = frappe.db.get_value(
         "Item Default",
         {"parent": item_code, "company": company},
         "default_warehouse",
     )
-    if wh:
-        return wh
-    abbr       = _get_abbr(company)
-    item_group = frappe.db.get_value("Item", item_code, "item_group") or ""
-    base       = "EL MOSQUETE" if abbr == "EMS" else "EL PANZER"
-    idx        = {"ARMAS": "I", "MUNICIÓN": "II", "ACCESORIOS": "III"}.get(item_group)
-    return f"{base} {idx} - {abbr}" if idx else ""
+    if not wh:
+        abbr       = _get_abbr(company)
+        item_group = frappe.db.get_value("Item", item_code, "item_group") or ""
+        base       = "EL MOSQUETE" if abbr == "EMS" else "EL PANZER"
+        idx        = {"ARMAS": "I", "MUNICIÓN": "II", "ACCESORIOS": "III"}.get(item_group)
+        wh = f"{base} {idx} - {abbr}" if idx else ""
+
+    if wh and allowed_warehouses is not None and wh not in allowed_warehouses:
+        wh = allowed_warehouses[0] if allowed_warehouses else ""
+    return wh
 
 
 def _list_company_tax_templates(company: str) -> list:
@@ -180,7 +189,9 @@ def get_item_purchase_info(item_code: str, company: str = None) -> dict:
     if not item:
         frappe.throw(f"Producto '{item_code}' no encontrado.")
 
-    warehouse = _resolve_item_warehouse(item_code, company) if item.is_stock_item else ""
+    from facex_multi.api.permissions import get_facex_allowed_warehouses
+    allowed_warehouses = get_facex_allowed_warehouses(company)
+    warehouse = _resolve_item_warehouse(item_code, company, allowed_warehouses) if item.is_stock_item else ""
 
     return {
         "item_code":    item_code,
@@ -215,9 +226,12 @@ def search_items(txt: str = "", company: str = None) -> list:
         limit=25,
     )
 
+    from facex_multi.api.permissions import get_facex_allowed_warehouses
+    allowed_warehouses = get_facex_allowed_warehouses(company)
+
     out = []
     for r in results:
-        wh = _resolve_item_warehouse(r.item_code, company) if r.is_stock_item else ""
+        wh = _resolve_item_warehouse(r.item_code, company, allowed_warehouses) if r.is_stock_item else ""
         out.append({
             "item_code":    r.item_code,
             "item_name":    r.item_name,
@@ -527,7 +541,7 @@ def save_purchase_invoice(data_json: str) -> dict:
             continue
         qty       = flt(row.get("qty") or 1)
         rate      = flt(row.get("rate") or 0)
-        wh        = row.get("warehouse") or _resolve_item_warehouse(item_code, company)
+        wh        = row.get("warehouse") or _resolve_item_warehouse(item_code, company, allowed_warehouses)
         if wh and allowed_warehouses is not None and wh not in allowed_warehouses:
             if row.get("warehouse"):
                 frappe.throw(f"No tiene permiso para utilizar la bodega '{wh}' en esta compra.")
@@ -626,6 +640,9 @@ def process_purchase_excel(file_url: str, company: str = None) -> dict:
     file_path = get_file_path(file_url)
     wb        = openpyxl.load_workbook(file_path, data_only=True)
 
+    from facex_multi.api.permissions import get_facex_allowed_warehouses
+    allowed_warehouses = get_facex_allowed_warehouses(company)
+
     # ── Hoja 1: Encabezado ──────────────────────────────────────────
     ws_h   = wb.worksheets[0]
     rows_h = list(ws_h.iter_rows(min_row=2, values_only=True))
@@ -682,7 +699,7 @@ def process_purchase_excel(file_url: str, company: str = None) -> dict:
             continue
 
         has_serial = int(info.has_serial_no or 0)
-        wh         = _resolve_item_warehouse(item_code, company) if info.is_stock_item else ""
+        wh         = _resolve_item_warehouse(item_code, company, allowed_warehouses) if info.is_stock_item else ""
 
         if has_serial and g["serials"]:
             qty       = len(g["serials"])

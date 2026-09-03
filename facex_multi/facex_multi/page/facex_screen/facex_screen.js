@@ -127,6 +127,11 @@ class EFastPOSScreen {
 				this.doc.posting_date = d.posting_date || this.doc.posting_date;
 				this.doc.due_date = d.due_date || this.doc.due_date;
 				this.doc.sales_partner = d.default_sales_partner || "";
+				// true mientras sales_partner venga de un default (usuario, cliente
+				// walk-in o cliente elegido) y no de una elección manual del cajero —
+				// permite que el default más específico del Cliente reemplace al del
+				// usuario en vez de quedar tapado por él.
+				this._sales_partner_is_default = true;
 
 				this._load_walkin_customer();
 				this._load_warehouses();
@@ -161,8 +166,9 @@ class EFastPOSScreen {
 					this.walkinCustomer = r.message;
 					this.doc.customer = r.message.name;
 					this.doc.customer_name = r.message.customer_name;
-					if (!this.doc.sales_partner && r.message.default_sales_partner) {
+					if (r.message.default_sales_partner && (!this.doc.sales_partner || this._sales_partner_is_default)) {
 						this.doc.sales_partner = r.message.default_sales_partner;
+						this._sales_partner_is_default = true;
 					}
 					this._render_customer_bar();
 				}
@@ -380,6 +386,7 @@ class EFastPOSScreen {
 		this.$body.find("#efs-btn-change-customer").on("click", () => this._show_customer_picker());
 		this.$body.find("#efs-vendor-select").on("change", (e) => {
 			this.doc.sales_partner = e.target.value;
+			this._sales_partner_is_default = false;
 			this._render_vendor_bar();
 		});
 		this.$body.find("#efs-btn-suspend").on("click", () => this._suspend_sale());
@@ -1186,8 +1193,9 @@ class EFastPOSScreen {
 						this.doc.customer = $row.data("name");
 						this.doc.customer_name = $row.data("label");
 						const defaultPartner = $row.data("sales-partner");
-						if (!this.doc.sales_partner && defaultPartner) {
+						if (defaultPartner && (!this.doc.sales_partner || this._sales_partner_is_default)) {
 							this.doc.sales_partner = defaultPartner;
+							this._sales_partner_is_default = true;
 						}
 						// Ya seleccionado: ocultar la lista de búsqueda y limpiar el
 						// campo de texto en vez de re-renderizar toda la tarjeta
@@ -1341,6 +1349,7 @@ class EFastPOSScreen {
 		$body.find("#efs-fld-price-list").on("change", (e) => { this.doc.selling_price_list = e.target.value; });
 		$body.find("#efs-fld-vendedor").on("change", (e) => {
 			this.doc.sales_partner = e.target.value;
+			this._sales_partner_is_default = false;
 			this._render_vendor_bar();
 		});
 
@@ -1797,7 +1806,9 @@ class EFastPOSScreen {
 								stock_uom: picked ? picked.stock_uom : "Nos",
 								is_stock_item: picked ? picked.is_stock_item : 1,
 								has_serial_no: picked ? picked.has_serial_no : 0,
-								custom_tiene_adenda: 0,
+								stock_qty: picked ? parseFloat(picked.stock_qty) || 0 : 0,
+								custom_tiene_adenda: picked ? picked.custom_tiene_adenda : 0,
+								item_group: picked ? picked.item_group : "",
 							});
 						});
 					},
@@ -2334,8 +2345,9 @@ class EFastPOSScreen {
 						this.doc.customer = name;
 						this.doc.customer_name = label;
 						const defaultPartner = $row.data("sales-partner");
-						if (!this.doc.sales_partner && defaultPartner) {
+						if (defaultPartner && (!this.doc.sales_partner || this._sales_partner_is_default)) {
 							this.doc.sales_partner = defaultPartner;
+							this._sales_partner_is_default = true;
 						}
 						this._render_customer_bar();
 						d.hide();
@@ -2503,7 +2515,10 @@ class EFastPOSScreen {
 	}
 
 	_render_payment_view(savedDoc) {
-		const total = parseFloat(savedDoc.grand_total || 0);
+		// Usar outstanding_amount (no grand_total): ya refleja el redondeo que
+		// ERPNext aplica en calculate_taxes_and_totals(), el mismo que luego usa
+		// para validar el allocated_amount del Payment Entry al confirmar el pago.
+		const total = parseFloat(savedDoc.outstanding_amount) || 0;
 		this.paymentState = {
 			total, method: "Efectivo", tendered: "", primaryAmount: total.toFixed(2), reference: "", payments: [], changeDue: 0,
 			guias: [], guiasResolved: false, guiasSkipped: false,
@@ -4138,11 +4153,12 @@ class EFastPOSScreen {
 		this.doc.taxes_and_charges = this.defaults.default_taxes_and_charges || "";
 		this.doc.payment_terms_template = this.defaults.default_payment_terms_template || "";
 		this.doc.sales_partner = this.defaults.default_sales_partner || "";
+		this._sales_partner_is_default = true;
 		if (this.walkinCustomer) {
 			this.doc.customer = this.walkinCustomer.name;
 			this.doc.customer_name = this.walkinCustomer.customer_name;
-			if (!this.doc.sales_partner) {
-				this.doc.sales_partner = this.walkinCustomer.default_sales_partner || "";
+			if (this.walkinCustomer.default_sales_partner && (!this.doc.sales_partner || this._sales_partner_is_default)) {
+				this.doc.sales_partner = this.walkinCustomer.default_sales_partner;
 			}
 		}
 		this._render_customer_bar();

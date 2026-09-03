@@ -187,6 +187,10 @@ class EFastSalePage {
 		this.doc.taxes_and_charges = "";
 		this.doc.payment_terms_template = this.defaults.default_payment_terms_template || "";
 		this.doc.sales_partner = this.defaults.default_sales_partner || "";
+		// true mientras sales_partner venga de un default (usuario o cliente) y no
+		// de una elección manual del cajero — permite que el default más específico
+		// del Cliente (ver _on_customer_change) reemplace al default del usuario.
+		this._sales_partner_is_default = true;
 		this.doc.bfel_status = "01 Enviar";
 		this.doc.posting_date = frappe.datetime.get_today();
 		this.doc.due_date = frappe.datetime.get_today();
@@ -4034,6 +4038,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 				if (fieldname === "customer") this._on_customer_change(val);
 				if (fieldname === "payment_terms_template") this._on_payment_terms_change(val);
 				if (fieldname === "taxes_and_charges") this._on_taxes_change(val);
+				if (fieldname === "sales_partner") this._sales_partner_is_default = false;
 				this._mark_dirty();
 			}, 50);
 		};
@@ -4072,6 +4077,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this.doc.customer_name = "";
 			this.doc.bfel_nombre = "";
 			this.doc.sales_partner = "";
+			this._sales_partner_is_default = true;
 			this.doc.bfel_identificacion = "";
 			this.$body.find("#ef-customer-name").val("");
 			this.$body.find("#ef-bfel-nombre").val("");
@@ -4117,8 +4123,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 						this._on_payment_terms_change(r.message.payment_terms);
 					}
 
-					if (r.message.default_sales_partner && !this.doc.sales_partner) {
+					if (r.message.default_sales_partner && (!this.doc.sales_partner || this._sales_partner_is_default)) {
 						this.doc.sales_partner = r.message.default_sales_partner;
+						this._sales_partner_is_default = true;
 						if (this.controls.sales_partner) {
 							this.controls.sales_partner.set_value(r.message.default_sales_partner);
 						}
