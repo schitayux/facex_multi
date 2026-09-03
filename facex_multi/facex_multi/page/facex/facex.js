@@ -1214,7 +1214,7 @@ class EFastSalePage {
           <div id="ef-report-table-title" class="ef-analytics-card-title">Detalle de Registros</div>
           
           <!-- Table -->
-          <div class="ef-table-wrapper" id="ef-report-table-wrapper" style="max-height: 600px; overflow-y: auto;">
+          <div class="ef-table-wrapper" id="ef-report-table-wrapper" style="max-height: 600px; overflow-y: auto; overflow-x: auto;">
             <table class="ef-table" id="ef-report-table">
               <thead id="ef-report-thead">
                 <!-- dynamic headers -->
@@ -8706,6 +8706,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 		$tbody.empty();
 		$kpis.empty();
 		$empty.hide();
+		// Reset: sólo algunos reportes anchos fuerzan scroll horizontal (ver más abajo).
+		this.$body.find("#ef-report-table").css("min-width", "");
 
 		this._last_report_data = data;
 		this._last_report_id = report_id;
@@ -9285,16 +9287,19 @@ body.facex-fullscreen-mode .ef-main-layout {
 				return;
 			}
 
+			// tabla ancha → habilitar scroll horizontal dentro de #ef-report-table-wrapper
+			this.$body.find("#ef-report-table").css("min-width", "1080px");
+
 			$thead.append(`
 				<tr>
-					<th class="ef-th">Código</th>
-					<th class="ef-th">Nombre</th>
-					<th class="ef-th">Grupo</th>
-					<th class="ef-th ef-td-num">Precio Neto</th>
-					<th class="ef-th ef-td-num">Precio c/IVA</th>
-					<th class="ef-th ef-td-num">Costo (${basisLabels[sum.cost_basis] || "base"})</th>
-					<th class="ef-th ef-td-num">Utilidad Q</th>
-					<th class="ef-th ef-td-num">Utilidad %</th>
+					<th class="ef-th" style="min-width:120px;">Código</th>
+					<th class="ef-th" style="min-width:200px;">Nombre</th>
+					<th class="ef-th" style="min-width:130px;">Grupo</th>
+					<th class="ef-th ef-td-num" style="min-width:110px;">Precio Neto</th>
+					<th class="ef-th ef-td-num" style="min-width:110px;">Precio c/IVA</th>
+					<th class="ef-th ef-td-num" style="min-width:150px;">Costo (${basisLabels[sum.cost_basis] || "base"})</th>
+					<th class="ef-th ef-td-num" style="min-width:110px;">Utilidad Q</th>
+					<th class="ef-th ef-td-num" style="min-width:100px;">Utilidad %</th>
 				</tr>
 			`);
 
@@ -10080,10 +10085,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.on("input", ".ef-ap-cost-input, .ef-ap-util-input", (e) => {
 			this._recalc_pricing_row($(e.currentTarget).closest("tr"));
 		});
-		// El cambio de base de costo / redondeo re-evalúa la 'Situación actual' y los
-		// precios calculados de todas las filas (sin tocar lo que el usuario ya editó).
-		this.$body.on("change", "#ef-ap-round-step, #ef-ap-round-mode, #ef-ap-cost-basis", () => {
+		// Redondeo → sólo recalcular en el cliente (no cambia costos ni precios base).
+		this.$body.on("change", "#ef-ap-round-step, #ef-ap-round-mode", () => {
 			this.$body.find("#ef-ap-tbody tr[data-item]").each((_, tr) => this._recalc_pricing_row($(tr)));
+		});
+		// Base de costo o lista de precios → recargar el grid automáticamente si ya hay resultados.
+		this.$body.on("change", "#ef-ap-cost-basis, #ef-ap-price-list", () => {
+			if (this.$body.find("#ef-ap-tbody tr[data-item]").length) this._search_pricing_rows();
 		});
 		this.$body.on("change", "#ef-ap-tbody .ef-ap-row-check", () => this._update_ap_selected_count());
 
