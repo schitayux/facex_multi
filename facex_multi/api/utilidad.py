@@ -262,19 +262,21 @@ def _items_for_supplier(company: str, supplier: str) -> set:
 
 
 def _fetch_items(company: str, item_group: str = None, item_code: str = None,
-                 supplier: str = None, limit: int = 500) -> list:
+                 supplier: str = None, limit: int = 500, require_stock: bool = True) -> list:
     """Ítems de la compañía filtrados por grupo / código / proveedor.
 
-    Sólo considera productos **de venta e inventariables** (``is_sales_item = 1``
-    y ``is_stock_item = 1``): la utilidad y la asignación de precios aplican a lo
-    que realmente se vende y se maneja en stock.
+    Siempre exige ``is_sales_item = 1`` (productos de venta). El informe de
+    Utilidad además exige ``is_stock_item = 1`` (``require_stock=True``); la
+    Asignación de Precios lo deja pasar para poder tarifar también servicios /
+    ítems no inventariables.
     """
     conditions = [
         "disabled = 0",
         "is_sales_item = 1",
-        "is_stock_item = 1",
         _company_item_filter(),
     ]
+    if require_stock:
+        conditions.append("is_stock_item = 1")
     params = {"company": company}
 
     if item_code:
@@ -454,7 +456,7 @@ def get_pricing_rows(company: str = None, supplier: str = None, item_group: str 
         frappe.throw("Indique un proveedor, un grupo de artículos o un ítem para buscar.")
 
     price_list = price_list or _get_selling_price_list()
-    items = _fetch_items(company, item_group, item_code, supplier)
+    items = _fetch_items(company, item_group, item_code, supplier, require_stock=False)
     costs = _costs_for_items(items, company, supplier)
     rates = _price_list_rates([it["item_code"] for it in items], price_list)
     currency = frappe.db.get_value("Price List", price_list, "currency") or "GTQ"
