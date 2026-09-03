@@ -1717,11 +1717,30 @@ class EFastSalePage {
           </div>
           <div class="ef-field-group">
             <label class="ef-label">% Utilidad (global)</label>
-            <input type="number" id="ef-ap-util-global" class="ef-input" style="width:100%;" min="0" step="any" value="30" />
+            <input type="number" id="ef-ap-util-global" class="ef-input" style="width:100%;" min="0" step="any" value="0" />
           </div>
           <div class="ef-field-group">
             <label class="ef-label">Tasa IVA %</label>
             <input type="number" id="ef-ap-iva" class="ef-input" style="width:100%;" min="0" step="any" value="12" />
+          </div>
+          <div class="ef-field-group">
+            <label class="ef-label">Redondear precio c/IVA a</label>
+            <select id="ef-ap-round-step" class="ef-input" style="width:100%;">
+              <option value="0">Ninguno (2 decimales)</option>
+              <option value="0.05">0.05</option>
+              <option value="0.10">0.10</option>
+              <option value="0.25">0.25</option>
+              <option value="0.50">0.50</option>
+              <option value="1">1.00</option>
+            </select>
+          </div>
+          <div class="ef-field-group">
+            <label class="ef-label">Dirección de redondeo</label>
+            <select id="ef-ap-round-mode" class="ef-input" style="width:100%;">
+              <option value="up">Hacia arriba</option>
+              <option value="nearest">Al más cercano</option>
+              <option value="down">Hacia abajo</option>
+            </select>
           </div>
           <div class="ef-field-group">
             <label class="ef-label">Proveedor</label>
@@ -1740,6 +1759,7 @@ class EFastSalePage {
           </div>
         </div>
         <div id="ef-ap-status" style="font-size:11px; color:#64748b; margin-top:10px; min-height:14px;"></div>
+        <div id="ef-ap-store-hint" style="font-size:11.5px; margin-top:4px;"></div>
       </div>
 
       <div class="ef-analytics-card" style="box-shadow: var(--ef-shadow); padding:16px;">
@@ -9236,7 +9256,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 				</div>
 				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-text-muted); cursor: default;">
 					<div class="ef-stat-label">Lista de Precios · IVA</div>
-					<div class="ef-stat-value" style="font-size:13px;">${_esc(sum.price_list || "")} · ${_fmt(sum.iva_rate || 0)}%</div>
+					<div class="ef-stat-value" style="font-size:13px;">${_esc(sum.price_list || "")} · ${_fmt(sum.iva_rate || 0)}%${sum.iva_inclusive ? " (incl.)" : ""}</div>
 				</div>
 			`);
 
@@ -10040,7 +10060,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.on("input", ".ef-ap-cost-input, .ef-ap-util-input", (e) => {
 			this._recalc_pricing_row($(e.currentTarget).closest("tr"));
 		});
-		this.$body.on("change", "#ef-ap-iva", () => {
+		this.$body.on("change", "#ef-ap-iva, #ef-ap-round-step, #ef-ap-round-mode", () => {
 			this.$body.find("#ef-ap-tbody tr[data-item]").each((_, tr) => this._recalc_pricing_row($(tr)));
 		});
 		this.$body.on("change", "#ef-ap-tbody .ef-ap-row-check", () => this._update_ap_selected_count());
@@ -10356,6 +10376,28 @@ body.facex-fullscreen-mode .ef-main-layout {
 		return this.doc.company || this.defaults.company || "";
 	}
 
+	// Redondeo del precio con IVA — espejo de facex_multi.api.utilidad._round_price
+	_ap_round_price(value) {
+		const step = parseFloat(this.$body.find("#ef-ap-round-step").val()) || 0;
+		const mode = this.$body.find("#ef-ap-round-mode").val() || "nearest";
+		if (!(step > 0)) return Math.round((value + 1e-9) * 100) / 100;
+		const eps = 1e-9;
+		let q = value / step;
+		if (mode === "up") q = Math.ceil(q - eps);
+		else if (mode === "down") q = Math.floor(q + eps);
+		else q = Math.floor(q + 0.5 + eps);
+		return Math.round(q * step * 100) / 100;
+	}
+
+	_ap_update_store_hint() {
+		const $h = this.$body.find("#ef-ap-store-hint");
+		if (this._ap_iva_inclusive) {
+			$h.html('Esta lista de precios guarda el precio <b>CON IVA</b> (redondeado). El precio neto es informativo.').css("color", "#1d4ed8");
+		} else {
+			$h.html('Esta lista de precios guarda el precio <b>NETO</b> (= precio con IVA redondeado ÷ IVA). El precio con IVA es informativo.').css("color", "#64748b");
+		}
+	}
+
 	_load_pricing_assignment() {
 		const $select = this.$body.find("#ef-ap-price-list");
 		$select.empty().append('<option value="">Cargando listas...</option>');
@@ -10363,6 +10405,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 			'<tr><td colspan="11" style="text-align:center; color:#94a3b8; padding:20px;">Filtre por proveedor, grupo de artículos o ítem y presione Buscar.</td></tr>'
 		);
 		this.$body.find("#ef-ap-status").text("");
+		this.$body.find("#ef-ap-util-global").val(0);
+		this._ap_iva_inclusive = false;
 		this._update_ap_selected_count();
 
 		frappe.call({
@@ -10383,6 +10427,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 					callback: (cr) => {
 						const ctx = cr.message || {};
 						if (ctx.iva_rate != null) this.$body.find("#ef-ap-iva").val(ctx.iva_rate);
+						this._ap_iva_inclusive = !!ctx.iva_inclusive;
+						this._ap_update_store_hint();
 						if (ctx.default_price_list && $select.find(`option[value="${ctx.default_price_list}"]`).length) {
 							$select.val(ctx.default_price_list);
 						}
@@ -10426,6 +10472,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const basis = this.$body.find("#ef-ap-cost-basis").val();
 		const globalUtil = parseFloat(this.$body.find("#ef-ap-util-global").val()) || 0;
 		if (data.iva_rate != null) this.$body.find("#ef-ap-iva").val(data.iva_rate);
+		if (data.iva_inclusive != null) this._ap_iva_inclusive = !!data.iva_inclusive;
+		this._ap_update_store_hint();
 		this.$body.find("#ef-ap-select-all").prop("checked", false);
 
 		if (!rows.length) {
@@ -10462,9 +10510,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const util = parseFloat($tr.find(".ef-ap-util-input").val()) || 0;
 		const iva = parseFloat(this.$body.find("#ef-ap-iva").val()) || 0;
 		const cur = $tr.attr("data-cur") || "GTQ";
-		const neto = cost * (1 + util / 100);
-		const conIva = neto * (1 + iva / 100);
+		const factor = 1 + iva / 100;
+		const netoBruto = cost * (1 + util / 100);
+		const conIva = this._ap_round_price(netoBruto * factor);
+		const neto = factor ? conIva / factor : conIva;   // deriva del con-IVA ya redondeado
 		$tr.attr("data-neto", neto);
+		$tr.attr("data-con-iva", conIva);
 		$tr.find(".ef-ap-neto").text(cost ? _fmtCurrency(neto, cur) : "—");
 		$tr.find(".ef-ap-iva-val").text(cost ? _fmtCurrency(conIva, cur) : "—");
 	}
@@ -10494,9 +10545,16 @@ body.facex-fullscreen-mode .ef-main-layout {
 		}
 		const sinCosto = rows.filter((r) => !(r.costo > 0)).length;
 		const guardar = this.$body.find("#ef-ap-save-cost").prop("checked") ? 1 : 0;
+		const round_step = parseFloat(this.$body.find("#ef-ap-round-step").val()) || 0;
+		const round_mode = this.$body.find("#ef-ap-round-mode").val() || "nearest";
+		const modeLbl = { up: "hacia arriba", down: "hacia abajo", nearest: "al más cercano" }[round_mode];
+		const queGraba = this._ap_iva_inclusive
+			? "el precio <b>CON IVA</b> (redondeado)"
+			: "el precio <b>NETO</b> (derivado del precio con IVA redondeado)";
 
 		frappe.confirm(
-			`Se asignará el precio neto calculado a <b>${rows.length - sinCosto}</b> producto(s) en la lista <b>${_esc(price_list)}</b>.`
+			`Se asignará ${queGraba} a <b>${rows.length - sinCosto}</b> producto(s) en la lista <b>${_esc(price_list)}</b>.`
+			+ (round_step > 0 ? `<br>El precio con IVA se redondea a <b>${round_step.toFixed(2)}</b> ${modeLbl}.` : `<br>El precio con IVA se deja a 2 decimales.`)
 			+ (sinCosto ? `<br><span style="color:#b45309;">${sinCosto} fila(s) sin costo válido se omitirán.</span>` : "")
 			+ (guardar ? `<br>También se guardará el costo usado como Costo Estándar del producto.` : ""),
 			() => {
@@ -10507,6 +10565,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 						price_list,
 						company: this._ap_company(),
 						guardar_costo_estandar: guardar,
+						round_step,
+						round_mode,
 					},
 					freeze: true,
 					freeze_message: "Aplicando precios...",

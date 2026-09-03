@@ -14,9 +14,17 @@ bases de costo:
                   (opcionalmente filtrada por proveedor).
 
 El % de utilidad es *markup sobre costo*: ``precio_neto = costo * (1 + util%/100)``.
-El IVA se aplica sólo para mostrar el precio con impuesto (``neto * (1 + iva%/100)``);
-la utilidad se calcula siempre sobre el neto. La tasa de IVA se toma de la plantilla
-de impuestos de venta por defecto de la compañía (override manual desde el front).
+La utilidad se calcula siempre sobre el neto. La tasa de IVA y si va incluida en el
+precio base se toman de la plantilla de impuestos de venta por defecto de la compañía
+(``Sales Taxes and Charges.included_in_print_rate``); el front permite override de la tasa.
+
+- Plantilla **exclusiva** (IVA no incluido): ``Item Price`` guarda el NETO.
+- Plantilla **inclusiva** (``included_in_print_rate=1``): ``Item Price`` guarda el
+  precio CON IVA (así lo espera el Facturador de esa compañía).
+
+La Asignación de Precios puede además redondear el precio de venta CON IVA a un paso
+comercial (0.05 / 0.10 / 0.25 / 0.50 / 1.00) hacia arriba, abajo o al más cercano;
+el valor guardado se deriva de ese con-IVA redondeado.
 
 Todas las consultas están aisladas por compañía con el mismo criterio ``bfel_company``
 que usa ``facex_multi.api.item``.
@@ -24,6 +32,7 @@ que usa ``facex_multi.api.item``.
 from __future__ import annotations
 
 import json
+import math
 
 import frappe
 from frappe.utils import flt
@@ -85,8 +94,16 @@ def _company_item_filter(alias: str = "") -> str:
     )"""
 
 
-def _get_iva_rate(company: str) -> float:
-    """Suma de tasas de la plantilla de impuestos de venta por defecto de la compañía."""
+ROUND_STEPS = (0.0, 0.05, 0.10, 0.25, 0.50, 1.0)
+ROUND_MODES = ("nearest", "up", "down")
+
+
+def _get_iva_config(company: str) -> dict:
+    """{'rate': %, 'inclusive': bool} de la plantilla de impuestos de venta por defecto.
+
+    ``inclusive`` es True si alguna fila de la plantilla tiene
+    ``included_in_print_rate = 1`` ("¿Está incluido este impuesto en el precio base?").
+    """
     template = (
         frappe.db.get_value(
             "Sales Taxes and Charges Template", {"company": company, "is_default": 1}, "name"
@@ -99,12 +116,43 @@ def _get_iva_rate(company: str) -> float:
         )
     )
     if not template:
-        return DEFAULT_IVA_RATE
+        return {"rate": DEFAULT_IVA_RATE, "inclusive": False}
     rows = frappe.get_all(
-        "Sales Taxes and Charges", filters={"parent": template}, fields=["rate"]
+        "Sales Taxes and Charges",
+        filters={"parent": template, "charge_type": ["in", ["On Net Total", "On Previous Row Total", "On Previous Row Amount"]]},
+        fields=["rate", "included_in_print_rate"],
     )
     total = sum(flt(r.rate) for r in rows)
-    return total or DEFAULT_IVA_RATE
+    inclusive = any(int(r.included_in_print_rate or 0) for r in rows)
+    # total puede ser 0 legítimamente (plantilla EXE/exenta) — sólo caer al
+    # default cuando no había ninguna fila de impuesto porcentual.
+    rate = total if rows else DEFAULT_IVA_RATE
+    return {"rate": rate, "inclusive": inclusive}
+
+
+def _get_iva_rate(company: str) -> float:
+    """Sólo la tasa — atajo para el informe de Utilidad y la exportación."""
+    return _get_iva_config(company)["rate"]
+
+
+def _round_price(value: float, step: float = 0.0, mode: str = "nearest") -> float:
+    """Redondea `value` al múltiplo de `step` más cercano / hacia arriba / hacia abajo.
+
+    `step` 0 (o None) → sólo 2 decimales. El resultado siempre queda a 2 decimales.
+    """
+    value = flt(value)
+    step = flt(step)
+    if step <= 0:
+        return round(value + 1e-9, 2)
+    q = value / step
+    eps = 1e-9
+    if mode == "up":
+        q = math.ceil(q - eps)
+    elif mode == "down":
+        q = math.floor(q + eps)
+    else:
+        q = math.floor(q + 0.5 + eps)
+    return round(q * step, 2)
 
 
 def _weighted_avg_costs(item_codes: list, company: str, allowed_warehouses) -> dict:
@@ -293,7 +341,9 @@ def get_utility_analysis(cost_basis: str = "estandar", company: str = None,
 
     cost_basis = cost_basis if cost_basis in COST_BASES else "estandar"
     price_list = price_list or _get_selling_price_list()
-    iva_rate = _get_iva_rate(company)
+    iva_cfg = _get_iva_config(company)
+    iva_rate = iva_cfg["rate"]
+    iva_inclusive = iva_cfg["inclusive"]
 
     items = _fetch_items(company, item_group, item_code, supplier)
     costs = _costs_for_items(items, company, supplier)
@@ -308,7 +358,14 @@ def get_utility_analysis(cost_basis: str = "estandar", company: str = None,
         code = it["item_code"]
         c = costs.get(code, {})
         costo = flt(c.get(cost_basis))
-        neto = flt(rates.get(code, 0.0))
+        rate = flt(rates.get(code, 0.0))
+        # Item Price guarda el con-IVA cuando la plantilla es inclusiva → derivar el neto.
+        if iva_inclusive and iva_rate:
+            neto = rate / (1 + iva_rate / 100.0)
+            con_iva = rate
+        else:
+            neto = rate
+            con_iva = neto * (1 + iva_rate / 100.0)
         util_q = neto - costo
         util_pct = (util_q / costo * 100.0) if costo else 0.0
         margen_precio_pct = (util_q / neto * 100.0) if neto else 0.0
@@ -323,7 +380,7 @@ def get_utility_analysis(cost_basis: str = "estandar", company: str = None,
             "item_group": it["item_group"] or "",
             "uom": it["stock_uom"] or "",
             "precio_neto": neto,
-            "precio_con_iva": neto * (1 + iva_rate / 100.0),
+            "precio_con_iva": con_iva,
             "costo_estandar": flt(c.get("estandar")),
             "costo_ponderado": flt(c.get("ponderado")),
             "costo_ultima_compra": flt(c.get("ultima_compra")),
@@ -340,6 +397,7 @@ def get_utility_analysis(cost_basis: str = "estandar", company: str = None,
             "con_utilidad_negativa": negativos,
             "util_pct_promedio": (suma_pct / n_pct) if n_pct else 0.0,
             "iva_rate": iva_rate,
+            "iva_inclusive": iva_inclusive,
             "price_list": price_list,
             "currency": currency,
             "cost_basis": cost_basis,
@@ -354,8 +412,10 @@ def get_pricing_context(company: str = None) -> dict:
         frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
     company = get_effective_company(company)
     _check_pricing_permission(company)
+    cfg = _get_iva_config(company)
     return {
-        "iva_rate": _get_iva_rate(company),
+        "iva_rate": cfg["rate"],
+        "iva_inclusive": cfg["inclusive"],
         "default_price_list": _get_selling_price_list(),
     }
 
@@ -394,9 +454,11 @@ def get_pricing_rows(company: str = None, supplier: str = None, item_group: str 
             "precio_actual": flt(rates.get(code, 0.0)),
         })
 
+    cfg = _get_iva_config(company)
     return {
         "rows": rows,
-        "iva_rate": _get_iva_rate(company),
+        "iva_rate": cfg["rate"],
+        "iva_inclusive": cfg["inclusive"],
         "price_list": price_list,
         "currency": currency,
     }
@@ -404,11 +466,19 @@ def get_pricing_rows(company: str = None, supplier: str = None, item_group: str 
 
 @frappe.whitelist()
 def apply_utility_prices(rows_json: str, price_list: str = None, company: str = None,
-                         guardar_costo_estandar: int = 0) -> dict:
-    """Asigna precios de venta (netos) a partir de costo + % de utilidad.
+                         guardar_costo_estandar: int = 0,
+                         round_step: float = 0.0, round_mode: str = "nearest") -> dict:
+    """Asigna precios de venta a partir de costo + % de utilidad (markup sobre costo).
 
-    Cada fila: {item_code, costo, util_pct}. El precio neto se recalcula aquí
-    (markup sobre costo) — el valor calculado en el cliente sólo es indicativo.
+    Cada fila: {item_code, costo, util_pct}. Todo se recalcula aquí — el valor del
+    cliente es sólo indicativo.
+
+    Flujo por fila:
+      neto_bruto  = costo * (1 + util_pct/100)
+      con_iva     = neto_bruto * (1 + iva/100)
+      con_iva     = redondear(con_iva, round_step, round_mode)   # 0.05/0.10/0.25/0.50/1.00
+      si plantilla INCLUSIVA  → Item Price = con_iva
+      si plantilla EXCLUSIVA  → Item Price = con_iva / (1 + iva/100)   (neto, plena precisión)
     """
     if not has_efast_permission():
         frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
@@ -422,6 +492,14 @@ def apply_utility_prices(rows_json: str, price_list: str = None, company: str = 
 
     price_list = price_list or _get_selling_price_list()
     guardar_costo_estandar = int(guardar_costo_estandar or 0)
+    round_step = flt(round_step)
+    if round_mode not in ROUND_MODES:
+        round_mode = "nearest"
+
+    cfg = _get_iva_config(company)
+    iva_rate = cfg["rate"]
+    inclusive = cfg["inclusive"]
+    factor = 1 + iva_rate / 100.0
 
     updated, errors = [], []
     for row in rows:
@@ -433,19 +511,32 @@ def apply_utility_prices(rows_json: str, price_list: str = None, company: str = 
         if costo <= 0:
             errors.append({"item_code": code, "error": "Costo inválido (debe ser > 0)."})
             continue
-        neto = costo * (1 + util_pct / 100.0)
+
+        neto_bruto = costo * (1 + util_pct / 100.0)
+        con_iva = _round_price(neto_bruto * factor, round_step, round_mode)
+        stored = con_iva if inclusive else round(con_iva / factor, 6)
         try:
-            update_item_price(code, neto, price_list, company)
+            update_item_price(code, stored, price_list, company)
             if guardar_costo_estandar and frappe.get_meta("Item").has_field("custom_costo_estandar"):
                 frappe.db.set_value("Item", code, "custom_costo_estandar", costo)
-            updated.append({"item_code": code, "precio_neto": neto})
+            updated.append({
+                "item_code": code,
+                "guardado": round(stored, 6),
+                "precio_con_iva": con_iva,
+                "es_con_iva": inclusive,
+            })
         except Exception as e:
             errors.append({"item_code": code, "error": str(e)})
 
     if guardar_costo_estandar:
         frappe.db.commit()
 
-    return {"updated": updated, "errors": errors, "price_list": price_list}
+    return {
+        "updated": updated,
+        "errors": errors,
+        "price_list": price_list,
+        "iva_inclusive": inclusive,
+    }
 
 
 @frappe.whitelist()
