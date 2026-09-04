@@ -172,6 +172,9 @@ class EFastPOSScreen {
 					}
 					if (r.message.default_price_list && !this.doc.selling_price_list) {
 						this.doc.selling_price_list = r.message.default_price_list;
+						// El catálogo (get_pos_data) puede haber arrancado en paralelo
+						// sin cliente todavía — recargar precios ahora que se sabe cuál.
+						this._reload_catalog_prices(false);
 					}
 					this._render_customer_bar();
 				}
@@ -199,6 +202,7 @@ class EFastPOSScreen {
 				// asociada (bfel_company), se usa directo sin obligar al
 				// cajero a elegirla — solo se respeta una selección previa
 				// (retomar venta en espera / factura ya cargada).
+				const _hadList = !!this.doc.selling_price_list;
 				if (this.priceLists.length === 1 && !this.doc.selling_price_list) {
 					this.doc.selling_price_list = this.priceLists[0].name;
 				}
@@ -207,6 +211,7 @@ class EFastPOSScreen {
 				if (!this.doc.selling_price_list && this.defaults.default_price_list) {
 					this.doc.selling_price_list = this.defaults.default_price_list;
 				}
+				if (!_hadList && this.doc.selling_price_list) this._reload_catalog_prices(false);
 				this._render_step_encabezado();
 			},
 		});
@@ -218,6 +223,7 @@ class EFastPOSScreen {
 		if ((this.doc.selling_price_list || "") === next) return;
 		this.doc.selling_price_list = next;
 		this._reprice_cart();
+		this._reload_catalog_prices(false);
 		this._render_documento_card();
 	}
 
@@ -255,11 +261,27 @@ class EFastPOSScreen {
 				this._render_categories();
 			},
 		});
+		this._reload_catalog_prices(true);
+	}
+
+	// Recarga el catálogo (precio, stock) con la lista de precios efectiva
+	// (this.doc.selling_price_list / cliente actual). Sin esto, las tarjetas
+	// del grid mostraban SIEMPRE el precio de la lista global por defecto
+	// (Selling Settings) sin importar el cliente elegido — un precio distinto
+	// al que realmente se cobra al agregar el ítem (fix "no jala el precio").
+	// `withFreeze`: solo en la carga inicial se bloquea la pantalla; en
+	// recargas por cambio de cliente/lista es silenciosa.
+	_reload_catalog_prices(withFreeze) {
 		frappe.call({
 			method: "facex_multi.api.item.get_pos_items",
-			args: { company: this.doc.company, warehouse: this.posWarehouse || undefined },
-			freeze: true,
-			freeze_message: __("Cargando productos…"),
+			args: {
+				company: this.doc.company,
+				warehouse: this.posWarehouse || undefined,
+				customer: this.doc.customer || "",
+				price_list: this.doc.selling_price_list || "",
+			},
+			freeze: !!withFreeze,
+			freeze_message: withFreeze ? __("Cargando productos…") : undefined,
 			callback: (r) => {
 				this.allItems = r.message || [];
 				this._render_grid();
@@ -1371,6 +1393,7 @@ class EFastPOSScreen {
 		$body.find("#efs-fld-price-list").on("change", (e) => {
 			this.doc.selling_price_list = e.target.value;
 			this._reprice_cart();
+			this._reload_catalog_prices(false);
 		});
 		// Vendedor bloqueado: usuario limitado a un Socio de Ventas.
 		if (this.defaults.default_sales_partner_locked) {
@@ -1646,7 +1669,7 @@ class EFastPOSScreen {
 				${lmBtn}
 				${img}
 				<div class="efs-card-name">${_efs_esc(it.item_name || it.item_code)}</div>
-				<div class="efs-card-price">Q ${_efs_fmt(it.rate)}</div>
+				<div class="efs-card-price">Q ${_efs_fmt(it.rate)}${it.stock_uom ? ` <span class="efs-card-uom">/ ${_efs_esc(it.stock_uom)}</span>` : ""}</div>
 			</div>
 		`;
 	}
@@ -4501,6 +4524,7 @@ body.facex-fullscreen-mode .main-section {
 }
 .efs-card-name { font-size: 12px; font-weight: 600; line-height: 1.3; height: 32px; overflow: hidden; }
 .efs-card-price { font-size: 13px; font-weight: 700; color: var(--efs-primary); margin-top: 4px; }
+.efs-card-uom { font-size: 10px; font-weight: 600; color: var(--efs-text-muted); text-transform: uppercase; }
 .efs-card-badge {
   position: absolute; top: -6px; right: -6px; background: var(--efs-danger); color: #fff;
   border-radius: 50%; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center;

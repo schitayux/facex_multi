@@ -25,6 +25,35 @@ def _get_selling_price_list():
     return plist
 
 
+def resolve_selling_price_list(company: str, customer: str = None, price_list: str = None) -> str:
+    """
+    Lista de precios de venta efectiva — misma prioridad en TODO FacEx
+    (encabezado, grid de ítems del Clásico, catálogo de tarjetas de Screen):
+      1. price_list explícita (selector del page / venta en espera retomada)
+      2. Customer.default_price_list — la ficha del cliente SIEMPRE gana
+      3. Lista por defecto del usuario en FacEx Settings (lista_precios_por_defecto)
+      4. Selling Settings / Standard Selling / primera lista de venta activa
+    """
+    plist = price_list
+    if not plist and customer:
+        plist = frappe.db.get_value("Customer", customer, "default_price_list")
+
+    if not plist:
+        from facex_multi.api.permissions import get_facex_default_price_list
+        plist = get_facex_default_price_list(company)
+
+    if not plist:
+        # Preferir una lista de venta activa de LA COMPAÑÍA antes que caer al
+        # fallback genérico de _get_selling_price_list (que puede resolver a
+        # una lista de otra compañía o "Standard Selling" fuera de contexto).
+        plist = (
+            frappe.db.get_value("Price List", {"selling": 1, "enabled": 1, "bfel_company": company}, "name")
+            if company else None
+        ) or _get_selling_price_list()
+
+    return plist or ""
+
+
 @frappe.whitelist()
 def get_price_lists(company: str = None):
     """Retorna todas las listas de precios activas (compras/ventas) de ERPNext filtradas por compañía."""
@@ -598,10 +627,16 @@ def get_pos_item_groups(company: str = None):
 
 
 @frappe.whitelist()
-def get_pos_items(company: str = None, item_group: str = None, txt: str = None, warehouse: str = None):
+def get_pos_items(company: str = None, item_group: str = None, txt: str = None, warehouse: str = None,
+                   customer: str = None, price_list: str = None):
     """Bulk: productos para la grilla de tarjetas de la pantalla POS (facex-screen).
     A diferencia de search_items/get_all_prices, trae item_group, imagen y precio
     en una sola consulta (sin N+1) para poder poblar el grid completo de un jalón.
+
+    El precio de cada tarjeta refleja la lista efectiva (`resolve_selling_price_list`:
+    explícita > cliente > usuario > Selling Settings) — el caller (facex_screen.js)
+    debe volver a llamar este método cuando cambie el cliente o la lista de precios
+    seleccionada, para que la tarjeta muestre el mismo precio que se cobrará.
 
     Si se pasa `warehouse`, `stock_qty` refleja las existencias de esa bodega
     específica; si no, se suman todas las bodegas de la compañía (señal
@@ -610,7 +645,7 @@ def get_pos_items(company: str = None, item_group: str = None, txt: str = None, 
         frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
 
     company = get_effective_company(company)
-    price_list = _get_selling_price_list()
+    price_list = resolve_selling_price_list(company, customer, price_list)
 
     conditions = [
         "i.disabled = 0",
