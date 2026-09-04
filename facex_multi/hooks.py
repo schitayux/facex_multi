@@ -32,6 +32,16 @@ doctype_js = {
 #     }
 # ]
 
+permission_query_conditions = {
+    "Customer": "facex_multi.api.permissions.customer_query_conditions",
+    "Sales Invoice": "facex_multi.api.permissions.sales_invoice_query_conditions",
+}
+
+has_permission = {
+    "Customer": "facex_multi.api.permissions.customer_has_permission",
+    "Sales Invoice": "facex_multi.api.permissions.sales_invoice_has_permission",
+}
+
 doc_events = {
     "Customer": {
         "validate": "facex_multi.api.customer.validate_customer_on_save"

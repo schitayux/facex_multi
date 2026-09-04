@@ -170,6 +170,9 @@ class EFastPOSScreen {
 						this.doc.sales_partner = r.message.default_sales_partner;
 						this._sales_partner_is_default = true;
 					}
+					if (r.message.default_price_list && !this.doc.selling_price_list) {
+						this.doc.selling_price_list = r.message.default_price_list;
+					}
 					this._render_customer_bar();
 				}
 			},
@@ -188,7 +191,7 @@ class EFastPOSScreen {
 
 	_load_price_lists() {
 		frappe.call({
-			method: "facex_multi.api.item.get_price_lists",
+			method: "facex_multi.api.item.get_selectable_price_lists",
 			args: { company: this.doc.company },
 			callback: (r) => {
 				this.priceLists = (r.message || []).filter((p) => p.selling);
@@ -199,9 +202,23 @@ class EFastPOSScreen {
 				if (this.priceLists.length === 1 && !this.doc.selling_price_list) {
 					this.doc.selling_price_list = this.priceLists[0].name;
 				}
+				// Lista por defecto del usuario (FacEx Settings) — se usa cuando
+				// aún no hay selección ni cliente con lista.
+				if (!this.doc.selling_price_list && this.defaults.default_price_list) {
+					this.doc.selling_price_list = this.defaults.default_price_list;
+				}
 				this._render_step_encabezado();
 			},
 		});
+	}
+
+	_apply_customer_price_list(plist) {
+		// La lista de precios de la ficha del cliente SIEMPRE gana.
+		const next = plist || this.defaults.default_price_list || this.doc.selling_price_list || "";
+		if ((this.doc.selling_price_list || "") === next) return;
+		this.doc.selling_price_list = next;
+		this._reprice_cart();
+		this._render_documento_card();
 	}
 
 	_load_payment_terms_templates() {
@@ -1182,7 +1199,7 @@ class EFastPOSScreen {
 					}
 					$list.html(
 						rows.map((c) => `
-							<div class="efs-cust-row ${c.name === this.doc.customer ? "efs-cust-row-active" : ""}" data-name="${_efs_esc(c.name)}" data-label="${_efs_esc(c.customer_name)}" data-sales-partner="${_efs_esc(c.default_sales_partner || "")}">
+							<div class="efs-cust-row ${c.name === this.doc.customer ? "efs-cust-row-active" : ""}" data-name="${_efs_esc(c.name)}" data-label="${_efs_esc(c.customer_name)}" data-sales-partner="${_efs_esc(c.default_sales_partner || "")}" data-price-list="${_efs_esc(c.default_price_list || "")}">
 								<div class="efs-cust-name">${_efs_esc(c.customer_name)}</div>
 								<div class="efs-cust-nit">${_efs_esc(c.tax_id || "")}</div>
 							</div>
@@ -1197,6 +1214,7 @@ class EFastPOSScreen {
 							this.doc.sales_partner = defaultPartner;
 							this._sales_partner_is_default = true;
 						}
+						this._apply_customer_price_list($row.data("price-list") || "");
 						// Ya seleccionado: ocultar la lista de búsqueda y limpiar el
 						// campo de texto en vez de re-renderizar toda la tarjeta
 						// (lo cual volvía a disparar renderList("") y remostraba el
@@ -1234,6 +1252,7 @@ class EFastPOSScreen {
 				args: { name: this.doc.customer, company: this.doc.company },
 				callback: (r) => {
 					this.customerDetails = r.message || null;
+					if (r.message) this._apply_customer_price_list(r.message.default_price_list || "");
 					this._render_customer_details_panel();
 				},
 			});
@@ -1303,6 +1322,9 @@ class EFastPOSScreen {
 					${priceLists.length === 1
 						? `<option value="${_efs_esc(priceLists[0].name)}" selected>${_efs_esc(priceLists[0].name)}</option>`
 						: `<option value="">(Por defecto)</option>${priceLists.map((p) => `<option value="${_efs_esc(p.name)}" ${p.name === this.doc.selling_price_list ? "selected" : ""}>${_efs_esc(p.name)}</option>`).join("")}`}
+					${(this.doc.selling_price_list && !priceLists.some((p) => p.name === this.doc.selling_price_list))
+						? `<option value="${_efs_esc(this.doc.selling_price_list)}" selected>${_efs_esc(this.doc.selling_price_list)} (del cliente)</option>`
+						: ""}
 				</select>
 			</div>
 			<div class="efs-field-row">
@@ -1346,8 +1368,18 @@ class EFastPOSScreen {
 			});
 		});
 		$body.find("#efs-fld-serie").on("change", (e) => { this.doc.naming_series = e.target.value; });
-		$body.find("#efs-fld-price-list").on("change", (e) => { this.doc.selling_price_list = e.target.value; });
+		$body.find("#efs-fld-price-list").on("change", (e) => {
+			this.doc.selling_price_list = e.target.value;
+			this._reprice_cart();
+		});
+		// Vendedor bloqueado: usuario limitado a un Socio de Ventas.
+		if (this.defaults.default_sales_partner_locked) {
+			const $v = $body.find("#efs-fld-vendedor");
+			$v.val(this.defaults.default_sales_partner || "").prop("disabled", true);
+			this.doc.sales_partner = this.defaults.default_sales_partner || "";
+		}
 		$body.find("#efs-fld-vendedor").on("change", (e) => {
+			if (this.defaults.default_sales_partner_locked) return;
 			this.doc.sales_partner = e.target.value;
 			this._sales_partner_is_default = false;
 			this._render_vendor_bar();
@@ -1840,7 +1872,46 @@ class EFastPOSScreen {
 			tiene_adenda: 0,
 		};
 		this.doc.items.push(row);
-		return this.doc.items.length - 1;
+		const newIdx = this.doc.items.length - 1;
+		// El precio del grid es el precio estándar del catálogo; re-cotizar
+		// contra la lista vigente (la del cliente si tiene, o la elegida).
+		this._reprice_row(newIdx);
+		return newIdx;
+	}
+
+	// ── Lista de Precios: re-cotización del carrito ──────────────────────
+
+	_reprice_row(idx) {
+		const row = this.doc.items[idx];
+		if (!row || !row.item_code) return;
+		const item_code = row.item_code;
+		frappe.call({
+			method: "facex_multi.api.invoice.get_item_details",
+			args: {
+				item_code,
+				company: this.doc.company || this.defaults.company || "",
+				customer: this.doc.customer || "",
+				warehouse: row.warehouse || this.posWarehouse || this.defaults.default_warehouse || "",
+				price_list: this.doc.selling_price_list || "",
+			},
+			callback: (r) => {
+				if (r.exc || !r.message) return;
+				const cur = this.doc.items[idx];
+				if (!cur || cur.item_code !== item_code) return;
+				const d = r.message;
+				if (d.rate !== undefined && d.rate !== null) {
+					cur.rate = parseFloat(d.rate) || 0;
+					cur.price_list_rate = cur.rate;
+					this._render_cart();
+				}
+			},
+		});
+	}
+
+	_reprice_cart() {
+		(this.doc.items || []).forEach((row, idx) => {
+			if (row.item_code) this._reprice_row(idx);
+		});
 	}
 
 	_change_qty(idx, delta) {

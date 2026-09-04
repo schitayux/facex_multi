@@ -154,9 +154,14 @@ def search_customer(txt: str, company: str = None):
         return []
     txt = txt.strip()
     company = get_effective_company(company)
+
+    from facex_multi.api.permissions import get_facex_customer_partner_sql
+    sp_cond, sp_params = get_facex_customer_partner_sql(company)
+    sp_filter = f"AND {sp_cond}" if sp_cond else ""
+
     rows = frappe.db.sql(
-        """
-        SELECT name, customer_name, tax_id, bfel_id_receptor
+        f"""
+        SELECT name, customer_name, tax_id, bfel_id_receptor, default_price_list
         FROM `tabCustomer`
         WHERE disabled = 0
           AND (
@@ -164,10 +169,11 @@ def search_customer(txt: str, company: str = None):
               OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
           )
           AND (name LIKE %(q)s OR customer_name LIKE %(q)s OR tax_id LIKE %(q)s OR bfel_id_receptor LIKE %(q)s)
+          {sp_filter}
         ORDER BY customer_name ASC
         LIMIT 20
         """,
-        {"q": f"%{txt}%", "company": company},
+        {"q": f"%{txt}%", "company": company, **sp_params},
         as_dict=True,
     )
     for row in rows:
@@ -229,6 +235,13 @@ def search_customers_maintenance(company: str = None, start: int = 0, page_lengt
               bfel_company = %(company)s
               OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
           )"""
+
+    from facex_multi.api.permissions import get_facex_customer_partner_sql
+    sp_cond, sp_params = get_facex_customer_partner_sql(company)
+    if sp_cond:
+        conditions.append(sp_cond)
+        params.update(sp_params)
+
     where = " AND ".join([company_filter] + conditions)
 
     total = frappe.db.sql(f"SELECT COUNT(*) FROM `tabCustomer` WHERE {where}", params)[0][0]
@@ -263,6 +276,15 @@ def export_customers_excel(names_json: str, company: str = None):
     company = get_effective_company(company)
 
     placeholders = ", ".join(["%s"] * len(names))
+
+    from facex_multi.api.permissions import get_facex_user_sales_partner
+    sp = get_facex_user_sales_partner(company)
+    sp_filter = ""
+    params = list(names) + [company]
+    if sp:
+        sp_filter = "AND (default_sales_partner = %s OR customer_name = 'Consumidor Final')"
+        params.append(sp)
+
     rows = frappe.db.sql(
         f"""
         SELECT name, customer_name, tax_id, bfel_id_receptor, customer_group, mobile_no,
@@ -273,8 +295,9 @@ def export_customers_excel(names_json: str, company: str = None):
               bfel_company = %s
               OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
           )
+          {sp_filter}
         """,
-        tuple(names) + (company,),
+        tuple(params),
         as_dict=True,
     )
 
@@ -307,6 +330,11 @@ def get_customer(name: str, company: str = None):
     
     if doc.meta.has_field("bfel_company") and doc.bfel_company and doc.bfel_company != company:
         frappe.throw(f"El cliente '{name}' pertenece a otra compañía y no puede ser accedido.")
+
+    from facex_multi.api.permissions import get_facex_user_sales_partner
+    sp = get_facex_user_sales_partner(company)
+    if sp and (doc.get("default_sales_partner") or "") != sp and doc.customer_name != "Consumidor Final":
+        frappe.throw(f"El cliente '{name}' está asignado a otro socio de ventas y no puede ser accedido.")
 
     nit = doc.get("bfel_id_receptor") or doc.get("tax_id") or ""
 
@@ -379,6 +407,14 @@ def create_or_update_customer(data_json: str, company: str = None):
     if doc.meta.has_field("bfel_company"):
         doc.bfel_company = company
 
+    # Si el usuario está limitado a un Socio de Ventas (socio_venta_por_defecto
+    # en FacEx Settings), todo cliente que cree o edite queda asociado a ESE
+    # socio — no puede crear/mover clientes fuera de su cartera.
+    from facex_multi.api.permissions import get_facex_user_sales_partner
+    user_sp = get_facex_user_sales_partner(company)
+    if user_sp and doc.customer_name != "Consumidor Final":
+        doc.default_sales_partner = user_sp
+
     if "credit_limit" in data:
         _set_credit_limit_for_company(doc, company, flt(data.get("credit_limit")))
 
@@ -405,6 +441,15 @@ def validate_customer_on_save(doc, method=None):
         if nit:
             doc.bfel_id_receptor = nit
             doc.tax_id = nit
+
+    # Red de seguridad: un cliente nuevo creado por un usuario limitado a un
+    # Socio de Ventas (desde escritorio o cualquier vía) queda asociado a su
+    # socio si no se especificó otro.
+    if doc.is_new() and not doc.get("default_sales_partner") and doc.customer_name != "Consumidor Final":
+        from facex_multi.api.permissions import get_facex_user_sales_partner
+        user_sp = get_facex_user_sales_partner()
+        if user_sp:
+            doc.default_sales_partner = user_sp
 
     if doc.meta.has_field("bfel_company") and doc.bfel_company:
         company = doc.bfel_company
@@ -452,7 +497,7 @@ def get_or_create_walkin_customer(company: str = None):
     existing = frappe.db.get_value(
         "Customer",
         {"customer_name": "Consumidor Final", "bfel_company": company},
-        ["name", "customer_name", "default_sales_partner"],
+        ["name", "customer_name", "default_sales_partner", "default_price_list"],
         as_dict=True,
     )
     if existing:
@@ -482,4 +527,9 @@ def get_or_create_walkin_customer(company: str = None):
     doc.insert(ignore_permissions=True)
     frappe.db.commit()
 
-    return {"name": doc.name, "customer_name": doc.customer_name, "default_sales_partner": doc.default_sales_partner or ""}
+    return {
+        "name": doc.name,
+        "customer_name": doc.customer_name,
+        "default_sales_partner": doc.default_sales_partner or "",
+        "default_price_list": doc.default_price_list or "",
+    }

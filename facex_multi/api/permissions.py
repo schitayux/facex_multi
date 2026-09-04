@@ -14,7 +14,7 @@ _ALL_PERM_FIELDS = [
     "puede_compras", "puede_validar_compras", "puede_cancelar_compras",
     "crea_clientes", "modifica_clientes",
     "crea_proveedores", "modifica_proveedores",
-    "crea_items", "modifica_items", "actualiza_precios", "puede_editar_precio",
+    "crea_items", "modifica_items", "actualiza_precios",
     "gestiona_listas_materiales", "asignacion_precios",
     "reporte_ventas_fecha", "reporte_ventas_producto",
     "reporte_facturas_canceladas", "reporte_estados_cuenta",
@@ -136,6 +136,181 @@ def get_facex_default_sales_partner(company: str) -> str:
         {"user": frappe.session.user, "bfel_company": company},
         "socio_venta_por_defecto",
     ) or ""
+
+
+# ---------------------------------------------------------------------------
+# Editar precio manualmente en venta (FacEx Screen y Clásico)
+# ---------------------------------------------------------------------------
+# Deny-by-default: sin fila de FacEx Settings o con puede_editar_precio=0 el
+# usuario NO puede sobrescribir el precio unitario — se factura siempre con el
+# precio de la lista. A diferencia del resto de _ALL_PERM_FIELDS (acceso total
+# cuando no hay config), aquí "sin config → sin permiso".
+
+def get_facex_can_edit_price(company: str) -> bool:
+    if "System Manager" in frappe.get_roles():
+        return True
+    if not company:
+        return False
+    value = frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "puede_editar_precio",
+    )
+    return bool(int(value or 0))
+
+
+# ---------------------------------------------------------------------------
+# Listas de Precios habilitadas / por defecto (FacEx Screen y Clásico)
+# ---------------------------------------------------------------------------
+# Mismo criterio retrocompatible que las bodegas: None = sin restricción
+# (System Manager, sin fila de FacEx Settings, o grid vacío) → el caller debe
+# tratarlo como "todas las listas de venta de la compañía".
+
+def get_facex_allowed_price_lists(company: str):
+    if "System Manager" in frappe.get_roles():
+        return None
+    if not company:
+        return None
+
+    settings_name = frappe.db.get_value(
+        "FacEx Settings", {"user": frappe.session.user, "bfel_company": company}, "name"
+    )
+    if not settings_name:
+        return None
+
+    price_lists = frappe.get_all(
+        "FacEx Settings Lista Precios",
+        filters={"parent": settings_name, "parenttype": "FacEx Settings"},
+        pluck="price_list",
+    )
+    return price_lists or None
+
+
+def get_facex_default_price_list(company: str) -> str:
+    """
+    Lista de precios por defecto del usuario (campo lista_precios_por_defecto).
+    Se usa SOLO cuando el cliente no tiene una lista asignada en su ficha —
+    la del cliente siempre tiene prioridad. Vacío si no hay valor configurado.
+    """
+    if not company:
+        return ""
+    return frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "lista_precios_por_defecto",
+    ) or ""
+
+
+# ---------------------------------------------------------------------------
+# Segregación de clientes por Socio de Ventas
+# ---------------------------------------------------------------------------
+# Si el usuario tiene socio_venta_por_defecto asignado en FacEx Settings, solo
+# puede ver/usar los clientes de ese socio (Customer.default_sales_partner).
+# Vacío/null en TODAS sus filas → sin restricción (ve todos y elige cualquiera).
+# System Manager → sin restricción siempre.
+
+def get_facex_user_sales_partner(company: str = None, user: str = None) -> str:
+    """
+    Socio de Ventas al que está limitado `user` (por defecto la sesión activa).
+    Si `company` viene dado, mira solo esa fila; si no, mira todas las filas de
+    FacEx Settings del usuario y devuelve el valor solo si es único y no vacío
+    (evita ambigüedad cuando el usuario opera en varias compañías con socios
+    distintos).
+    """
+    user = user or frappe.session.user
+    if user in ("Administrator", "Guest"):
+        return ""
+    if "System Manager" in frappe.get_roles(user):
+        return ""
+
+    filters = {"user": user}
+    if company:
+        filters["bfel_company"] = company
+        return frappe.db.get_value("FacEx Settings", filters, "socio_venta_por_defecto") or ""
+
+    valores = {
+        v for v in frappe.get_all(
+            "FacEx Settings", filters=filters, pluck="socio_venta_por_defecto"
+        ) if v
+    }
+    return valores.pop() if len(valores) == 1 else ""
+
+
+def get_facex_customer_partner_sql(company: str = None, alias: str = "tabCustomer"):
+    """
+    Devuelve (condicion_sql, params) para acotar una consulta de Customer al
+    socio de ventas del usuario, o ("", {}) si no hay restricción. `alias` es
+    el nombre de tabla/alias tal como aparece en el FROM del caller.
+    El cliente mostrador (Consumidor Final) queda siempre visible.
+    """
+    sp = get_facex_user_sales_partner(company)
+    if not sp:
+        return "", {}
+    cond = (
+        f"(`{alias}`.default_sales_partner = %(facex_sp)s "
+        f"OR `{alias}`.customer_name = 'Consumidor Final')"
+    )
+    return cond, {"facex_sp": sp}
+
+
+def get_facex_invoice_partner_sql(company: str = None, alias: str = "tabSales Invoice"):
+    """
+    Devuelve (condicion_sql, params) para acotar una consulta de Sales Invoice
+    (o Quotation, Delivery Note, etc. — cualquier doctype con campo
+    sales_partner) al socio de ventas del usuario, o ("", {}) si no hay
+    restricción. `alias` = tabla/alias tal como aparece en el FROM del caller.
+    Cubre reportes, historial, KPIs y transporte de FacEx (consultas SQL crudas
+    que no pasan por permission_query_conditions).
+    """
+    sp = get_facex_user_sales_partner(company)
+    if not sp:
+        return "", {}
+    return f"`{alias}`.sales_partner = %(facex_inv_sp)s", {"facex_inv_sp": sp}
+
+
+def sales_invoice_query_conditions(user: str = None) -> str:
+    """Hook permission_query_conditions para Sales Invoice (escritorio, report
+    view, links). Un usuario limitado a un socio de ventas solo ve las facturas
+    de ese socio."""
+    sp = get_facex_user_sales_partner(user=user)
+    if not sp:
+        return ""
+    return f"`tabSales Invoice`.sales_partner = {frappe.db.escape(sp)}"
+
+
+def sales_invoice_has_permission(doc, user: str = None, ptype: str = None) -> bool:
+    if ptype in ("create", "select"):
+        return True
+    sp = get_facex_user_sales_partner(user=user)
+    if not sp:
+        return True
+    return (getattr(doc, "sales_partner", "") or "") == sp
+
+
+def customer_query_conditions(user: str = None) -> str:
+    """Hook permission_query_conditions para Customer (escritorio, reportes,
+    link de Cliente en Factura)."""
+    sp = get_facex_user_sales_partner(user=user)
+    if not sp:
+        return ""
+    sp_esc = frappe.db.escape(sp)
+    return (
+        f"(`tabCustomer`.default_sales_partner = {sp_esc} "
+        f"OR `tabCustomer`.customer_name = 'Consumidor Final')"
+    )
+
+
+def customer_has_permission(doc, user: str = None, ptype: str = None) -> bool:
+    """Hook has_permission para Customer — mismo criterio que
+    customer_query_conditions para el acceso a un cliente puntual."""
+    if ptype in ("create", "select"):
+        return True
+    sp = get_facex_user_sales_partner(user=user)
+    if not sp:
+        return True
+    if getattr(doc, "customer_name", "") == "Consumidor Final":
+        return True
+    return (getattr(doc, "default_sales_partner", "") or "") == sp
 
 
 def get_facex_company_config(company: str) -> dict:

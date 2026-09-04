@@ -26,13 +26,33 @@ from facex_multi.api.si_carga import _get_establishments
 
 
 def get_warehouses_meta(company: str):
-    """Almacenes de la compañía con su sucursal (bfel_establecimiento) asignada, si la hay."""
+    """Almacenes de la compañía con su sucursal (bfel_establecimiento) asignada,
+    si la hay — acotado a las bodegas habilitadas del usuario en FacEx Settings."""
+    from facex_multi.api.permissions import get_facex_allowed_warehouses
+    filters = {"company": company, "is_group": 0, "disabled": 0}
+    allowed = get_facex_allowed_warehouses(company)
+    if allowed is not None:
+        filters["name"] = ["in", allowed]
     return frappe.get_all(
         "Warehouse",
-        filters={"company": company, "is_group": 0, "disabled": 0},
+        filters=filters,
         fields=["name", "bfel_establecimiento"],
         order_by="name asc",
     )
+
+
+def _assert_warehouse_allowed(warehouse: str, company: str = None):
+    """frappe.throw si `warehouse` no está entre las bodegas habilitadas del
+    usuario (FacEx Settings). Sin restricción → no hace nada."""
+    if not warehouse:
+        return
+    from facex_multi.api.permissions import get_facex_allowed_warehouses
+    company = company or get_effective_company()
+    allowed = get_facex_allowed_warehouses(company)
+    if allowed is not None and warehouse not in allowed:
+        frappe.throw(
+            f"No tiene permiso para ver la bodega '{warehouse}'.", frappe.PermissionError
+        )
 
 
 def get_warehouses_for_establecimiento(company: str, establecimiento_id: str):
@@ -440,6 +460,7 @@ def get_valuation_rates(item_codes: str, warehouse: str = None):
     codes = frappe.parse_json(item_codes) or []
     if not codes or not warehouse:
         return {}
+    _assert_warehouse_allowed(warehouse)
     rows = frappe.get_all(
         "Bin",
         filters={"item_code": ["in", codes], "warehouse": warehouse},
@@ -454,6 +475,7 @@ def get_available_serials(item_code: str, warehouse: str):
     almacén — para el selector de series de Salidas/Transferencias."""
     if not warehouse:
         return []
+    _assert_warehouse_allowed(warehouse)
     return frappe.get_all(
         "Serial No",
         filters={"item_code": item_code, "warehouse": warehouse, "status": "Active"},
@@ -762,6 +784,23 @@ def _list_stock_movements(mode: str, company: str = None, from_date: str = None,
     from_date = from_date or get_first_day(today())
     to_date = to_date or get_last_day(today())
 
+    from facex_multi.api.permissions import get_facex_allowed_warehouses
+    allowed = get_facex_allowed_warehouses(company)
+    wh_filter = ""
+    values = {"company": company, "purpose": cfg["purpose"], "from_date": from_date, "to_date": to_date}
+    if allowed is not None:
+        # Solo movimientos que tocan alguna bodega habilitada del usuario
+        # (en el detalle o en el encabezado del Stock Entry).
+        wh_filter = """
+          AND (
+            se.from_warehouse IN %(allowed_wh)s
+            OR se.to_warehouse IN %(allowed_wh)s
+            OR EXISTS (SELECT 1 FROM `tabStock Entry Detail` sd
+                       WHERE sd.parent = se.name
+                         AND (sd.s_warehouse IN %(allowed_wh)s OR sd.t_warehouse IN %(allowed_wh)s))
+          )"""
+        values["allowed_wh"] = tuple(allowed) or ("",)
+
     rows = frappe.db.sql(
         f"""
         SELECT
@@ -774,10 +813,11 @@ def _list_stock_movements(mode: str, company: str = None, from_date: str = None,
           AND se.purpose = %(purpose)s
           {cfg.get("extra_filter", "")}
           AND se.posting_date BETWEEN %(from_date)s AND %(to_date)s
+          {wh_filter}
         ORDER BY se.posting_date DESC, se.creation DESC
         LIMIT 500
         """,
-        {"company": company, "purpose": cfg["purpose"], "from_date": from_date, "to_date": to_date},
+        values,
         as_dict=True,
     )
 
@@ -810,6 +850,18 @@ def get_stock_entry_detail(name: str):
     doc = frappe.get_doc("Stock Entry", name)
     if doc.company not in (get_user_companies() or []):
         frappe.throw("No tiene permiso para operar sobre esta compañía.", frappe.PermissionError)
+
+    from facex_multi.api.permissions import get_facex_allowed_warehouses
+    allowed = get_facex_allowed_warehouses(doc.company)
+    if allowed is not None:
+        wh_touched = {doc.from_warehouse, doc.to_warehouse}
+        for d in doc.items:
+            wh_touched.update({d.s_warehouse, d.t_warehouse})
+        if not ({w for w in wh_touched if w} & set(allowed)):
+            frappe.throw(
+                "Este movimiento no involucra ninguna de sus bodegas habilitadas.",
+                frappe.PermissionError,
+            )
 
     mode_by_purpose = {
         "Material Receipt": "in",

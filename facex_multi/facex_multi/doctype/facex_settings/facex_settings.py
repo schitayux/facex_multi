@@ -5,6 +5,7 @@ class FacExSettings(Document):
         import frappe
         self._validate_bodegas_habilitadas()
         self._validate_socio_venta_por_defecto()
+        self._validate_listas_precios()
 
         # user="" → registro de compañía (config DIGECAM); solo puede haber uno por compañía
         if not self.user:
@@ -55,3 +56,26 @@ class FacExSettings(Document):
             return
         from facex_multi.api.sales_partner import validate_sales_partner_company
         validate_sales_partner_company(self.socio_venta_por_defecto, self.bfel_company)
+
+    def _validate_listas_precios(self):
+        import frappe
+        from facex_multi.api.item import validate_price_list_company
+
+        habilitadas = []
+        for row in self.get("listas_precios_habilitadas") or []:
+            if not row.price_list:
+                continue
+            validate_price_list_company(row.price_list, self.bfel_company)
+            if not frappe.db.get_value("Price List", row.price_list, "selling"):
+                frappe.throw(
+                    f"La lista '{row.price_list}' no es una lista de venta y no puede habilitarse aquí."
+                )
+            habilitadas.append(row.price_list)
+
+        if self.lista_precios_por_defecto:
+            validate_price_list_company(self.lista_precios_por_defecto, self.bfel_company)
+            if habilitadas and self.lista_precios_por_defecto not in habilitadas:
+                frappe.throw(
+                    f"La Lista de Precios por Defecto '{self.lista_precios_por_defecto}' debe ser una de "
+                    "las Listas de Precios Habilitadas, o deja el grid vacío para no restringir listas."
+                )

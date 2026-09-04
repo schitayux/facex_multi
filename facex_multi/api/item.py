@@ -50,6 +50,52 @@ def get_price_lists(company: str = None):
 
 
 @frappe.whitelist()
+def get_selectable_price_lists(company: str = None):
+    """Listas de precios de VENTA que el usuario puede elegir manualmente en el
+    selector de FacEx / FacEx Screen. Es get_price_lists() acotado a
+    listas_precios_habilitadas de FacEx Settings cuando el usuario está
+    restringido (grid no vacío). Sin restricción → todas las de venta.
+    NO se usa para Asignación de Precios / Análisis de Utilidad (herramientas
+    de administración que siguen viendo todas las listas vía get_price_lists)."""
+    if not has_efast_permission():
+        frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
+
+    company = get_effective_company(company)
+    rows = [r for r in get_price_lists(company) if r.get("selling")]
+
+    from facex_multi.api.permissions import get_facex_allowed_price_lists
+    allowed = get_facex_allowed_price_lists(company)
+    if allowed is not None:
+        allowed_set = set(allowed)
+        rows = [r for r in rows if r["name"] in allowed_set]
+    return rows
+
+
+def validate_price_list_company(price_list: str, company: str) -> None:
+    """Valida que una Price List sea accesible desde `company` (misma lógica
+    bfel_company_null que Sales Partner / Customer). frappe.throw si no lo es."""
+    if not price_list or not company:
+        return
+    pl = frappe.db.get_value(
+        "Price List", price_list, ["bfel_company", "bfel_company_null"], as_dict=True
+    )
+    if not pl:
+        return
+    pl_company = pl.bfel_company or ""
+    pl_null = int(pl.bfel_company_null or 0)
+    if pl_company and pl_company != company:
+        frappe.throw(
+            f"La Lista de Precios '{price_list}' pertenece a '{pl_company}' "
+            f"y no puede utilizarse en '{company}'."
+        )
+    if not pl_company and pl_null:
+        frappe.throw(
+            f"La Lista de Precios '{price_list}' está marcada como exclusiva "
+            f"sin compañía asignada y no es accesible."
+        )
+
+
+@frappe.whitelist()
 def search_items(txt: str = None, company: str = None):
     """Busca ítems por código o nombre filtrados por compañía activa."""
     if not has_efast_permission():
@@ -752,9 +798,14 @@ def get_customers_list(txt: str = None, company: str = None):
     company = get_effective_company(company)
     
     txt_filter = "AND customer_name LIKE %(txt)s" if txt else ""
+
+    from facex_multi.api.permissions import get_facex_customer_partner_sql
+    sp_cond, sp_params = get_facex_customer_partner_sql(company)
+    sp_filter = f"AND {sp_cond}" if sp_cond else ""
+
     res = frappe.db.sql(
         f"""
-        SELECT name, customer_name, tax_id, bfel_id_receptor, default_sales_partner
+        SELECT name, customer_name, tax_id, bfel_id_receptor, default_sales_partner, default_price_list
         FROM `tabCustomer`
         WHERE disabled = 0
           AND (
@@ -762,10 +813,11 @@ def get_customers_list(txt: str = None, company: str = None):
               OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
           )
           {txt_filter}
+          {sp_filter}
         ORDER BY customer_name ASC
         LIMIT 50
         """,
-        {"company": company, "txt": f"%{txt}%" if txt else ""},
+        {"company": company, "txt": f"%{txt}%" if txt else "", **sp_params},
         as_dict=True,
     )
     for r in res:

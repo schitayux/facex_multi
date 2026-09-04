@@ -63,6 +63,10 @@
   "socio_venta_por_defecto",
   "cb_bodegas_socio",
   "bodegas_habilitadas",
+  "sb_listas_precios",
+  "lista_precios_por_defecto",
+  "cb_listas_precios",
+  "listas_precios_habilitadas",
   "sb_columnas",
   "mostrar_almacen",
   "mostrar_desc_pct",
@@ -226,7 +230,8 @@
    "default": "0",
    "fieldname": "puede_editar_precio",
    "fieldtype": "Check",
-   "label": "Editar Precio en Venta (FacEx Screen)"
+   "label": "Editar Precio Manualmente en Venta (FacEx Screen y Clásico)",
+   "description": "Por defecto NADIE puede editar el precio a mano: se factura siempre con el precio de la lista (la de la ficha del cliente o, si no tiene, la lista por defecto del usuario). Actívalo solo para usuarios autorizados a sobrescribir el precio unitario durante la venta."
   },
   {
    "default": "1",
@@ -442,6 +447,29 @@
    "label": "Bodegas Habilitadas",
    "options": "FacEx Settings Bodega",
    "description": "Bodegas que este usuario puede ver y seleccionar en FacEx, FacEx Screen y FacEx Inventario (grid de items, selects, saldos por bodega e informes). Vacío = puede ver y usar todas las bodegas de la compañía."
+  },
+  {
+   "fieldname": "sb_listas_precios",
+   "fieldtype": "Section Break",
+   "label": "Listas de Precios (FacEx / FacEx Screen)"
+  },
+  {
+   "fieldname": "lista_precios_por_defecto",
+   "fieldtype": "Link",
+   "label": "Lista de Precios por Defecto",
+   "options": "Price List",
+   "description": "Lista de precios precargada al iniciar una venta en FacEx / FacEx Screen cuando el cliente NO tiene una lista asignada en su ficha. La lista asignada al cliente siempre tiene prioridad sobre esta. Vacío = se usa la lista de Selling Settings."
+  },
+  {
+   "fieldname": "cb_listas_precios",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "listas_precios_habilitadas",
+   "fieldtype": "Table",
+   "label": "Listas de Precios Habilitadas",
+   "options": "FacEx Settings Lista Precios",
+   "description": "Listas de precios de venta que este usuario puede ver y elegir manualmente en el selector de FacEx / FacEx Screen. Vacío = puede ver y elegir todas las listas de venta de la compañía. No limita la lista asignada al cliente, que siempre se respeta."
   },
   {
    "fieldname": "sb_columnas",

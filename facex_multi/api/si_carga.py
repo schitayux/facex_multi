@@ -382,9 +382,17 @@ def create_invoices(
     if not naming_series:
         naming_series = _get_naming_series_for_company(company)[0] if _get_naming_series_for_company(company) else "SINV-.YYYY.-"
 
+    from facex_multi.api.permissions import get_facex_allowed_warehouses
+    _allowed_wh = get_facex_allowed_warehouses(company)
+    _wh_filters = {"company": company, "is_group": 0, "disabled": 0}
+    if _allowed_wh is not None:
+        _wh_filters["name"] = ["in", _allowed_wh]
+    default_warehouse = frappe.defaults.get_user_default("Warehouse")
+    if _allowed_wh is not None and default_warehouse and default_warehouse not in _allowed_wh:
+        default_warehouse = ""
     default_warehouse = (
-        frappe.defaults.get_user_default("Warehouse")
-        or frappe.db.get_value("Warehouse", {"company": company, "is_group": 0, "disabled": 0}, "name")
+        default_warehouse
+        or frappe.db.get_value("Warehouse", _wh_filters, "name")
         or ""
     )
     default_cost_center = (

@@ -644,6 +644,10 @@ class EFastSalePage {
                   <div data-ctrl="sales_partner" class="ef-link-ctrl" tabindex="12"></div>
                 </div>
               </div>
+              <div class="ef-field-group" id="ef-price-list-group" style="display:none;">
+                <label class="ef-label">Lista de Precios</label>
+                <select id="ef-price-list" class="ef-select" tabindex="12"></select>
+              </div>
               <div class="ef-field-group">
                 <label class="ef-label">Términos y Condiciones</label>
                 <textarea id="ef-terms" class="ef-textarea ef-textarea-sm" rows="2" placeholder="Términos..." tabindex="13"></textarea>
@@ -4055,6 +4059,15 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this._mark_dirty();
 		});
 
+		// Lista de Precios <select> — solo visible si el usuario puede elegir
+		// entre varias (ver _load_price_list_selector). El cambio re-cotiza.
+		this.$body.find("#ef-price-list").on("change", (e) => {
+			this.doc.selling_price_list = e.target.value || "";
+			this._mark_dirty();
+			this._reprice_all_items();
+		});
+		this._load_price_list_selector();
+
 		// Link fields vía Frappe ControlLink
 		this._make_link_ctrl("customer", "Customer", true);
 		this._make_link_ctrl("payment_terms_template", "Payment Terms Template", false);
@@ -4215,6 +4228,18 @@ body.facex-fullscreen-mode .ef-main-layout {
 		ctrl.refresh();
 		this.controls[fieldname] = ctrl;
 
+		// Vendedor bloqueado: el usuario está limitado a un Socio de Ventas
+		// (socio_venta_por_defecto en FacEx Settings) y no puede cambiarlo.
+		if (fieldname === "sales_partner" && this.defaults && this.defaults.default_sales_partner_locked) {
+			const fixed = this.defaults.default_sales_partner || "";
+			this.doc.sales_partner = fixed;
+			ctrl.set_value(fixed);
+			ctrl.df.read_only = 1;
+			if (ctrl.set_disp_area) ctrl.set_disp_area(fixed);
+			ctrl.refresh();
+			if (ctrl.$input) ctrl.$input.prop("readonly", true).css("background", "#f8fafc");
+		}
+
 		const _onCtrlChange = () => {
 			setTimeout(() => {
 				const val = ctrl.get_value() || "";
@@ -4287,8 +4312,18 @@ body.facex-fullscreen-mode .ef-main-layout {
 					this.doc.bfel_nombre = cname;
 					this.$body.find("#ef-bfel-nombre").val(cname);
 
-					if (r.message.default_price_list) {
-						this.doc.selling_price_list = r.message.default_price_list;
+					// La lista de precios de la ficha del cliente SIEMPRE gana.
+					// Si el cliente no tiene, se usa la lista por defecto del
+					// usuario (FacEx Settings) y, si tampoco, se deja la actual.
+					const _prevList = this.doc.selling_price_list || "";
+					this.doc.selling_price_list =
+						r.message.default_price_list
+						|| this.defaults.default_price_list
+						|| this.doc.selling_price_list
+						|| "";
+					this._sync_price_list_selector();
+					if ((this.doc.selling_price_list || "") !== _prevList) {
+						this._reprice_all_items();
 					}
 
 					this.doc.bfel_identificacion = r.message.bfel_identificacion || "";
@@ -4563,7 +4598,8 @@ body.facex-fullscreen-mode .ef-main-layout {
   <td class="ef-td ef-td-num">
     <input type="number" class="ef-cell-input ef-input-num ef-rate"
       data-field="rate" data-idx="${idx}"
-      value="${base_rate || 0}" min="0" step="any" />
+      value="${base_rate || 0}" min="0" step="any"
+      ${(this.perms && this.perms.puede_editar_precio) ? "" : "readonly title=\"El precio se toma de la lista de precios. No tiene permiso para editarlo.\""} />
   </td>
   <td class="ef-td ef-td-num ef-col-disc">
     <input type="number" class="ef-cell-input ef-input-num ef-disc"
@@ -4635,6 +4671,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 		// qty / rate / discount → recalcular amount local
 		["qty", "rate", "discount_percentage"].forEach((field) => {
 			$row.find(`[data-field="${field}"]`).on("input change", (e) => {
+				// Sin permiso puede_editar_precio, el precio no se edita a mano:
+				// lo resuelve la lista de precios en el backend.
+				if (field === "rate" && !(this.perms && this.perms.puede_editar_precio)) {
+					return;
+				}
 				const val = parseFloat(e.target.value) || 0;
 				this.doc.items[idx][field] = val;
 				if (field === "rate") {
@@ -4788,6 +4829,73 @@ body.facex-fullscreen-mode .ef-main-layout {
 					}
 				}
 			},
+		});
+	}
+
+	// ── Lista de Precios: selector de encabezado + re-cotización ──────────
+
+	_load_price_list_selector() {
+		frappe.call({
+			method: "facex_multi.api.item.get_selectable_price_lists",
+			args: { company: this.doc.company || this.defaults.company || "" },
+			callback: (r) => {
+				this._selectable_price_lists = (r.message || []).map((p) => p.name);
+				const $grp = this.$body.find("#ef-price-list-group");
+				const $sel = this.$body.find("#ef-price-list");
+				// Solo se muestra si el usuario tiene más de una lista para elegir.
+				if (this._selectable_price_lists.length < 2) {
+					$grp.hide();
+					return;
+				}
+				$sel.empty();
+				this._selectable_price_lists.forEach((name) => {
+					$sel.append(`<option value="${_esc(name)}">${_esc(name)}</option>`);
+				});
+				$grp.show();
+				this._sync_price_list_selector();
+			},
+		});
+	}
+
+	_sync_price_list_selector() {
+		const $sel = this.$body.find("#ef-price-list");
+		if (!$sel.length || !(this._selectable_price_lists || []).length) return;
+		const cur = this.doc.selling_price_list || this.defaults.default_price_list || "";
+		if (cur && this._selectable_price_lists.indexOf(cur) === -1) {
+			// La lista del cliente no está entre las seleccionables: se respeta
+			// igual (el cliente siempre gana) pero se muestra como opción fija.
+			$sel.append(`<option value="${_esc(cur)}">${_esc(cur)} (del cliente)</option>`);
+		}
+		$sel.val(cur);
+	}
+
+	_reprice_all_items() {
+		const rows = this.doc.items || [];
+		rows.forEach((row, idx) => {
+			if (!row.item_code) return;
+			frappe.call({
+				method: "facex_multi.api.invoice.get_item_details",
+				args: {
+					item_code: row.item_code,
+					company: this.doc.company || this.defaults.company || "",
+					customer: this.doc.customer || "",
+					warehouse: row.warehouse || this.defaults.default_warehouse || "",
+					price_list: this.doc.selling_price_list || "",
+				},
+				callback: (r) => {
+					if (r.exc || !r.message) return;
+					const d = r.message;
+					const cur = this.doc.items[idx];
+					if (!cur || cur.item_code !== row.item_code) return;
+					if (d.rate !== undefined && d.rate !== null) {
+						cur.rate = d.rate;
+						cur.price_list_rate = d.rate;
+						cur.amount = this._calc_amount(cur.qty, cur.rate, cur.discount_percentage);
+					}
+					this._render_items();
+					this._update_local_footer();
+				},
+			});
 		});
 	}
 
@@ -7520,6 +7628,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 		dlg._ef_customer_name = "";
 		dlg._ef_mode = "";
 		dlg.show();
+
+		// Usuario limitado a un Socio de Ventas: el cliente que cree/edite queda
+		// asociado a su socio, campo fijo (el backend lo fuerza igualmente).
+		if (this.defaults && this.defaults.default_sales_partner_locked && dlg.fields_dict.default_sales_partner) {
+			dlg.set_value("default_sales_partner", this.defaults.default_sales_partner || "");
+			dlg.set_df_property("default_sales_partner", "read_only", 1);
+		}
 
 		// Helper to get the dialog primary button reliably
 		const _getPrimaryBtn = () =>

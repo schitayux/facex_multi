@@ -382,8 +382,11 @@ def get_defaults(company: str = None):
         get_facex_can_administer_transportistas, get_facex_can_view_transporte_reportes,
         get_facex_can_upload_liquidaciones_transporte, get_facex_can_view_transporte_menu,
         get_facex_can_view_transporte_kpis, get_facex_default_sales_partner,
+        get_facex_can_edit_price, get_facex_default_price_list,
+        get_facex_allowed_price_lists,
     )
     permissions = get_facex_permissions_for_company(company)
+    permissions["puede_editar_precio"] = int(get_facex_can_edit_price(company))
     permissions["puede_eliminar_ventas_espera"] = int(get_facex_can_delete_held_sales(company))
     permissions["puede_anular_facturas"] = int(get_facex_can_cancel_invoices(company))
     permissions["puede_ver_pos"] = int(get_facex_can_access_pos(company))
@@ -397,6 +400,15 @@ def get_defaults(company: str = None):
     company_config = get_facex_company_config(company)
     default_pos_warehouse = get_facex_default_warehouse(company)
     default_sales_partner = get_facex_default_sales_partner(company)
+
+    from facex_multi.api.permissions import get_facex_user_sales_partner
+    # El vendedor queda BLOQUEADO cuando el usuario está limitado a un socio
+    # (socio_venta_por_defecto asignado) — no puede facturar a nombre de otro.
+    fixed_sales_partner = get_facex_user_sales_partner(company)
+    if fixed_sales_partner:
+        default_sales_partner = fixed_sales_partner
+    default_price_list = get_facex_default_price_list(company)
+    allowed_price_lists = get_facex_allowed_price_lists(company)
 
     return {
         "company": company,
@@ -415,6 +427,9 @@ def get_defaults(company: str = None):
         "company_config": company_config,
         "default_pos_warehouse": default_pos_warehouse,
         "default_sales_partner": default_sales_partner,
+        "default_sales_partner_locked": bool(fixed_sales_partner),
+        "default_price_list": default_price_list,
+        "allowed_price_lists": allowed_price_lists,
     }
 
 
@@ -430,12 +445,18 @@ def get_invoice_history(company: str = None, from_date: str = None, to_date: str
     from_date = getdate(from_date) if from_date else today_date.replace(day=1)
     to_date = getdate(to_date) if to_date else today_date
 
+    from facex_multi.api.permissions import get_facex_user_sales_partner
+    _si_filters = {
+        "company": company,
+        "posting_date": ["between", [from_date, to_date]],
+    }
+    _sp = get_facex_user_sales_partner(company)
+    if _sp:
+        _si_filters["sales_partner"] = _sp
+
     rows = frappe.get_all(
         "Sales Invoice",
-        filters={
-            "company": company,
-            "posting_date": ["between", [from_date, to_date]],
-        },
+        filters=_si_filters,
         fields=["name", "customer_name", "posting_date", "grand_total", "docstatus", "bfel_status", "bfel_uuid", "custom_pagado"],
         order_by="posting_date desc, creation desc",
         limit_page_length=500,
@@ -492,13 +513,20 @@ def get_held_sales(company: str = None):
         frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
 
     company = get_effective_company(company)
+
+    from facex_multi.api.permissions import get_facex_user_sales_partner
+    _held_filters = {
+        "company": company,
+        "docstatus": 0,
+        "bfel_venta_suspendida": 1,
+    }
+    _sp = get_facex_user_sales_partner(company)
+    if _sp:
+        _held_filters["sales_partner"] = _sp
+
     rows = frappe.get_all(
         "Sales Invoice",
-        filters={
-            "company": company,
-            "docstatus": 0,
-            "bfel_venta_suspendida": 1,
-        },
+        filters=_held_filters,
         fields=["name", "customer_name", "posting_date", "grand_total", "sales_partner", "owner"],
         order_by="modified desc",
         limit_page_length=200,
@@ -553,13 +581,19 @@ def get_pending_guias(company: str = None):
         frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
 
     company = get_effective_company(company)
+
+    from facex_multi.api.permissions import get_facex_invoice_partner_sql
+    sp_cond, sp_params = get_facex_invoice_partner_sql(company, alias="si")
+    sp_filter = f"and {sp_cond}" if sp_cond else ""
+
     return frappe.db.sql(
-        """
+        f"""
         select si.name, si.customer_name, si.posting_date, si.grand_total
         from `tabSales Invoice` si
         where si.docstatus = 1
           and si.company = %(company)s
           and si.bfel_pago_contra_entrega = 1
+          {sp_filter}
           and not exists (
             select 1 from `tabFacEx Guia Transportista` g
             where g.parent = si.name and g.parenttype = 'Sales Invoice'
@@ -567,7 +601,7 @@ def get_pending_guias(company: str = None):
         order by si.modified desc
         limit 200
         """,
-        {"company": company},
+        {"company": company, **sp_params},
         as_dict=True,
     )
 
@@ -618,6 +652,12 @@ def get_guias_transporte(company: str = None, estado_entrega: str = None, transp
 
     conditions = ["si.company = %(company)s", "si.docstatus = 1"]
     values = {"company": company, "limit": int(limit or 200)}
+
+    from facex_multi.api.permissions import get_facex_invoice_partner_sql
+    sp_cond, sp_params = get_facex_invoice_partner_sql(company, alias="si")
+    if sp_cond:
+        conditions.append(sp_cond)
+        values.update(sp_params)
 
     if estado_entrega:
         conditions.append("g.estado_entrega = %(estado_entrega)s")
@@ -681,29 +721,33 @@ def get_transporte_kpis(company: str = None, days: int = 14):
 
     days = int(days or 14)
 
+    from facex_multi.api.permissions import get_facex_invoice_partner_sql
+    sp_cond, sp_params = get_facex_invoice_partner_sql(company, alias="si")
+    sp_and = f"and {sp_cond}" if sp_cond else ""
+
     por_estado = frappe.db.sql(
-        """
+        f"""
         select g.estado_entrega as estado, count(g.name) as total
         from `tabFacEx Guia Transportista` g
         inner join `tabSales Invoice` si on si.name = g.parent
-        where g.parenttype = 'Sales Invoice' and si.company = %(company)s and si.docstatus = 1
+        where g.parenttype = 'Sales Invoice' and si.company = %(company)s and si.docstatus = 1 {sp_and}
         group by g.estado_entrega
         """,
-        {"company": company},
+        {"company": company, **sp_params},
         as_dict=True,
     )
 
     por_dia = frappe.db.sql(
-        """
+        f"""
         select g.fecha_envio as fecha, count(g.name) as total
         from `tabFacEx Guia Transportista` g
         inner join `tabSales Invoice` si on si.name = g.parent
-        where g.parenttype = 'Sales Invoice' and si.company = %(company)s and si.docstatus = 1
+        where g.parenttype = 'Sales Invoice' and si.company = %(company)s and si.docstatus = 1 {sp_and}
             and g.fecha_envio is not null and g.fecha_envio >= %(from_date)s
         group by g.fecha_envio
         order by g.fecha_envio asc
         """,
-        {"company": company, "from_date": add_days(today(), -(days - 1))},
+        {"company": company, "from_date": add_days(today(), -(days - 1)), **sp_params},
         as_dict=True,
     )
 
@@ -716,15 +760,15 @@ def get_transporte_kpis(company: str = None, days: int = 14):
     # vuelva a guardar; ahí se asume 0 (mismo criterio que el comportamiento
     # previo: liquidado=1 significaba "ya cubierto por completo").
     cod_pendiente = frappe.db.sql(
-        """
+        f"""
         select coalesce(sum(case when g.liquidado = 0 then g.monto_cod else coalesce(g.monto_pendiente, 0) end), 0) as total,
             coalesce(sum(case when (case when g.liquidado = 0 then g.monto_cod else coalesce(g.monto_pendiente, 0) end) > 0.005 then 1 else 0 end), 0) as cantidad
         from `tabFacEx Guia Transportista` g
         inner join `tabSales Invoice` si on si.name = g.parent
-        where g.parenttype = 'Sales Invoice' and si.company = %(company)s and si.docstatus = 1
+        where g.parenttype = 'Sales Invoice' and si.company = %(company)s and si.docstatus = 1 {sp_and}
             and g.estado_entrega != 'Anulado'
         """,
-        {"company": company},
+        {"company": company, **sp_params},
         as_dict=True,
     )[0]
 
@@ -831,11 +875,19 @@ def get_item_details(item_code: str, company: str = "", customer: str = "",
     if item.meta.has_field("bfel_company") and item.bfel_company and item.bfel_company != company:
         frappe.throw(f"El producto '{item_code}' no pertenece a la compañía activa '{company}'.")
 
-    # Buscar la lista de precios a usar
+    # Buscar la lista de precios a usar. Prioridad:
+    #   1. lista explícita enviada por el page (selector / selling_price_list)
+    #   2. lista asignada en la ficha del cliente (SIEMPRE gana sobre la del usuario)
+    #   3. lista por defecto del usuario en FacEx Settings (lista_precios_por_defecto)
+    #   4. Selling Settings / Standard Selling / primera lista de venta activa
     plist = price_list
     if not plist and customer:
         plist = frappe.db.get_value("Customer", customer, "default_price_list")
-    
+
+    if not plist:
+        from facex_multi.api.permissions import get_facex_default_price_list
+        plist = get_facex_default_price_list(company)
+
     if not plist:
         plist = (
             frappe.defaults.get_user_default("selling_price_list")
@@ -1031,12 +1083,41 @@ def save_draft(doc_json: str):
 
     # Validar cliente
     customer = data.get("customer")
+    cust_price_list = ""
     if customer:
-        cust_company = frappe.db.get_value("Customer", customer, "bfel_company")
-        if cust_company and cust_company != company:
+        cust_row = frappe.db.get_value(
+            "Customer", customer, ["bfel_company", "default_price_list", "default_sales_partner", "customer_name"],
+            as_dict=True,
+        ) or frappe._dict()
+        if cust_row.bfel_company and cust_row.bfel_company != company:
             frappe.throw(f"El cliente '{customer}' pertenece a otra compañía y no puede utilizarse en esta factura.")
+        cust_price_list = cust_row.default_price_list or ""
+
+        # Segregación por socio de ventas: un usuario limitado a un socio solo
+        # puede facturar a sus clientes (Consumidor Final exento).
+        from facex_multi.api.permissions import get_facex_user_sales_partner
+        user_sp = get_facex_user_sales_partner(company)
+        if user_sp and cust_row.customer_name != "Consumidor Final" \
+           and (cust_row.default_sales_partner or "") != user_sp:
+            frappe.throw(f"El cliente '{customer}' está asignado a otro socio de ventas y no puede facturarse desde su usuario.")
+
+    # La lista de precios de la ficha del cliente SIEMPRE gana (fix "no jala el precio").
+    # Si el cliente no tiene lista y no se envió ninguna, usar la lista por
+    # defecto del usuario en FacEx Settings antes de caer a Selling Settings.
+    if cust_price_list:
+        data["selling_price_list"] = cust_price_list
+    elif not data.get("selling_price_list"):
+        from facex_multi.api.permissions import get_facex_default_price_list
+        _udef = get_facex_default_price_list(company)
+        if _udef:
+            data["selling_price_list"] = _udef
 
     # Validar Socio de Ventas y mapear a campo vendedor si bfel_enlace_vendedor=1
+    from facex_multi.api.permissions import get_facex_user_sales_partner
+    fixed_sp = get_facex_user_sales_partner(company)
+    if fixed_sp:
+        # Vendedor bloqueado: se ignora lo que envíe el cliente.
+        data["sales_partner"] = fixed_sp
     sales_partner = data.get("sales_partner")
     if sales_partner:
         from facex_multi.api.sales_partner import validate_sales_partner_company
@@ -1059,20 +1140,36 @@ def save_draft(doc_json: str):
             if wh and allowed_warehouses is not None and wh not in allowed_warehouses:
                 frappe.throw(f"No tiene permiso para utilizar la bodega '{wh}' en esta factura.")
 
-    
-    # Pre-procesar items para asegurar que el descuento se aplique correctamente en ERPNext
+
+    # Pre-procesar items.
+    #
+    # Regla de precios (fix "no jala el precio" + permiso puede_editar_precio):
+    #  - Sin puede_editar_precio  → NUNCA se respeta un rate manual: se quitan
+    #    rate/price_list_rate de la fila y ERPNext los resuelve desde
+    #    selling_price_list. (El descuento % sí se respeta.)
+    #  - Con puede_editar_precio  → si el usuario puso un precio (> 0) se fija
+    #    como price_list_rate; si mandó 0/nada, se deja que ERPNext lo resuelva
+    #    de la lista (evita facturar en 0 cuando la fila se cargó sin lista).
     if "items" in data:
+        from facex_multi.api.permissions import get_facex_can_edit_price
+        can_edit_price = get_facex_can_edit_price(company)
         for item_row in data["items"]:
             disc_pct = float(item_row.get("discount_percentage") or 0)
             original_rate = float(item_row.get("rate") or 0)
+            item_row["discount_percentage"] = disc_pct if disc_pct > 0 else 0.0
+
+            if not can_edit_price or original_rate <= 0:
+                # Dejar que ERPNext cotice desde la lista de precios.
+                item_row.pop("rate", None)
+                item_row.pop("price_list_rate", None)
+                continue
+
             if disc_pct > 0:
                 item_row["price_list_rate"] = original_rate
-                item_row["discount_percentage"] = disc_pct
                 # rate tiene que ser el precio descontado para ERPNext
                 item_row["rate"] = original_rate - (original_rate * disc_pct / 100.0)
             else:
                 item_row["price_list_rate"] = original_rate
-                item_row["discount_percentage"] = 0.0
                 item_row["rate"] = original_rate
 
     name = (data.get("name") or "").strip()
@@ -1919,6 +2016,11 @@ def get_dashboard_stats(start_date=None, end_date=None, customer=None, item_code
     if customer:
         filters["customer"] = customer
 
+    from facex_multi.api.permissions import get_facex_user_sales_partner
+    _sp = get_facex_user_sales_partner(company)
+    if _sp:
+        filters["sales_partner"] = _sp
+
     # Cargar facturas
     raw_invoices = frappe.db.get_all(
         "Sales Invoice",
@@ -2001,13 +2103,15 @@ def get_dashboard_stats(start_date=None, end_date=None, customer=None, item_code
         if cust_doc.credit_limits:
             credit_limit = float(cust_doc.credit_limits[0].credit_limit or 0)
             
+        _ob_sp = get_facex_user_sales_partner(company)
         outstanding_balance_res = frappe.db.sql(
             """
             select sum(outstanding_amount)
             from `tabSales Invoice`
             where customer = %s and docstatus = 1 and company = %s
+              and (%s = '' or sales_partner = %s)
             """,
-            (customer, company),
+            (customer, company, _ob_sp or "", _ob_sp or ""),
         )
         outstanding_balance = float((outstanding_balance_res and outstanding_balance_res[0][0]) or 0.0)
 

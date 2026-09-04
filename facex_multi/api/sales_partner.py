@@ -11,8 +11,20 @@ from facex_multi.api.invoice import get_effective_company
 
 @frappe.whitelist()
 def search_sales_partners(txt: str = "", company: str = None):
-    """Busca socios de ventas filtrados por compañía activa con lógica bfel_company_null."""
+    """Busca socios de ventas filtrados por compañía activa con lógica bfel_company_null.
+    Si el usuario está limitado a un socio (socio_venta_por_defecto en FacEx
+    Settings), solo devuelve ese — el selector de vendedor queda fijo."""
     company = get_effective_company(company)
+
+    from facex_multi.api.permissions import get_facex_user_sales_partner
+    fixed_sp = get_facex_user_sales_partner(company)
+    if fixed_sp:
+        row = frappe.db.get_value(
+            "Sales Partner", fixed_sp,
+            ["name", "partner_name", "partner_type", "commission_rate"], as_dict=True,
+        )
+        return [row] if row else []
+
     q = f"%{txt.strip()}%" if txt and txt.strip() else "%"
     return frappe.db.sql(
         """

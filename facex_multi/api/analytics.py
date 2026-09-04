@@ -26,9 +26,16 @@ def get_customer_analytics(customer: str, company: str = None):
     company = get_effective_company(company)
 
     # Validar que el cliente pertenece a la compañía activa (si bfel_company está seteada)
-    cust_comp = frappe.db.get_value("Customer", customer, "bfel_company")
-    if cust_comp and cust_comp != company:
+    cust_row = frappe.db.get_value(
+        "Customer", customer, ["bfel_company", "default_sales_partner", "customer_name"], as_dict=True
+    ) or frappe._dict()
+    if cust_row.bfel_company and cust_row.bfel_company != company:
         frappe.throw("El cliente seleccionado pertenece a otra compañía y no se pueden cargar sus estadísticas.")
+
+    from facex_multi.api.permissions import get_facex_user_sales_partner
+    _sp = get_facex_user_sales_partner(company)
+    if _sp and cust_row.customer_name != "Consumidor Final" and (cust_row.default_sales_partner or "") != _sp:
+        frappe.throw("El cliente seleccionado está asignado a otro socio de ventas.")
 
     since = add_months(today(), -6)
 

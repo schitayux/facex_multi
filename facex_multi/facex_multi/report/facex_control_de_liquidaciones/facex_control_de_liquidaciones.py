@@ -38,6 +38,12 @@ def get_data(filters):
 	conditions = ["si.company in %(companies)s"]
 	values = {"companies": companies}
 
+	from facex_multi.api.permissions import get_facex_invoice_partner_sql
+	sp_cond, sp_params = get_facex_invoice_partner_sql(alias="si")
+	if sp_cond:
+		conditions.append(sp_cond)
+		values.update(sp_params)
+
 	if filters.transportista:
 		conditions.append("g.transportista = %(transportista)s")
 		values["transportista"] = filters.transportista
