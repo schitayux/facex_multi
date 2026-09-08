@@ -124,11 +124,14 @@ def execute_auto_configuration(doc):
 		summary_lines.append(f"[i] Cuenta contable de impuestos '{tax_account}' no encontrada en el Catálogo. Se creará la plantilla pero verifique la cuenta contable.")
 
 	# IVA Template
+	# ERPNext antepone " - {abbr}" al title en autoname, así que el title
+	# debe ser plano ("IVA") para que el name quede "IVA - {abbr}" y no se
+	# duplique la abreviatura ("IVA - DV - DV").
 	iva_template_name = f"IVA - {abbr}"
 	if not frappe.db.exists("Sales Taxes and Charges Template", iva_template_name):
 		iva_temp = frappe.get_doc({
 			"doctype": "Sales Taxes and Charges Template",
-			"title": iva_template_name,
+			"title": "IVA",
 			"company": company_name,
 			"is_default": 1,
 			"taxes": [
@@ -150,7 +153,7 @@ def execute_auto_configuration(doc):
 	if not frappe.db.exists("Sales Taxes and Charges Template", exe_template_name):
 		exe_temp = frappe.get_doc({
 			"doctype": "Sales Taxes and Charges Template",
-			"title": exe_template_name,
+			"title": "EXE",
 			"company": company_name,
 			"is_default": 0,
 			"taxes": [
