@@ -54,6 +54,26 @@ def get_facex_permissions_for_company(company: str) -> dict:
     return {k: int(row.get(k) or 0) for k in _ALL_PERM_FIELDS}
 
 
+def require_facex_permission(company: str, *flags: str, msg: str = None) -> None:
+    """Exige uno o más flags de _ALL_PERM_FIELDS para frappe.session.user + company.
+
+    Retrocompatible con el resto de este archivo: sin fila de FacEx Settings o
+    System Manager → get_facex_permissions_for_company devuelve acceso total y
+    la comprobación pasa. Sólo un usuario configurado con el flag en 0 recibe
+    PermissionError. Pensado para blindar los @frappe.whitelist() que hasta
+    ahora sólo ocultaban el botón en el front (puede_facturar, puede_guardar,
+    puede_validar, puede_compras, crea_clientes, actualiza_precios, …).
+    """
+    from facex_multi.api.invoice import get_effective_company
+
+    perms = get_facex_permissions_for_company(get_effective_company(company))
+    if any(not perms.get(f) for f in flags):
+        frappe.throw(
+            msg or "No tiene permiso para realizar esta acción en FacEx.",
+            frappe.PermissionError,
+        )
+
+
 _COMPANY_CONFIG_FIELDS = [
     "maneja_series", "maneja_adendas", "concatena_descripcion2",
     "maneja_inventario", "tipo_x_defecto",

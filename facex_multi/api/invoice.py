@@ -205,6 +205,46 @@ def create_custom_field_if_missing():
             frappe.log_error(frappe.get_traceback(), "FacEx Multi: create_custom_field_if_missing")
 
 
+# Campos del módulo de pagos eFast. Los creó originalmente el patch
+# v1_0.create_custom_fields; en algún sitio (p.ej. neko) el patch quedó
+# registrado en Patch Log pero los campos NO existen — y `bench migrate` ya no
+# lo vuelve a correr. Sin ellos truenan get_invoice_history, save_payments,
+# get_invoice_payment_detail y analytics.get_customer_analytics. Este helper
+# corre en cada `bench migrate` (after_migrate en hooks.py) y auto-repara.
+_EFAST_PAYMENT_FIELDS = [
+    {"fieldname": "custom_pagado", "label": "Pagado", "fieldtype": "Check",
+     "default": "0", "insert_after": "outstanding_amount"},
+    {"fieldname": "custom_efast_payments", "label": "Pagos eFast", "fieldtype": "Table",
+     "options": "eFast Invoice Payment", "insert_after": "custom_pagado"},
+]
+
+
+def ensure_efast_payment_custom_fields():
+    """Idempotente: recrea custom_pagado / custom_efast_payments en Sales Invoice
+    si faltan (aunque el patch original figure aplicado)."""
+    created = False
+    for spec in _EFAST_PAYMENT_FIELDS:
+        fname = spec["fieldname"]
+        if frappe.db.exists("Custom Field", {"dt": "Sales Invoice", "fieldname": fname}):
+            continue
+        if spec["fieldtype"] == "Table" and not frappe.db.exists("DocType", spec.get("options")):
+            frappe.log_error(
+                f"FacEx Multi: no se puede crear {fname}: falta el DocType '{spec.get('options')}'",
+                "ensure_efast_payment_custom_fields",
+            )
+            continue
+        doc = frappe.new_doc("Custom Field")
+        doc.dt = "Sales Invoice"
+        for k, v in spec.items():
+            setattr(doc, k, v)
+        doc.module = "FacEx Multi"
+        doc.insert(ignore_permissions=True)
+        created = True
+    if created:
+        frappe.db.commit()
+        frappe.clear_cache(doctype="Sales Invoice")
+
+
 # ---------------------------------------------------------------------------
 # 1. Defaults para nueva factura
 # ---------------------------------------------------------------------------
@@ -1075,6 +1115,13 @@ def save_draft(doc_json: str):
     company = get_effective_company(data.get("company"))
     data["company"] = company
 
+    # Permiso FacEx: guardar borrador de factura (retrocompatible — sin fila de
+    # FacEx Settings o System Manager pasa). El nombre/estado decide el flag:
+    # un documento nuevo o en borrador exige puede_guardar.
+    from facex_multi.api.permissions import require_facex_permission
+    require_facex_permission(company, "puede_guardar",
+                             msg="No tiene permiso para guardar facturas en FacEx.")
+
     # Validar naming series
     if data.get("naming_series"):
         all_series = _get_naming_series("Sales Invoice")
@@ -1292,6 +1339,10 @@ def submit_invoice(name: str):
     name = (name or "").strip()
     doc = frappe.get_doc("Sales Invoice", name)
 
+    from facex_multi.api.permissions import require_facex_permission
+    require_facex_permission(doc.company, "puede_validar",
+                             msg="No tiene permiso para validar (submit) facturas en FacEx.")
+
     if doc.docstatus != 0:
         frappe.throw("Solo se puede validar una factura en estado Borrador.")
 
@@ -1395,6 +1446,11 @@ def mark_printed_without_cert(name: str):
     """
     name = (name or "").strip()
     doc = frappe.get_doc("Sales Invoice", name)
+
+    from facex_multi.api.permissions import require_facex_permission
+    require_facex_permission(doc.company, "puede_facturar",
+                             msg="No tiene permiso para emitir facturas en FacEx.")
+
     if doc.bfel_uuid:
         frappe.throw("Esta factura ya fue certificada en FEL.")
     frappe.db.set_value("Sales Invoice", name, "bfel_impreso_sin_certificar", 1)
@@ -1449,6 +1505,10 @@ def certify_invoice(name: str):
     """
     name = (name or "").strip()
     doc = frappe.get_doc("Sales Invoice", name)
+
+    from facex_multi.api.permissions import require_facex_permission
+    require_facex_permission(doc.company, "puede_certificar",
+                             msg="No tiene permiso para certificar facturas en FEL desde FacEx.")
 
     # Validar que existe exactamente una configuración activa
     configs = frappe.get_all("BFEL Settings", filters={"company": doc.company, "enabled": 1}, fields=["name"])
@@ -1638,6 +1698,16 @@ def rebill_with_new_customer(invoice_name: str, new_customer: str, payments_json
     src = frappe.get_doc("Sales Invoice", invoice_name)
     if src.docstatus != 1:
         frappe.throw("Solo se puede corregir el cliente de una venta ya validada.")
+
+    # Esta operación puede cancelar y ELIMINAR la factura original (si no fue
+    # certificada) — es una anulación de hecho. Se exige puede_anular_facturas
+    # además de los permisos de guardar/validar que aplican las llamadas internas.
+    from facex_multi.api.permissions import get_facex_can_cancel_invoices
+    if not get_facex_can_cancel_invoices(src.company):
+        frappe.throw(
+            "No tiene permiso para anular/reemplazar facturas en FacEx Screen.",
+            frappe.PermissionError,
+        )
 
     was_certified = bool(src.bfel_uuid) or src.bfel_status == "02 Procesada"
 
@@ -1937,6 +2007,12 @@ def save_payments(invoice_name: str, payments_json: str, pagado: str = "0"):
     name       = (invoice_name or "").strip()
     payments   = _json.loads(payments_json) if isinstance(payments_json, str) else (payments_json or [])
     pagado_val = 1 if str(pagado) in ("1", "true", "True") else 0
+
+    _si_company = frappe.db.get_value("Sales Invoice", name, "company")
+    if _si_company:
+        from facex_multi.api.permissions import require_facex_permission
+        require_facex_permission(_si_company, "puede_guardar",
+                                 msg="No tiene permiso para registrar pagos en FacEx.")
 
     # Bloquear si hay PEs ya validados
     all_pes   = _get_linked_payment_entries(name)

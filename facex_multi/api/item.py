@@ -767,6 +767,11 @@ def update_item_price(item_code: str, rate: float | str, price_list: str, compan
         frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
 
     company = get_effective_company(company)
+
+    from facex_multi.api.permissions import require_facex_permission
+    require_facex_permission(company, "actualiza_precios",
+                             msg="No tiene permiso para actualizar precios en FacEx.")
+
     item_comp = frappe.db.get_value("Item", item_code, "bfel_company")
     if item_comp and item_comp != company:
         frappe.throw("No se puede asignar precio a un producto de otra compañía.")

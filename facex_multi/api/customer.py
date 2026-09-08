@@ -371,6 +371,13 @@ def create_or_update_customer(data_json: str, company: str = None):
     name = (data.get("name") or "").strip()
     company = get_effective_company(company)
 
+    from facex_multi.api.permissions import require_facex_permission
+    require_facex_permission(
+        company,
+        "modifica_clientes" if name else "crea_clientes",
+        msg="No tiene permiso para %s clientes en FacEx." % ("modificar" if name else "crear"),
+    )
+
     if name:
         doc = frappe.get_doc("Customer", name)
         # Validar pertenencia antes de editar

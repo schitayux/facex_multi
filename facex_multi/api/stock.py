@@ -1047,7 +1047,18 @@ def _list_stock_movements(mode: str, company: str = None, from_date: str = None,
         as_dict=True,
     )
 
-    return {"from_date": str(from_date), "to_date": str(to_date), "rows": rows}
+    # Fuga de costos: el valor del movimiento sólo se entrega a quien tiene
+    # puede_ver_costos (mismo criterio que los reportes de inventario).
+    can_view_costs = get_facex_can_view_costs(company)
+    if not can_view_costs:
+        for r in rows:
+            r["total_incoming_value"] = None
+            r["total_outgoing_value"] = None
+
+    return {
+        "from_date": str(from_date), "to_date": str(to_date), "rows": rows,
+        "can_view_costs": can_view_costs,
+    }
 
 
 @frappe.whitelist()
@@ -1099,9 +1110,13 @@ def get_stock_entry_detail(name: str):
     else:
         mode = mode_by_purpose.get(doc.purpose, "other")
 
+    # Fuga de costos: el costo unitario (basic_rate) sólo para puede_ver_costos.
+    can_view_costs = get_facex_can_view_costs(doc.company)
+
     return {
         "name": doc.name,
         "mode": mode,
+        "can_view_costs": can_view_costs,
         "source_warehouse": doc.from_warehouse,
         "target_warehouse": doc.to_warehouse,
         "posting_date": str(doc.posting_date),
@@ -1115,7 +1130,7 @@ def get_stock_entry_detail(name: str):
                 "uom": d.uom,
                 "batch_no": d.batch_no,
                 "serial_no": d.serial_no,
-                "rate": d.basic_rate,
+                "rate": d.basic_rate if can_view_costs else None,
                 "expense_account": d.expense_account,
                 "s_warehouse": d.s_warehouse,
                 "t_warehouse": d.t_warehouse,

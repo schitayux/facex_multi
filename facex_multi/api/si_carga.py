@@ -12,7 +12,32 @@ import frappe
 import json
 import re
 from frappe.utils import today, getdate
-from facex_multi.api.invoice import get_effective_company
+from facex_multi.api.invoice import get_effective_company, get_user_companies
+
+
+# ---------------------------------------------------------------------------
+# Guardia de permisos
+# ---------------------------------------------------------------------------
+# La Carga Masiva crea Sales Invoices (y clientes) reales. Hasta ahora ningún
+# endpoint validaba FacEx Settings: cualquier usuario con el rol nativo de
+# ERPNext podía facturar por esta vía saltándose puede_facturar / crea_clientes
+# / segregación por socio de ventas. Se exige lo mismo que el Facturador.
+
+def _guard(company: str = None, *, need_customers: bool = False) -> str:
+    from facex_multi.api.permissions import require_facex_permission
+
+    company = get_effective_company(company)
+    if company not in (get_user_companies() or []):
+        frappe.throw("No tiene permiso para operar sobre esta compañía.", frappe.PermissionError)
+
+    flags = ["puede_facturar"]
+    if need_customers:
+        flags.append("crea_clientes")
+    require_facex_permission(
+        company, *flags,
+        msg="No tiene permiso para cargar facturas de forma masiva en esta compañía.",
+    )
+    return company
 
 
 # ---------------------------------------------------------------------------
@@ -51,6 +76,8 @@ def parse_file(file_content: str):
     marcados como anulados).
     Retorna las filas parseadas con datos mapeados, más el listado de filas omitidas.
     """
+    _guard()
+
     if not file_content:
         frappe.throw("El contenido del archivo está vacío.")
 
@@ -181,7 +208,7 @@ def get_load_defaults(company: str = None):
     Retorna los datos necesarios para inicializar la pantalla de carga:
     establecimientos, series, plantilla de impuestos, condiciones de pago.
     """
-    company = get_effective_company(company)
+    company = _guard(company)
 
     establishments = _get_establishments(company)
     tax_template = _get_tax_template(company)
@@ -220,7 +247,7 @@ def validate_rows(rows_json: str, company: str, default_item: str):
     Retorna filas enriquecidas con _customer_status, _errors, _warnings.
     """
     rows = json.loads(rows_json) if isinstance(rows_json, str) else rows_json
-    company = get_effective_company(company)
+    company = _guard(company)
 
     if not frappe.db.exists("Item", default_item):
         frappe.throw(f"El ítem '{default_item}' no existe.")
@@ -367,7 +394,9 @@ def create_invoices(
       - Si upload_as_paid (global o por fila) es True, agrega fila en custom_efast_payments
     """
     rows = json.loads(rows_json) if isinstance(rows_json, str) else rows_json
-    company = get_effective_company(company)
+    _rows_preview = rows if isinstance(rows, list) else []
+    _need_customers = any(not (r or {}).get("customer") for r in _rows_preview)
+    company = _guard(company, need_customers=_need_customers)
     upload_as_paid_global = int(upload_as_paid or 0)
 
     # Validar estado FEL
@@ -602,7 +631,7 @@ def create_invoices(
 @frappe.whitelist()
 def get_series_for_company(company: str) -> list:
     """Retorna las naming series compatibles con la compañía."""
-    company = get_effective_company(company)
+    company = _guard(company)
     return _get_naming_series_for_company(company)
 
 

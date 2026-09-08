@@ -84,6 +84,21 @@ def check_permission():
         frappe.throw("No tiene permisos suficientes para acceder a este reporte.", frappe.PermissionError)
 
 
+def _require_report(company: str, flag: str) -> None:
+    """Gate por rol (check_permission) + flag granular de FacEx Settings.
+
+    Antes sólo se validaba el rol (Accounts/Sales Manager…): los ~12 checkboxes
+    reporte_* de FacEx Settings no se aplicaban. Retrocompatible: sin fila de
+    FacEx Settings o System Manager → get_facex_permissions_for_company devuelve
+    acceso total y sólo manda el rol.
+    """
+    check_permission()
+    from facex_multi.api.permissions import get_facex_permissions_for_company
+    perms = get_facex_permissions_for_company(get_effective_company(company))
+    if not perms.get(flag):
+        frappe.throw("No tiene permiso para ver este informe.", frappe.PermissionError)
+
+
 def _resolve_warehouse_filter(company: str, warehouse: str):
     """
     Acota el filtro de bodega a las bodegas habilitadas del usuario (FacEx
@@ -119,7 +134,7 @@ def _resolve_warehouse_filter(company: str, warehouse: str):
 
 @frappe.whitelist()
 def get_sales_by_date(start_date: str, end_date: str, customer: str = None, warehouse: str = None, company: str = None, establecimiento: str = None) -> dict:
-    check_permission()
+    _require_report(company, "reporte_ventas_fecha")
 
     company_cond, company_vals = _build_company_condition(company)
     sp_cond, sp_vals = _sales_partner_condition()
@@ -174,7 +189,7 @@ def get_sales_by_date(start_date: str, end_date: str, customer: str = None, ware
 @frappe.whitelist()
 def get_sales_by_product(start_date: str, end_date: str, item_code: str = None,
                          item_group: str = None, customer: str = None, warehouse: str = None, company: str = None, establecimiento: str = None) -> dict:
-    check_permission()
+    _require_report(company, "reporte_ventas_producto")
 
     company_cond, company_vals = _build_company_condition_alias(company, "p")
     sp_cond, sp_vals = _sales_partner_condition("p")
@@ -235,7 +250,7 @@ def get_sales_by_product(start_date: str, end_date: str, item_code: str = None,
 
 @frappe.whitelist()
 def get_cancelled_invoices(start_date: str, end_date: str, customer: str = None, company: str = None, establecimiento: str = None) -> dict:
-    check_permission()
+    _require_report(company, "reporte_facturas_canceladas")
 
     company_cond, company_vals = _build_company_condition(company)
     sp_cond, sp_vals = _sales_partner_condition()
@@ -275,7 +290,7 @@ def get_cancelled_invoices(start_date: str, end_date: str, customer: str = None,
 
 @frappe.whitelist()
 def get_customer_statement(customer: str, start_date: str = None, end_date: str = None, doc_type_filter: str = None, company: str = None, establecimiento: str = None) -> dict:
-    check_permission()
+    _require_report(company, "reporte_estados_cuenta")
     if not customer:
         return {"ledger": [], "summary": {}}
         
@@ -382,7 +397,7 @@ def get_customer_statement(customer: str, start_date: str = None, end_date: str 
 
 @frappe.whitelist()
 def get_aging_receivables(customer: str = None, company: str = None, establecimiento: str = None) -> dict:
-    check_permission()
+    _require_report(company, "reporte_antiguedad_saldos")
 
     company_cond, company_vals = _build_company_condition(company)
     sp_cond, sp_vals = _sales_partner_condition()
@@ -503,7 +518,7 @@ def get_aging_receivables(customer: str = None, company: str = None, establecimi
 
 @frappe.whitelist()
 def get_quotations_report(start_date: str = None, end_date: str = None, customer: str = None, company: str = None, establecimiento: str = None) -> dict:
-    check_permission()
+    _require_report(company, "reporte_cotizaciones")
 
     company_cond, company_vals = _build_company_condition(company)
     sp_cond, sp_vals = _sales_partner_condition()
@@ -547,7 +562,7 @@ def get_quotations_report(start_date: str = None, end_date: str = None, customer
 
 @frappe.whitelist()
 def get_payments_report(start_date: str, end_date: str, payment_method: str = None, company: str = None, establecimiento: str = None) -> dict:
-    check_permission()
+    _require_report(company, "reporte_recibos_pagos")
 
     company_cond, company_vals = _build_company_condition_alias(company, "p")
     sp_cond, sp_vals = _sales_partner_condition("p")
@@ -600,7 +615,7 @@ def get_payments_report(start_date: str, end_date: str, payment_method: str = No
 
 @frappe.whitelist()
 def get_uncertified_invoices(company: str = None, establecimiento: str = None) -> dict:
-    check_permission()
+    _require_report(company, "reporte_facturas_canceladas")
 
     company_cond, company_vals = _build_company_condition(company)
     sp_cond, sp_vals = _sales_partner_condition()
@@ -642,7 +657,7 @@ def get_uncertified_invoices(company: str = None, establecimiento: str = None) -
 
 @frappe.whitelist()
 def get_sales_growth_analysis(year: str = None, month: str = None, company: str = None, establecimiento: str = None) -> dict:
-    check_permission()
+    _require_report(company, "reporte_crecimiento_ventas")
 
     company_cond, company_vals = _build_company_condition(company)
     sp_cond, sp_vals = _sales_partner_condition()

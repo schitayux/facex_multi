@@ -132,6 +132,25 @@ def _get_credit_to(company: str, currency: str = "GTQ") -> str:
 
 
 # ---------------------------------------------------------------------------
+# Guardia de permisos del módulo de Compras
+# ---------------------------------------------------------------------------
+# Hasta ahora los flags puede_compras / puede_validar_compras /
+# puede_cancelar_compras / crea_proveedores / modifica_proveedores sólo
+# ocultaban botones. Aquí se aplican de verdad, retrocompatibles: sin fila de
+# FacEx Settings o System Manager → pasan.
+
+def _require_purchase(company: str = None, *flags: str, msg: str = None) -> str:
+    from facex_multi.api.invoice import get_effective_company, get_user_companies
+    from facex_multi.api.permissions import require_facex_permission
+
+    company = get_effective_company(company)
+    if company not in (get_user_companies() or []) and frappe.session.user != "Administrator":
+        frappe.throw("No tiene permiso para operar sobre esta compañía.", frappe.PermissionError)
+    require_facex_permission(company, *(flags or ("puede_compras",)), msg=msg)
+    return company
+
+
+# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
@@ -302,8 +321,8 @@ def search_suppliers_maintenance(company: str = None, start: int = 0, page_lengt
     para poder ubicarlos y reactivarlos/editarlos desde el mantenimiento.
 
     Retorna {"rows": [...], "total": N} para el paginador del popup."""
-    from facex_multi.api.invoice import get_effective_company
-    company = get_effective_company(company)
+    company = _require_purchase(company, "puede_compras",
+                                msg="No tiene permiso para consultar proveedores en FacEx.")
 
     conditions = []
     params = {"company": company}
@@ -352,11 +371,11 @@ def export_suppliers_excel(names_json: str, company: str = None):
     """Exporta a Excel los proveedores marcados en el popup de resultados del
     Mantenimiento de Proveedores. Vuelve a filtrar por compañía activa por si el
     listado de nombres fue manipulado desde el cliente."""
-    from facex_multi.api.invoice import get_effective_company
     names = json.loads(names_json) if isinstance(names_json, str) else names_json
     if not names:
         frappe.throw("Debe seleccionar al menos un proveedor.")
-    company = get_effective_company(company)
+    company = _require_purchase(company, "puede_compras",
+                                msg="No tiene permiso para exportar proveedores en FacEx.")
 
     placeholders = ", ".join(["%s"] * len(names))
     rows = frappe.db.sql(
@@ -389,8 +408,8 @@ def export_suppliers_excel(names_json: str, company: str = None):
 @frappe.whitelist()
 def get_supplier(name: str, company: str = None) -> dict:
     """Retorna los campos relevantes del proveedor para el formulario de mantenimiento."""
-    from facex_multi.api.invoice import get_effective_company
-    company = get_effective_company(company)
+    company = _require_purchase(company, "puede_compras",
+                                msg="No tiene permiso para consultar proveedores en FacEx.")
     doc = frappe.get_doc("Supplier", name)
     if doc.get("bfel_company") and doc.bfel_company != company:
         frappe.throw(f"El proveedor '{name}' pertenece a otra compañía.")
@@ -406,10 +425,13 @@ def get_supplier(name: str, company: str = None) -> dict:
 @frappe.whitelist()
 def create_or_update_supplier(data_json: str, company: str = None) -> dict:
     """Crea o actualiza un proveedor desde el mantenimiento FacEx."""
-    from facex_multi.api.invoice import get_effective_company
     data    = json.loads(data_json) if isinstance(data_json, str) else data_json
     name    = (data.get("name") or "").strip()
-    company = get_effective_company(company)
+    company = _require_purchase(
+        company,
+        "modifica_proveedores" if name else "crea_proveedores",
+        msg="No tiene permiso para %s proveedores en FacEx." % ("modificar" if name else "crear"),
+    )
 
     if name:
         doc = frappe.get_doc("Supplier", name)
@@ -449,8 +471,8 @@ def get_purchase_list(
     docstatus: str = None,
     limit: int = 50,
 ) -> list:
-    from facex_multi.api.invoice import get_effective_company
-    company = get_effective_company(company)
+    company = _require_purchase(company, "puede_compras",
+                                msg="No tiene permiso para consultar compras en FacEx.")
 
     filters = [["company", "=", company]]
     if start_date and end_date:
@@ -476,8 +498,8 @@ def get_purchase_list(
 
 @frappe.whitelist()
 def get_purchase_invoice(name: str, company: str = None) -> dict:
-    from facex_multi.api.invoice import get_effective_company
-    company = get_effective_company(company)
+    company = _require_purchase(company, "puede_compras",
+                                msg="No tiene permiso para ver compras en FacEx.")
     doc = frappe.get_doc("Purchase Invoice", name.strip())
     if doc.company != company and frappe.session.user != "Administrator":
         frappe.throw("No tiene permisos para ver esta factura de compra.")
@@ -499,8 +521,8 @@ def save_purchase_invoice(data_json: str) -> dict:
                 items: [{item_code, qty, rate, warehouse, serial_no, bfel_multi_tipo}]}
     """
     data     = json.loads(data_json) if isinstance(data_json, str) else data_json
-    from facex_multi.api.invoice import get_effective_company
-    company       = get_effective_company(data.get("company"))
+    company       = _require_purchase(data.get("company"), "puede_compras",
+                                      msg="No tiene permiso para registrar compras en esta compañía.")
     currency      = data.get("currency") or "GTQ"
     tax_template  = data.get("tax_type") or ""
     name          = (data.get("name") or "").strip()
@@ -606,6 +628,8 @@ def save_purchase_invoice(data_json: str) -> dict:
 @frappe.whitelist()
 def submit_purchase_invoice(name: str) -> dict:
     doc = frappe.get_doc("Purchase Invoice", name.strip())
+    _require_purchase(doc.company, "puede_validar_compras",
+                      msg="No tiene permiso para validar compras.")
     if doc.docstatus != 0:
         frappe.throw("La factura ya fue validada o cancelada.")
     doc.flags.ignore_validate = False
@@ -617,6 +641,8 @@ def submit_purchase_invoice(name: str) -> dict:
 @frappe.whitelist()
 def cancel_purchase_invoice(name: str) -> dict:
     doc = frappe.get_doc("Purchase Invoice", name.strip())
+    _require_purchase(doc.company, "puede_cancelar_compras",
+                      msg="No tiene permiso para cancelar compras.")
     if doc.docstatus != 1:
         frappe.throw("Solo se pueden cancelar facturas validadas.")
     doc.cancel()
