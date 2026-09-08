@@ -1172,6 +1172,18 @@ def save_draft(doc_json: str):
                 item_row["price_list_rate"] = original_rate
                 item_row["rate"] = original_rate
 
+    # Documento con fecha de emisión distinta a hoy (retroactivo o postfechado):
+    # ERPNext sobreescribe posting_date con la fecha actual salvo que
+    # set_posting_time = 1 (ver erpnext/utilities/transaction_base.validate_posting_time).
+    # Sin esto la posting_date real se pierde y las validaciones de vencimiento
+    # (validate_due_date / validate_due_date_with_template) usan HOY como base,
+    # lanzando "Due Date cannot be before Posting Date" o "Due Date cannot be
+    # after ...". Respetamos la fecha contable que ingresó el usuario: así se
+    # puede grabar una factura cuyo vencimiento es menor a la fecha actual
+    # siempre que la emisión sea <= al vencimiento (lo sigue validando ERPNext).
+    if data.get("posting_date") and getdate(data["posting_date"]) != getdate(today()):
+        data["set_posting_time"] = 1
+
     name = (data.get("name") or "").strip()
     is_new = not name or name == "new"
 
@@ -1209,7 +1221,7 @@ def save_draft(doc_json: str):
         doc = frappe.get_doc("Sales Invoice", name)
         # Actualizar campos del encabezado
         for field in (
-            "naming_series", "customer", "posting_date", "due_date",
+            "naming_series", "customer", "posting_date", "set_posting_time", "due_date",
             "payment_terms_template", "terms", "taxes_and_charges",
             "bfel_nit", "bfel_identificacion", "bfel_nombre", "bfel_status", "bfel_escenario_exento",
             "es_fiscal", "update_stock", "company", "bfel_facex_multi", "bfel_venta_suspendida",
@@ -1281,6 +1293,12 @@ def submit_invoice(name: str):
 
     if doc.docstatus != 0:
         frappe.throw("Solo se puede validar una factura en estado Borrador.")
+
+    # Documento retroactivo: conservar la fecha de emisión contable del borrador al
+    # validar (de lo contrario ERPNext la mueve a hoy y rompe la fecha de
+    # vencimiento). Ver save_draft para el detalle. doc.submit() persiste el flag.
+    if doc.posting_date and getdate(doc.posting_date) != getdate(today()) and not doc.set_posting_time:
+        doc.set_posting_time = 1
 
     from facex_multi.api.permissions import get_facex_company_config
     cfg = get_facex_company_config(doc.company)
