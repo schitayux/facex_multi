@@ -358,6 +358,14 @@ _INVENTORY_PERM_FIELDS = [
     "reporte_inv_kardex",
     "reporte_inv_existencias",
     "reporte_inv_trazabilidad",
+    "reporte_inv_kardex_producto",
+    "reporte_inv_valuacion",
+    "reporte_inv_vencimientos",
+    "reporte_inv_rotacion",
+    "reporte_inv_entradas_proveedor",
+    "mantiene_costos_items",
+    "mantiene_almacenes",
+    "puede_recibir_traslados",
 ]
 
 
@@ -391,6 +399,103 @@ def get_facex_inventory_permissions(company: str) -> dict:
         return _inventory_no_access()
 
     return {k: int(row.get(k) or 0) for k in _INVENTORY_PERM_FIELDS}
+
+
+# ---------------------------------------------------------------------------
+# Ver Costos y Valores de Inventario (reportes, grids de Entradas/Salidas,
+# flotante de existencia y pantallas nuevas del módulo de Inventario)
+# ---------------------------------------------------------------------------
+# Deny-by-default: información sensible. Sin fila de FacEx Settings o con
+# puede_ver_costos=0 el usuario NO ve ningún costo/valor dentro del módulo de
+# Inventario — ni en pantalla, ni al imprimir, ni al exportar. NO afecta el
+# Análisis de Utilidad / Asignación de Precios de FacEx Clásico (permisos aparte).
+
+def get_facex_can_view_costs(company: str) -> bool:
+    if "System Manager" in frappe.get_roles():
+        return True
+    if not company:
+        return False
+    value = frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "puede_ver_costos",
+    )
+    return bool(int(value or 0))
+
+
+_COST_BASES = ("estandar", "ponderado", "ultima_compra")
+
+
+def get_facex_default_cost_basis(company: str) -> str:
+    """Base de costo por defecto del usuario para las Entradas de Inventario
+    (campo costo_entrada_por_defecto). Cae a 'estandar' si no hay valor o es
+    desconocido."""
+    if not company:
+        return "estandar"
+    value = frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "costo_entrada_por_defecto",
+    )
+    return value if value in _COST_BASES else "estandar"
+
+
+def get_facex_can_maintain_item_costs(company: str) -> bool:
+    """Pantalla «Costos a Ítems». Deny-by-default."""
+    if "System Manager" in frappe.get_roles():
+        return True
+    if not company:
+        return False
+    value = frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "mantiene_costos_items",
+    )
+    return bool(int(value or 0))
+
+
+def get_facex_can_receive_traslados(company: str) -> bool:
+    """Pantalla «Recepción de Traslados». Deny-by-default."""
+    if "System Manager" in frappe.get_roles():
+        return True
+    if not company:
+        return False
+    value = frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "puede_recibir_traslados",
+    )
+    return bool(int(value or 0))
+
+
+def get_facex_transito_warehouse(company: str) -> str:
+    """Almacén de tránsito del usuario (campo transito_por_defecto). Vacío si no
+    hay valor configurado."""
+    if not company:
+        return ""
+    return frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "transito_por_defecto",
+    ) or ""
+
+
+def get_facex_can_maintain_warehouses(company: str) -> bool:
+    """Pantalla «Almacenes». Deny-by-default y además exige acceso a TODAS las
+    bodegas de la compañía — un usuario con bodegas_habilitadas restringidas no
+    puede administrar el árbol de almacenes."""
+    if "System Manager" in frappe.get_roles():
+        return True
+    if not company:
+        return False
+    value = frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "mantiene_almacenes",
+    )
+    if not bool(int(value or 0)):
+        return False
+    return get_facex_allowed_warehouses(company) is None
 
 
 # ---------------------------------------------------------------------------
@@ -581,6 +686,31 @@ def ensure_warehouse_establecimiento_field():
         "fieldtype": "Data",
         "insert_after": "company",
         "description": "ID de BFEL Establecimientos al que pertenece este almacén. Vacío = sin asignar.",
+    }).insert(ignore_permissions=True)
+    frappe.db.commit()
+    frappe.clear_cache(doctype="Warehouse")
+
+
+# Tipo de Almacén (FacEx) — clasificación funcional del almacén, editable desde
+# la pantalla «Almacenes» del módulo de Inventario. Prefijo bfel_ para que lo
+# capture el fixture de Custom Field existente (hooks.py).
+WAREHOUSE_TIPO_ALMACEN_OPTIONS = "\nVenta\nTransito\nConsignación\nDevoluciones\nCuarentena\nGeneral\nOtros"
+
+
+def ensure_warehouse_tipo_almacen_field():
+    """Idempotente: agrega el campo Select bfel_tipo_almacen a Warehouse si no existe."""
+    if frappe.db.exists("Custom Field", "Warehouse-bfel_tipo_almacen"):
+        return
+    frappe.get_doc({
+        "doctype": "Custom Field",
+        "dt": "Warehouse",
+        "fieldname": "bfel_tipo_almacen",
+        "label": "Tipo de Almacén",
+        "fieldtype": "Select",
+        "options": WAREHOUSE_TIPO_ALMACEN_OPTIONS,
+        "insert_after": "bfel_establecimiento",
+        "module": "FacEx Multi",
+        "description": "Clasificación funcional del almacén usada por FacEx (Venta, Tránsito, Consignación, etc.).",
     }).insert(ignore_permissions=True)
     frappe.db.commit()
     frappe.clear_cache(doctype="Warehouse")

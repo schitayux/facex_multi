@@ -37,6 +37,7 @@ import math
 import frappe
 from frappe.utils import flt
 
+from facex_multi.api.costs import get_item_costs as _get_item_costs
 from facex_multi.api.invoice import get_effective_company, has_efast_permission
 from facex_multi.api.item import _get_selling_price_list, update_item_price
 from facex_multi.api.permissions import (
@@ -155,86 +156,6 @@ def _round_price(value: float, step: float = 0.0, mode: str = "nearest") -> floa
     return round(q * step, 2)
 
 
-def _weighted_avg_costs(item_codes: list, company: str, allowed_warehouses) -> dict:
-    """{item_code: promedio_ponderado} calculado desde tabBin por compañía."""
-    if not item_codes:
-        return {}
-    params = {"company": company}
-    placeholders = ", ".join([f"%(ic{i})s" for i in range(len(item_codes))])
-    for i, code in enumerate(item_codes):
-        params[f"ic{i}"] = code
-
-    wh_cond = ""
-    if allowed_warehouses is not None:
-        wh_cond = "AND b.warehouse IN %(allowed_warehouses)s"
-        params["allowed_warehouses"] = tuple(allowed_warehouses) or ("",)
-
-    rows = frappe.db.sql(
-        f"""
-        SELECT b.item_code,
-               SUM(b.actual_qty * b.valuation_rate) AS val,
-               SUM(b.actual_qty) AS qty
-        FROM `tabBin` b
-        INNER JOIN `tabWarehouse` w ON w.name = b.warehouse
-        WHERE b.item_code IN ({placeholders})
-          AND w.company = %(company)s
-          {wh_cond}
-        GROUP BY b.item_code
-        """,
-        params,
-        as_dict=True,
-    )
-    out = {}
-    for r in rows:
-        qty = flt(r.qty)
-        out[r.item_code] = flt(r.val) / qty if qty else 0.0
-    return out
-
-
-def _last_purchase_costs(item_codes: list, company: str, supplier: str = None) -> dict:
-    """{item_code: tarifa neta de la última Purchase Invoice validada}."""
-    if not item_codes:
-        return {}
-    params = {"company": company}
-    placeholders = ", ".join([f"%(ic{i})s" for i in range(len(item_codes))])
-    for i, code in enumerate(item_codes):
-        params[f"ic{i}"] = code
-    supp_cond = ""
-    if supplier:
-        supp_cond = "AND pi.supplier = %(supplier)s"
-        params["supplier"] = supplier
-
-    rows = frappe.db.sql(
-        f"""
-        SELECT pii.item_code, pii.base_net_rate, pii.base_rate, pi.posting_date, pi.creation
-        FROM `tabPurchase Invoice Item` pii
-        INNER JOIN `tabPurchase Invoice` pi ON pi.name = pii.parent
-        INNER JOIN (
-            SELECT pii2.item_code, MAX(pi2.posting_date) AS max_date
-            FROM `tabPurchase Invoice Item` pii2
-            INNER JOIN `tabPurchase Invoice` pi2 ON pi2.name = pii2.parent
-            WHERE pii2.item_code IN ({placeholders})
-              AND pi2.docstatus = 1
-              AND pi2.company = %(company)s
-              {supp_cond}
-            GROUP BY pii2.item_code
-        ) latest ON latest.item_code = pii.item_code AND pi.posting_date = latest.max_date
-        WHERE pi.docstatus = 1
-          AND pi.company = %(company)s
-          {supp_cond}
-        ORDER BY pi.creation DESC
-        """,
-        params,
-        as_dict=True,
-    )
-    out = {}
-    for r in rows:
-        if r.item_code in out:
-            continue
-        out[r.item_code] = flt(r.base_net_rate) or flt(r.base_rate) or 0.0
-    return out
-
-
 def _price_list_rates(item_codes: list, price_list: str) -> dict:
     if not item_codes or not price_list:
         return {}
@@ -315,25 +236,8 @@ def _costs_for_items(items: list, company: str, supplier: str = None) -> dict:
     codes = [it["item_code"] for it in items]
     if not codes:
         return {}
-
     allowed = get_facex_allowed_warehouses(company)
-    ponderado = _weighted_avg_costs(codes, company, allowed)
-    ultima = _last_purchase_costs(codes, company, supplier)
-
-    estandar_rows = frappe.get_all(
-        "Item", filters={"name": ["in", codes]},
-        fields=["name", "custom_costo_estandar"],
-    )
-    estandar = {r.name: flt(r.custom_costo_estandar) for r in estandar_rows}
-
-    out = {}
-    for code in codes:
-        out[code] = {
-            "estandar": estandar.get(code, 0.0),
-            "ponderado": ponderado.get(code, 0.0),
-            "ultima_compra": ultima.get(code, 0.0),
-        }
-    return out
+    return _get_item_costs(codes, company, supplier=supplier, allowed_warehouses=allowed)
 
 
 # ---------------------------------------------------------------------------

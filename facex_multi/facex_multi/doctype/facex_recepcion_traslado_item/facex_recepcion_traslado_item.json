@@ -1,0 +1,108 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-09-08 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "item_code",
+  "item_name",
+  "uom",
+  "batch_no",
+  "serial_no",
+  "qty_enviada",
+  "qty_recibida",
+  "qty_pendiente_recepcion",
+  "qty_pendiente_devolucion",
+  "qty_devuelta",
+  "motivo_devolucion"
+ ],
+ "fields": [
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Producto",
+   "options": "Item",
+   "reqd": 1,
+   "columns": 2
+  },
+  {
+   "fetch_from": "item_code.item_name",
+   "fieldname": "item_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Nombre",
+   "read_only": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "uom",
+   "fieldtype": "Data",
+   "label": "UOM",
+   "columns": 1
+  },
+  {
+   "fieldname": "batch_no",
+   "fieldtype": "Data",
+   "label": "Lote"
+  },
+  {
+   "fieldname": "serial_no",
+   "fieldtype": "Small Text",
+   "label": "N° de Serie"
+  },
+  {
+   "fieldname": "qty_enviada",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Enviada",
+   "columns": 1
+  },
+  {
+   "fieldname": "qty_recibida",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Recibida",
+   "columns": 1
+  },
+  {
+   "fieldname": "qty_pendiente_recepcion",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Pend. Recepción",
+   "columns": 1
+  },
+  {
+   "fieldname": "qty_pendiente_devolucion",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Pend. Devolución",
+   "columns": 1
+  },
+  {
+   "fieldname": "qty_devuelta",
+   "fieldtype": "Float",
+   "label": "Devuelta"
+  },
+  {
+   "fieldname": "motivo_devolucion",
+   "fieldtype": "Link",
+   "label": "Motivo Devolución",
+   "options": "FacEx Motivo Devolucion"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-08 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FacEx Multi",
+ "name": "FacEx Recepcion Traslado Item",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

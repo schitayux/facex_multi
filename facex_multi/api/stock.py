@@ -10,16 +10,25 @@ from __future__ import annotations
 import frappe
 from frappe.utils import today, cint, flt, get_first_day, get_last_day
 
+from facex_multi.api.costs import get_item_costs, normalize_basis, resolve_cost
 from facex_multi.api.invoice import get_effective_company, get_user_companies, get_warehouses
 from facex_multi.api.item import _variantes_layout_teclado
 from facex_multi.api.permissions import (
+    get_facex_allowed_warehouses,
     get_facex_can_administer_transportistas,
     get_facex_can_edit_guias_transporte,
+    get_facex_can_maintain_item_costs,
+    get_facex_can_maintain_warehouses,
+    get_facex_can_receive_traslados,
     get_facex_can_upload_liquidaciones_transporte,
+    get_facex_can_view_costs,
     get_facex_can_view_transporte_kpis,
     get_facex_can_view_transporte_menu,
     get_facex_can_view_transporte_reportes,
+    get_facex_default_cost_basis,
+    get_facex_default_warehouse,
     get_facex_inventory_permissions,
+    get_facex_transito_warehouse,
     get_facex_permissions_for_company,
 )
 from facex_multi.api.si_carga import _get_establishments
@@ -239,16 +248,23 @@ def validate_items_bulk(item_codes: str, company: str = None):
 
 
 def _build_stock_entry_items(
-    rows: list, company: str, mode: str, default_source: str = None, default_target: str = None
+    rows: list, company: str, mode: str, default_source: str = None, default_target: str = None,
+    cost_basis: str = None,
 ) -> list:
     """
     mode: 'in' (solo t_warehouse) / 'out' (solo s_warehouse) / 'transfer' (ambos).
     Valida cada fila y arma el dict listo para doc.append('items', ...).
     El bloqueo de stock negativo (out/transfer) lo hace ERPNext de forma nativa
     (Stock Settings > Allow Negative Stock) — no se reimplementa aquí.
+
+    En Entradas ('in') el costo se asigna automáticamente: se exige que el ítem
+    tenga Costo Estándar FacEx (Item.custom_costo_estandar) — sin él la entrada se
+    rechaza. El valor se toma de la base `cost_basis` (o la base por defecto del
+    usuario); un usuario con `puede_ver_costos` puede sobrescribirlo por fila.
     """
-    from facex_multi.api.permissions import get_facex_allowed_warehouses
     allowed_warehouses = get_facex_allowed_warehouses(company)
+    basis = normalize_basis(cost_basis or get_facex_default_cost_basis(company))
+    can_view_costs = get_facex_can_view_costs(company)
 
     def _check_warehouse_allowed(i, item_code, warehouse):
         if warehouse and allowed_warehouses is not None and warehouse not in allowed_warehouses:
@@ -282,8 +298,20 @@ def _build_stock_entry_items(
         # Costo: solo aplica en Entradas — en Salidas/Transferencias el valor
         # de lo que sale ya lo determina ERPNext (FIFO/Promedio), no se pide.
         if mode == "in":
-            entry_row["basic_rate"] = flt(row.get("rate")) or 0
-            entry_row["allow_zero_valuation_rate"] = 1 if not row.get("rate") else 0
+            costs = get_item_costs([item_code], company, allowed_warehouses=allowed_warehouses)
+            estandar = flt((costs.get(item_code) or {}).get("estandar"))
+            if estandar <= 0:
+                frappe.throw(
+                    f"Fila {i} ({item_code}): el producto no tiene Costo Estándar FacEx "
+                    f"asignado. Asígnelo en «Costos a Ítems» antes de registrar entradas."
+                )
+            manual = flt(row.get("rate"))
+            if manual > 0 and can_view_costs:
+                rate = manual
+            else:
+                rate = resolve_cost(item_code, company, basis, costs) or estandar
+            entry_row["basic_rate"] = rate
+            entry_row["allow_zero_valuation_rate"] = 0
 
         # Cuenta contable: aplica en Entradas y Salidas (no en Transferencias,
         # que es un movimiento interno entre almacenes de la misma compañía).
@@ -372,16 +400,33 @@ def _create_stock_movement(mode: str, payload: str, client_token: str = None):
     items = _build_stock_entry_items(
         data.get("items") or [], company, mode,
         default_source=source_warehouse, default_target=target_warehouse,
+        cost_basis=data.get("cost_basis"),
     )
 
+    doc = _build_and_submit_stock_entry(
+        mode, company, source_warehouse, target_warehouse, items,
+        remarks=data.get("remarks"), posting_date=data.get("posting_date"),
+    )
+
+    _remember_token(client_token, doc.name)
+
+    return {"name": doc.name}
+
+
+def _build_and_submit_stock_entry(mode, company, source_warehouse, target_warehouse, items,
+                                  remarks=None, posting_date=None):
+    """Arma un Stock Entry (con la serie/purpose de `mode`), lo inserta y somete.
+    `items` ya viene armado por _build_stock_entry_items. Reusado por el módulo de
+    Recepción de Traslados, que no pasa por el gate `puede_hacer_transferencias`."""
+    cfg = _MOVEMENT_CONFIG[mode]
     doc_fields = {
         "doctype": "Stock Entry",
         "naming_series": cfg["naming_series"],
         "stock_entry_type": cfg["purpose"],
         "purpose": cfg["purpose"],
         "company": company,
-        "posting_date": data.get("posting_date") or today(),
-        "remarks": data.get("remarks"),
+        "posting_date": posting_date or today(),
+        "remarks": remarks,
         "items": items,
     }
     if mode in ("out", "transfer"):
@@ -394,10 +439,7 @@ def _create_stock_movement(mode: str, payload: str, client_token: str = None):
     doc.insert()
     doc.submit()
     frappe.db.commit()
-
-    _remember_token(client_token, doc.name)
-
-    return {"name": doc.name}
+    return doc
 
 
 @frappe.whitelist()
@@ -428,7 +470,6 @@ def get_item_stock_summary(item_code: str, company: str = None):
     bodegas_habilitadas restringidas, no debe ver saldos de bodegas fuera de su
     alcance (misma regla que _check_warehouse_allowed en el resto de este módulo)."""
     company = get_effective_company(company)
-    from facex_multi.api.permissions import get_facex_allowed_warehouses
     allowed_warehouses = get_facex_allowed_warehouses(company)
 
     conditions = "b.item_code = %(item_code)s AND w.company = %(company)s"
@@ -437,7 +478,7 @@ def get_item_stock_summary(item_code: str, company: str = None):
         conditions += " AND b.warehouse IN %(allowed_warehouses)s"
         values["allowed_warehouses"] = allowed_warehouses
 
-    return frappe.db.sql(
+    rows = frappe.db.sql(
         f"""
         SELECT b.warehouse, b.actual_qty, b.valuation_rate
         FROM `tabBin` b
@@ -448,6 +489,10 @@ def get_item_stock_summary(item_code: str, company: str = None):
         values,
         as_dict=True,
     )
+    if not get_facex_can_view_costs(company):
+        for r in rows:
+            r["valuation_rate"] = None
+    return rows
 
 
 @frappe.whitelist()
@@ -461,12 +506,48 @@ def get_valuation_rates(item_codes: str, warehouse: str = None):
     if not codes or not warehouse:
         return {}
     _assert_warehouse_allowed(warehouse)
+    if not get_facex_can_view_costs(get_effective_company()):
+        return {}
     rows = frappe.get_all(
         "Bin",
         filters={"item_code": ["in", codes], "warehouse": warehouse},
         fields=["item_code", "valuation_rate"],
     )
     return {r.item_code: r.valuation_rate for r in rows}
+
+
+@frappe.whitelist()
+def get_entry_cost_preview(item_codes: str, company: str = None, cost_basis: str = None):
+    """Para el grid de Entradas: por ítem indica si tiene Costo Estándar FacEx
+    (`has_estandar`, siempre presente, para bloquear/avisar aunque el usuario no
+    pueda ver montos) y, solo si `puede_ver_costos`, las tres bases y el costo
+    resuelto según la base indicada / por defecto del usuario."""
+    company = get_effective_company(company)
+    codes = frappe.parse_json(item_codes) or []
+    if isinstance(codes, str):
+        codes = [codes]
+    codes = [c for c in codes if c]
+    if not codes:
+        return {}
+
+    allowed = get_facex_allowed_warehouses(company)
+    basis = normalize_basis(cost_basis or get_facex_default_cost_basis(company))
+    can_view = get_facex_can_view_costs(company)
+    costs = get_item_costs(codes, company, allowed_warehouses=allowed)
+
+    out = {}
+    for code in codes:
+        c = costs.get(code) or {"estandar": 0.0, "ponderado": 0.0, "ultima_compra": 0.0}
+        entry = {"has_estandar": flt(c.get("estandar")) > 0}
+        if can_view:
+            entry.update({
+                "estandar": flt(c.get("estandar")),
+                "ponderado": flt(c.get("ponderado")),
+                "ultima_compra": flt(c.get("ultima_compra")),
+                "resolved": flt(c.get(basis)) or flt(c.get("estandar")),
+            })
+        out[code] = entry
+    return {"basis": basis, "can_view_costs": can_view, "items": out}
 
 
 @frappe.whitelist()
@@ -742,6 +823,20 @@ def get_inventory_defaults(company: str = None):
 
     permissions = get_facex_inventory_permissions(company)
     general_perms = get_facex_permissions_for_company(company)
+    # Costos: permiso de visibilidad + base por defecto para Entradas.
+    permissions["puede_ver_costos"] = int(get_facex_can_view_costs(company))
+    permissions["costo_entrada_por_defecto"] = get_facex_default_cost_basis(company)
+    # Maestros de Inventario: Costos a Ítems / Almacenes (deny-by-default).
+    permissions["mantiene_costos_items"] = int(get_facex_can_maintain_item_costs(company))
+    permissions["mantiene_almacenes"] = int(get_facex_can_maintain_warehouses(company))
+    # Maestro de Ítems: reusa los permisos generales de catálogo (Mantenimiento).
+    permissions["crea_items"] = general_perms.get("crea_items", 0)
+    permissions["modifica_items"] = general_perms.get("modifica_items", 0)
+    permissions["bodegas_restringidas"] = int(get_facex_allowed_warehouses(company) is not None)
+    # Recepción de Traslados: permiso + almacenes configurados del usuario.
+    permissions["puede_recibir_traslados"] = int(get_facex_can_receive_traslados(company))
+    permissions["transito_por_defecto"] = get_facex_transito_warehouse(company)
+    permissions["bodega_por_defecto"] = get_facex_default_warehouse(company)
     # "Listas de Materiales" es un permiso general (Mantenimiento, default ON —
     # crea_items/modifica_items), no deny-by-default como el resto de Inventario;
     # se mezcla aquí para que la tarjeta en Inventario use la misma fuente de verdad

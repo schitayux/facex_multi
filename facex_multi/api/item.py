@@ -8,8 +8,13 @@ from __future__ import annotations
 import frappe
 import json
 from frappe.utils import flt, cint
+from facex_multi.api.costs import get_item_costs as _get_item_costs
 from facex_multi.api.invoice import has_efast_permission, get_effective_company
-from facex_multi.api.permissions import get_facex_permissions_for_company
+from facex_multi.api.permissions import (
+    get_facex_allowed_warehouses,
+    get_facex_can_maintain_item_costs,
+    get_facex_permissions_for_company,
+)
 
 
 def _get_selling_price_list():
@@ -519,6 +524,14 @@ def create_or_update_item(data_json: str, company: str = None):
     if doc.meta.has_field("bfel_company"):
         doc.bfel_company = company
 
+    # Enforcement de permisos de catálogo (FacEx Settings). Sin fila configurada
+    # para el usuario+compañía → acceso total (retrocompatible).
+    _perms = get_facex_permissions_for_company(company)
+    if is_new and not _perms.get("crea_items", 1):
+        frappe.throw("No tiene permiso para crear productos.", frappe.PermissionError)
+    if not is_new and not _perms.get("modifica_items", 1):
+        frappe.throw("No tiene permiso para modificar productos.", frappe.PermissionError)
+
     doc.save(ignore_permissions=False)
     frappe.db.commit()
 
@@ -869,6 +882,8 @@ def delete_item(item_code: str, company: str = None):
         frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
 
     company = get_effective_company(company)
+    if not get_facex_permissions_for_company(company).get("modifica_items", 1):
+        frappe.throw("No tiene permiso para eliminar productos.", frappe.PermissionError)
     item_comp = frappe.db.get_value("Item", item_code, "bfel_company")
     if item_comp and item_comp != company:
         frappe.throw("No puede eliminar un producto de otra compañía.")
@@ -1317,3 +1332,133 @@ def get_lista_materiales_detail(item_code: str):
             for row in (doc.get("bfel_lista_materiales_items") or [])
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# Costos a Ítems — mantenimiento masivo del Costo Estándar FacEx
+# (Item.custom_costo_estandar), estilo «Mantenimiento de Precios».
+# ---------------------------------------------------------------------------
+
+def _check_costos_items_permission(company: str) -> None:
+    if not get_facex_can_maintain_item_costs(company):
+        frappe.throw("No tiene permiso para mantener los costos de ítems.", frappe.PermissionError)
+
+
+@frappe.whitelist()
+def get_item_costs_maintenance(company: str = None, codigo: str = None, grupo: str = None,
+                               uom: str = None, con_costo: int = 0, sin_costo: int = 0,
+                               start: int = 0, page_length: int = 50):
+    """Filas para la pantalla «Costos a Ítems». Muestra las 3 bases de costo; solo
+    el Costo Estándar es editable. `con_costo`/`sin_costo` filtran por
+    Item.custom_costo_estandar; marcados ambos o ninguno → todos."""
+    company = get_effective_company(company)
+    _check_costos_items_permission(company)
+
+    con_costo = int(con_costo or 0)
+    sin_costo = int(sin_costo or 0)
+    has_field = frappe.get_meta("Item").has_field("custom_costo_estandar")
+
+    conditions = ["disabled = 0"]
+    params = {"company": company}
+    company_filter = """(
+              bfel_company = %(company)s
+              OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
+          )"""
+    conditions.append(company_filter)
+
+    codigo = (codigo or "").strip()
+    if codigo:
+        conditions.append("name LIKE %(codigo)s")
+        params["codigo"] = f"%{codigo}%"
+    grupo = (grupo or "").strip()
+    if grupo:
+        conditions.append("item_group LIKE %(grupo)s")
+        params["grupo"] = f"%{grupo}%"
+    uom = (uom or "").strip()
+    if uom:
+        conditions.append("stock_uom = %(uom)s")
+        params["uom"] = uom
+
+    if has_field and con_costo and not sin_costo:
+        conditions.append("IFNULL(custom_costo_estandar, 0) > 0")
+    elif has_field and sin_costo and not con_costo:
+        conditions.append("IFNULL(custom_costo_estandar, 0) = 0")
+
+    where = " AND ".join(conditions)
+    total = frappe.db.sql(f"SELECT COUNT(*) FROM `tabItem` WHERE {where}", params)[0][0]
+    items = frappe.db.sql(
+        f"""
+        SELECT name AS item_code, item_name, item_group, stock_uom
+        FROM `tabItem`
+        WHERE {where}
+        ORDER BY item_name ASC
+        LIMIT %(page_length)s OFFSET %(start)s
+        """,
+        {**params, "page_length": int(page_length), "start": int(start)},
+        as_dict=True,
+    )
+
+    codes = [it["item_code"] for it in items]
+    costs = _get_item_costs(codes, company, allowed_warehouses=get_facex_allowed_warehouses(company))
+    for it in items:
+        c = costs.get(it["item_code"], {})
+        it["costo_estandar"] = flt(c.get("estandar"))
+        it["costo_ponderado"] = flt(c.get("ponderado"))
+        it["costo_ultima_compra"] = flt(c.get("ultima_compra"))
+
+    return {"rows": items, "total": total}
+
+
+@frappe.whitelist()
+def save_item_costs(rows_json: str, company: str = None):
+    """Guarda el Costo Estándar FacEx de las filas indicadas: [{item_code, costo_estandar}]."""
+    company = get_effective_company(company)
+    _check_costos_items_permission(company)
+
+    if not frappe.get_meta("Item").has_field("custom_costo_estandar"):
+        frappe.throw("El campo Costo Estándar (custom_costo_estandar) no existe en Item.")
+
+    rows = json.loads(rows_json) if isinstance(rows_json, str) else rows_json
+    if not rows:
+        frappe.throw("No hay filas para guardar.")
+
+    updated, errors = [], []
+    for row in rows:
+        code = (row.get("item_code") or "").strip()
+        if not code:
+            continue
+        try:
+            _get_item_for_company(code, company)
+            costo = flt(row.get("costo_estandar") or 0)
+            if costo < 0:
+                errors.append({"item_code": code, "error": "El costo no puede ser negativo."})
+                continue
+            frappe.db.set_value("Item", code, "custom_costo_estandar", costo)
+            updated.append({"item_code": code, "costo_estandar": costo})
+        except Exception as e:
+            errors.append({"item_code": code, "error": str(e)})
+
+    frappe.db.commit()
+    return {"updated": updated, "errors": errors}
+
+
+@frappe.whitelist()
+def export_item_costs_maintenance_excel(company: str = None, codigo: str = None, grupo: str = None,
+                                        uom: str = None, con_costo: int = 0, sin_costo: int = 0):
+    data = get_item_costs_maintenance(company, codigo, grupo, uom, con_costo, sin_costo,
+                                      start=0, page_length=100000)
+    rows = data["rows"]
+    if not rows:
+        frappe.throw("No hay ítems para exportar con los filtros seleccionados.")
+
+    from frappe.utils.xlsxutils import make_xlsx
+    headers = ["Código", "Nombre", "Grupo", "UOM", "Costo Estándar (FacEx)",
+               "Promedio Ponderado", "Último Precio de Compra"]
+    out = [headers]
+    for r in rows:
+        out.append([r["item_code"], r["item_name"], r["item_group"], r["stock_uom"],
+                    r["costo_estandar"], r["costo_ponderado"], r["costo_ultima_compra"]])
+    xlsx_file = make_xlsx(out, "Costos a Items")
+    frappe.response["filename"] = "costos_a_items.xlsx"
+    frappe.response["filecontent"] = xlsx_file.getvalue()
+    frappe.response["type"] = "binary"

@@ -19,3 +19,5 @@ facex_multi.patches.v1_0.add_supplier_direccion_telefono_fields
 facex_multi.patches.v1_0.add_utilidad_analisis
 facex_multi.patches.v1_0.add_facex_settings_price_list_permissions
 facex_multi.patches.v1_0.backfill_sales_partners_from_sales_team
+facex_multi.patches.v1_0.add_inventario_costos_maestros
+facex_multi.patches.v1_0.add_recepcion_traslados

@@ -49,7 +49,24 @@ const INV_REPORTS = [
 	{ key: "reporte_inv_kardex", id: "inv-rep-kardex", title: "Kardex de Movimientos", desc: "Entradas, salidas y transferencias por fecha, almacén o producto." },
 	{ key: "reporte_inv_existencias", id: "inv-rep-existencias", title: "Existencias", desc: "Status de stock por almacén, antigüedad y productos sin rotación." },
 	{ key: "reporte_inv_trazabilidad", id: "inv-rep-trazabilidad", title: "Trazabilidad Serie / Lote", desc: "Ubicación e historial por número de serie o lote." },
+	{ key: "reporte_inv_kardex_producto", id: "inv-rep-kardex-prod", title: "Kardex Valorizado por Producto", desc: "Saldo corrido de un producto en unidades y valorizado a la base de costo elegida." },
+	{ key: "reporte_inv_valuacion", id: "inv-rep-valuacion", title: "Valuación de Inventario", desc: "Valor de existencias por almacén y grupo, con reconciliación contra la cuenta contable." },
+	{ key: "reporte_inv_vencimientos", id: "inv-rep-vencimientos", title: "Productos por Vencer", desc: "Lotes con existencia próximos a vencer o ya caducados, por rango de días." },
+	{ key: "reporte_inv_rotacion", id: "inv-rep-rotacion", title: "Rotación y Análisis ABC", desc: "Rotación de inventario y clasificación ABC por valor de consumo del periodo." },
+	{ key: "reporte_inv_entradas_proveedor", id: "inv-rep-entradas-prov", title: "Entradas por Proveedor", desc: "Resumen de ingresos de mercadería vía Facturas de Compra, por proveedor y producto." },
 ];
+
+const INV_MAESTROS = [
+	{ key: "puede_ver_inventario", id: "inv-maestro-items", maestro: "items", title: "Maestro de Ítems", desc: "Consultar y mantener el catálogo de productos (según sus permisos de Mantenimiento)." },
+	{ key: "mantiene_costos_items", id: "inv-maestro-costos", maestro: "costos", title: "Costos a Ítems", desc: "Fijar el Costo Estándar FacEx de forma masiva, con referencia de promedio ponderado y última compra." },
+	{ key: "mantiene_almacenes", id: "inv-maestro-almacenes", maestro: "almacenes", title: "Almacenes", desc: "Alta, edición y baja de almacenes, con sucursal y Tipo de Almacén." },
+];
+
+const COST_BASIS_LABELS = {
+	estandar: "Costo Estándar (FacEx)",
+	ponderado: "Promedio Ponderado",
+	ultima_compra: "Último Precio de Compra",
+};
 
 // Listas de Materiales para venta (paquetes/kits) y su operación de Transformación.
 const INV_BOM = [
@@ -366,6 +383,7 @@ class FacexInventario {
 			args: { company: company || null },
 			callback: (r) => {
 				this.defaults = r.message || {};
+				this._can_costs = !!((this.defaults.permissions || {}).puede_ver_costos);
 				this._render_transporte_menu();
 				this._render_shell();
 			},
@@ -416,6 +434,12 @@ class FacexInventario {
   <div style="font-size:13px;font-weight:600;color:#6c757d;text-transform:uppercase;letter-spacing:.4px;margin:4px 0 10px;">Movimientos</div>
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;margin-bottom:24px;">
     ${INV_MOVEMENTS.map(m => this._movement_card(m, !!perms[m.key])).join("")}
+    ${(perms.puede_recibir_traslados && perms.transito_por_defecto) ? `
+    <div id="inv-card-recepcion" class="inv-card" data-recepcion="1">
+      <div class="inv-card-title">Recepción de Traslados</div>
+      <div class="inv-card-desc">Ingresar a bodega o devolver el stock que llega a su almacén de tránsito.</div>
+      <div class="inv-card-tag">Abrir →</div>
+    </div>` : ""}
   </div>
 
   <div style="font-size:13px;font-weight:600;color:#6c757d;text-transform:uppercase;letter-spacing:.4px;margin:4px 0 10px;">Listas de Materiales para Venta</div>
@@ -424,9 +448,15 @@ class FacexInventario {
   </div>
 
   <div style="font-size:13px;font-weight:600;color:#6c757d;text-transform:uppercase;letter-spacing:.4px;margin:4px 0 10px;">Reportes de Operaciones</div>
-  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;">
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;margin-bottom:24px;">
     ${INV_REPORTS.map(r => this._report_card(r, !!perms[r.key])).join("")}
   </div>
+
+  ${INV_MAESTROS.some(m => !!perms[m.key]) ? `
+  <div style="font-size:13px;font-weight:600;color:#6c757d;text-transform:uppercase;letter-spacing:.4px;margin:4px 0 10px;">Maestros y Mantenimiento</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;">
+    ${INV_MAESTROS.filter(m => !!perms[m.key]).map(m => this._maestro_card(m)).join("")}
+  </div>` : ""}
   `}
 
 </div>
@@ -464,6 +494,15 @@ class FacexInventario {
 </div>`;
 	}
 
+	_maestro_card(item) {
+		return `
+<div id="${item.id}" class="inv-card" data-maestro="${item.maestro}">
+  <div class="inv-card-title">${item.title}</div>
+  <div class="inv-card-desc">${item.desc}</div>
+  <div class="inv-card-tag">Abrir →</div>
+</div>`;
+	}
+
 	_bind_shell_events() {
 		// Siempre limpiar TODO lo previamente atado a $body antes de re-atar
 		// (causa raíz de un bug ya corregido: handlers se acumulaban en cada render).
@@ -491,6 +530,11 @@ class FacexInventario {
 			if (report === "reporte_inv_kardex") { this._open_kardex(); return; }
 			if (report === "reporte_inv_existencias") { this._open_existencias(); return; }
 			if (report === "reporte_inv_trazabilidad") { this._open_trazabilidad(); return; }
+			if (report === "reporte_inv_kardex_producto") { this._open_kardex_producto(); return; }
+			if (report === "reporte_inv_valuacion") { this._open_valuacion(); return; }
+			if (report === "reporte_inv_vencimientos") { this._open_vencimientos(); return; }
+			if (report === "reporte_inv_rotacion") { this._open_rotacion_abc(); return; }
+			if (report === "reporte_inv_entradas_proveedor") { this._open_entradas_proveedor(); return; }
 			frappe.show_alert({ message: __("Próximamente: {0}", [report]), indicator: "blue" });
 		});
 
@@ -500,6 +544,16 @@ class FacexInventario {
 			if (bom === "listas") { this._open_lista_materiales(); return; }
 			if (bom === "transformar") { this._open_transformacion(); return; }
 		});
+
+		this.$body.on("click", "[data-maestro]", (e) => {
+			const maestro = $(e.currentTarget).data("maestro");
+			if (!maestro) return;
+			if (maestro === "items") { this._open_maestro_items(); return; }
+			if (maestro === "costos") { this._open_costos_items(); return; }
+			if (maestro === "almacenes") { this._open_almacenes(); return; }
+		});
+
+		this.$body.on("click", "[data-recepcion]", () => this._open_recepcion_traslados());
 	}
 
 	// ──────────────────────────────────────────────
@@ -527,9 +581,21 @@ class FacexInventario {
 		this._render_movement();
 	}
 
+	// Config del movimiento activo, con las columnas de costo/total ocultas si el
+	// usuario no tiene permiso `puede_ver_costos` (en ese caso el backend asigna
+	// el costo automáticamente según la base por defecto).
+	_movement_cfg() {
+		const base = MOVEMENT_CONFIG[this.mode];
+		return {
+			...base,
+			show_cost: !!base.show_cost && !!this._can_costs,
+			show_total: !!base.show_total && !!this._can_costs,
+		};
+	}
+
 	_render_movement() {
 		const d = this.defaults;
-		const cfg = MOVEMENT_CONFIG[this.mode];
+		const cfg = this._movement_cfg();
 		const warehouses = d.warehouses || [];
 		const first_day = frappe.datetime.month_start();
 		const last_day = frappe.datetime.month_end();
@@ -564,6 +630,13 @@ class FacexInventario {
           <label class="inv-label">Fecha</label>
           <input type="date" id="inv-e-date" class="inv-select" style="width:100%;" value="${frappe.datetime.get_today()}">
         </div>
+        ${(this.mode === "in" && this._can_costs) ? `
+        <div>
+          <label class="inv-label">Base de costo de esta entrada</label>
+          <select id="inv-e-cost-basis" class="inv-select" style="width:100%;">
+            ${Object.keys(COST_BASIS_LABELS).map(k => `<option value="${k}" ${k === (this.defaults.permissions || {}).costo_entrada_por_defecto ? "selected" : ""}>${COST_BASIS_LABELS[k]}</option>`).join("")}
+          </select>
+        </div>` : ""}
         <div style="grid-column:1/-1;">
           <label class="inv-label">Comentario</label>
           <input type="text" id="inv-e-remarks" class="inv-select" style="width:100%;" placeholder="Motivo de la ${cfg.label.toLowerCase()} (opcional)" value="${frappe.utils.escape_html(this._entry_prefill_remarks)}">
@@ -666,7 +739,7 @@ class FacexInventario {
 	}
 
 	_load_movement_list() {
-		const cfg = MOVEMENT_CONFIG[this.mode];
+		const cfg = this._movement_cfg();
 		const from_date = this.$body.find("#inv-m-from").val();
 		const to_date = this.$body.find("#inv-m-to").val();
 		const $tbody = this.$body.find("#inv-m-tbody");
@@ -704,7 +777,7 @@ class FacexInventario {
 	}
 
 	_render_entry_rows() {
-		const cfg = MOVEMENT_CONFIG[this.mode];
+		const cfg = this._movement_cfg();
 		const pick_serials = cfg.fields.includes("source"); // out/transfer: la serie ya debe existir
 		const ncols = 6 + (cfg.show_account ? 1 : 0) + (cfg.show_cost ? 1 : 0) + (cfg.show_total ? 1 : 0);
 		const $tbody = this.$body.find("#inv-e-tbody");
@@ -713,12 +786,15 @@ class FacexInventario {
 			this._recompute_grand_total();
 			return;
 		}
-		$tbody.html(this.entry_rows.map((row) => `
-<tr data-row-id="${row.uid}">
+		$tbody.html(this.entry_rows.map((row) => {
+			const sinCosto = this.mode === "in" && row._has_estandar === false;
+			return `
+<tr data-row-id="${row.uid}" class="${sinCosto ? "inv-row-invalid" : ""}">
   <td>
     <span class="inv-row-info" data-info="${row.uid}" title="Ver existencia y costo">&#9432;</span>
     <strong>${frappe.utils.escape_html(row.item_code)}</strong><br>
     <span style="color:#6c757d;">${frappe.utils.escape_html(row.item_name || "")}</span>
+    ${sinCosto ? `<br><span style="color:#e03e2d;font-size:11px;">Sin Costo Estándar — asígnelo en «Costos a Ítems»</span>` : ""}
   </td>
   <td><input type="number" min="0" step="any" class="inv-e-field" data-field="qty" value="${row.qty}"></td>
   <td><input type="text" class="inv-e-field" data-field="uom" value="${frappe.utils.escape_html(row.uom || "")}"></td>
@@ -728,10 +804,20 @@ class FacexInventario {
   ${cfg.show_cost ? `<td><input type="number" min="0" step="any" class="inv-e-field" data-field="rate" value="${row.rate || ""}" placeholder="0.00"></td>` : ""}
   ${cfg.show_total ? `<td class="inv-total-cell">${this._format_row_total(row)}</td>` : ""}
   <td><span class="inv-row-remove" data-remove="${row.uid}">&times;</span></td>
-</tr>
-		`).join(""));
+</tr>`;
+		}).join(""));
 
 		this._recompute_grand_total();
+		this._refresh_save_enabled();
+	}
+
+	// Deshabilita "Guardar" si alguna fila de Entrada no tiene Costo Estándar FacEx.
+	_refresh_save_enabled() {
+		if (this.mode !== "in") return;
+		const bad = (this.entry_rows || []).some((r) => r._has_estandar === false);
+		const $btn = this.$body.find("#inv-e-save");
+		$btn.prop("disabled", bad);
+		$btn.attr("title", bad ? "Hay productos sin Costo Estándar FacEx asignado." : "");
 	}
 
 	_render_serial_cell(row, cfg, pick_serials) {
@@ -755,7 +841,7 @@ class FacexInventario {
 	}
 
 	_recompute_grand_total() {
-		const cfg = MOVEMENT_CONFIG[this.mode];
+		const cfg = this._movement_cfg();
 		if (!cfg.show_total) return;
 		let grand = 0;
 		this.entry_rows.forEach((row) => {
@@ -766,7 +852,7 @@ class FacexInventario {
 	}
 
 	_update_row_display(uid) {
-		const cfg = MOVEMENT_CONFIG[this.mode];
+		const cfg = this._movement_cfg();
 		const row = this.entry_rows.find((r) => r.uid === uid);
 		if (!row) return;
 		const $tr = this.$body.find(`tr[data-row-id="${uid}"]`);
@@ -935,7 +1021,7 @@ class FacexInventario {
 
 	_movement_add_row(item) {
 		if (!item) return;
-		const cfg = MOVEMENT_CONFIG[this.mode];
+		const cfg = this._movement_cfg();
 		this._entry_uid += 1;
 		const uid = this._entry_uid;
 		const row = {
@@ -955,6 +1041,24 @@ class FacexInventario {
 		};
 		this.entry_rows.push(row);
 		this._render_entry_rows();
+
+		if (this.mode === "in") {
+			row._has_estandar = true; // optimista hasta que responda el preview
+			const basis = this.$body.find("#inv-e-cost-basis").val() || undefined;
+			frappe.call({
+				method: "facex_multi.api.stock.get_entry_cost_preview",
+				args: { item_codes: JSON.stringify([row.item_code]), company: this.defaults.company, cost_basis: basis },
+				callback: (r) => {
+					const cur = this.entry_rows.find((x) => x.uid === uid);
+					if (!cur) return;
+					const info = ((r.message || {}).items || {})[cur.item_code] || {};
+					cur._has_estandar = !!info.has_estandar;
+					if (this._can_costs && info.resolved != null && !cur.rate) cur.rate = info.resolved;
+					this._render_entry_rows();
+					this._refresh_save_enabled();
+				},
+			});
+		}
 
 		if (cfg.show_account) {
 			frappe.call({
@@ -996,7 +1100,7 @@ class FacexInventario {
 	// ──────────────────────────────────────────────
 
 	_paste_columns() {
-		const cfg = MOVEMENT_CONFIG[this.mode];
+		const cfg = this._movement_cfg();
 		const cols = ["Código", "Cantidad", "UOM", "Lote", "Serie"];
 		if (cfg.show_account) cols.push("Cuenta Contable");
 		if (cfg.show_cost) cols.push("Costo");
@@ -1029,7 +1133,7 @@ class FacexInventario {
 	}
 
 	_paste_bulk_rows(text) {
-		const cfg = MOVEMENT_CONFIG[this.mode];
+		const cfg = this._movement_cfg();
 		const lines = (text || "").replace(/\r/g, "").split("\n").map((l) => l.trim()).filter(Boolean);
 		if (!lines.length) return;
 
@@ -1196,13 +1300,14 @@ class FacexInventario {
 					$b.html(`<div style="color:#adb5bd;">Sin existencia registrada.</div>`);
 					return;
 				}
+				const cc = this._can_costs;
 				$b.html(`
 <table style="width:100%;font-size:12px;">
-  <tr><th style="text-align:left;">Almacén</th><th style="text-align:right;">Cant.</th><th style="text-align:right;">Costo</th></tr>
+  <tr><th style="text-align:left;">Almacén</th><th style="text-align:right;">Cant.</th>${cc ? `<th style="text-align:right;">Costo</th>` : ""}</tr>
   ${rows.map(w => `<tr>
     <td>${frappe.utils.escape_html(w.warehouse)}</td>
     <td style="text-align:right;">${frappe.format(w.actual_qty, { fieldtype: "Float" })}</td>
-    <td style="text-align:right;">${frappe.format(w.valuation_rate, { fieldtype: "Currency" })}</td>
+    ${cc ? `<td style="text-align:right;">${frappe.format(w.valuation_rate, { fieldtype: "Currency" })}</td>` : ""}
   </tr>`).join("")}
 </table>`);
 			},
@@ -1212,7 +1317,7 @@ class FacexInventario {
 	_movement_save() {
 		if (this._saving) return;
 
-		const cfg = MOVEMENT_CONFIG[this.mode];
+		const cfg = this._movement_cfg();
 		const source_warehouse = cfg.fields.includes("source") ? this.$body.find("#inv-e-warehouse-source").val() : "";
 		const target_warehouse = cfg.fields.includes("target") ? this.$body.find("#inv-e-warehouse-target").val() : "";
 		const posting_date = this.$body.find("#inv-e-date").val();
@@ -1228,19 +1333,25 @@ class FacexInventario {
 		}
 		if (!this.entry_rows.length) { frappe.show_alert({ message: "Agregue al menos un producto.", indicator: "orange" }); return; }
 
+		if (this.mode === "in" && this.entry_rows.some((r) => r._has_estandar === false)) {
+			frappe.show_alert({ message: "Hay productos sin Costo Estándar FacEx. Asígnelo en «Costos a Ítems».", indicator: "red" });
+			return;
+		}
+
 		const payload = {
 			company: this.defaults.company,
 			source_warehouse,
 			target_warehouse,
 			posting_date,
 			remarks,
+			cost_basis: this.$body.find("#inv-e-cost-basis").val() || undefined,
 			items: this.entry_rows.map((r) => ({
 				item_code: r.item_code,
 				qty: r.qty,
 				uom: r.uom,
 				batch_no: r.batch_no,
 				serial_no: r.serial_no,
-				rate: r.rate,
+				rate: this._can_costs ? r.rate : undefined,
 				expense_account: r.expense_account,
 			})),
 		};
@@ -1289,7 +1400,7 @@ class FacexInventario {
 
 	_render_movement_result(doc) {
 		this.mode = doc.mode || this.mode;
-		const cfg = MOVEMENT_CONFIG[this.mode];
+		const cfg = this._movement_cfg();
 		this._result_doc = doc;
 		const is_cancelled = cint(doc.docstatus) === 2;
 		this._result_cancelled = is_cancelled;
@@ -1469,7 +1580,8 @@ class FacexInventario {
 	_render_kardex() {
 		const d = this.defaults;
 		const warehouses = d.warehouses || [];
-		const NCOLS = 13;
+		const cc = this._can_costs;
+		const NCOLS = cc ? 13 : 10;
 		this.$body.html(`
 <div id="inv-report-app" style="max-width:1500px;margin:0 auto;padding:16px 8px;">
 
@@ -1507,10 +1619,11 @@ class FacexInventario {
     </div>
   `, `<button type="button" id="inv-k-refresh" class="inv-btn inv-btn-primary">Filtrar</button>`)}
 
+  ${cc ? `
   <div class="inv-chart-card">
     <div class="inv-chart-title">Valor Acumulado en el tiempo</div>
     <div id="inv-k-chart"></div>
-  </div>
+  </div>` : ""}
 
   <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;overflow-x:auto;">
     <table class="inv-table" style="width:100%;">
@@ -1519,8 +1632,7 @@ class FacexInventario {
           <th>Documento</th><th style="width:95px;">Fecha</th><th style="width:100px;">Tipo</th><th>Producto</th>
           <th style="width:90px;">Cantidad</th><th>Almacén</th><th>Establecimiento</th><th>Compañía</th>
           <th style="width:160px;">Cuenta Contable</th>
-          <th style="width:100px;">Costo</th><th style="width:110px;">Valor</th>
-          <th style="width:120px;">Valor Acumulado</th>
+          ${cc ? `<th style="width:100px;">Costo</th><th style="width:110px;">Valor</th><th style="width:120px;">Valor Acumulado</th>` : ""}
           <th style="width:90px;">Estado</th>
         </tr>
       </thead>
@@ -1591,7 +1703,8 @@ class FacexInventario {
 
 	_load_kardex() {
 		const $tbody = this.$body.find("#inv-k-tbody");
-		const NCOLS = 13;
+		const cc = this._can_costs;
+		const NCOLS = cc ? 13 : 10;
 		$tbody.html(`<tr><td colspan="${NCOLS}" style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr>`);
 
 		frappe.call({
@@ -1607,7 +1720,7 @@ class FacexInventario {
 			},
 			callback: (r) => {
 				const rows = (r.message && r.message.rows) || [];
-				this._render_kardex_chart(rows);
+				if (cc) this._render_kardex_chart(rows);
 				if (!rows.length) {
 					$tbody.html(`<tr><td colspan="${NCOLS}" style="text-align:center;color:#adb5bd;padding:20px;">Sin movimientos en este rango.</td></tr>`);
 					return;
@@ -1625,9 +1738,9 @@ class FacexInventario {
   <td>${frappe.utils.escape_html(row.establecimiento_nombre || "")}</td>
   <td>${frappe.utils.escape_html(row.company || "")}</td>
   <td>${row.expense_account ? frappe.utils.escape_html(row.expense_account) : `<span style="color:#adb5bd;">—</span>`}</td>
-  <td>${frappe.format(row.valuation_rate, { fieldtype: "Currency" })}</td>
+  ${cc ? `<td>${frappe.format(row.valuation_rate, { fieldtype: "Currency" })}</td>
   <td>${frappe.format(row.stock_value_difference, { fieldtype: "Currency" })}</td>
-  <td>${frappe.format(row.accumulated_value, { fieldtype: "Currency" })}</td>
+  <td>${frappe.format(row.accumulated_value, { fieldtype: "Currency" })}</td>` : ""}
   <td><span style="color:${STATUS_COLOR[row.status_label] || "#333"};font-weight:600;">${frappe.utils.escape_html(row.status_label)}</span></td>
 </tr>`).join(""));
 			},
@@ -1795,19 +1908,21 @@ class FacexInventario {
 
 	_render_existencias_status(rows) {
 		const $table = this.$body.find("#inv-x-table");
+		const cc = this._can_costs;
 		if (!rows.length) { $table.html(`<tr><td style="text-align:center;color:#adb5bd;padding:20px;">Sin existencias.</td></tr>`); this._render_exist_chart(null); return; }
 		$table.html(`
-<thead><tr><th>Producto</th><th>Almacén</th><th style="width:100px;">Cantidad</th><th style="width:110px;">Costo</th><th style="width:120px;">Valor</th></tr></thead>
+<thead><tr><th>Producto</th><th>Almacén</th><th style="width:100px;">Cantidad</th>${cc ? `<th style="width:110px;">Costo</th><th style="width:120px;">Valor</th>` : ""}</tr></thead>
 <tbody>
 ${rows.map(r => `<tr>
   <td><strong>${frappe.utils.escape_html(r.item_code)}</strong><br><span style="color:#6c757d;">${frappe.utils.escape_html(r.item_name || "")}</span></td>
   <td>${frappe.utils.escape_html(r.warehouse)}</td>
   <td>${frappe.utils.escape_html(String(r.actual_qty))}</td>
-  <td>${frappe.format(r.valuation_rate, { fieldtype: "Currency" })}</td>
-  <td>${frappe.format(r.stock_value, { fieldtype: "Currency" })}</td>
+  ${cc ? `<td>${frappe.format(r.valuation_rate, { fieldtype: "Currency" })}</td>
+  <td>${frappe.format(r.stock_value, { fieldtype: "Currency" })}</td>` : ""}
 </tr>`).join("")}
 </tbody>`);
 
+		if (!cc) { this._render_exist_chart(null); return; }
 		const by_warehouse = new Map();
 		rows.forEach((r) => by_warehouse.set(r.warehouse, (by_warehouse.get(r.warehouse) || 0) + flt(r.stock_value)));
 		this._render_exist_chart({
@@ -1851,19 +1966,21 @@ ${rows.map(r => `<tr>
 
 	_render_existencias_nonmoving(rows) {
 		const $table = this.$body.find("#inv-x-table");
+		const cc = this._can_costs;
 		if (!rows.length) { $table.html(`<tr><td style="text-align:center;color:#adb5bd;padding:20px;">Todos los productos con existencia han tenido salidas recientes.</td></tr>`); this._render_exist_chart(null); return; }
 		$table.html(`
-<thead><tr><th>Producto</th><th>Almacén</th><th style="width:100px;">Cantidad</th><th style="width:120px;">Valor</th><th style="width:140px;">Última Salida</th></tr></thead>
+<thead><tr><th>Producto</th><th>Almacén</th><th style="width:100px;">Cantidad</th>${cc ? `<th style="width:120px;">Valor</th>` : ""}<th style="width:140px;">Última Salida</th></tr></thead>
 <tbody>
 ${rows.map(r => `<tr>
   <td><strong>${frappe.utils.escape_html(r.item_code)}</strong><br><span style="color:#6c757d;">${frappe.utils.escape_html(r.item_name || "")}</span></td>
   <td>${frappe.utils.escape_html(r.warehouse)}</td>
   <td>${frappe.utils.escape_html(String(r.actual_qty))}</td>
-  <td>${frappe.format(flt(r.actual_qty) * flt(r.valuation_rate), { fieldtype: "Currency" })}</td>
+  ${cc ? `<td>${frappe.format(flt(r.actual_qty) * flt(r.valuation_rate), { fieldtype: "Currency" })}</td>` : ""}
   <td>${r.last_outgoing_date ? frappe.utils.escape_html(r.last_outgoing_date) : `<span style="color:#e03e2d;">Nunca</span>`}</td>
 </tr>`).join("")}
 </tbody>`);
 
+		if (!cc) { this._render_exist_chart(null); return; }
 		const top = [...rows]
 			.map((r) => ({ label: r.item_code, value: flt(r.actual_qty) * flt(r.valuation_rate) }))
 			.sort((a, b) => b.value - a.value)
@@ -2050,6 +2167,1168 @@ ${rows.map(r => `<tr>
   <td>${r.expiry_date ? frappe.utils.escape_html(r.expiry_date) : "—"}</td>
 </tr>`).join("")}
 </tbody>`);
+	}
+
+	// ══════════════════════════════════════════════
+	// Reportes nuevos (Kardex valorizado / Valuación / Vencimientos /
+	// Rotación ABC / Entradas por proveedor) + Maestros (Ítems / Costos /
+	// Almacenes). Todos respetan `this._can_costs` para columnas de costo.
+	// ══════════════════════════════════════════════
+
+	_report_shell(title, subtitle, filtersHtml, actionsHtml, bodyHtml) {
+		const d = this.defaults;
+		return `
+<div id="inv-report-app" style="max-width:1500px;margin:0 auto;padding:16px 8px;">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+    <button type="button" id="inv-back" class="inv-btn inv-btn-secondary">&larr; Volver</button>
+    <div style="font-size:16px;font-weight:600;color:#333;">${title}</div>
+    <div style="font-size:12.5px;color:#6c757d;">${frappe.utils.escape_html(d.company)}${subtitle ? " · " + subtitle : ""}</div>
+  </div>
+  ${filtersHtml ? this._filter_panel_html(filtersHtml, actionsHtml) : ""}
+  ${bodyHtml}
+</div>
+<style>${INV_STYLES}</style>`;
+	}
+
+	_cost_basis_select(id) {
+		const def = (this.defaults.permissions || {}).costo_entrada_por_defecto || "estandar";
+		return `
+<div>
+  <label class="inv-label">Base de costo</label>
+  <select id="${id}" class="inv-select">
+    ${Object.keys(COST_BASIS_LABELS).map(k => `<option value="${k}" ${k === def ? "selected" : ""}>${COST_BASIS_LABELS[k]}</option>`).join("")}
+  </select>
+</div>`;
+	}
+
+	_report_item_filter(inputId, hiddenId) {
+		return `
+<div style="position:relative;">
+  <label class="inv-label">Producto</label>
+  <input type="text" id="${inputId}" class="inv-select" placeholder="Código o nombre..." autocomplete="off">
+  <div id="${inputId}-results" class="inv-autocomplete"></div>
+  <input type="hidden" id="${hiddenId}">
+</div>`;
+	}
+
+	_bind_report_item_filter(inputId, hiddenId) {
+		const $body = this.$body;
+		let t = null;
+		$body.on("input", `#${inputId}`, (e) => {
+			clearTimeout(t);
+			const val = e.target.value.trim();
+			if (!val) { $body.find(`#${hiddenId}`).val(""); $body.find(`#${inputId}-results`).hide(); return; }
+			if (val.length < 2) { $body.find(`#${inputId}-results`).hide(); return; }
+			t = setTimeout(() => {
+				frappe.call({
+					method: "facex_multi.api.stock.search_items_for_stock",
+					args: { txt: val, company: this.defaults.company },
+					callback: (r) => {
+						const items = r.message || [];
+						const $res = $body.find(`#${inputId}-results`);
+						if (!items.length) { $res.html(`<div style="color:#adb5bd;">Sin resultados</div>`).show(); return; }
+						$res.html(items.map((it) => `<div data-code="${frappe.utils.escape_html(it.item_code)}" data-label="${frappe.utils.escape_html(it.item_code)} — ${frappe.utils.escape_html(it.item_name || "")}"><strong>${frappe.utils.escape_html(it.item_code)}</strong> — ${frappe.utils.escape_html(it.item_name || "")}</div>`).join("")).show();
+					},
+				});
+			}, 300);
+		});
+		$body.on("click", `#${inputId}-results div`, (e) => {
+			const $d = $(e.currentTarget);
+			$body.find(`#${inputId}`).val($d.data("label"));
+			$body.find(`#${hiddenId}`).val($d.data("code"));
+			$body.find(`#${inputId}-results`).hide();
+		});
+		$(document).on("click.facexInv", (e) => {
+			if (!$(e.target).closest(`#${inputId}, #${inputId}-results`).length) $body.find(`#${inputId}-results`).hide();
+		});
+	}
+
+	_export_url(method, params) {
+		const qs = Object.keys(params)
+			.filter((k) => params[k] !== undefined && params[k] !== null && params[k] !== "")
+			.map((k) => `${k}=${encodeURIComponent(params[k])}`)
+			.join("&");
+		return `/api/method/${method}?${qs}`;
+	}
+
+	_money(v) {
+		return (v === null || v === undefined) ? "—" : frappe.format(v, { fieldtype: "Currency" });
+	}
+
+	// ── Kardex Valorizado por Producto ─────────────────────────────
+	_open_kardex_producto() { this._render_kardex_producto(); }
+
+	_render_kardex_producto() {
+		const cc = this._can_costs;
+		const warehouses = this.defaults.warehouses || [];
+		const filters = `
+      <div><label class="inv-label">Desde</label><input type="date" id="inv-kp-from" class="inv-select" value="${frappe.datetime.month_start()}"></div>
+      <div><label class="inv-label">Hasta</label><input type="date" id="inv-kp-to" class="inv-select" value="${frappe.datetime.month_end()}"></div>
+      <div><label class="inv-label">Almacén</label><select id="inv-kp-warehouse" class="inv-select"><option value="">Todos</option>${warehouses.map(w => `<option value="${frappe.utils.escape_html(w)}">${frappe.utils.escape_html(w)}</option>`).join("")}</select></div>
+      ${this._sucursal_filter_html("inv-kp-establecimiento")}
+      ${this._report_item_filter("inv-kp-item", "inv-kp-item-code")}
+      ${cc ? this._cost_basis_select("inv-kp-basis") : ""}`;
+		const actions = `<button type="button" id="inv-kp-refresh" class="inv-btn inv-btn-primary">Filtrar</button>
+      <button type="button" id="inv-kp-export" class="inv-btn inv-btn-secondary">Exportar a Excel</button>`;
+		const body = `
+  <div id="inv-kp-summary" style="margin:10px 0;font-size:13px;color:#495057;"></div>
+  <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;overflow-x:auto;">
+    <table class="inv-table" style="width:100%;">
+      <thead><tr>
+        <th style="width:95px;">Fecha</th><th>Documento</th><th style="width:100px;">Tipo</th><th>Almacén</th>
+        <th style="width:80px;">Entra</th><th style="width:80px;">Sale</th><th style="width:100px;">Saldo Unid.</th>
+        ${cc ? `<th style="width:100px;">Costo Unit.</th><th style="width:110px;">Valor Mov.</th><th style="width:120px;">Saldo Valorizado</th>` : ""}
+        <th style="width:80px;">Estado</th>
+      </tr></thead>
+      <tbody id="inv-kp-tbody"><tr><td colspan="${cc ? 11 : 8}" style="text-align:center;color:#adb5bd;padding:20px;">Seleccione un producto y filtre.</td></tr></tbody>
+    </table>
+  </div>`;
+		this.$body.html(this._report_shell("Kardex Valorizado por Producto", "saldo corrido en unidades y valorizado a la base elegida", filters, actions, body));
+		this.$body.off(); $(document).off(".facexInv");
+		this._bind_filter_toggle();
+		this._bind_report_item_filter("inv-kp-item", "inv-kp-item-code");
+		this.$body.on("click", "#inv-back", () => this._render_shell());
+		this.$body.on("click", "#inv-kp-refresh", () => this._load_kardex_producto());
+		this.$body.on("click", "#inv-kp-export", () => {
+			const p = this._kardex_producto_params();
+			if (!p.item_code) { frappe.show_alert({ message: "Seleccione un producto.", indicator: "orange" }); return; }
+			window.open(this._export_url("facex_multi.api.stock_reports.export_kardex_producto_excel", p), "_blank");
+		});
+	}
+
+	_kardex_producto_params() {
+		return {
+			company: this.defaults.company,
+			item_code: this.$body.find("#inv-kp-item-code").val(),
+			from_date: this.$body.find("#inv-kp-from").val(),
+			to_date: this.$body.find("#inv-kp-to").val(),
+			warehouse: this.$body.find("#inv-kp-warehouse").val(),
+			establecimiento: this._establecimiento_param("inv-kp-establecimiento"),
+			cost_basis: this.$body.find("#inv-kp-basis").val() || "estandar",
+		};
+	}
+
+	_load_kardex_producto() {
+		const cc = this._can_costs;
+		const p = this._kardex_producto_params();
+		if (!p.item_code) { frappe.show_alert({ message: "Seleccione un producto.", indicator: "orange" }); return; }
+		const $tbody = this.$body.find("#inv-kp-tbody");
+		$tbody.html(`<tr><td colspan="${cc ? 11 : 8}" style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr>`);
+		frappe.call({
+			method: "facex_multi.api.stock_reports.get_kardex_producto", args: p,
+			callback: (r) => {
+				const m = r.message || {};
+				const rows = m.rows || [];
+				const s = m.summary || {};
+				const $sum = this.$body.find("#inv-kp-summary");
+				$sum.html(`<strong>${frappe.utils.escape_html(m.item_code || "")}</strong> ${frappe.utils.escape_html(m.item_name || "")}
+					· Saldo inicial: ${frappe.format(m.opening_qty || 0, { fieldtype: "Float" })}
+					· Saldo final: <strong>${frappe.format(s.final_qty || 0, { fieldtype: "Float" })}</strong>
+					${cc ? ` · Valorizado final: <strong>${this._money(s.final_value)}</strong> (${frappe.utils.escape_html(s.cost_basis_label || "")})` : ""}`);
+				if (!rows.length) { $tbody.html(`<tr><td colspan="${cc ? 11 : 8}" style="text-align:center;color:#adb5bd;padding:20px;">Sin movimientos en el rango.</td></tr>`); return; }
+				const TC = { Entrada: "#28a745", Salida: "#e03e2d", Transferencia: "#5e64ff" };
+				$tbody.html(rows.map((row) => `
+<tr>
+  <td>${frappe.utils.escape_html(row.posting_date || "")}</td>
+  <td>${frappe.utils.escape_html(row.voucher_no || "")}</td>
+  <td><span style="color:${TC[row.movement_type_label] || "#333"};font-weight:600;">${frappe.utils.escape_html(row.movement_type_label)}</span></td>
+  <td>${frappe.utils.escape_html(row.warehouse || "")}</td>
+  <td>${row.qty_in ? frappe.format(row.qty_in, { fieldtype: "Float" }) : ""}</td>
+  <td>${row.qty_out ? frappe.format(row.qty_out, { fieldtype: "Float" }) : ""}</td>
+  <td><strong>${frappe.format(row.balance_qty, { fieldtype: "Float" })}</strong></td>
+  ${cc ? `<td>${this._money(row.unit_cost)}</td><td>${this._money(row.movement_value)}</td><td>${this._money(row.balance_value)}</td>` : ""}
+  <td>${frappe.utils.escape_html(row.status_label)}</td>
+</tr>`).join(""));
+			},
+		});
+	}
+
+	// ── Valuación de Inventario ────────────────────────────────────
+	_open_valuacion() { this._render_valuacion(); }
+
+	_render_valuacion() {
+		const cc = this._can_costs;
+		const warehouses = this.defaults.warehouses || [];
+		const filters = `
+      <div><label class="inv-label">Almacén</label><select id="inv-val-warehouse" class="inv-select"><option value="">Todos</option>${warehouses.map(w => `<option value="${frappe.utils.escape_html(w)}">${frappe.utils.escape_html(w)}</option>`).join("")}</select></div>
+      <div style="position:relative;"><label class="inv-label">Grupo de artículo</label><input type="text" id="inv-val-group" class="inv-select" placeholder="Grupo..."></div>
+      ${this._sucursal_filter_html("inv-val-establecimiento")}
+      ${cc ? this._cost_basis_select("inv-val-basis") : ""}`;
+		const actions = `<button type="button" id="inv-val-refresh" class="inv-btn inv-btn-primary">Filtrar</button>
+      <button type="button" id="inv-val-export" class="inv-btn inv-btn-secondary">Exportar a Excel</button>`;
+		const body = `
+  <div id="inv-val-summary" style="margin:10px 0;"></div>
+  <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;overflow-x:auto;">
+    <table class="inv-table" style="width:100%;">
+      <thead><tr><th>Producto</th><th>Grupo</th><th>Almacén</th><th style="width:100px;">Cantidad</th>
+        ${cc ? `<th style="width:110px;">Costo Unit.</th><th style="width:130px;">Valor</th>` : ""}</tr></thead>
+      <tbody id="inv-val-tbody"><tr><td colspan="${cc ? 6 : 4}" style="text-align:center;color:#adb5bd;padding:20px;">Filtre para ver la valuación.</td></tr></tbody>
+    </table>
+  </div>`;
+		this.$body.html(this._report_shell("Valuación de Inventario", "foto del valor de existencias", filters, actions, body));
+		this.$body.off(); $(document).off(".facexInv");
+		this._bind_filter_toggle();
+		this.$body.on("click", "#inv-back", () => this._render_shell());
+		this.$body.on("click", "#inv-val-refresh", () => this._load_valuacion());
+		this.$body.on("click", "#inv-val-export", () => window.open(this._export_url("facex_multi.api.stock_reports.export_stock_valuation_excel", this._valuacion_params()), "_blank"));
+	}
+
+	_valuacion_params() {
+		return {
+			company: this.defaults.company,
+			warehouse: this.$body.find("#inv-val-warehouse").val(),
+			item_group: this.$body.find("#inv-val-group").val(),
+			establecimiento: this._establecimiento_param("inv-val-establecimiento"),
+			cost_basis: this.$body.find("#inv-val-basis").val() || "estandar",
+		};
+	}
+
+	_load_valuacion() {
+		const cc = this._can_costs;
+		const $tbody = this.$body.find("#inv-val-tbody");
+		$tbody.html(`<tr><td colspan="${cc ? 6 : 4}" style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr>`);
+		frappe.call({
+			method: "facex_multi.api.stock_reports.get_stock_valuation", args: this._valuacion_params(),
+			callback: (r) => {
+				const m = r.message || {};
+				const rows = m.rows || [];
+				const s = m.summary || {};
+				const $sum = this.$body.find("#inv-val-summary");
+				if (cc) {
+					$sum.html(`
+<div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:12px 16px;display:flex;gap:24px;flex-wrap:wrap;font-size:13px;">
+  <div>Base: <strong>${frappe.utils.escape_html(s.cost_basis_label || "")}</strong></div>
+  <div>Valor total: <strong>${this._money(s.total_value)}</strong></div>
+  <div>Saldo contable (Stock): <strong>${this._money(s.gl_balance)}</strong></div>
+  <div>Diferencia: <strong style="color:${flt(s.difference) === 0 ? "#28a745" : "#e03e2d"};">${this._money(s.difference)}</strong></div>
+</div>`);
+				} else { $sum.html(""); }
+				if (!rows.length) { $tbody.html(`<tr><td colspan="${cc ? 6 : 4}" style="text-align:center;color:#adb5bd;padding:20px;">Sin existencias.</td></tr>`); return; }
+				$tbody.html(rows.map((r2) => `
+<tr>
+  <td><strong>${frappe.utils.escape_html(r2.item_code)}</strong><br><span style="color:#6c757d;">${frappe.utils.escape_html(r2.item_name || "")}</span></td>
+  <td>${frappe.utils.escape_html(r2.item_group || "")}</td>
+  <td>${frappe.utils.escape_html(r2.warehouse)}</td>
+  <td>${frappe.format(r2.actual_qty, { fieldtype: "Float" })}</td>
+  ${cc ? `<td>${this._money(r2.unit_cost)}</td><td>${this._money(r2.stock_value)}</td>` : ""}
+</tr>`).join(""));
+			},
+		});
+	}
+
+	// ── Productos por Vencer ───────────────────────────────────────
+	_open_vencimientos() { this._render_vencimientos(); }
+
+	_render_vencimientos() {
+		const cc = this._can_costs;
+		const warehouses = this.defaults.warehouses || [];
+		const filters = `
+      <div><label class="inv-label">Almacén</label><select id="inv-ven-warehouse" class="inv-select"><option value="">Todos</option>${warehouses.map(w => `<option value="${frappe.utils.escape_html(w)}">${frappe.utils.escape_html(w)}</option>`).join("")}</select></div>
+      ${this._sucursal_filter_html("inv-ven-establecimiento")}
+      ${this._report_item_filter("inv-ven-item", "inv-ven-item-code")}
+      <div><label class="inv-label">Días hacia adelante</label><input type="number" id="inv-ven-days" class="inv-select" value="30" min="0" style="width:120px;"></div>
+      <div><label class="inv-label">&nbsp;</label><label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="inv-ven-expired" checked> Incluir vencidos</label></div>`;
+		const actions = `<button type="button" id="inv-ven-refresh" class="inv-btn inv-btn-primary">Filtrar</button>
+      <button type="button" id="inv-ven-export" class="inv-btn inv-btn-secondary">Exportar a Excel</button>`;
+		const body = `
+  <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;overflow-x:auto;">
+    <table class="inv-table" style="width:100%;">
+      <thead><tr><th>Lote</th><th>Producto</th><th>Almacén</th><th style="width:90px;">Cantidad</th>
+        <th style="width:110px;">Vence</th><th style="width:80px;">Días</th><th style="width:110px;">Estado</th>
+        ${cc ? `<th style="width:120px;">Valor</th>` : ""}</tr></thead>
+      <tbody id="inv-ven-tbody"><tr><td colspan="${cc ? 8 : 7}" style="text-align:center;color:#adb5bd;padding:20px;">Filtre para ver los lotes.</td></tr></tbody>
+    </table>
+  </div>`;
+		this.$body.html(this._report_shell("Productos por Vencer / Lotes Caducados", "", filters, actions, body));
+		this.$body.off(); $(document).off(".facexInv");
+		this._bind_filter_toggle();
+		this._bind_report_item_filter("inv-ven-item", "inv-ven-item-code");
+		this.$body.on("click", "#inv-back", () => this._render_shell());
+		this.$body.on("click", "#inv-ven-refresh", () => this._load_vencimientos());
+		this.$body.on("click", "#inv-ven-export", () => window.open(this._export_url("facex_multi.api.stock_reports.export_expiring_batches_excel", this._vencimientos_params()), "_blank"));
+	}
+
+	_vencimientos_params() {
+		return {
+			company: this.defaults.company,
+			warehouse: this.$body.find("#inv-ven-warehouse").val(),
+			item_code: this.$body.find("#inv-ven-item-code").val(),
+			establecimiento: this._establecimiento_param("inv-ven-establecimiento"),
+			days_ahead: this.$body.find("#inv-ven-days").val() || 30,
+			include_expired: this.$body.find("#inv-ven-expired").is(":checked") ? 1 : 0,
+		};
+	}
+
+	_load_vencimientos() {
+		const cc = this._can_costs;
+		const $tbody = this.$body.find("#inv-ven-tbody");
+		$tbody.html(`<tr><td colspan="${cc ? 8 : 7}" style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr>`);
+		frappe.call({
+			method: "facex_multi.api.stock_reports.get_expiring_batches", args: this._vencimientos_params(),
+			callback: (r) => {
+				const rows = (r.message || {}).rows || [];
+				if (!rows.length) { $tbody.html(`<tr><td colspan="${cc ? 8 : 7}" style="text-align:center;color:#adb5bd;padding:20px;">Sin lotes por vencer en el rango.</td></tr>`); return; }
+				$tbody.html(rows.map((row) => `
+<tr>
+  <td><strong>${frappe.utils.escape_html(row.batch_no)}</strong></td>
+  <td>${frappe.utils.escape_html(row.item_code)}<br><span style="color:#6c757d;">${frappe.utils.escape_html(row.item_name || "")}</span></td>
+  <td>${frappe.utils.escape_html(row.warehouse)}</td>
+  <td>${frappe.format(row.qty, { fieldtype: "Float" })}</td>
+  <td>${frappe.utils.escape_html(String(row.expiry_date || ""))}</td>
+  <td>${row.days_to_expiry}</td>
+  <td class="${row.bucket === "Vencido" ? "inv-bucket-vencido" : ""}">${frappe.utils.escape_html(row.bucket)}</td>
+  ${cc ? `<td>${this._money(row.stock_value)}</td>` : ""}
+</tr>`).join(""));
+			},
+		});
+	}
+
+	// ── Rotación y Análisis ABC ────────────────────────────────────
+	_open_rotacion_abc() { this._render_rotacion_abc(); }
+
+	_render_rotacion_abc() {
+		const cc = this._can_costs;
+		const warehouses = this.defaults.warehouses || [];
+		const filters = `
+      <div><label class="inv-label">Desde</label><input type="date" id="inv-abc-from" class="inv-select" value="${frappe.datetime.add_days(frappe.datetime.get_today(), -90)}"></div>
+      <div><label class="inv-label">Hasta</label><input type="date" id="inv-abc-to" class="inv-select" value="${frappe.datetime.get_today()}"></div>
+      <div><label class="inv-label">Almacén</label><select id="inv-abc-warehouse" class="inv-select"><option value="">Todos</option>${warehouses.map(w => `<option value="${frappe.utils.escape_html(w)}">${frappe.utils.escape_html(w)}</option>`).join("")}</select></div>
+      <div><label class="inv-label">Grupo de artículo</label><input type="text" id="inv-abc-group" class="inv-select" placeholder="Grupo..."></div>
+      ${this._sucursal_filter_html("inv-abc-establecimiento")}
+      ${cc ? this._cost_basis_select("inv-abc-basis") : ""}`;
+		const actions = `<button type="button" id="inv-abc-refresh" class="inv-btn inv-btn-primary">Filtrar</button>
+      <button type="button" id="inv-abc-export" class="inv-btn inv-btn-secondary">Exportar a Excel</button>`;
+		const body = `
+  <div id="inv-abc-summary" style="margin:10px 0;font-size:13px;color:#495057;"></div>
+  <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;overflow-x:auto;">
+    <table class="inv-table" style="width:100%;">
+      <thead><tr><th>Producto</th><th>Grupo</th><th style="width:100px;">Consumo</th><th style="width:100px;">Stock Final</th>
+        <th style="width:90px;">Rotación</th><th style="width:70px;">ABC</th>
+        ${cc ? `<th style="width:120px;">Valor Consumo</th><th style="width:90px;">% Pareto</th>` : ""}</tr></thead>
+      <tbody id="inv-abc-tbody"><tr><td colspan="${cc ? 8 : 6}" style="text-align:center;color:#adb5bd;padding:20px;">Filtre para ver la rotación.</td></tr></tbody>
+    </table>
+  </div>`;
+		this.$body.html(this._report_shell("Rotación y Análisis ABC", "por valor de consumo del periodo", filters, actions, body));
+		this.$body.off(); $(document).off(".facexInv");
+		this._bind_filter_toggle();
+		this.$body.on("click", "#inv-back", () => this._render_shell());
+		this.$body.on("click", "#inv-abc-refresh", () => this._load_rotacion_abc());
+		this.$body.on("click", "#inv-abc-export", () => window.open(this._export_url("facex_multi.api.stock_reports.export_stock_turnover_abc_excel", this._rotacion_abc_params()), "_blank"));
+	}
+
+	_rotacion_abc_params() {
+		return {
+			company: this.defaults.company,
+			from_date: this.$body.find("#inv-abc-from").val(),
+			to_date: this.$body.find("#inv-abc-to").val(),
+			warehouse: this.$body.find("#inv-abc-warehouse").val(),
+			item_group: this.$body.find("#inv-abc-group").val(),
+			establecimiento: this._establecimiento_param("inv-abc-establecimiento"),
+			cost_basis: this.$body.find("#inv-abc-basis").val() || "estandar",
+		};
+	}
+
+	_load_rotacion_abc() {
+		const cc = this._can_costs;
+		const $tbody = this.$body.find("#inv-abc-tbody");
+		$tbody.html(`<tr><td colspan="${cc ? 8 : 6}" style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr>`);
+		frappe.call({
+			method: "facex_multi.api.stock_reports.get_stock_turnover_abc", args: this._rotacion_abc_params(),
+			callback: (r) => {
+				const m = r.message || {};
+				const rows = m.rows || [];
+				const s = m.summary || {};
+				this.$body.find("#inv-abc-summary").html(`Clase A: <strong>${s.count_a || 0}</strong> · Clase B: <strong>${s.count_b || 0}</strong> · Clase C: <strong>${s.count_c || 0}</strong>${cc ? ` · Valor total de consumo: <strong>${this._money(s.total_consumo_valor)}</strong> (${frappe.utils.escape_html(s.cost_basis_label || "")})` : ""}`);
+				if (!rows.length) { $tbody.html(`<tr><td colspan="${cc ? 8 : 6}" style="text-align:center;color:#adb5bd;padding:20px;">Sin datos en el periodo.</td></tr>`); return; }
+				$tbody.html(rows.map((row) => `
+<tr>
+  <td><strong>${frappe.utils.escape_html(row.item_code)}</strong><br><span style="color:#6c757d;">${frappe.utils.escape_html(row.item_name || "")}</span></td>
+  <td>${frappe.utils.escape_html(row.item_group || "")}</td>
+  <td>${frappe.format(row.consumo, { fieldtype: "Float" })}</td>
+  <td>${frappe.format(row.stock_final, { fieldtype: "Float" })}</td>
+  <td>${flt(row.rotacion).toFixed(2)}</td>
+  <td><span class="inv-abc-badge inv-abc-${row.abc}">${row.abc}</span></td>
+  ${cc ? `<td>${this._money(row.consumo_valor)}</td><td>${row.pareto_pct == null ? "—" : flt(row.pareto_pct).toFixed(1) + "%"}</td>` : ""}
+</tr>`).join(""));
+			},
+		});
+	}
+
+	// ── Entradas por Proveedor ─────────────────────────────────────
+	_open_entradas_proveedor() { this._render_entradas_proveedor(); }
+
+	_render_entradas_proveedor() {
+		const cc = this._can_costs;
+		const filters = `
+      <div><label class="inv-label">Desde</label><input type="date" id="inv-ep-from" class="inv-select" value="${frappe.datetime.month_start()}"></div>
+      <div><label class="inv-label">Hasta</label><input type="date" id="inv-ep-to" class="inv-select" value="${frappe.datetime.month_end()}"></div>
+      <div><label class="inv-label">Proveedor</label><input type="text" id="inv-ep-supplier" class="inv-select" placeholder="Nombre exacto del proveedor..."></div>
+      ${this._report_item_filter("inv-ep-item", "inv-ep-item-code")}
+      ${this._sucursal_filter_html("inv-ep-establecimiento")}`;
+		const actions = `<button type="button" id="inv-ep-refresh" class="inv-btn inv-btn-primary">Filtrar</button>
+      <button type="button" id="inv-ep-export" class="inv-btn inv-btn-secondary">Exportar a Excel</button>`;
+		const body = `
+  <div id="inv-ep-summary" style="margin:10px 0;font-size:13px;color:#495057;"></div>
+  <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;overflow-x:auto;">
+    <table class="inv-table" style="width:100%;">
+      <thead><tr><th>Proveedor</th><th>Producto</th><th style="width:100px;">Cantidad</th><th style="width:110px;">Últ. Fecha</th><th style="width:90px;">Facturas</th>
+        ${cc ? `<th style="width:120px;">Monto Neto</th><th style="width:110px;">Costo Unit. Prom.</th>` : ""}</tr></thead>
+      <tbody id="inv-ep-tbody"><tr><td colspan="${cc ? 7 : 5}" style="text-align:center;color:#adb5bd;padding:20px;">Filtre para ver las entradas.</td></tr></tbody>
+    </table>
+  </div>`;
+		this.$body.html(this._report_shell("Entradas por Proveedor", "vía Facturas de Compra validadas", filters, actions, body));
+		this.$body.off(); $(document).off(".facexInv");
+		this._bind_filter_toggle();
+		this._bind_report_item_filter("inv-ep-item", "inv-ep-item-code");
+		this.$body.on("click", "#inv-back", () => this._render_shell());
+		this.$body.on("click", "#inv-ep-refresh", () => this._load_entradas_proveedor());
+		this.$body.on("click", "#inv-ep-export", () => window.open(this._export_url("facex_multi.api.stock_reports.export_receipts_by_supplier_excel", this._entradas_proveedor_params()), "_blank"));
+	}
+
+	_entradas_proveedor_params() {
+		return {
+			company: this.defaults.company,
+			from_date: this.$body.find("#inv-ep-from").val(),
+			to_date: this.$body.find("#inv-ep-to").val(),
+			supplier: this.$body.find("#inv-ep-supplier").val(),
+			item_code: this.$body.find("#inv-ep-item-code").val(),
+			establecimiento: this._establecimiento_param("inv-ep-establecimiento"),
+		};
+	}
+
+	_load_entradas_proveedor() {
+		const cc = this._can_costs;
+		const $tbody = this.$body.find("#inv-ep-tbody");
+		$tbody.html(`<tr><td colspan="${cc ? 7 : 5}" style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr>`);
+		frappe.call({
+			method: "facex_multi.api.stock_reports.get_receipts_by_supplier", args: this._entradas_proveedor_params(),
+			callback: (r) => {
+				const m = r.message || {};
+				const rows = m.rows || [];
+				const s = m.summary || {};
+				this.$body.find("#inv-ep-summary").html(`Cantidad total: <strong>${frappe.format(s.total_qty || 0, { fieldtype: "Float" })}</strong>${cc ? ` · Monto neto total: <strong>${this._money(s.total_net)}</strong>` : ""}`);
+				if (!rows.length) { $tbody.html(`<tr><td colspan="${cc ? 7 : 5}" style="text-align:center;color:#adb5bd;padding:20px;">Sin entradas en el rango.</td></tr>`); return; }
+				$tbody.html(rows.map((row) => `
+<tr>
+  <td>${frappe.utils.escape_html(row.supplier || "")}</td>
+  <td>${frappe.utils.escape_html(row.item_code)}<br><span style="color:#6c757d;">${frappe.utils.escape_html(row.item_name || "")}</span></td>
+  <td>${frappe.format(row.qty, { fieldtype: "Float" })}</td>
+  <td>${frappe.utils.escape_html(String(row.last_date || ""))}</td>
+  <td>${row.invoice_count}</td>
+  ${cc ? `<td>${this._money(row.net_amount)}</td><td>${this._money(row.avg_net_rate)}</td>` : ""}
+</tr>`).join(""));
+			},
+		});
+	}
+
+	// ══════════════════════════════════════════════
+	// Maestro de Ítems
+	// ══════════════════════════════════════════════
+	_open_maestro_items() {
+		this._mi_start = 0;
+		this._render_maestro_items();
+	}
+
+	_render_maestro_items() {
+		const p = this.defaults.permissions || {};
+		const body = `
+  <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;margin-bottom:12px;display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
+    <div><label class="inv-label">Código</label><input type="text" id="inv-mi-codigo" class="inv-select"></div>
+    <div><label class="inv-label">Nombre</label><input type="text" id="inv-mi-nombre" class="inv-select"></div>
+    <div><label class="inv-label">Grupo</label><input type="text" id="inv-mi-grupo" class="inv-select"></div>
+    <button type="button" id="inv-mi-search" class="inv-btn inv-btn-primary">Buscar</button>
+    ${p.crea_items ? `<button type="button" id="inv-mi-new" class="inv-btn inv-btn-secondary">+ Nuevo producto</button>` : ""}
+  </div>
+  <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;overflow-x:auto;">
+    <table class="inv-table" style="width:100%;">
+      <thead><tr><th>Código</th><th>Nombre</th><th>Grupo</th><th style="width:80px;">UOM</th><th style="width:110px;">Gestión</th><th style="width:90px;">Estado</th><th style="width:120px;"></th></tr></thead>
+      <tbody id="inv-mi-tbody"><tr><td colspan="7" style="text-align:center;color:#adb5bd;padding:20px;">Busque productos.</td></tr></tbody>
+    </table>
+    <div id="inv-mi-pager" style="margin-top:10px;text-align:center;"></div>
+  </div>`;
+		this.$body.html(this._report_shell("Maestro de Ítems", "catálogo de productos", "", "", body));
+		this.$body.off(); $(document).off(".facexInv");
+		this.$body.on("click", "#inv-back", () => this._render_shell());
+		this.$body.on("click", "#inv-mi-search", () => { this._mi_start = 0; this._load_maestro_items(); });
+		this.$body.on("click", "#inv-mi-new", () => this._maestro_item_dialog(null));
+		this.$body.on("click", ".inv-mi-edit", (e) => this._maestro_item_dialog($(e.currentTarget).data("code")));
+		this.$body.on("click", ".inv-mi-del", (e) => this._maestro_item_delete($(e.currentTarget).data("code")));
+		this.$body.on("click", ".inv-mi-page", (e) => { this._mi_start = $(e.currentTarget).data("start"); this._load_maestro_items(); });
+		this._load_maestro_items();
+	}
+
+	_load_maestro_items() {
+		const $tbody = this.$body.find("#inv-mi-tbody");
+		$tbody.html(`<tr><td colspan="7" style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr>`);
+		const p = this.defaults.permissions || {};
+		const PAGE = 20;
+		frappe.call({
+			method: "facex_multi.api.item.search_items_maintenance",
+			args: {
+				company: this.defaults.company, start: this._mi_start || 0, page_length: PAGE,
+				codigo: this.$body.find("#inv-mi-codigo").val(),
+				nombre: this.$body.find("#inv-mi-nombre").val(),
+				grupo: this.$body.find("#inv-mi-grupo").val(),
+			},
+			callback: (r) => {
+				const m = r.message || {};
+				const rows = m.rows || [];
+				if (!rows.length) { $tbody.html(`<tr><td colspan="7" style="text-align:center;color:#adb5bd;padding:20px;">Sin resultados.</td></tr>`); this.$body.find("#inv-mi-pager").html(""); return; }
+				$tbody.html(rows.map((row) => `
+<tr>
+  <td><strong>${frappe.utils.escape_html(row.name)}</strong></td>
+  <td>${frappe.utils.escape_html(row.item_name || "")}</td>
+  <td>${frappe.utils.escape_html(row.item_group || "")}</td>
+  <td>${frappe.utils.escape_html(row.stock_uom || "")}</td>
+  <td>${frappe.utils.escape_html(row.gestionado_por || "")}</td>
+  <td>${row.disabled ? `<span style="color:#e03e2d;">Inactivo</span>` : `<span style="color:#28a745;">Activo</span>`}</td>
+  <td>
+    ${p.modifica_items ? `<button type="button" class="inv-btn inv-btn-secondary inv-mi-edit" data-code="${frappe.utils.escape_html(row.name)}" style="padding:2px 8px;">Editar</button>` : ""}
+    ${p.modifica_items ? `<button type="button" class="inv-btn inv-btn-danger inv-mi-del" data-code="${frappe.utils.escape_html(row.name)}" style="padding:2px 8px;">✕</button>` : ""}
+  </td>
+</tr>`).join(""));
+				const total = m.total || 0;
+				const start = this._mi_start || 0;
+				const pager = [];
+				if (start > 0) pager.push(`<button type="button" class="inv-btn inv-btn-secondary inv-mi-page" data-start="${Math.max(0, start - PAGE)}">&larr; Anterior</button>`);
+				pager.push(`<span style="margin:0 10px;color:#6c757d;">${start + 1}–${Math.min(total, start + rows.length)} de ${total}</span>`);
+				if (start + PAGE < total) pager.push(`<button type="button" class="inv-btn inv-btn-secondary inv-mi-page" data-start="${start + PAGE}">Siguiente &rarr;</button>`);
+				this.$body.find("#inv-mi-pager").html(pager.join(""));
+			},
+		});
+	}
+
+	_maestro_item_dialog(item_code) {
+		const cc = this._can_costs;
+		const fields = [
+			{ fieldtype: "Data", fieldname: "item_code", label: "Código", reqd: 1, read_only: !!item_code },
+			{ fieldtype: "Data", fieldname: "item_name", label: "Nombre", reqd: 1 },
+			{ fieldtype: "Data", fieldname: "item_group", label: "Grupo de artículo" },
+			{ fieldtype: "Data", fieldname: "stock_uom", label: "UOM (unidad)" },
+			{ fieldtype: "Select", fieldname: "gestionado_por", label: "Gestión de stock", options: "General\nLote\nSerie", default: "General" },
+		];
+		if (cc) fields.push({ fieldtype: "Currency", fieldname: "costo_estandar", label: "Costo Estándar (FacEx)" });
+		const dlg = new frappe.ui.Dialog({
+			title: item_code ? "Editar producto" : "Nuevo producto",
+			fields,
+			primary_action_label: "Guardar",
+			primary_action: (v) => {
+				dlg.get_primary_btn().prop("disabled", true);
+				frappe.call({
+					method: "facex_multi.api.item.create_or_update_item",
+					args: { data_json: JSON.stringify(v), company: this.defaults.company },
+					callback: (r) => {
+						dlg.get_primary_btn().prop("disabled", false);
+						if (!r.exc) { frappe.show_alert({ message: "Producto guardado.", indicator: "green" }); dlg.hide(); this._load_maestro_items(); }
+					},
+					error: () => dlg.get_primary_btn().prop("disabled", false),
+				});
+			},
+		});
+		if (item_code) {
+			frappe.call({
+				method: "facex_multi.api.item.get_item",
+				args: { name: item_code, company: this.defaults.company },
+				callback: (r) => {
+					const it = r.message || {};
+					dlg.set_values({
+						item_code: it.item_code || item_code,
+						item_name: it.item_name || "",
+						item_group: it.item_group || "",
+						stock_uom: it.stock_uom || "",
+						gestionado_por: it.has_serial_no ? "Serie" : (it.has_batch_no ? "Lote" : "General"),
+						costo_estandar: it.costo_estandar || 0,
+					});
+				},
+			});
+		}
+		dlg.show();
+	}
+
+	_maestro_item_delete(item_code) {
+		frappe.confirm(`¿Eliminar permanentemente el producto <strong>${frappe.utils.escape_html(item_code)}</strong>?`, () => {
+			frappe.call({
+				method: "facex_multi.api.item.delete_item",
+				args: { item_code, company: this.defaults.company },
+				callback: (r) => { if (!r.exc) { frappe.show_alert({ message: "Producto eliminado.", indicator: "orange" }); this._load_maestro_items(); } },
+			});
+		});
+	}
+
+	// ══════════════════════════════════════════════
+	// Costos a Ítems
+	// ══════════════════════════════════════════════
+	_open_costos_items() {
+		this._ci_start = 0;
+		this._ci_dirty = {};
+		this._render_costos_items();
+	}
+
+	_render_costos_items() {
+		const body = `
+  <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;margin-bottom:12px;display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
+    <div><label class="inv-label">Código</label><input type="text" id="inv-ci-codigo" class="inv-select"></div>
+    <div><label class="inv-label">Grupo</label><input type="text" id="inv-ci-grupo" class="inv-select"></div>
+    <div><label class="inv-label">UOM</label><input type="text" id="inv-ci-uom" class="inv-select" style="width:100px;"></div>
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="inv-ci-con"> Solo con costo</label>
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="inv-ci-sin"> Solo sin costo</label>
+    <button type="button" id="inv-ci-search" class="inv-btn inv-btn-primary">Buscar</button>
+    <button type="button" id="inv-ci-export" class="inv-btn inv-btn-secondary">Exportar a Excel</button>
+    <button type="button" id="inv-ci-save" class="inv-btn inv-btn-primary" style="margin-left:auto;">Guardar cambios</button>
+  </div>
+  <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;overflow-x:auto;">
+    <table class="inv-table" style="width:100%;">
+      <thead><tr><th>Código</th><th>Nombre</th><th>Grupo</th><th style="width:80px;">UOM</th>
+        <th style="width:150px;">Costo Estándar (FacEx)</th><th style="width:130px;">Prom. Ponderado</th><th style="width:130px;">Última Compra</th></tr></thead>
+      <tbody id="inv-ci-tbody"><tr><td colspan="7" style="text-align:center;color:#adb5bd;padding:20px;">Busque productos.</td></tr></tbody>
+    </table>
+    <div id="inv-ci-pager" style="margin-top:10px;text-align:center;"></div>
+  </div>`;
+		this.$body.html(this._report_shell("Costos a Ítems", "Costo Estándar FacEx editable · promedio ponderado y última compra como referencia", "", "", body));
+		this.$body.off(); $(document).off(".facexInv");
+		this.$body.on("click", "#inv-back", () => this._render_shell());
+		this.$body.on("click", "#inv-ci-search", () => { this._ci_start = 0; this._ci_dirty = {}; this._load_costos_items(); });
+		this.$body.on("click", ".inv-ci-page", (e) => { this._ci_start = $(e.currentTarget).data("start"); this._load_costos_items(); });
+		this.$body.on("change", ".inv-ci-cost", (e) => { this._ci_dirty[$(e.currentTarget).data("code")] = flt(e.currentTarget.value); });
+		this.$body.on("click", "#inv-ci-save", () => this._save_costos_items());
+		this.$body.on("click", "#inv-ci-export", () => window.open(this._export_url("facex_multi.api.item.export_item_costs_maintenance_excel", this._costos_items_params()), "_blank"));
+		this._load_costos_items();
+	}
+
+	_costos_items_params() {
+		return {
+			company: this.defaults.company,
+			codigo: this.$body.find("#inv-ci-codigo").val(),
+			grupo: this.$body.find("#inv-ci-grupo").val(),
+			uom: this.$body.find("#inv-ci-uom").val(),
+			con_costo: this.$body.find("#inv-ci-con").is(":checked") ? 1 : 0,
+			sin_costo: this.$body.find("#inv-ci-sin").is(":checked") ? 1 : 0,
+		};
+	}
+
+	_load_costos_items() {
+		const $tbody = this.$body.find("#inv-ci-tbody");
+		$tbody.html(`<tr><td colspan="7" style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr>`);
+		const PAGE = 50;
+		frappe.call({
+			method: "facex_multi.api.item.get_item_costs_maintenance",
+			args: { ...this._costos_items_params(), start: this._ci_start || 0, page_length: PAGE },
+			callback: (r) => {
+				const m = r.message || {};
+				const rows = m.rows || [];
+				if (!rows.length) { $tbody.html(`<tr><td colspan="7" style="text-align:center;color:#adb5bd;padding:20px;">Sin resultados.</td></tr>`); this.$body.find("#inv-ci-pager").html(""); return; }
+				$tbody.html(rows.map((row) => {
+					const dirty = this._ci_dirty[row.item_code];
+					const val = dirty !== undefined ? dirty : row.costo_estandar;
+					return `
+<tr>
+  <td><strong>${frappe.utils.escape_html(row.item_code)}</strong></td>
+  <td>${frappe.utils.escape_html(row.item_name || "")}</td>
+  <td>${frappe.utils.escape_html(row.item_group || "")}</td>
+  <td>${frappe.utils.escape_html(row.stock_uom || "")}</td>
+  <td><input type="number" min="0" step="any" class="inv-e-field inv-ci-cost inv-maint-editable" data-code="${frappe.utils.escape_html(row.item_code)}" value="${val || ""}" placeholder="0.00"></td>
+  <td style="text-align:right;color:#6c757d;">${frappe.format(row.costo_ponderado, { fieldtype: "Currency" })}</td>
+  <td style="text-align:right;color:#6c757d;">${frappe.format(row.costo_ultima_compra, { fieldtype: "Currency" })}</td>
+</tr>`;
+				}).join(""));
+				const total = m.total || 0;
+				const start = this._ci_start || 0;
+				const pager = [];
+				if (start > 0) pager.push(`<button type="button" class="inv-btn inv-btn-secondary inv-ci-page" data-start="${Math.max(0, start - PAGE)}">&larr; Anterior</button>`);
+				pager.push(`<span style="margin:0 10px;color:#6c757d;">${start + 1}–${Math.min(total, start + rows.length)} de ${total}</span>`);
+				if (start + PAGE < total) pager.push(`<button type="button" class="inv-btn inv-btn-secondary inv-ci-page" data-start="${start + PAGE}">Siguiente &rarr;</button>`);
+				this.$body.find("#inv-ci-pager").html(pager.join(""));
+			},
+		});
+	}
+
+	_save_costos_items() {
+		const rows = Object.keys(this._ci_dirty).map((code) => ({ item_code: code, costo_estandar: this._ci_dirty[code] }));
+		if (!rows.length) { frappe.show_alert({ message: "No hay cambios para guardar.", indicator: "orange" }); return; }
+		frappe.call({
+			method: "facex_multi.api.item.save_item_costs",
+			args: { rows_json: JSON.stringify(rows), company: this.defaults.company },
+			freeze: true, freeze_message: "Guardando costos…",
+			callback: (r) => {
+				if (r.exc) return;
+				const m = r.message || {};
+				frappe.show_alert({ message: `${(m.updated || []).length} ítem(s) actualizado(s).`, indicator: "green" });
+				if ((m.errors || []).length) frappe.msgprint({ title: "Errores", message: m.errors.map((e) => `${e.item_code}: ${e.error}`).join("<br>"), indicator: "red" });
+				this._ci_dirty = {};
+				this._load_costos_items();
+			},
+		});
+	}
+
+	// ══════════════════════════════════════════════
+	// Almacenes
+	// ══════════════════════════════════════════════
+	_open_almacenes() { this._load_almacenes_and_render(); }
+
+	_load_almacenes_and_render() {
+		frappe.call({
+			method: "facex_multi.api.warehouse.list_warehouses_maintenance",
+			args: { company: this.defaults.company },
+			callback: (r) => {
+				if (r.exc) { this._render_shell(); return; }
+				this._almacenes_data = r.message || {};
+				this._render_almacenes();
+			},
+		});
+	}
+
+	_render_almacenes() {
+		const d = this._almacenes_data || {};
+		const ws = d.warehouses || [];
+		const body = `
+  <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;margin-bottom:12px;display:flex;gap:12px;align-items:center;">
+    <button type="button" id="inv-al-new" class="inv-btn inv-btn-primary">+ Nuevo almacén</button>
+    <span style="font-size:12.5px;color:#6c757d;">Solo se pueden eliminar almacenes sin movimientos de inventario.</span>
+  </div>
+  <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;overflow-x:auto;">
+    <table class="inv-table" style="width:100%;">
+      <thead><tr><th>Almacén</th><th>Grupo padre</th><th style="width:160px;">Sucursal</th><th style="width:140px;">Tipo</th><th style="width:90px;">Estado</th><th style="width:150px;"></th></tr></thead>
+      <tbody>
+      ${ws.filter(w => w.is_group).map(g => `<tr style="background:#f8f9fa;"><td colspan="6"><strong>${frappe.utils.escape_html(g.warehouse_name)}</strong> <span style="color:#adb5bd;">(grupo)</span></td></tr>
+        ${ws.filter(w => !w.is_group && w.parent_warehouse === g.name).map(w => this._almacen_row(w)).join("")}`).join("")}
+      ${ws.filter(w => !w.is_group && !ws.some(g => g.is_group && g.name === w.parent_warehouse)).map(w => this._almacen_row(w)).join("")}
+      </tbody>
+    </table>
+  </div>`;
+		this.$body.html(this._report_shell("Almacenes", "alta, edición y baja de almacenes", "", "", body));
+		this.$body.off(); $(document).off(".facexInv");
+		this.$body.on("click", "#inv-back", () => this._render_shell());
+		this.$body.on("click", "#inv-al-new", () => this._almacen_dialog(null));
+		this.$body.on("click", ".inv-al-edit", (e) => this._almacen_dialog($(e.currentTarget).data("name")));
+		this.$body.on("click", ".inv-al-del", (e) => this._almacen_delete($(e.currentTarget).data("name")));
+	}
+
+	_almacen_row(w) {
+		return `
+<tr>
+  <td>${frappe.utils.escape_html(w.warehouse_name)}</td>
+  <td style="color:#6c757d;">${frappe.utils.escape_html(w.parent_warehouse || "—")}</td>
+  <td>${frappe.utils.escape_html(this._est_name(w.bfel_establecimiento) || "—")}</td>
+  <td>${frappe.utils.escape_html(w.bfel_tipo_almacen || "—")}</td>
+  <td>${w.disabled ? `<span style="color:#e03e2d;">Inactivo</span>` : `<span style="color:#28a745;">Activo</span>`}</td>
+  <td>
+    <button type="button" class="inv-btn inv-btn-secondary inv-al-edit" data-name="${frappe.utils.escape_html(w.name)}" style="padding:2px 8px;">Editar</button>
+    <button type="button" class="inv-btn inv-btn-danger inv-al-del" data-name="${frappe.utils.escape_html(w.name)}" style="padding:2px 8px;" ${w.has_movements ? "disabled title='Tiene movimientos'" : ""}>✕</button>
+  </td>
+</tr>`;
+	}
+
+	_est_name(id) {
+		if (!id) return "";
+		const e = (this._almacenes_data.establishments || []).find((x) => x.id === id);
+		return e ? e.nombre : id;
+	}
+
+	_almacen_dialog(name) {
+		const d = this._almacenes_data || {};
+		const estOpts = ["\n"].concat((d.establishments || []).map((e) => `${e.id}`)).join("\n");
+		const fields = [
+			{ fieldtype: "Data", fieldname: "warehouse_name", label: "Nombre del almacén", reqd: 1 },
+			{ fieldtype: "Select", fieldname: "parent_warehouse", label: "Grupo padre", options: [""].concat((d.groups || []).map((g) => g.name)).join("\n"), reqd: !name ? 0 : 0 },
+			{ fieldtype: "Select", fieldname: "bfel_establecimiento", label: "Sucursal (Establecimiento)", options: estOpts },
+			{ fieldtype: "Select", fieldname: "bfel_tipo_almacen", label: "Tipo de Almacén", options: ["\n"].concat(d.tipo_almacen_options || []).join("\n") },
+		];
+		if (name) fields.push({ fieldtype: "Check", fieldname: "disabled", label: "Inactivo" });
+		const dlg = new frappe.ui.Dialog({
+			title: name ? "Editar almacén" : "Nuevo almacén",
+			fields,
+			primary_action_label: "Guardar",
+			primary_action: (v) => {
+				const payload = { ...v, company: this.defaults.company };
+				dlg.get_primary_btn().prop("disabled", true);
+				frappe.call({
+					method: name ? "facex_multi.api.warehouse.update_warehouse" : "facex_multi.api.warehouse.create_warehouse",
+					args: name ? { name, payload: JSON.stringify(payload) } : { payload: JSON.stringify(payload) },
+					callback: (r) => {
+						dlg.get_primary_btn().prop("disabled", false);
+						if (!r.exc) { frappe.show_alert({ message: "Almacén guardado.", indicator: "green" }); dlg.hide(); this._load_almacenes_and_render(); }
+					},
+					error: () => dlg.get_primary_btn().prop("disabled", false),
+				});
+			},
+		});
+		if (name) {
+			const w = (d.warehouses || []).find((x) => x.name === name) || {};
+			dlg.set_values({
+				warehouse_name: w.warehouse_name || "",
+				parent_warehouse: w.parent_warehouse || "",
+				bfel_establecimiento: w.bfel_establecimiento || "",
+				bfel_tipo_almacen: w.bfel_tipo_almacen || "",
+				disabled: w.disabled ? 1 : 0,
+			});
+		}
+		dlg.show();
+	}
+
+	_almacen_delete(name) {
+		frappe.confirm(`¿Eliminar el almacén <strong>${frappe.utils.escape_html(name)}</strong>?`, () => {
+			frappe.call({
+				method: "facex_multi.api.warehouse.delete_warehouse",
+				args: { name, company: this.defaults.company },
+				callback: (r) => { if (!r.exc) { frappe.show_alert({ message: "Almacén eliminado.", indicator: "orange" }); this._load_almacenes_and_render(); } },
+			});
+		});
+	}
+
+	// ══════════════════════════════════════════════
+	// Recepción de Traslados en Tránsito (Por Recibir / Por Devolver)
+	// ══════════════════════════════════════════════
+	_open_recepcion_traslados() {
+		this._rt_tab = "recibir";
+		this._render_recepcion();
+	}
+
+	_render_recepcion() {
+		this.$body.html(`
+<div id="inv-rt-app" style="max-width:1300px;margin:0 auto;padding:16px 8px;">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+    <button type="button" id="inv-back" class="inv-btn inv-btn-secondary">&larr; Volver</button>
+    <div style="font-size:16px;font-weight:600;color:#333;">Recepción de Traslados</div>
+    <div style="font-size:12.5px;color:#6c757d;">${frappe.utils.escape_html(this.defaults.company)} · tránsito: ${frappe.utils.escape_html((this.defaults.permissions || {}).transito_por_defecto || "")}</div>
+  </div>
+  <div class="inv-tabs">
+    <div class="inv-tab ${this._rt_tab === "recibir" ? "inv-tab-active" : ""}" data-rttab="recibir">Por Recibir</div>
+    <div class="inv-tab ${this._rt_tab === "devolver" ? "inv-tab-active" : ""}" data-rttab="devolver">Por Devolver</div>
+  </div>
+  <div id="inv-rt-body"></div>
+</div>
+<style>${INV_STYLES}</style>`);
+		this.$body.off(); $(document).off(".facexInv");
+		this.$body.on("click", "#inv-back", () => this._render_shell());
+		this.$body.on("click", ".inv-tab[data-rttab]", (e) => {
+			this._rt_tab = $(e.currentTarget).data("rttab");
+			this._render_recepcion();
+		});
+		if (this._rt_tab === "recibir") this._load_rt_pendientes();
+		else this._load_rt_devoluciones();
+	}
+
+	// ── Por Recibir ───────────────────────────────────────────────
+	_load_rt_pendientes() {
+		const $b = this.$body.find("#inv-rt-body");
+		$b.html(`<div style="text-align:center;color:#adb5bd;padding:30px;">Cargando...</div>`);
+		frappe.call({
+			method: "facex_multi.api.traslados.list_traslados_pendientes",
+			args: { company: this.defaults.company },
+			callback: (r) => {
+				const rows = (r.message || {}).rows || [];
+				if (!rows.length) { $b.html(`<div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:30px;text-align:center;color:#6c757d;">No hay traslados pendientes de recibir en su tránsito.</div>`); return; }
+				$b.html(`
+<div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;overflow-x:auto;">
+  <table class="inv-table" style="width:100%;">
+    <thead><tr><th>Traslado</th><th style="width:100px;">Fecha</th><th>Bodega Origen</th><th style="width:70px;">Ítems</th><th style="width:110px;">Unid. Pend.</th><th style="width:120px;">Estado</th><th style="width:90px;"></th></tr></thead>
+    <tbody>
+    ${rows.map(row => `<tr>
+      <td><strong>${frappe.utils.escape_html(row.name)}</strong></td>
+      <td>${frappe.utils.escape_html(row.posting_date)}</td>
+      <td>${frappe.utils.escape_html(row.from_warehouse || "")}</td>
+      <td>${row.item_count}</td>
+      <td>${frappe.format(row.unidades_pendientes, { fieldtype: "Float" })}</td>
+      <td>${frappe.utils.escape_html(row.estado)}</td>
+      <td><button type="button" class="inv-btn inv-btn-primary inv-rt-open" data-se="${frappe.utils.escape_html(row.name)}" style="padding:3px 10px;">Recibir</button></td>
+    </tr>`).join("")}
+    </tbody>
+  </table>
+</div>`);
+				$b.find(".inv-rt-open").on("click", (e) => this._open_rt_recepcion($(e.currentTarget).data("se")));
+			},
+		});
+	}
+
+	_open_rt_recepcion(stock_entry) {
+		frappe.call({
+			method: "facex_multi.api.traslados.get_traslado_para_recepcion",
+			args: { stock_entry, company: this.defaults.company },
+			freeze: true,
+			callback: (r) => {
+				if (r.exc) return;
+				const d = r.message;
+				this._rt_rec = {
+					stock_entry,
+					destinos: d.destinos || [],
+					motivos: d.motivos || [],
+					destino: d.destino_defecto || "",
+					rows: (d.items || []).map((it) => ({
+						...it,
+						recibido: 0,
+						resto: "devolucion",
+						motivo: "",
+					})),
+					from_warehouse: d.from_warehouse,
+					transito: d.transito,
+				};
+				this._render_rt_recepcion_detalle();
+			},
+		});
+	}
+
+	_render_rt_recepcion_detalle() {
+		const rec = this._rt_rec;
+		const $b = this.$body.find("#inv-rt-body");
+		$b.html(`
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+  <button type="button" id="inv-rt-back" class="inv-btn inv-btn-secondary">&larr; Lista</button>
+  <div style="font-size:13px;color:#495057;">Traslado <strong>${frappe.utils.escape_html(rec.stock_entry)}</strong> · ${frappe.utils.escape_html(rec.from_warehouse || "")} → ${frappe.utils.escape_html(rec.transito || "")}</div>
+</div>
+<div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;margin-bottom:12px;display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;">
+  <div style="flex:1;min-width:240px;">
+    <label class="inv-label">Escanear (QR / código de barras / código de ítem)</label>
+    <input type="text" id="inv-rt-scan" class="inv-select" style="width:100%;" autocomplete="off" placeholder="Escanee o teclee y presione Enter...">
+  </div>
+  <div>
+    <label class="inv-label">Bodega destino <span style="color:#e03e2d;">*</span></label>
+    <select id="inv-rt-destino" class="inv-select" style="min-width:220px;">
+      ${rec.destinos.map(w => `<option value="${frappe.utils.escape_html(w)}" ${w === rec.destino ? "selected" : ""}>${frappe.utils.escape_html(w)}</option>`).join("")}
+    </select>
+  </div>
+</div>
+<div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;margin-bottom:12px;overflow-x:auto;">
+  <table class="inv-table" style="width:100%;"><thead><tr>
+    <th>Producto</th><th style="width:90px;">Enviado</th><th style="width:90px;">Pendiente</th>
+    <th style="width:110px;">Recibido</th><th style="width:160px;">Resto</th><th style="width:190px;">Motivo devolución</th>
+  </tr></thead><tbody id="inv-rt-tbody"></tbody></table>
+</div>
+<div style="display:flex;justify-content:flex-end;">
+  <button type="button" id="inv-rt-aceptar" class="inv-btn inv-btn-primary">Aceptar</button>
+</div>`);
+		this._render_rt_recepcion_rows();
+		$b.find("#inv-rt-back").on("click", () => this._render_recepcion());
+		$b.find("#inv-rt-destino").on("change", (e) => { rec.destino = e.target.value; });
+		const $scan = $b.find("#inv-rt-scan");
+		$scan.on("keydown", (e) => {
+			if (e.key !== "Enter") return;
+			e.preventDefault();
+			const code = $scan.val().trim();
+			$scan.val("");
+			if (code) this._rt_scan(code);
+		});
+		setTimeout(() => $scan.focus(), 100);
+		$b.on("change", ".inv-rt-recibido", (e) => {
+			const i = +$(e.currentTarget).data("i");
+			const row = rec.rows[i];
+			row.recibido = Math.max(0, Math.min(flt(e.currentTarget.value), row.qty_pendiente));
+			this._render_rt_recepcion_rows();
+		});
+		$b.on("change", ".inv-rt-resto", (e) => {
+			rec.rows[+$(e.currentTarget).data("i")].resto = e.target.value;
+			this._render_rt_recepcion_rows();
+		});
+		$b.on("change", ".inv-rt-motivo", (e) => {
+			rec.rows[+$(e.currentTarget).data("i")].motivo = e.target.value;
+		});
+		$b.find("#inv-rt-aceptar").on("click", () => this._rt_aceptar());
+	}
+
+	_render_rt_recepcion_rows() {
+		const rec = this._rt_rec;
+		const $tb = this.$body.find("#inv-rt-tbody");
+		$tb.html(rec.rows.map((row, i) => {
+			const parcial = row.recibido < row.qty_pendiente;
+			return `
+<tr class="${row._flash ? "inv-row-scan" : ""}">
+  <td><strong>${frappe.utils.escape_html(row.item_code)}</strong> <span style="color:#6c757d;">${frappe.utils.escape_html(row.item_name || "")}</span>
+    ${row.batch_no ? `<br><span style="color:#6c757d;font-size:11px;">Lote ${frappe.utils.escape_html(row.batch_no)}</span>` : ""}
+    ${row.has_serial_no ? `<br><span style="color:#ff9f43;font-size:11px;">Por serie — se recibe completo</span>` : ""}</td>
+  <td>${frappe.format(row.qty_enviada, { fieldtype: "Float" })}</td>
+  <td>${frappe.format(row.qty_pendiente, { fieldtype: "Float" })}</td>
+  <td><input type="number" min="0" step="any" class="inv-e-field inv-rt-recibido" data-i="${i}" value="${row.recibido || ""}" ${row.has_serial_no ? "readonly" : ""} style="width:90px;"></td>
+  <td>${parcial ? `<select class="inv-select inv-rt-resto" data-i="${i}" style="width:150px;">
+      <option value="devolucion" ${row.resto === "devolucion" ? "selected" : ""}>Devolución</option>
+      <option value="recepcion" ${row.resto === "recepcion" ? "selected" : ""}>Recepción posterior</option>
+    </select>` : `<span style="color:#adb5bd;">—</span>`}</td>
+  <td>${(parcial && row.resto === "devolucion") ? `<select class="inv-select inv-rt-motivo" data-i="${i}" style="width:180px;">
+      <option value="">(sin motivo)</option>
+      ${rec.motivos.map(m => `<option value="${frappe.utils.escape_html(m.name)}" ${m.name === row.motivo ? "selected" : ""}>${frappe.utils.escape_html(m.motivo)}</option>`).join("")}
+    </select>` : `<span style="color:#adb5bd;">—</span>`}</td>
+</tr>`;
+		}).join(""));
+		rec.rows.forEach((r) => { r._flash = false; });
+	}
+
+	_rt_scan(code) {
+		const rec = this._rt_rec;
+		frappe.call({
+			method: "facex_multi.api.traslados.resolver_codigo_escaneado",
+			args: { stock_entry: rec.stock_entry, code, company: this.defaults.company },
+			callback: (r) => {
+				const m = r.message;
+				if (!m) { frappe.show_alert({ message: `No se reconoció «${code}» en este traslado.`, indicator: "orange" }); return; }
+				const row = rec.rows.find((x) => x.item_code === m.item_code);
+				if (!row) { frappe.show_alert({ message: `${m.item_code} no tiene pendiente en este traslado.`, indicator: "orange" }); return; }
+				if (row.has_serial_no) {
+					row.recibido = row.qty_pendiente;
+				} else if (row.recibido >= row.qty_pendiente) {
+					frappe.show_alert({ message: `${row.item_code}: ya alcanzó la cantidad pendiente (${row.qty_pendiente}).`, indicator: "orange" });
+					return;
+				} else {
+					row.recibido += 1;
+				}
+				row._flash = true;
+				this._render_rt_recepcion_rows();
+				this.$body.find("#inv-rt-scan").focus();
+			},
+		});
+	}
+
+	_rt_aceptar() {
+		const rec = this._rt_rec;
+		if (!rec.destino) { frappe.show_alert({ message: "Seleccione la bodega destino.", indicator: "orange" }); return; }
+		const recibido = rec.rows.reduce((s, r) => s + flt(r.recibido), 0);
+		const pendDev = rec.rows.filter(r => r.resto === "devolucion").reduce((s, r) => s + (flt(r.qty_pendiente) - flt(r.recibido)), 0);
+		const pendRec = rec.rows.filter(r => r.resto === "recepcion").reduce((s, r) => s + (flt(r.qty_pendiente) - flt(r.recibido)), 0);
+		if (recibido <= 0 && pendDev <= 0 && pendRec <= 0) { frappe.show_alert({ message: "No hay nada que procesar.", indicator: "orange" }); return; }
+
+		const items = rec.rows.map((r) => ({
+			item_code: r.item_code, batch_no: r.batch_no, serial_no: r.serial_no,
+			qty_recibida: flt(r.recibido), resto: r.resto, motivo_devolucion: r.motivo || undefined,
+		}));
+		const payload = { company: this.defaults.company, stock_entry: rec.stock_entry, destino_warehouse: rec.destino, items };
+		const doProc = () => {
+			frappe.call({
+				method: "facex_multi.api.traslados.procesar_recepcion",
+				args: { payload: JSON.stringify(payload) },
+				freeze: true, freeze_message: "Procesando recepción…",
+				callback: (r) => { if (!r.exc) this._rt_result(r.message, "Recepción procesada"); },
+			});
+		};
+		if (pendDev > 0 || pendRec > 0) {
+			frappe.confirm(
+				`Se recibirán <strong>${recibido}</strong> unidades. Quedarán <strong>${pendRec}</strong> pendientes de recepción y <strong>${pendDev}</strong> pendientes de devolución. ¿Continuar?`,
+				doProc
+			);
+		} else {
+			doProc();
+		}
+	}
+
+	// ── Por Devolver ──────────────────────────────────────────────
+	_load_rt_devoluciones() {
+		const $b = this.$body.find("#inv-rt-body");
+		$b.html(`<div style="text-align:center;color:#adb5bd;padding:30px;">Cargando...</div>`);
+		frappe.call({
+			method: "facex_multi.api.traslados.list_devoluciones_pendientes",
+			args: { company: this.defaults.company },
+			callback: (r) => {
+				const rows = (r.message || {}).rows || [];
+				if (!rows.length) { $b.html(`<div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:30px;text-align:center;color:#6c757d;">No hay traslados con pendientes de devolución.</div>`); return; }
+				$b.html(`
+<div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;overflow-x:auto;">
+  <table class="inv-table" style="width:100%;">
+    <thead><tr><th>Recepción</th><th>Traslado Origen</th><th>Bodega Origen</th><th style="width:130px;">Unid. a Devolver</th><th style="width:90px;"></th></tr></thead>
+    <tbody>
+    ${rows.map(row => `<tr>
+      <td><strong>${frappe.utils.escape_html(row.name)}</strong></td>
+      <td>${frappe.utils.escape_html(row.stock_entry_origen || "")}</td>
+      <td>${frappe.utils.escape_html(row.almacen_origen || "")}</td>
+      <td>${frappe.format(row.total_pendiente_devolucion, { fieldtype: "Float" })}</td>
+      <td><button type="button" class="inv-btn inv-btn-primary inv-rt-dev-open" data-rec="${frappe.utils.escape_html(row.name)}" style="padding:3px 10px;">Devolver</button></td>
+    </tr>`).join("")}
+    </tbody>
+  </table>
+</div>`);
+				$b.find(".inv-rt-dev-open").on("click", (e) => this._open_rt_devolucion($(e.currentTarget).data("rec")));
+			},
+		});
+	}
+
+	_open_rt_devolucion(recepcion) {
+		frappe.call({
+			method: "facex_multi.api.traslados.get_devolucion_detalle",
+			args: { recepcion, company: this.defaults.company },
+			freeze: true,
+			callback: (r) => {
+				if (r.exc) return;
+				const d = r.message;
+				this._rt_dev = {
+					recepcion,
+					transito: d.transito,
+					destinos: d.destinos || [],
+					destino: "",
+					rows: (d.items || []).map((it) => ({ ...it, devolver: flt(it.qty_pendiente_devolucion) })),
+				};
+				this._render_rt_devolucion_detalle();
+			},
+		});
+	}
+
+	_render_rt_devolucion_detalle() {
+		const dev = this._rt_dev;
+		const $b = this.$body.find("#inv-rt-body");
+		$b.html(`
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+  <button type="button" id="inv-rt-dev-back" class="inv-btn inv-btn-secondary">&larr; Lista</button>
+  <div style="font-size:13px;color:#495057;">Recepción <strong>${frappe.utils.escape_html(dev.recepcion)}</strong> · devolución desde ${frappe.utils.escape_html(dev.transito || "")}</div>
+</div>
+<div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;margin-bottom:12px;">
+  <label class="inv-label">Bodega a la que devolverá <span style="color:#e03e2d;">*</span></label>
+  <select id="inv-rt-dev-destino" class="inv-select" style="min-width:240px;">
+    <option value="">Seleccione...</option>
+    ${dev.destinos.map(w => `<option value="${frappe.utils.escape_html(w)}">${frappe.utils.escape_html(w)}</option>`).join("")}
+  </select>
+</div>
+<div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;margin-bottom:12px;overflow-x:auto;">
+  <table class="inv-table" style="width:100%;"><thead><tr>
+    <th>Producto</th><th style="width:120px;">Pend. Devolución</th><th style="width:110px;">A Devolver</th><th style="width:180px;">Motivo</th>
+  </tr></thead><tbody>
+  ${dev.rows.map((row, i) => `<tr>
+    <td><strong>${frappe.utils.escape_html(row.item_code)}</strong> <span style="color:#6c757d;">${frappe.utils.escape_html(row.item_name || "")}</span>${row.batch_no ? `<br><span style="color:#6c757d;font-size:11px;">Lote ${frappe.utils.escape_html(row.batch_no)}</span>` : ""}</td>
+    <td>${frappe.format(row.qty_pendiente_devolucion, { fieldtype: "Float" })}</td>
+    <td><input type="number" min="0" step="any" class="inv-e-field inv-rt-dev-qty" data-i="${i}" value="${row.devolver || ""}" ${row.has_serial_no ? "readonly" : ""} style="width:90px;"></td>
+    <td>${frappe.utils.escape_html(row.motivo_devolucion || "—")}</td>
+  </tr>`).join("")}
+  </tbody></table>
+</div>
+<div style="display:flex;justify-content:flex-end;">
+  <button type="button" id="inv-rt-devolver" class="inv-btn inv-btn-primary">Devolver</button>
+</div>`);
+		$b.find("#inv-rt-dev-back").on("click", () => this._render_recepcion());
+		$b.find("#inv-rt-dev-destino").on("change", (e) => { dev.destino = e.target.value; });
+		$b.on("change", ".inv-rt-dev-qty", (e) => {
+			const i = +$(e.currentTarget).data("i");
+			dev.rows[i].devolver = Math.max(0, Math.min(flt(e.currentTarget.value), dev.rows[i].qty_pendiente_devolucion));
+			e.currentTarget.value = dev.rows[i].devolver || "";
+		});
+		$b.find("#inv-rt-devolver").on("click", () => this._rt_devolver());
+	}
+
+	_rt_devolver() {
+		const dev = this._rt_dev;
+		if (!dev.destino) { frappe.show_alert({ message: "Seleccione la bodega de devolución.", indicator: "orange" }); return; }
+		const items = dev.rows.filter(r => flt(r.devolver) > 0).map(r => ({
+			item_code: r.item_code, batch_no: r.batch_no, serial_no: r.serial_no, qty: flt(r.devolver),
+		}));
+		if (!items.length) { frappe.show_alert({ message: "Indique cantidades a devolver.", indicator: "orange" }); return; }
+		const total = items.reduce((s, r) => s + r.qty, 0);
+		frappe.confirm(`¿Devolver <strong>${total}</strong> unidades a <strong>${frappe.utils.escape_html(dev.destino)}</strong>?`, () => {
+			frappe.call({
+				method: "facex_multi.api.traslados.procesar_devolucion",
+				args: { payload: JSON.stringify({ company: this.defaults.company, recepcion: dev.recepcion, almacen_devolucion: dev.destino, items }) },
+				freeze: true, freeze_message: "Procesando devolución…",
+				callback: (r) => { if (!r.exc) this._rt_result(r.message, "Devolución procesada"); },
+			});
+		});
+	}
+
+	_rt_result(msg, titulo) {
+		const $b = this.$body.find("#inv-rt-body");
+		const se = (msg || {}).stock_entry_generado;
+		$b.html(`
+<div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:30px;text-align:center;">
+  <div style="font-size:16px;font-weight:600;color:#28a745;margin-bottom:8px;">${titulo}</div>
+  ${se ? `<div style="font-size:13px;color:#495057;">Traslado generado: <strong>${frappe.utils.escape_html(se)}</strong></div>` : `<div style="font-size:13px;color:#6c757d;">Sin traslado de stock (no se recibió ninguna unidad).</div>`}
+  <div style="font-size:12.5px;color:#6c757d;margin-top:4px;">Recepción ${frappe.utils.escape_html((msg || {}).recepcion || "")} · estado: ${frappe.utils.escape_html((msg || {}).estado || "")}</div>
+  <div style="margin-top:16px;display:flex;gap:10px;justify-content:center;">
+    ${se ? `<button type="button" id="inv-rt-print" class="inv-btn inv-btn-secondary">Imprimir traslado</button>` : ""}
+    <button type="button" id="inv-rt-done" class="inv-btn inv-btn-primary">Volver a la lista</button>
+  </div>
+</div>`);
+		if (se) $b.find("#inv-rt-print").on("click", () => frappe.utils.print("Stock Entry", se));
+		$b.find("#inv-rt-done").on("click", () => this._render_recepcion());
 	}
 
 	// ──────────────────────────────────────────────
@@ -2914,5 +4193,11 @@ const INV_STYLES = `
 .inv-table input { width:100%;padding:5px 7px;border:1px solid #d1d8dd;border-radius:3px;font-size:12.5px;box-sizing:border-box; }
 .inv-row-remove { cursor:pointer;color:#e03e2d;font-weight:700; }
 .inv-row-info { cursor:pointer;color:#5e64ff;margin-right:4px; }
+.inv-row-invalid > td { background:#fff5f5 !important; }
+.inv-row-scan > td { background:#e8f7ee !important; transition:background .4s; }
+.inv-abc-badge { display:inline-block;min-width:20px;text-align:center;padding:1px 6px;border-radius:10px;font-weight:700;font-size:11px;color:#fff; }
+.inv-abc-A { background:#e03e2d; } .inv-abc-B { background:#ff9f43; } .inv-abc-C { background:#28a745; }
+.inv-bucket-vencido { color:#e03e2d;font-weight:700; }
+.inv-maint-editable { width:110px;text-align:right; }
 .inv-popover { position:absolute;z-index:1050;background:#fff;border:1px solid #d1d8dd;border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.15);padding:12px 14px;min-width:260px;font-size:12.5px; }
 `;

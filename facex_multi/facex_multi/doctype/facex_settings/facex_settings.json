@@ -59,6 +59,7 @@
   "tipo_x_defecto",
   "cb_inventario",
   "bodega_por_defecto",
+  "transito_por_defecto",
   "sb_bodegas_socio",
   "socio_venta_por_defecto",
   "cb_bodegas_socio",
@@ -79,14 +80,29 @@
   "cb_inv_movs1",
   "puede_hacer_salidas",
   "puede_hacer_transferencias",
+  "puede_recibir_traslados",
   "cb_inv_movs2",
   "puede_cancelar_movimientos",
   "puede_hacer_transformaciones",
+  "cb_inv_movs3",
+  "puede_ver_costos",
+  "costo_entrada_por_defecto",
   "sb_inventario_reportes",
   "reporte_inv_kardex",
   "reporte_inv_existencias",
   "cb_inv_rep",
   "reporte_inv_trazabilidad",
+  "reporte_inv_kardex_producto",
+  "cb_inv_rep2",
+  "reporte_inv_valuacion",
+  "reporte_inv_vencimientos",
+  "cb_inv_rep3",
+  "reporte_inv_rotacion",
+  "reporte_inv_entradas_proveedor",
+  "sb_inventario_maestros",
+  "mantiene_costos_items",
+  "cb_inv_maestros",
+  "mantiene_almacenes",
   "sb_pagos",
   "exige_pago_completo",
   "cb_pagos",
@@ -423,7 +439,14 @@
    "fieldtype": "Link",
    "label": "Bodega por Defecto (FacEx Screen)",
    "options": "Warehouse",
-   "description": "Almacén usado para filtrar/colorear existencias en FacEx Screen. Vacío = ver todos los productos sin distinción de stock."
+   "description": "Almacén usado para filtrar/colorear existencias en FacEx Screen y como bodega destino por defecto al recibir traslados. Vacío = ver todos los productos sin distinción de stock."
+  },
+  {
+   "fieldname": "transito_por_defecto",
+   "fieldtype": "Link",
+   "label": "Almacén de Tránsito",
+   "options": "Warehouse",
+   "description": "Almacén de tránsito del usuario: los traslados de stock dirigidos a este almacén aparecen en «Recepción de Traslados» para que el usuario los ingrese a bodega o los devuelva."
   },
   {
    "fieldname": "sb_bodegas_socio",
@@ -538,6 +561,13 @@
    "label": "Registrar Transferencias"
   },
   {
+   "default": "0",
+   "fieldname": "puede_recibir_traslados",
+   "fieldtype": "Check",
+   "label": "Recibir Traslados (Recepción/Devolución)",
+   "description": "Habilita la pantalla «Recepción de Traslados» para ingresar a bodega o devolver el stock que llega al Almacén de Tránsito del usuario. Requiere además tener configurado el Almacén de Tránsito."
+  },
+  {
    "fieldname": "cb_inv_movs2",
    "fieldtype": "Column Break"
   },
@@ -553,6 +583,25 @@
    "fieldtype": "Check",
    "label": "Registrar Transformaciones",
    "description": "Permite convertir componentes en unidades del producto padre (Listas de Materiales con stock en el padre), generando la Entrada/Salida de inventario automáticamente."
+  },
+  {
+   "fieldname": "cb_inv_movs3",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "puede_ver_costos",
+   "fieldtype": "Check",
+   "label": "Ver Costos y Valores de Inventario",
+   "description": "Gobierna la visibilidad de costos y valores dentro del módulo de Inventario: columnas de costo/valor en reportes, grids de Entradas/Salidas, flotante de existencia y pantallas de maestros — en pantalla, al imprimir y al exportar. No afecta el Análisis de Utilidad ni la Asignación de Precios de FacEx Clásico."
+  },
+  {
+   "default": "estandar",
+   "fieldname": "costo_entrada_por_defecto",
+   "fieldtype": "Select",
+   "options": "estandar\nponderado\nultima_compra",
+   "label": "Base de Costo por Defecto (Entradas)",
+   "description": "Base de costo con la que el sistema valora automáticamente las Entradas de mercadería de este usuario: estandar = Costo Estándar FacEx, ponderado = promedio ponderado del sistema, ultima_compra = último precio de compra."
   },
   {
    "fieldname": "sb_inventario_reportes",
@@ -580,6 +629,67 @@
    "fieldname": "reporte_inv_trazabilidad",
    "fieldtype": "Check",
    "label": "Trazabilidad Serie / Lote"
+  },
+  {
+   "default": "0",
+   "fieldname": "reporte_inv_kardex_producto",
+   "fieldtype": "Check",
+   "label": "Kardex Valorizado por Producto"
+  },
+  {
+   "fieldname": "cb_inv_rep2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "reporte_inv_valuacion",
+   "fieldtype": "Check",
+   "label": "Valuación de Inventario"
+  },
+  {
+   "default": "0",
+   "fieldname": "reporte_inv_vencimientos",
+   "fieldtype": "Check",
+   "label": "Productos por Vencer / Lotes Caducados"
+  },
+  {
+   "fieldname": "cb_inv_rep3",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "reporte_inv_rotacion",
+   "fieldtype": "Check",
+   "label": "Rotación y Análisis ABC"
+  },
+  {
+   "default": "0",
+   "fieldname": "reporte_inv_entradas_proveedor",
+   "fieldtype": "Check",
+   "label": "Entradas por Proveedor"
+  },
+  {
+   "fieldname": "sb_inventario_maestros",
+   "fieldtype": "Section Break",
+   "label": "Maestros de Inventario"
+  },
+  {
+   "default": "0",
+   "fieldname": "mantiene_costos_items",
+   "fieldtype": "Check",
+   "label": "Mantener Costos de Ítems (Costos a Ítems)",
+   "description": "Habilita la pantalla «Costos a Ítems» del módulo de Inventario para fijar el Costo Estándar FacEx de forma masiva. Quien mantiene costos inherentemente ve los valores de costo en esa pantalla."
+  },
+  {
+   "fieldname": "cb_inv_maestros",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "mantiene_almacenes",
+   "fieldtype": "Check",
+   "label": "Mantener Almacenes",
+   "description": "Habilita la pantalla «Almacenes» del módulo de Inventario (alta, edición y baja de almacenes). Requiere además que el usuario tenga acceso a todas las bodegas de la compañía (sin restricción en «Bodegas Habilitadas»)."
   },
   {
    "fieldname": "sb_pagos",

@@ -1,0 +1,223 @@
+{
+ "actions": [],
+ "autoname": "naming_series:",
+ "creation": "2026-09-08 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "company",
+  "stock_entry_origen",
+  "almacen_transito",
+  "almacen_origen",
+  "usuario",
+  "fecha_origen",
+  "estado",
+  "recepcion_stock_entry",
+  "column_break_totales",
+  "total_enviado",
+  "total_recibido",
+  "total_pendiente_recepcion",
+  "total_pendiente_devolucion",
+  "total_devuelto",
+  "section_break_items",
+  "items"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Serie",
+   "options": "RCT-.YYYY.-",
+   "reqd": 1,
+   "default": "RCT-.YYYY.-"
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Compañía",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "fieldname": "stock_entry_origen",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Traslado Origen",
+   "options": "Stock Entry",
+   "read_only": 1,
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "almacen_transito",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Almacén de Tránsito",
+   "options": "Warehouse",
+   "read_only": 1
+  },
+  {
+   "fieldname": "almacen_origen",
+   "fieldtype": "Link",
+   "label": "Almacén de Origen",
+   "options": "Warehouse",
+   "read_only": 1
+  },
+  {
+   "fieldname": "usuario",
+   "fieldtype": "Link",
+   "label": "Usuario Receptor",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "fecha_origen",
+   "fieldtype": "Date",
+   "label": "Fecha del Traslado",
+   "read_only": 1
+  },
+  {
+   "fieldname": "estado",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Estado",
+   "options": "Pendiente\nPendiente Devolución\nCerrado",
+   "default": "Pendiente",
+   "read_only": 1
+  },
+  {
+   "fieldname": "recepcion_stock_entry",
+   "fieldtype": "Link",
+   "label": "Último Traslado de Alta",
+   "options": "Stock Entry",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_totales",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "total_enviado",
+   "fieldtype": "Float",
+   "label": "Total Enviado",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_recibido",
+   "fieldtype": "Float",
+   "label": "Total Recibido",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_pendiente_recepcion",
+   "fieldtype": "Float",
+   "label": "Pendiente de Recepción",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_pendiente_devolucion",
+   "fieldtype": "Float",
+   "label": "Pendiente de Devolución",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_devuelto",
+   "fieldtype": "Float",
+   "label": "Total Devuelto",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_items",
+   "fieldtype": "Section Break",
+   "label": "Detalle"
+  },
+  {
+   "fieldname": "items",
+   "fieldtype": "Table",
+   "label": "Ítems",
+   "options": "FacEx Recepcion Traslado Item"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 0,
+ "links": [],
+ "modified": "2026-09-08 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FacEx Multi",
+ "name": "FacEx Recepcion Traslado",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Stock Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Sales User",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Manager",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts User",
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
