@@ -1872,12 +1872,15 @@ class FacexInventario {
 
 	_open_existencias() {
 		this._exist_tab = "status";
+		this._exist_sort = { by: null, dir: "asc" };
+		this._exist_rows = [];
 		this._render_existencias();
 	}
 
 	_render_existencias() {
 		const d = this.defaults;
 		const warehouses = d.warehouses || [];
+		const groups = d.item_groups || [];
 		this.$body.html(`
 <div id="inv-report-app" style="max-width:1300px;margin:0 auto;padding:16px 8px;">
 
@@ -1913,7 +1916,18 @@ class FacexInventario {
       <label class="inv-label">Días sin salida</label>
       <input type="number" id="inv-x-days" class="inv-select" value="60" min="0" style="width:100px;">
     </div>` : ""}
-  `, `<button type="button" id="inv-x-refresh" class="inv-btn inv-btn-primary">Filtrar</button>`)}
+    ${groups.length ? `
+    <div style="grid-column:1/-1;">
+      <label class="inv-label">Grupos de artículo <span style="color:#6c757d;font-weight:400;">(ninguno = todos)</span></label>
+      <div id="inv-x-groups" style="display:flex;flex-wrap:wrap;gap:4px 16px;max-height:110px;overflow-y:auto;border:1px solid #d1d8dd;border-radius:4px;padding:8px 10px;background:#fff;">
+        ${groups.map(g => `<label style="font-size:12.5px;display:flex;align-items:center;gap:5px;white-space:nowrap;cursor:pointer;"><input type="checkbox" class="inv-x-group-cb" value="${frappe.utils.escape_html(g)}"> ${frappe.utils.escape_html(g)}</label>`).join("")}
+      </div>
+    </div>` : ""}
+  `, `
+    <button type="button" id="inv-x-refresh" class="inv-btn inv-btn-primary">Filtrar</button>
+    <button type="button" id="inv-x-excel" class="inv-btn inv-btn-secondary">Exportar a Excel</button>
+    <button type="button" id="inv-x-pdf" class="inv-btn inv-btn-secondary">Imprimir PDF</button>
+  `)}
 
   <div class="inv-chart-card">
     <div class="inv-chart-title" id="inv-x-chart-title"></div>
@@ -1940,9 +1954,20 @@ class FacexInventario {
 		$body.on("click", "#inv-back", () => this._render_shell());
 		$body.on("click", ".inv-tab", (e) => {
 			this._exist_tab = $(e.currentTarget).data("etab");
+			this._exist_sort = { by: null, dir: "asc" };
 			this._render_existencias();
 		});
 		$body.on("click", "#inv-x-refresh", () => this._load_existencias());
+		$body.on("click", "#inv-x-excel", () => this._export_existencias("xlsx"));
+		$body.on("click", "#inv-x-pdf", () => this._export_existencias("pdf"));
+
+		$body.on("click", "#inv-x-table th[data-sortk]", (e) => {
+			const k = $(e.currentTarget).data("sortk");
+			const s = this._exist_sort;
+			if (s.by === k) s.dir = s.dir === "asc" ? "desc" : "asc";
+			else { s.by = k; s.dir = "asc"; }
+			this._render_exist_grid();
+		});
 
 		let _item_timer = null;
 		$body.on("input", "#inv-x-item", (e) => {
@@ -1974,120 +1999,157 @@ class FacexInventario {
 		});
 	}
 
+	_exist_group_filter() {
+		return this.$body.find(".inv-x-group-cb:checked").map((_, el) => el.value).get();
+	}
+
+	_exist_params() {
+		const groups = this._exist_group_filter();
+		return {
+			company: this.defaults.company,
+			warehouse: this.$body.find("#inv-x-warehouse").val(),
+			item_code: this.$body.find("#inv-x-item-code").val(),
+			establecimiento: this._establecimiento_param("inv-x-establecimiento"),
+			item_groups: groups.length ? JSON.stringify(groups) : undefined,
+			days: this._exist_tab === "nonmoving" ? (this.$body.find("#inv-x-days").val() || 60) : undefined,
+		};
+	}
+
 	_load_existencias() {
-		const warehouse = this.$body.find("#inv-x-warehouse").val();
-		const item_code = this.$body.find("#inv-x-item-code").val();
-		const establecimiento = this._establecimiento_param("inv-x-establecimiento");
 		const $table = this.$body.find("#inv-x-table");
 		$table.html(`<tr><td style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr>`);
+		const p = this._exist_params();
+		const tab = this._exist_tab;
+		const method = tab === "status" ? "get_stock_status"
+			: tab === "aging" ? "get_stock_aging" : "get_non_moving_items";
+		frappe.call({
+			method: `facex_multi.api.stock_reports.${method}`,
+			args: p,
+			callback: (r) => {
+				const rows = (r.message && r.message.rows) || [];
+				if (tab === "nonmoving") {
+					rows.forEach((row) => {
+						row.stock_value_calc = (row.valuation_rate == null)
+							? null : flt(row.actual_qty) * flt(row.valuation_rate);
+					});
+				}
+				this._exist_rows = rows;
+				this._render_exist_grid();
+				this._render_exist_tab_chart();
+			},
+		});
+	}
+
+	// Especificación de columnas de la pestaña activa (con orden y formato).
+	_exist_cols(tab) {
+		const esc = frappe.utils.escape_html;
+		const cc = this._can_costs;
+		const prod = { k: "item_code", label: "Producto",
+			render: (r) => `<strong>${esc(r.item_code)}</strong><br><span style="color:#6c757d;">${esc(r.item_name || "")}</span>` };
+		const grupo = { k: "item_group", label: "Grupo", width: "150px" };
+		const alm = { k: "warehouse", label: "Almacén", width: "170px" };
+		const qty = { k: "actual_qty", label: "Cantidad", width: "100px", num: true,
+			render: (r) => esc(String(r.actual_qty)) };
+
+		if (tab === "status") {
+			const c = [prod, grupo, alm, qty];
+			if (cc) c.push(
+				{ k: "valuation_rate", label: "Costo", width: "110px", num: true, money: true },
+				{ k: "stock_value", label: "Valor", width: "120px", num: true, money: true });
+			return c;
+		}
+		if (tab === "aging") {
+			const BC = { "0-30 días": "#28a745", "31-60 días": "#ff9f43", "61-90 días": "#e08a2f", "+90 días": "#e03e2d", "Sin dato": "#adb5bd" };
+			return [prod, grupo, alm, qty,
+				{ k: "last_receipt_date", label: "Último Ingreso", width: "130px",
+					render: (r) => r.last_receipt_date ? esc(r.last_receipt_date) : "—" },
+				{ k: "days_in_stock", label: "Días", width: "70px", num: true,
+					render: (r) => r.days_in_stock == null ? "—" : r.days_in_stock },
+				{ k: "bucket", label: "Rango", width: "110px",
+					render: (r) => `<span style="color:${BC[r.bucket] || "#333"};font-weight:600;">${esc(r.bucket)}</span>` }];
+		}
+		// nonmoving
+		const c = [prod, grupo, alm, qty];
+		if (cc) c.push({ k: "stock_value_calc", label: "Valor", width: "120px", num: true, money: true });
+		c.push({ k: "last_outgoing_date", label: "Última Salida", width: "140px",
+			render: (r) => r.last_outgoing_date ? esc(r.last_outgoing_date) : `<span style="color:#e03e2d;">Nunca</span>` });
+		return c;
+	}
+
+	_sort_exist_rows(rows) {
+		const s = this._exist_sort;
+		if (!s || !s.by) return rows;
+		const col = this._exist_cols(this._exist_tab).find((c) => c.k === s.by);
+		const num = !!(col && col.num);
+		const dir = s.dir === "desc" ? -1 : 1;
+		return [...rows].sort((a, b) => {
+			const av = a[s.by], bv = b[s.by];
+			const ae = av == null || av === "", be = bv == null || bv === "";
+			if (ae && be) return 0;
+			if (ae) return 1;   // vacíos siempre al final
+			if (be) return -1;
+			if (num) return (flt(av) - flt(bv)) * dir;
+			return String(av).toLowerCase().localeCompare(String(bv).toLowerCase()) * dir;
+		});
+	}
+
+	_render_exist_grid() {
+		const $table = this.$body.find("#inv-x-table");
+		const cols = this._exist_cols(this._exist_tab);
+		const rows = this._sort_exist_rows(this._exist_rows || []);
+		if (!rows.length) {
+			$table.html(`<tr><td style="text-align:center;color:#adb5bd;padding:20px;">Sin resultados con estos filtros.</td></tr>`);
+			return;
+		}
+		const s = this._exist_sort || {};
+		const head = cols.map((col) => {
+			const ar = s.by === col.k ? (s.dir === "desc" ? " ▼" : " ▲") : "";
+			return `<th data-sortk="${col.k}" style="cursor:pointer;user-select:none;${col.width ? `width:${col.width};` : ""}${col.num ? "text-align:right;" : ""}">${frappe.utils.escape_html(col.label)}${ar}</th>`;
+		}).join("");
+		const body = rows.map((r) => "<tr>" + cols.map((col) => {
+			let v;
+			if (col.render) v = col.render(r);
+			else if (col.money) v = this._money(r[col.k]);
+			else v = frappe.utils.escape_html(r[col.k] == null ? "" : String(r[col.k]));
+			return `<td${col.num ? ' style="text-align:right;"' : ""}>${v}</td>`;
+		}).join("") + "</tr>").join("");
+		$table.html(`<thead><tr>${head}</tr></thead><tbody>${body}</tbody>`);
+	}
+
+	_render_exist_tab_chart() {
+		const rows = this._exist_rows || [];
+		const cc = this._can_costs;
+		if (!rows.length) { this._render_exist_chart(null); return; }
 
 		if (this._exist_tab === "status") {
-			frappe.call({
-				method: "facex_multi.api.stock_reports.get_stock_status",
-				args: { company: this.defaults.company, warehouse, item_code, establecimiento },
-				callback: (r) => this._render_existencias_status((r.message && r.message.rows) || []),
-			});
+			if (!cc) { this._render_exist_chart(null); return; }
+			const by_wh = new Map();
+			rows.forEach((r) => by_wh.set(r.warehouse, (by_wh.get(r.warehouse) || 0) + flt(r.stock_value)));
+			this._render_exist_chart({ title: "Valor por Almacén", labels: Array.from(by_wh.keys()), values: Array.from(by_wh.values()), color: "#5e64ff" });
 		} else if (this._exist_tab === "aging") {
-			frappe.call({
-				method: "facex_multi.api.stock_reports.get_stock_aging",
-				args: { company: this.defaults.company, warehouse, item_code, establecimiento },
-				callback: (r) => this._render_existencias_aging((r.message && r.message.rows) || []),
-			});
+			const ORDER = ["0-30 días", "31-60 días", "61-90 días", "+90 días", "Sin dato"];
+			const counts = new Map(ORDER.map((b) => [b, 0]));
+			rows.forEach((r) => counts.set(r.bucket, (counts.get(r.bucket) || 0) + 1));
+			const present = ORDER.filter((b) => counts.get(b) > 0);
+			this._render_exist_chart({ title: "Productos por Antigüedad", labels: present, values: present.map((b) => counts.get(b)), color: "#3987e5" });
 		} else {
-			const days = this.$body.find("#inv-x-days").val();
-			frappe.call({
-				method: "facex_multi.api.stock_reports.get_non_moving_items",
-				args: { company: this.defaults.company, warehouse, days, item_code, establecimiento },
-				callback: (r) => this._render_existencias_nonmoving((r.message && r.message.rows) || []),
-			});
+			if (!cc) { this._render_exist_chart(null); return; }
+			const top = [...rows].map((r) => ({ label: r.item_code, value: flt(r.stock_value_calc) }))
+				.sort((a, b) => b.value - a.value).slice(0, 10);
+			this._render_exist_chart({ title: "Valor Inmovilizado por Producto (top 10)", labels: top.map((t) => t.label), values: top.map((t) => t.value), color: "#e08a2f" });
 		}
 	}
 
-	_render_existencias_status(rows) {
-		const $table = this.$body.find("#inv-x-table");
-		const cc = this._can_costs;
-		if (!rows.length) { $table.html(`<tr><td style="text-align:center;color:#adb5bd;padding:20px;">Sin existencias.</td></tr>`); this._render_exist_chart(null); return; }
-		$table.html(`
-<thead><tr><th>Producto</th><th>Almacén</th><th style="width:100px;">Cantidad</th>${cc ? `<th style="width:110px;">Costo</th><th style="width:120px;">Valor</th>` : ""}</tr></thead>
-<tbody>
-${rows.map(r => `<tr>
-  <td><strong>${frappe.utils.escape_html(r.item_code)}</strong><br><span style="color:#6c757d;">${frappe.utils.escape_html(r.item_name || "")}</span></td>
-  <td>${frappe.utils.escape_html(r.warehouse)}</td>
-  <td>${frappe.utils.escape_html(String(r.actual_qty))}</td>
-  ${cc ? `<td>${frappe.format(r.valuation_rate, { fieldtype: "Currency" })}</td>
-  <td>${frappe.format(r.stock_value, { fieldtype: "Currency" })}</td>` : ""}
-</tr>`).join("")}
-</tbody>`);
-
-		if (!cc) { this._render_exist_chart(null); return; }
-		const by_warehouse = new Map();
-		rows.forEach((r) => by_warehouse.set(r.warehouse, (by_warehouse.get(r.warehouse) || 0) + flt(r.stock_value)));
-		this._render_exist_chart({
-			title: "Valor por Almacén",
-			labels: Array.from(by_warehouse.keys()),
-			values: Array.from(by_warehouse.values()),
-			color: "#5e64ff",
-		});
-	}
-
-	_render_existencias_aging(rows) {
-		const $table = this.$body.find("#inv-x-table");
-		if (!rows.length) { $table.html(`<tr><td style="text-align:center;color:#adb5bd;padding:20px;">Sin existencias.</td></tr>`); this._render_exist_chart(null); return; }
-		const BUCKET_COLOR = { "0-30 días": "#28a745", "31-60 días": "#ff9f43", "61-90 días": "#e08a2f", "+90 días": "#e03e2d", "Sin dato": "#adb5bd" };
-		$table.html(`
-<thead><tr><th>Producto</th><th>Almacén</th><th style="width:100px;">Cantidad</th><th style="width:140px;">Último Ingreso</th><th style="width:80px;">Días</th><th style="width:110px;">Rango</th></tr></thead>
-<tbody>
-${rows.map(r => `<tr>
-  <td><strong>${frappe.utils.escape_html(r.item_code)}</strong><br><span style="color:#6c757d;">${frappe.utils.escape_html(r.item_name || "")}</span></td>
-  <td>${frappe.utils.escape_html(r.warehouse)}</td>
-  <td>${frappe.utils.escape_html(String(r.actual_qty))}</td>
-  <td>${r.last_receipt_date ? frappe.utils.escape_html(r.last_receipt_date) : "—"}</td>
-  <td>${r.days_in_stock === null ? "—" : r.days_in_stock}</td>
-  <td><span style="color:${BUCKET_COLOR[r.bucket] || "#333"};font-weight:600;">${frappe.utils.escape_html(r.bucket)}</span></td>
-</tr>`).join("")}
-</tbody>`);
-
-		// Orden fijo 0-30 -> +90: rampa secuencial de un solo tono, clara->oscura,
-		// validada con el script de la skill de dataviz (ordinal, mode light).
-		const BUCKET_ORDER = ["0-30 días", "31-60 días", "61-90 días", "+90 días", "Sin dato"];
-		const counts = new Map(BUCKET_ORDER.map((b) => [b, 0]));
-		rows.forEach((r) => counts.set(r.bucket, (counts.get(r.bucket) || 0) + 1));
-		const present = BUCKET_ORDER.filter((b) => counts.get(b) > 0);
-		this._render_exist_chart({
-			title: "Productos por Antigüedad",
-			labels: present,
-			values: present.map((b) => counts.get(b)),
-			color: "#3987e5",
-		});
-	}
-
-	_render_existencias_nonmoving(rows) {
-		const $table = this.$body.find("#inv-x-table");
-		const cc = this._can_costs;
-		if (!rows.length) { $table.html(`<tr><td style="text-align:center;color:#adb5bd;padding:20px;">Todos los productos con existencia han tenido salidas recientes.</td></tr>`); this._render_exist_chart(null); return; }
-		$table.html(`
-<thead><tr><th>Producto</th><th>Almacén</th><th style="width:100px;">Cantidad</th>${cc ? `<th style="width:120px;">Valor</th>` : ""}<th style="width:140px;">Última Salida</th></tr></thead>
-<tbody>
-${rows.map(r => `<tr>
-  <td><strong>${frappe.utils.escape_html(r.item_code)}</strong><br><span style="color:#6c757d;">${frappe.utils.escape_html(r.item_name || "")}</span></td>
-  <td>${frappe.utils.escape_html(r.warehouse)}</td>
-  <td>${frappe.utils.escape_html(String(r.actual_qty))}</td>
-  ${cc ? `<td>${frappe.format(flt(r.actual_qty) * flt(r.valuation_rate), { fieldtype: "Currency" })}</td>` : ""}
-  <td>${r.last_outgoing_date ? frappe.utils.escape_html(r.last_outgoing_date) : `<span style="color:#e03e2d;">Nunca</span>`}</td>
-</tr>`).join("")}
-</tbody>`);
-
-		if (!cc) { this._render_exist_chart(null); return; }
-		const top = [...rows]
-			.map((r) => ({ label: r.item_code, value: flt(r.actual_qty) * flt(r.valuation_rate) }))
-			.sort((a, b) => b.value - a.value)
-			.slice(0, 10);
-		this._render_exist_chart({
-			title: "Valor Inmovilizado por Producto (top 10)",
-			labels: top.map((t) => t.label),
-			values: top.map((t) => t.value),
-			color: "#e08a2f",
-		});
+	_export_existencias(formato) {
+		const s = this._exist_sort || {};
+		const params = {
+			...this._exist_params(),
+			tab: this._exist_tab,
+			formato,
+			sort_by: s.by || undefined,
+			sort_dir: s.by ? s.dir : undefined,
+		};
+		window.open(this._export_url("facex_multi.api.stock_reports.export_existencias", params), "_blank");
 	}
 
 	_render_exist_chart(spec) {
@@ -2816,7 +2878,12 @@ ${rows.map(r => `<tr>
 					args: { data_json: JSON.stringify(v), company: this.defaults.company },
 					callback: (r) => {
 						dlg.get_primary_btn().prop("disabled", false);
-						if (!r.exc) { frappe.show_alert({ message: "Producto guardado.", indicator: "green" }); dlg.hide(); this._load_maestro_items(); }
+						if (r.exc) return;
+						frappe.show_alert({ message: "Producto guardado.", indicator: "green" });
+						dlg.hide();
+						this._load_maestro_items();
+						const code = r.message && r.message.item_code;
+						if (!item_code && code) this._maestro_item_dialog(code);
 					},
 					error: () => dlg.get_primary_btn().prop("disabled", false),
 				});

@@ -36,6 +36,51 @@ def _strip_cost_fields(rows: list, fields: tuple) -> None:
                 r[f] = None
 
 
+def _parse_list(val):
+    """Acepta lista, JSON de lista o cadena separada por comas. Devuelve list[str]."""
+    if not val:
+        return []
+    if isinstance(val, (list, tuple)):
+        return [str(v).strip() for v in val if str(v).strip()]
+    if isinstance(val, str):
+        val = val.strip()
+        if val.startswith("["):
+            try:
+                return [str(v).strip() for v in frappe.parse_json(val) if str(v).strip()]
+            except Exception:
+                pass
+        return [v.strip() for v in val.split(",") if v.strip()]
+    return []
+
+
+def _item_group_condition(item_groups, params, alias="i"):
+    """(condicion_sql_o_None) filtrando por uno o varios grupos de artículo."""
+    groups = _parse_list(item_groups)
+    if not groups:
+        return None
+    params["item_groups"] = tuple(groups)
+    return f"{alias}.item_group IN %(item_groups)s"
+
+
+def _sort_rows(rows, sort_by, sort_dir, numeric_keys=()):
+    """Ordena `rows` (list[dict]) por `sort_by`. Numérico para numeric_keys, texto
+    para el resto; None siempre al final. Sin `sort_by` no toca el orden."""
+    if not sort_by or not rows or sort_by not in rows[0]:
+        return rows
+    reverse = str(sort_dir or "asc").lower() == "desc"
+    is_num = sort_by in numeric_keys
+
+    def key(r):
+        v = r.get(sort_by)
+        if v is None or v == "":
+            return (1, 0 if is_num else "")
+        if is_num:
+            return (0, flt(v))
+        return (0, str(v).lower())
+
+    return sorted(rows, key=key, reverse=reverse)
+
+
 
 def _check_report_access(company: str, perm_field: str) -> str:
     company = get_effective_company(company)
@@ -205,7 +250,8 @@ def get_kardex(
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_stock_status(company: str = None, warehouse: str = None, item_code: str = None, establecimiento: str = None):
+def get_stock_status(company: str = None, warehouse: str = None, item_code: str = None,
+                     establecimiento: str = None, item_groups=None):
     """Balance actual por almacén (Bin) — foto de hoy."""
     company = _check_report_access(company, "reporte_inv_existencias")
 
@@ -218,6 +264,9 @@ def get_stock_status(company: str = None, warehouse: str = None, item_code: str 
     if item_code:
         conditions.append("b.item_code = %(item_code)s")
         params["item_code"] = item_code
+    ig_cond = _item_group_condition(item_groups, params)
+    if ig_cond:
+        conditions.append(ig_cond)
     try:
         est_cond, est_val = _establecimiento_condition(company, establecimiento, "b")
     except _NoWarehousesForEstablecimiento:
@@ -228,7 +277,7 @@ def get_stock_status(company: str = None, warehouse: str = None, item_code: str 
 
     rows = frappe.db.sql(
         f"""
-        SELECT b.item_code, i.item_name, b.warehouse, b.actual_qty, b.valuation_rate,
+        SELECT b.item_code, i.item_name, i.item_group, b.warehouse, b.actual_qty, b.valuation_rate,
                (b.actual_qty * b.valuation_rate) AS stock_value
         FROM `tabBin` b
         INNER JOIN `tabWarehouse` w ON w.name = b.warehouse
@@ -247,7 +296,8 @@ def get_stock_status(company: str = None, warehouse: str = None, item_code: str 
 
 
 @frappe.whitelist()
-def get_stock_aging(company: str = None, warehouse: str = None, item_code: str = None, establecimiento: str = None):
+def get_stock_aging(company: str = None, warehouse: str = None, item_code: str = None,
+                    establecimiento: str = None, item_groups=None):
     """
     Antigüedad práctica: días desde el ÚLTIMO ingreso (Stock Ledger Entry con
     actual_qty > 0) por ítem+almacén con stock actual. No es FIFO layer-by-layer
@@ -265,6 +315,9 @@ def get_stock_aging(company: str = None, warehouse: str = None, item_code: str =
     if item_code:
         conditions.append("b.item_code = %(item_code)s")
         params["item_code"] = item_code
+    ig_cond = _item_group_condition(item_groups, params)
+    if ig_cond:
+        conditions.append(ig_cond)
     try:
         est_cond, est_val = _establecimiento_condition(company, establecimiento, "b")
     except _NoWarehousesForEstablecimiento:
@@ -275,7 +328,7 @@ def get_stock_aging(company: str = None, warehouse: str = None, item_code: str =
 
     rows = frappe.db.sql(
         f"""
-        SELECT b.item_code, i.item_name, b.warehouse, b.actual_qty,
+        SELECT b.item_code, i.item_name, i.item_group, b.warehouse, b.actual_qty,
                (
                    SELECT MAX(sle.posting_date)
                    FROM `tabStock Ledger Entry` sle
@@ -317,7 +370,8 @@ def get_stock_aging(company: str = None, warehouse: str = None, item_code: str =
 
 
 @frappe.whitelist()
-def get_non_moving_items(company: str = None, warehouse: str = None, days: int = 60, item_code: str = None, establecimiento: str = None):
+def get_non_moving_items(company: str = None, warehouse: str = None, days: int = 60,
+                         item_code: str = None, establecimiento: str = None, item_groups=None):
     """
     Productos con stock actual que NO han tenido ninguna salida (actual_qty < 0
     en Stock Ledger Entry — cualquier documento: Stock Entry, Factura de Venta,
@@ -336,6 +390,9 @@ def get_non_moving_items(company: str = None, warehouse: str = None, days: int =
     if item_code:
         conditions.append("b.item_code = %(item_code)s")
         params["item_code"] = item_code
+    ig_cond = _item_group_condition(item_groups, params)
+    if ig_cond:
+        conditions.append(ig_cond)
     try:
         est_cond, est_val = _establecimiento_condition(company, establecimiento, "b")
     except _NoWarehousesForEstablecimiento:
@@ -346,7 +403,7 @@ def get_non_moving_items(company: str = None, warehouse: str = None, days: int =
 
     rows = frappe.db.sql(
         f"""
-        SELECT b.item_code, i.item_name, b.warehouse, b.actual_qty, b.valuation_rate,
+        SELECT b.item_code, i.item_name, i.item_group, b.warehouse, b.actual_qty, b.valuation_rate,
                (
                    SELECT MAX(sle.posting_date)
                    FROM `tabStock Ledger Entry` sle
@@ -370,6 +427,85 @@ def get_non_moving_items(company: str = None, warehouse: str = None, days: int =
     if not can_costs:
         _strip_cost_fields(rows, ("valuation_rate",))
     return {"days": days, "cutoff": str(cutoff), "rows": rows, "can_view_costs": can_costs}
+
+
+@frappe.whitelist()
+def export_existencias(company: str = None, tab: str = "status", formato: str = "xlsx",
+                       warehouse: str = None, item_code: str = None, establecimiento: str = None,
+                       item_groups=None, days=60, sort_by: str = None, sort_dir: str = "asc"):
+    """Exporta el reporte de Existencias (pestaña `tab`: status / aging / nonmoving)
+    a `formato` xlsx o pdf, respetando los filtros, el orden y el permiso de costos."""
+    company_eff = get_effective_company(company)
+    tab = tab if tab in ("status", "aging", "nonmoving") else "status"
+    numeric_keys = ("actual_qty", "valuation_rate", "stock_value", "days_in_stock")
+
+    if tab == "status":
+        data = get_stock_status(company, warehouse, item_code, establecimiento, item_groups)
+        cc = data.get("can_view_costs")
+        rows = _sort_rows(data["rows"], sort_by, sort_dir, numeric_keys)
+        headers = ["Código", "Nombre", "Grupo", "Almacén", "Cantidad"]
+        num = {4}
+        if cc:
+            headers += ["Costo", "Valor"]
+            num |= {5, 6}
+        matrix = []
+        for r in rows:
+            line = [r["item_code"], r["item_name"], r.get("item_group"), r["warehouse"], r["actual_qty"]]
+            if cc:
+                line += [r.get("valuation_rate"), r.get("stock_value")]
+            matrix.append(line)
+        titulo = "Existencias — Status por Almacén"
+
+    elif tab == "aging":
+        data = get_stock_aging(company, warehouse, item_code, establecimiento, item_groups)
+        rows = _sort_rows(data["rows"], sort_by, sort_dir, numeric_keys)
+        headers = ["Código", "Nombre", "Grupo", "Almacén", "Cantidad", "Último Ingreso", "Días", "Rango"]
+        num = {4, 6}
+        matrix = []
+        for r in rows:
+            d = r.get("days_in_stock")
+            matrix.append([
+                r["item_code"], r["item_name"], r.get("item_group"), r["warehouse"], r["actual_qty"],
+                r.get("last_receipt_date") or "", "" if d is None else d, r.get("bucket"),
+            ])
+        titulo = "Existencias — Antigüedad"
+
+    else:  # nonmoving
+        data = get_non_moving_items(company, warehouse, days, item_code, establecimiento, item_groups)
+        cc = data.get("can_view_costs")
+        for r in data["rows"]:
+            vr = r.get("valuation_rate")
+            r["stock_value"] = (flt(r.get("actual_qty")) * flt(vr)) if vr is not None else None
+        rows = _sort_rows(data["rows"], sort_by, sort_dir, numeric_keys)
+        headers = ["Código", "Nombre", "Grupo", "Almacén", "Cantidad"]
+        num = {4}
+        if cc:
+            headers += ["Valor"]
+            num |= {5}
+        headers += ["Última Salida"]
+        matrix = []
+        for r in rows:
+            line = [r["item_code"], r["item_name"], r.get("item_group"), r["warehouse"], r["actual_qty"]]
+            if cc:
+                line += [r.get("stock_value")]
+            line += [r.get("last_outgoing_date") or "Nunca"]
+            matrix.append(line)
+        titulo = f"Existencias — Sin Rotación (>{data.get('days', days)} días sin salida)"
+
+    fbase = f"existencias_{tab}"
+    if formato == "pdf":
+        filtros = []
+        if warehouse:
+            filtros.append(f"Almacén: {warehouse}")
+        groups = _parse_list(item_groups)
+        if groups:
+            filtros.append(f"Grupos: {', '.join(groups)}")
+        if item_code:
+            filtros.append(f"Ítem: {item_code}")
+        _pdf_response(fbase, titulo, company_eff, " · ".join(filtros) or "Sin filtros",
+                      headers, matrix, tuple(num))
+    else:
+        _xlsx_response(fbase, [headers] + matrix)
 
 
 # ---------------------------------------------------------------------------
@@ -494,6 +630,46 @@ def _xlsx_response(filename: str, matrix: list) -> None:
     frappe.response["filename"] = f"{filename}.xlsx"
     frappe.response["filecontent"] = xlsx.getvalue()
     frappe.response["type"] = "binary"
+
+
+def _pdf_response(filename: str, titulo: str, company: str, subtitulo: str,
+                  headers: list, matrix_rows: list, num_cols: tuple = ()) -> None:
+    """Genera un PDF apaisado sencillo (encabezado + tabla) y lo devuelve como descarga."""
+    from frappe.utils.pdf import get_pdf
+
+    def esc(v):
+        return frappe.utils.escape_html("" if v is None else str(v))
+
+    thead = "".join(f"<th>{esc(h)}</th>" for h in headers)
+    body = ""
+    for row in matrix_rows:
+        tds = "".join(
+            f'<td class="{"num" if idx in num_cols else ""}">{esc(c)}</td>'
+            for idx, c in enumerate(row)
+        )
+        body += f"<tr>{tds}</tr>"
+
+    html = f"""
+<div style="font-family:Helvetica,Arial,sans-serif;font-size:10px;color:#222;">
+  <div style="border-bottom:2px solid #153375;padding-bottom:6px;margin-bottom:10px;">
+    <div style="font-size:15px;font-weight:700;color:#153375;">{esc(titulo)}</div>
+    <div style="font-size:11px;color:#555;">{esc(company)}</div>
+    <div style="font-size:9px;color:#888;">{esc(subtitulo)} · Generado {esc(frappe.utils.now_datetime().strftime("%d/%m/%Y %H:%M"))}</div>
+  </div>
+  <table style="width:100%;border-collapse:collapse;">
+    <thead><tr style="background:#eef2ff;">{thead}</tr></thead>
+    <tbody>{body}</tbody>
+  </table>
+</div>
+<style>
+  th, td {{ border:1px solid #cdd5e0; padding:3px 5px; text-align:left; }}
+  td.num {{ text-align:right; font-family:'Courier New',monospace; }}
+  tbody tr:nth-child(even) {{ background:#f7f9fc; }}
+</style>
+"""
+    frappe.response["filename"] = f"{filename}.pdf"
+    frappe.response["filecontent"] = get_pdf(html, options={"orientation": "Landscape"})
+    frappe.response["type"] = "pdf"
 
 
 def _allowed_wh(company: str):

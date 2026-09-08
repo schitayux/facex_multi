@@ -5683,6 +5683,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this.$body.find("#ef-maint-tab-productos .ef-input, #ef-maint-tab-productos .ef-link-ctrl input")
 				.prop("readonly", true).css("background", "#f8fafc");
 		}
+		// Costo Estándar en la ficha de producto: solo con permiso "Ver Costos".
+		if (!p.puede_ver_costos) {
+			this.$body.find("#ef-maint-item-costo-estandar").closest(".ef-field-group").hide();
+		}
 		if (!p.actualiza_precios) {
 			this.$body.find(".ef-maint-tab-btn[data-maint-tab='precios']").hide();
 		}
@@ -11811,8 +11815,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 			callback: (r) => {
 				if (!r.exc) {
 					frappe.show_alert({ message: "Producto guardado exitosamente", indicator: "green" });
-					this._clear_maint_item_form();
-					this._set_maint_item_form_mode("search");
+					// Recargar el producto recién guardado precargado, para que el
+					// usuario lo vea/confirme sin volver a buscarlo.
+					const code = (r.message && r.message.item_code) || this._current_maint_item_code;
+					if (code) this._load_maint_item_details(code);
+					else { this._clear_maint_item_form(); this._set_maint_item_form_mode("search"); }
 				}
 			}
 		});

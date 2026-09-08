@@ -963,6 +963,7 @@ def get_inventory_defaults(company: str = None):
     warehouses = get_warehouses(company) if permissions.get("puede_ver_inventario") else []
     establishments = _get_establishments(company) if permissions.get("puede_ver_inventario") else []
     warehouses_meta = get_warehouses_meta(company) if permissions.get("puede_ver_inventario") else []
+    item_groups = _get_company_item_groups(company) if permissions.get("puede_ver_inventario") else []
 
     return {
         "company": company,
@@ -970,8 +971,28 @@ def get_inventory_defaults(company: str = None):
         "warehouses": warehouses,
         "warehouses_meta": warehouses_meta,
         "establishments": establishments,
+        "item_groups": item_groups,
         "permissions": permissions,
     }
+
+
+def _get_company_item_groups(company: str) -> list:
+    """Grupos de artículo distintos de los ítems de la compañía (para filtros)."""
+    rows = frappe.db.sql(
+        """
+        SELECT DISTINCT item_group
+        FROM `tabItem`
+        WHERE disabled = 0 AND item_group IS NOT NULL AND item_group != ''
+          AND (
+              bfel_company = %(company)s
+              OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
+          )
+        ORDER BY item_group ASC
+        """,
+        {"company": company},
+        pluck=True,
+    )
+    return rows or []
 
 
 def _list_stock_movements(mode: str, company: str = None, from_date: str = None, to_date: str = None):
