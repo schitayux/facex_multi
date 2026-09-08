@@ -30,6 +30,7 @@ from facex_multi.api.permissions import (
     get_facex_inventory_permissions,
     get_facex_transito_warehouse,
     get_facex_permissions_for_company,
+    movement_gate,
 )
 from facex_multi.api.si_carga import _get_establishments
 
@@ -388,8 +389,17 @@ def _create_stock_movement(mode: str, payload: str, client_token: str = None):
         frappe.throw("No tiene permiso para operar sobre esta compañía.", frappe.PermissionError)
 
     perms = get_facex_inventory_permissions(company)
-    if not perms.get(cfg["perm_field"]):
+    gate = movement_gate(perms, mode)
+    if not gate["can_access"]:
         frappe.throw("No tiene permiso para registrar este movimiento de inventario.", frappe.PermissionError)
+
+    want_submit = bool(data.get("submit"))
+    if want_submit and not gate["can_submit"]:
+        frappe.throw("No tiene permiso para validar y confirmar este movimiento.", frappe.PermissionError)
+    if not want_submit and not gate["can_draft"] and not gate["can_submit"]:
+        frappe.throw("No tiene permiso para grabar este movimiento.", frappe.PermissionError)
+    # "solo validar": no puede borrador -> el guardado somete siempre
+    do_submit = want_submit or (not gate["can_draft"] and gate["can_submit"])
 
     source_warehouse = data.get("source_warehouse")
     target_warehouse = data.get("target_warehouse")
@@ -406,18 +416,20 @@ def _create_stock_movement(mode: str, payload: str, client_token: str = None):
     doc = _build_and_submit_stock_entry(
         mode, company, source_warehouse, target_warehouse, items,
         remarks=data.get("remarks"), posting_date=data.get("posting_date"),
+        submit=do_submit,
     )
 
     _remember_token(client_token, doc.name)
 
-    return {"name": doc.name}
+    return {"name": doc.name, "docstatus": doc.docstatus}
 
 
 def _build_and_submit_stock_entry(mode, company, source_warehouse, target_warehouse, items,
-                                  remarks=None, posting_date=None):
-    """Arma un Stock Entry (con la serie/purpose de `mode`), lo inserta y somete.
+                                  remarks=None, posting_date=None, submit=True):
+    """Arma un Stock Entry (con la serie/purpose de `mode`) y lo inserta;
+    lo somete salvo que `submit=False` (grabar como borrador).
     `items` ya viene armado por _build_stock_entry_items. Reusado por el módulo de
-    Recepción de Traslados, que no pasa por el gate `puede_hacer_transferencias`."""
+    Recepción de Traslados, que siempre somete (submit=True por defecto)."""
     cfg = _MOVEMENT_CONFIG[mode]
     doc_fields = {
         "doctype": "Stock Entry",
@@ -437,7 +449,8 @@ def _build_and_submit_stock_entry(mode, company, source_warehouse, target_wareho
     doc = frappe.get_doc(doc_fields)
     doc.flags.ignore_permissions = False
     doc.insert()
-    doc.submit()
+    if submit:
+        doc.submit()
     frappe.db.commit()
     return doc
 
@@ -808,6 +821,100 @@ def cancel_stock_entry(name: str):
     return {"name": doc.name, "docstatus": doc.docstatus}
 
 
+# ---------------------------------------------------------------------------
+# Borradores de movimiento: validar / editar / eliminar
+# ---------------------------------------------------------------------------
+
+_PURPOSE_TO_MODE = {
+    "Material Receipt": "in",
+    "Material Issue": "out",
+    "Material Transfer": "transfer",
+}
+
+
+def _load_movement_doc(name: str, require_draft: bool = False):
+    """Carga un Stock Entry de movimiento (Entrada/Salida/Transferencia) validando
+    compañía y devolviendo también su `mode` y las compuertas del usuario."""
+    doc = frappe.get_doc("Stock Entry", name)
+    if doc.company not in (get_user_companies() or []):
+        frappe.throw("No tiene permiso para operar sobre esta compañía.", frappe.PermissionError)
+    mode = _PURPOSE_TO_MODE.get(doc.purpose)
+    if not mode or (doc.purpose == "Manufacture"):
+        frappe.throw("Este documento no es un movimiento de inventario editable desde aquí.")
+    if require_draft and doc.docstatus != 0:
+        frappe.throw("Este movimiento ya no es un borrador.")
+    gate = movement_gate(get_facex_inventory_permissions(doc.company), mode)
+    return doc, mode, gate
+
+
+@frappe.whitelist()
+def submit_stock_movement(name: str):
+    """Valida y confirma (somete) un movimiento en borrador."""
+    doc, mode, gate = _load_movement_doc(name, require_draft=True)
+    if not gate["can_submit"]:
+        frappe.throw("No tiene permiso para validar y confirmar este movimiento.", frappe.PermissionError)
+    doc.flags.ignore_permissions = False
+    doc.submit()
+    frappe.db.commit()
+    return {"name": doc.name, "docstatus": doc.docstatus}
+
+
+@frappe.whitelist()
+def delete_stock_movement_draft(name: str):
+    """Elimina un movimiento en borrador."""
+    doc, mode, gate = _load_movement_doc(name, require_draft=True)
+    if not gate["can_draft"]:
+        frappe.throw("No tiene permiso para eliminar borradores de este movimiento.", frappe.PermissionError)
+    frappe.delete_doc("Stock Entry", name, ignore_permissions=False)
+    frappe.db.commit()
+    return {"success": True}
+
+
+@frappe.whitelist()
+def update_stock_movement_draft(name: str, payload: str):
+    """Actualiza un movimiento en borrador (bodegas, comentario, fecha, ítems).
+    Si el payload trae `submit` y el usuario puede validar, lo somete también."""
+    doc, mode, gate = _load_movement_doc(name, require_draft=True)
+    if not gate["can_draft"]:
+        frappe.throw("No tiene permiso para editar borradores de este movimiento.", frappe.PermissionError)
+
+    data = frappe.parse_json(payload)
+    company = doc.company
+    source_warehouse = data.get("source_warehouse")
+    target_warehouse = data.get("target_warehouse")
+    if mode == "transfer" and source_warehouse and target_warehouse and source_warehouse == target_warehouse:
+        frappe.throw("El almacén origen y destino no pueden ser el mismo.")
+
+    items = _build_stock_entry_items(
+        data.get("items") or [], company, mode,
+        default_source=source_warehouse, default_target=target_warehouse,
+        cost_basis=data.get("cost_basis"),
+    )
+
+    doc.set("items", [])
+    for it in items:
+        doc.append("items", it)
+    if data.get("posting_date"):
+        doc.posting_date = data.get("posting_date")
+        doc.set_posting_time = 1
+    doc.remarks = data.get("remarks")
+    if mode in ("out", "transfer"):
+        doc.from_warehouse = source_warehouse
+    if mode in ("in", "transfer"):
+        doc.to_warehouse = target_warehouse
+
+    doc.flags.ignore_permissions = False
+    doc.save()
+
+    if data.get("submit"):
+        if not gate["can_submit"]:
+            frappe.throw("No tiene permiso para validar y confirmar este movimiento.", frappe.PermissionError)
+        doc.submit()
+
+    frappe.db.commit()
+    return {"name": doc.name, "docstatus": doc.docstatus}
+
+
 @frappe.whitelist()
 def get_inventory_defaults(company: str = None):
     """
@@ -837,6 +944,8 @@ def get_inventory_defaults(company: str = None):
     permissions["puede_recibir_traslados"] = int(get_facex_can_receive_traslados(company))
     permissions["transito_por_defecto"] = get_facex_transito_warehouse(company)
     permissions["bodega_por_defecto"] = get_facex_default_warehouse(company)
+    # Compuertas Grabar Borrador / Validar y Confirmar por operación.
+    permissions["movimientos"] = {m: movement_gate(permissions, m) for m in ("in", "out", "transfer")}
     # "Listas de Materiales" es un permiso general (Mantenimiento, default ON —
     # crea_items/modifica_items), no deny-by-default como el resto de Inventario;
     # se mezcla aquí para que la tarjeta en Inventario use la misma fuente de verdad
@@ -873,7 +982,8 @@ def _list_stock_movements(mode: str, company: str = None, from_date: str = None,
         frappe.throw("No tiene permiso para operar sobre esta compañía.", frappe.PermissionError)
 
     perms = get_facex_inventory_permissions(company)
-    if not perms.get(cfg["perm_field"]):
+    access = perms.get(cfg["perm_field"]) if mode == "transform" else movement_gate(perms, mode)["can_access"]
+    if not access:
         frappe.throw("No tiene permiso para ver estos movimientos de inventario.", frappe.PermissionError)
 
     from_date = from_date or get_first_day(today())
@@ -989,6 +1099,8 @@ def get_stock_entry_detail(name: str):
                 "s_warehouse": d.s_warehouse,
                 "t_warehouse": d.t_warehouse,
                 "is_finished_item": d.is_finished_item,
+                "has_batch_no": cint(frappe.db.get_value("Item", d.item_code, "has_batch_no")),
+                "has_serial_no": cint(frappe.db.get_value("Item", d.item_code, "has_serial_no")),
             }
             for d in doc.items
         ],

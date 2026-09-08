@@ -433,7 +433,7 @@ class FacexInventario {
   ` : `
   <div style="font-size:13px;font-weight:600;color:#6c757d;text-transform:uppercase;letter-spacing:.4px;margin:4px 0 10px;">Movimientos</div>
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;margin-bottom:24px;">
-    ${INV_MOVEMENTS.map(m => this._movement_card(m, !!perms[m.key])).join("")}
+    ${INV_MOVEMENTS.map(m => this._movement_card(m, !!this._mov_gate(m.mode).can_access)).join("")}
     ${(perms.puede_recibir_traslados && perms.transito_por_defecto) ? `
     <div id="inv-card-recepcion" class="inv-card" data-recepcion="1">
       <div class="inv-card-title">Recepción de Traslados</div>
@@ -567,18 +567,42 @@ class FacexInventario {
 		this._saving = false;
 		this._client_token = frappe.utils.get_random(20);
 
-		this._entry_prefill_source = (prefill && prefill.source_warehouse) || "";
-		this._entry_prefill_target = (prefill && prefill.target_warehouse) || "";
+		this._entry_prefill_source = (prefill && (prefill.source_warehouse || prefill.s_warehouse)) || "";
+		this._entry_prefill_target = (prefill && (prefill.target_warehouse || prefill.t_warehouse)) || "";
 		this._entry_prefill_remarks = (prefill && prefill.remarks) || "";
+		this._draft_name = (prefill && prefill.draft_name) || null;
 
 		if (prefill && prefill.items) {
 			prefill.items.forEach((it) => {
 				this._entry_uid += 1;
-				this.entry_rows.push({ ...it, uid: this._entry_uid });
+				this.entry_rows.push({
+					...it,
+					uid: this._entry_uid,
+					qty: flt(it.qty) || it.qty,
+					has_batch_no: cint(it.has_batch_no),
+					has_serial_no: cint(it.has_serial_no),
+				});
 			});
 		}
 
 		this._render_movement();
+	}
+
+	// Compuertas Grabar Borrador / Validar y Confirmar del modo indicado.
+	_mov_gate(mode) {
+		return (((this.defaults || {}).permissions || {}).movimientos || {})[mode]
+			|| { can_access: 0, can_draft: 0, can_submit: 0 };
+	}
+
+	// true = el guardado somete directo (usuario solo puede validar, no borrador).
+	_mov_wants_submit() {
+		const g = this._mov_gate(this.mode);
+		return !g.can_draft && g.can_submit;
+	}
+
+	_save_button_label() {
+		if (this._draft_name) return "Guardar cambios del borrador";
+		return this._mov_wants_submit() ? "Validar y Confirmar" : "Grabar Borrador";
 	}
 
 	// Config del movimiento activo, con las columnas de costo/total ocultas si el
@@ -605,12 +629,12 @@ class FacexInventario {
 
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
     <button type="button" id="inv-back" class="inv-btn inv-btn-secondary">&larr; Volver</button>
-    <div style="font-size:16px;font-weight:600;color:#333;">${cfg.label} de Inventario</div>
+    <div style="font-size:16px;font-weight:600;color:#333;">${cfg.label} de Inventario${this._draft_name ? ` · editando borrador ${frappe.utils.escape_html(this._draft_name)}` : ""}</div>
     <div style="font-size:12.5px;color:#6c757d;">${frappe.utils.escape_html(d.company)}</div>
   </div>
 
   <div class="inv-tabs">
-    <div class="inv-tab inv-tab-active" data-tab="nueva">Nueva ${cfg.label}</div>
+    <div class="inv-tab inv-tab-active" data-tab="nueva">${this._draft_name ? "Editar borrador" : `Nueva ${cfg.label}`}</div>
     <div class="inv-tab" data-tab="movs">Movimientos del Mes</div>
   </div>
 
@@ -683,7 +707,7 @@ class FacexInventario {
     </div>
 
     <div style="display:flex;justify-content:flex-end;gap:10px;">
-      <button type="button" id="inv-e-save" class="inv-btn inv-btn-primary">Guardar ${cfg.label}</button>
+      <button type="button" id="inv-e-save" class="inv-btn inv-btn-primary">${this._save_button_label()}</button>
     </div>
 
   </div>
@@ -1338,12 +1362,14 @@ class FacexInventario {
 			return;
 		}
 
+		const wantSubmit = this._mov_wants_submit();
 		const payload = {
 			company: this.defaults.company,
 			source_warehouse,
 			target_warehouse,
 			posting_date,
 			remarks,
+			submit: wantSubmit ? 1 : 0,
 			cost_basis: this.$body.find("#inv-e-cost-basis").val() || undefined,
 			items: this.entry_rows.map((r) => ({
 				item_code: r.item_code,
@@ -1360,16 +1386,25 @@ class FacexInventario {
 			? `de <strong>${frappe.utils.escape_html(source_warehouse)}</strong> a <strong>${frappe.utils.escape_html(target_warehouse)}</strong>`
 			: `en <strong>${frappe.utils.escape_html(source_warehouse || target_warehouse)}</strong>`;
 
+		const editing = !!this._draft_name;
+		const confirmMsg = editing
+			? `¿Guardar los cambios del borrador <strong>${frappe.utils.escape_html(this._draft_name)}</strong>?`
+			: wantSubmit
+				? `¿Confirmar la ${cfg.label.toLowerCase()} de <strong>${this.entry_rows.length}</strong> producto(s) ${target_desc}?`
+				: `¿Grabar el borrador de la ${cfg.label.toLowerCase()} de <strong>${this.entry_rows.length}</strong> producto(s) ${target_desc}?`;
+
 		frappe.confirm(
-			`¿Confirmar la ${cfg.label.toLowerCase()} de <strong>${this.entry_rows.length}</strong> producto(s) ${target_desc}?`,
+			confirmMsg,
 			() => {
 				if (this._saving) return; // guarda extra por si el diálogo se disparó dos veces
 				this._saving = true;
 				this.$body.find("#inv-e-save").prop("disabled", true);
 
 				frappe.call({
-					method: cfg.api_create,
-					args: { payload: JSON.stringify(payload), client_token },
+					method: editing ? "facex_multi.api.stock.update_stock_movement_draft" : cfg.api_create,
+					args: editing
+						? { name: this._draft_name, payload: JSON.stringify(payload) }
+						: { payload: JSON.stringify(payload), client_token },
 					freeze: true,
 					freeze_message: `Registrando ${cfg.label.toLowerCase()}…`,
 					callback: (r) => {
@@ -1403,14 +1438,18 @@ class FacexInventario {
 		const cfg = this._movement_cfg();
 		this._result_doc = doc;
 		const is_cancelled = cint(doc.docstatus) === 2;
+		const is_draft = cint(doc.docstatus) === 0;
 		this._result_cancelled = is_cancelled;
+		const gate = this._mov_gate(this.mode);
+		const headColor = is_cancelled ? "#e03e2d" : (is_draft ? "#6c757d" : "#28a745");
+		const headTag = is_cancelled ? " (Anulado)" : (is_draft ? " (Borrador)" : "");
 
 		this.$body.html(`
 <div id="inv-result-app" style="max-width:900px;margin:0 auto;padding:16px 8px;">
 
   <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:24px;margin-bottom:16px;text-align:center;">
     <div style="font-size:13px;color:#6c757d;text-transform:uppercase;letter-spacing:.4px;">${cfg.label} de Inventario</div>
-    <div id="inv-r-name" style="font-size:22px;font-weight:700;color:${is_cancelled ? "#e03e2d" : "#28a745"};margin:6px 0;">${frappe.utils.escape_html(doc.name)}${is_cancelled ? " (Anulado)" : ""}</div>
+    <div id="inv-r-name" style="font-size:22px;font-weight:700;color:${headColor};margin:6px 0;">${frappe.utils.escape_html(doc.name)}${headTag}</div>
     <div style="font-size:12.5px;color:#6c757d;">${frappe.utils.escape_html(this._movement_warehouse_display(doc))} · ${frappe.utils.escape_html(doc.posting_date || "")}</div>
   </div>
 
@@ -1451,10 +1490,16 @@ class FacexInventario {
   </div>
 
   <div style="display:flex;justify-content:center;gap:10px;flex-wrap:wrap;">
-    <button type="button" id="inv-r-cancelar" class="inv-btn inv-btn-danger" ${is_cancelled ? "disabled" : ""}>Cancelar</button>
+    ${is_draft ? `
+      ${gate.can_submit ? `<button type="button" id="inv-r-validar" class="inv-btn inv-btn-primary">Validar y Confirmar</button>` : ""}
+      ${gate.can_draft ? `<button type="button" id="inv-r-editar" class="inv-btn inv-btn-secondary">Editar</button>` : ""}
+      ${gate.can_draft ? `<button type="button" id="inv-r-eliminar" class="inv-btn inv-btn-danger">Eliminar borrador</button>` : ""}
+    ` : `
+      <button type="button" id="inv-r-cancelar" class="inv-btn inv-btn-danger" ${is_cancelled ? "disabled" : ""}>Cancelar</button>
+    `}
     <button type="button" id="inv-r-duplicar" class="inv-btn inv-btn-secondary">Duplicar</button>
     <button type="button" id="inv-r-imprimir" class="inv-btn inv-btn-secondary">Imprimir</button>
-    <button type="button" id="inv-r-nuevo" class="inv-btn inv-btn-primary">Nuevo</button>
+    <button type="button" id="inv-r-nuevo" class="inv-btn ${is_draft ? "inv-btn-secondary" : "inv-btn-primary"}">Nuevo</button>
     <button type="button" id="inv-r-volver" class="inv-btn inv-btn-secondary">Movimientos</button>
     <button type="button" id="inv-r-salir" class="inv-btn inv-btn-secondary">Salir</button>
   </div>
@@ -1478,6 +1523,15 @@ class FacexInventario {
 		const doc = this._result_doc;
 
 		this.$body.on("click", "#inv-r-cancelar", () => this._movement_cancel());
+		this.$body.on("click", "#inv-r-validar", () => this._movement_validate());
+		this.$body.on("click", "#inv-r-editar", () => this._open_movement(this.mode, {
+			draft_name: doc.name,
+			source_warehouse: doc.source_warehouse,
+			target_warehouse: doc.target_warehouse,
+			remarks: doc.remarks,
+			items: doc.items,
+		}));
+		this.$body.on("click", "#inv-r-eliminar", () => this._movement_delete_draft());
 		this.$body.on("click", "#inv-r-duplicar", () => this._open_movement(this.mode, {
 			source_warehouse: doc.source_warehouse,
 			target_warehouse: doc.target_warehouse,
@@ -1511,6 +1565,49 @@ class FacexInventario {
 						this.$body.find("#inv-r-name").css("color", "#e03e2d").text(doc.name + " (Anulado)");
 						this.$body.find("#inv-r-cancelar").prop("disabled", true);
 						frappe.show_alert({ message: "Movimiento anulado.", indicator: "orange" });
+					},
+				});
+			}
+		);
+	}
+
+	_movement_validate() {
+		const doc = this._result_doc;
+		frappe.confirm(
+			`¿Validar y confirmar el movimiento <strong>${frappe.utils.escape_html(doc.name)}</strong>? Afectará el stock.`,
+			() => {
+				frappe.call({
+					method: "facex_multi.api.stock.submit_stock_movement",
+					args: { name: doc.name },
+					freeze: true,
+					freeze_message: "Validando…",
+					callback: (r) => {
+						if (!r.message) return;
+						frappe.call({
+							method: "facex_multi.api.stock.get_stock_entry_detail",
+							args: { name: doc.name },
+							callback: (r2) => { if (r2.message) this._render_movement_result(r2.message); },
+						});
+					},
+				});
+			}
+		);
+	}
+
+	_movement_delete_draft() {
+		const doc = this._result_doc;
+		frappe.confirm(
+			`¿Eliminar el borrador <strong>${frappe.utils.escape_html(doc.name)}</strong>?`,
+			() => {
+				frappe.call({
+					method: "facex_multi.api.stock.delete_stock_movement_draft",
+					args: { name: doc.name },
+					freeze: true,
+					freeze_message: "Eliminando…",
+					callback: (r) => {
+						if (!r.message) return;
+						frappe.show_alert({ message: "Borrador eliminado.", indicator: "orange" });
+						this._open_movement(this.mode);
 					},
 				});
 			}

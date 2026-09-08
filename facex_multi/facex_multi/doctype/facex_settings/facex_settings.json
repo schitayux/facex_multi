@@ -87,6 +87,15 @@
   "cb_inv_movs3",
   "puede_ver_costos",
   "costo_entrada_por_defecto",
+  "sb_inv_movs_estados",
+  "entrada_grabar_borrador",
+  "entrada_validar_confirmar",
+  "cb_inv_estados_1",
+  "salida_grabar_borrador",
+  "salida_validar_confirmar",
+  "cb_inv_estados_2",
+  "transferencia_grabar_borrador",
+  "transferencia_validar_confirmar",
   "sb_inventario_reportes",
   "reporte_inv_kardex",
   "reporte_inv_existencias",
@@ -602,6 +611,56 @@
    "options": "estandar\nponderado\nultima_compra",
    "label": "Base de Costo por Defecto (Entradas)",
    "description": "Base de costo con la que el sistema valora automáticamente las Entradas de mercadería de este usuario: estandar = Costo Estándar FacEx, ponderado = promedio ponderado del sistema, ultima_compra = último precio de compra."
+  },
+  {
+   "fieldname": "sb_inv_movs_estados",
+   "fieldtype": "Section Break",
+   "label": "Grabar / Validar por Operación",
+   "description": "Control fino del botón Guardar en Entradas/Salidas/Transferencias. Ambas casillas → graba borrador y luego se valida. Solo «Validar y Confirmar» → somete directo (comportamiento clásico). Solo «Grabar Borrador» → queda en borrador sin poder validar desde FacEx. Ninguna → no puede operar. Los permisos «Registrar Entradas/Salidas/Transferencias» de arriba son legacy: por sí solos equivalen a «Validar y Confirmar»."
+  },
+  {
+   "default": "0",
+   "fieldname": "entrada_grabar_borrador",
+   "fieldtype": "Check",
+   "label": "Entrada — Grabar Borrador"
+  },
+  {
+   "default": "0",
+   "fieldname": "entrada_validar_confirmar",
+   "fieldtype": "Check",
+   "label": "Entrada — Validar y Confirmar"
+  },
+  {
+   "fieldname": "cb_inv_estados_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "salida_grabar_borrador",
+   "fieldtype": "Check",
+   "label": "Salida — Grabar Borrador"
+  },
+  {
+   "default": "0",
+   "fieldname": "salida_validar_confirmar",
+   "fieldtype": "Check",
+   "label": "Salida — Validar y Confirmar"
+  },
+  {
+   "fieldname": "cb_inv_estados_2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "transferencia_grabar_borrador",
+   "fieldtype": "Check",
+   "label": "Transferencia — Grabar Borrador"
+  },
+  {
+   "default": "0",
+   "fieldname": "transferencia_validar_confirmar",
+   "fieldtype": "Check",
+   "label": "Transferencia — Validar y Confirmar"
   },
   {
    "fieldname": "sb_inventario_reportes",

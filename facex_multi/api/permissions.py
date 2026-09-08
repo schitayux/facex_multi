@@ -366,7 +366,39 @@ _INVENTORY_PERM_FIELDS = [
     "mantiene_costos_items",
     "mantiene_almacenes",
     "puede_recibir_traslados",
+    "entrada_grabar_borrador", "entrada_validar_confirmar",
+    "salida_grabar_borrador", "salida_validar_confirmar",
+    "transferencia_grabar_borrador", "transferencia_validar_confirmar",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Grabar Borrador / Validar y Confirmar por operación (Entrada/Salida/Transferencia)
+# ---------------------------------------------------------------------------
+# `puede_hacer_<op>` queda como legacy: por sí solo = "acceso + validación
+# directa". Si el admin marca alguna de las casillas nuevas, esas mandan.
+
+MOV_FLAGS = {
+    "in":       ("puede_hacer_entradas",       "entrada_grabar_borrador",       "entrada_validar_confirmar"),
+    "out":      ("puede_hacer_salidas",        "salida_grabar_borrador",        "salida_validar_confirmar"),
+    "transfer": ("puede_hacer_transferencias", "transferencia_grabar_borrador", "transferencia_validar_confirmar"),
+}
+
+
+def movement_gate(perms: dict, mode: str) -> dict:
+    """A partir del dict de get_facex_inventory_permissions, resuelve para `mode`:
+    can_access (¿ve la operación?), can_draft (¿graba borrador?), can_submit
+    (¿valida/somete?)."""
+    legacy_f, draft_f, submit_f = MOV_FLAGS[mode]
+    legacy_v = bool(perms.get(legacy_f))
+    draft_v = bool(perms.get(draft_f))
+    submit_v = bool(perms.get(submit_f))
+    has_new = draft_v or submit_v
+    return {
+        "can_access": legacy_v or has_new,
+        "can_draft": draft_v,
+        "can_submit": submit_v or (legacy_v and not has_new),
+    }
 
 
 def _inventory_no_access() -> dict:
