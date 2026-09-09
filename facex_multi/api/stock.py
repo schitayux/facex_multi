@@ -22,6 +22,7 @@ from facex_multi.api.permissions import (
     get_facex_can_receive_traslados,
     get_facex_can_upload_liquidaciones_transporte,
     get_facex_can_view_costs,
+    get_facex_see_only_own_movements,
     get_facex_can_view_transporte_kpis,
     get_facex_can_view_transporte_menu,
     get_facex_can_view_transporte_reportes,
@@ -33,6 +34,18 @@ from facex_multi.api.permissions import (
     movement_gate,
 )
 from facex_multi.api.si_carga import _get_establishments
+
+
+def _resolve_letter_head(company: str) -> str:
+    """Membrete (con logo) a usar al imprimir movimientos de inventario:
+    el de la compañía si lo tiene, si no el marcado por defecto. "" si no hay."""
+    if not company:
+        return frappe.db.get_value("Letter Head", {"is_default": 1, "disabled": 0}, "name") or ""
+    return (
+        frappe.db.get_value("Company", company, "default_letter_head")
+        or frappe.db.get_value("Letter Head", {"is_default": 1, "disabled": 0}, "name")
+        or ""
+    )
 
 
 def get_warehouses_meta(company: str):
@@ -965,6 +978,8 @@ def get_inventory_defaults(company: str = None):
     warehouses_meta = get_warehouses_meta(company) if permissions.get("puede_ver_inventario") else []
     item_groups = _get_company_item_groups(company) if permissions.get("puede_ver_inventario") else []
 
+    permissions["ver_solo_mis_movimientos"] = int(get_facex_see_only_own_movements(company))
+
     return {
         "company": company,
         "companies": allowed_companies,
@@ -973,6 +988,8 @@ def get_inventory_defaults(company: str = None):
         "establishments": establishments,
         "item_groups": item_groups,
         "permissions": permissions,
+        "movimiento_print_format": "Movimiento de Inventario FacEx",
+        "letter_head": _resolve_letter_head(company),
     }
 
 
@@ -1014,6 +1031,13 @@ def _list_stock_movements(mode: str, company: str = None, from_date: str = None,
     allowed = get_facex_allowed_warehouses(company)
     wh_filter = ""
     values = {"company": company, "purpose": cfg["purpose"], "from_date": from_date, "to_date": to_date}
+
+    # «Movimientos del Mes»: usuario con ver_solo_mis_movimientos solo ve los
+    # documentos que él mismo creó (no afecta Kardex ni reportes).
+    owner_filter = ""
+    if get_facex_see_only_own_movements(company):
+        owner_filter = "AND se.owner = %(mov_owner)s"
+        values["mov_owner"] = frappe.session.user
     if allowed is not None:
         # Solo movimientos que tocan alguna bodega habilitada del usuario
         # (en el detalle o en el encabezado del Stock Entry).
@@ -1033,19 +1057,25 @@ def _list_stock_movements(mode: str, company: str = None, from_date: str = None,
             se.name, se.posting_date, se.from_warehouse, se.to_warehouse, se.docstatus,
             se.remarks, se.owner, se.creation,
             se.total_incoming_value, se.total_outgoing_value,
+            u.full_name AS owner_name,
             (SELECT COUNT(*) FROM `tabStock Entry Detail` sed WHERE sed.parent = se.name) AS item_count
         FROM `tabStock Entry` se
+        LEFT JOIN `tabUser` u ON u.name = se.owner
         WHERE se.company = %(company)s
           AND se.purpose = %(purpose)s
           {cfg.get("extra_filter", "")}
           AND se.posting_date BETWEEN %(from_date)s AND %(to_date)s
           {wh_filter}
+          {owner_filter}
         ORDER BY se.posting_date DESC, se.creation DESC
         LIMIT 500
         """,
         values,
         as_dict=True,
     )
+
+    for r in rows:
+        r["owner_name"] = r.get("owner_name") or r.get("owner")
 
     # Fuga de costos: el valor del movimiento sólo se entrega a quien tiene
     # puede_ver_costos (mismo criterio que los reportes de inventario).
@@ -1117,6 +1147,10 @@ def get_stock_entry_detail(name: str):
         "name": doc.name,
         "mode": mode,
         "can_view_costs": can_view_costs,
+        "print_format": "Movimiento de Inventario FacEx",
+        "letter_head": _resolve_letter_head(doc.company),
+        "owner": doc.owner,
+        "owner_name": frappe.db.get_value("User", doc.owner, "full_name") or doc.owner,
         "source_warehouse": doc.from_warehouse,
         "target_warehouse": doc.to_warehouse,
         "posting_date": str(doc.posting_date),

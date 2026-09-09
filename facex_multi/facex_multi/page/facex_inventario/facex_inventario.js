@@ -733,13 +733,14 @@ class FacexInventario {
             <th>Documento</th>
             <th>Fecha</th>
             <th>Almacén</th>
+            <th style="width:140px;">Usuario</th>
             <th style="width:70px;">Ítems</th>
             <th style="width:110px;">Valor</th>
             <th style="width:90px;">Estado</th>
             <th>Comentario</th>
           </tr>
         </thead>
-        <tbody id="inv-m-tbody"><tr><td colspan="7" style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr></tbody>
+        <tbody id="inv-m-tbody"><tr><td colspan="8" style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr></tbody>
       </table>
     </div>
 
@@ -767,7 +768,7 @@ class FacexInventario {
 		const from_date = this.$body.find("#inv-m-from").val();
 		const to_date = this.$body.find("#inv-m-to").val();
 		const $tbody = this.$body.find("#inv-m-tbody");
-		$tbody.html(`<tr><td colspan="7" style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr>`);
+		$tbody.html(`<tr><td colspan="8" style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr>`);
 
 		frappe.call({
 			method: cfg.api_list,
@@ -775,7 +776,7 @@ class FacexInventario {
 			callback: (r) => {
 				const rows = (r.message && r.message.rows) || [];
 				if (!rows.length) {
-					$tbody.html(`<tr><td colspan="7" style="text-align:center;color:#adb5bd;padding:20px;">Sin movimientos en este rango.</td></tr>`);
+					$tbody.html(`<tr><td colspan="8" style="text-align:center;color:#adb5bd;padding:20px;">Sin movimientos en este rango.</td></tr>`);
 					return;
 				}
 				const STATUS = { 0: ["Borrador", "#6c757d"], 1: ["Sometido", "#28a745"], 2: ["Anulado", "#e03e2d"] };
@@ -785,13 +786,17 @@ class FacexInventario {
 						? `${row.from_warehouse || ""} → ${row.to_warehouse || ""}`
 						: (row.from_warehouse || row.to_warehouse || "");
 					const value = this.mode === "in" ? row.total_incoming_value : row.total_outgoing_value;
+					const value_cell = (value === null || value === undefined)
+						? `<span style="color:#adb5bd;">—</span>`
+						: frappe.format(value, { fieldtype: "Currency" });
 					return `
 <tr class="inv-mov-row" data-view="${frappe.utils.escape_html(row.name)}">
   <td><strong>${frappe.utils.escape_html(row.name)}</strong></td>
   <td>${frappe.utils.escape_html(row.posting_date || "")}</td>
   <td>${frappe.utils.escape_html(warehouse_display)}</td>
+  <td>${frappe.utils.escape_html(row.owner_name || row.owner || "")}</td>
   <td>${row.item_count}</td>
-  <td>${frappe.format(value, { fieldtype: "Currency" })}</td>
+  <td>${value_cell}</td>
   <td><span style="color:${color};font-weight:600;">${label}</span></td>
   <td>${frappe.utils.escape_html(row.remarks || "")}</td>
 </tr>`;
@@ -1538,7 +1543,11 @@ class FacexInventario {
 			remarks: doc.remarks,
 			items: doc.items,
 		}));
-		this.$body.on("click", "#inv-r-imprimir", () => frappe.utils.print("Stock Entry", doc.name));
+		this.$body.on("click", "#inv-r-imprimir", () => frappe.utils.print(
+			"Stock Entry", doc.name,
+			doc.print_format || "Movimiento de Inventario FacEx",
+			doc.letter_head || (this.defaults || {}).letter_head || "",
+		));
 		this.$body.on("click", "#inv-r-nuevo", () => this._open_movement(this.mode));
 		this.$body.on("click", "#inv-r-volver", () => {
 			this._open_movement(this.mode);
@@ -3491,7 +3500,11 @@ ${rows.map(r => `<tr>
     <button type="button" id="inv-rt-done" class="inv-btn inv-btn-primary">Volver a la lista</button>
   </div>
 </div>`);
-		if (se) $b.find("#inv-rt-print").on("click", () => frappe.utils.print("Stock Entry", se));
+		if (se) $b.find("#inv-rt-print").on("click", () => frappe.utils.print(
+			"Stock Entry", se,
+			(this.defaults || {}).movimiento_print_format || "Movimiento de Inventario FacEx",
+			(this.defaults || {}).letter_head || "",
+		));
 		$b.find("#inv-rt-done").on("click", () => this._render_recepcion());
 	}
 
@@ -3950,9 +3963,9 @@ ${rows.map(r => `<tr>
     <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;overflow-x:auto;">
       <table class="inv-table" style="width:100%;">
         <thead>
-          <tr><th>Documento</th><th>Fecha</th><th style="width:70px;">Ítems</th><th style="width:110px;">Valor</th><th style="width:90px;">Estado</th><th>Comentario</th></tr>
+          <tr><th>Documento</th><th>Fecha</th><th style="width:140px;">Usuario</th><th style="width:70px;">Ítems</th><th style="width:110px;">Valor</th><th style="width:90px;">Estado</th><th>Comentario</th></tr>
         </thead>
-        <tbody id="inv-m-tbody"><tr><td colspan="6" style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr></tbody>
+        <tbody id="inv-m-tbody"><tr><td colspan="7" style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr></tbody>
       </table>
     </div>
 
@@ -4149,7 +4162,7 @@ ${rows.map(r => `<tr>
 		const from_date = this.$body.find("#inv-m-from").val();
 		const to_date = this.$body.find("#inv-m-to").val();
 		const $tbody = this.$body.find("#inv-m-tbody");
-		$tbody.html(`<tr><td colspan="6" style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr>`);
+		$tbody.html(`<tr><td colspan="7" style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr>`);
 
 		frappe.call({
 			method: "facex_multi.api.stock.list_stock_entries_transform",
@@ -4157,18 +4170,22 @@ ${rows.map(r => `<tr>
 			callback: (r) => {
 				const rows = (r.message && r.message.rows) || [];
 				if (!rows.length) {
-					$tbody.html(`<tr><td colspan="6" style="text-align:center;color:#adb5bd;padding:20px;">Sin transformaciones en este rango.</td></tr>`);
+					$tbody.html(`<tr><td colspan="7" style="text-align:center;color:#adb5bd;padding:20px;">Sin transformaciones en este rango.</td></tr>`);
 					return;
 				}
 				const STATUS = { 0: ["Borrador", "#6c757d"], 1: ["Sometido", "#28a745"], 2: ["Anulado", "#e03e2d"] };
 				$tbody.html(rows.map((row) => {
 					const [label, color] = STATUS[row.docstatus] || STATUS[0];
+					const value_cell = (row.total_incoming_value === null || row.total_incoming_value === undefined)
+						? `<span style="color:#adb5bd;">—</span>`
+						: frappe.format(row.total_incoming_value, { fieldtype: "Currency" });
 					return `
 <tr class="inv-mov-row" data-view="${frappe.utils.escape_html(row.name)}">
   <td><strong>${frappe.utils.escape_html(row.name)}</strong></td>
   <td>${frappe.utils.escape_html(row.posting_date || "")}</td>
+  <td>${frappe.utils.escape_html(row.owner_name || row.owner || "")}</td>
   <td>${row.item_count}</td>
-  <td>${frappe.format(row.total_incoming_value, { fieldtype: "Currency" })}</td>
+  <td>${value_cell}</td>
   <td><span style="color:${color};font-weight:600;">${label}</span></td>
   <td>${frappe.utils.escape_html(row.remarks || "")}</td>
 </tr>`;

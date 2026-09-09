@@ -86,6 +86,7 @@
   "puede_hacer_transformaciones",
   "cb_inv_movs3",
   "puede_ver_costos",
+  "ver_solo_mis_movimientos",
   "costo_entrada_por_defecto",
   "sb_inv_movs_estados",
   "entrada_grabar_borrador",
@@ -603,6 +604,13 @@
    "fieldtype": "Check",
    "label": "Ver Costos y Valores de Inventario",
    "description": "Gobierna la visibilidad de costos y valores dentro del módulo de Inventario: columnas de costo/valor en reportes, grids de Entradas/Salidas, flotante de existencia y pantallas de maestros — en pantalla, al imprimir y al exportar. No afecta el Análisis de Utilidad ni la Asignación de Precios de FacEx Clásico."
+  },
+  {
+   "default": "0",
+   "fieldname": "ver_solo_mis_movimientos",
+   "fieldtype": "Check",
+   "label": "Movimientos del Mes: ver únicamente los propios",
+   "description": "Si está marcado, en la pestaña «Movimientos del Mes» (Entradas/Salidas/Transferencias/Transformaciones) este usuario solo ve los documentos que él mismo creó, no los de otros usuarios. No afecta el Kardex ni los demás reportes. Los System Manager siempre ven todos."
   },
   {
    "default": "estandar",

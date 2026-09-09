@@ -475,6 +475,21 @@ def get_facex_can_view_costs(company: str) -> bool:
     return bool(int(value or 0))
 
 
+def get_facex_see_only_own_movements(company: str) -> bool:
+    """True → en «Movimientos del Mes» del módulo de Inventario el usuario solo
+    ve los Stock Entry que él mismo creó. Default 0 (ve todos). System Manager
+    siempre ve todos. No afecta el Kardex ni los demás reportes de inventario."""
+    if "System Manager" in frappe.get_roles():
+        return False
+    if not company:
+        return False
+    return bool(int(frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "ver_solo_mis_movimientos",
+    ) or 0))
+
+
 _COST_BASES = ("estandar", "ponderado", "ultima_compra")
 
 
