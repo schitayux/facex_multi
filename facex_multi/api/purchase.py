@@ -202,7 +202,7 @@ def get_item_purchase_info(item_code: str, company: str = None) -> dict:
 
     item = frappe.db.get_value(
         "Item", item_code,
-        ["item_name", "item_group", "has_serial_no", "is_stock_item", "stock_uom"],
+        ["item_name", "item_group", "has_serial_no", "has_batch_no", "is_stock_item", "stock_uom"],
         as_dict=True,
     )
     if not item:
@@ -217,6 +217,7 @@ def get_item_purchase_info(item_code: str, company: str = None) -> dict:
         "item_name":    item.item_name,
         "item_group":   item.item_group,
         "has_serial_no": int(item.has_serial_no or 0),
+        "has_batch_no": int(item.has_batch_no or 0),
         "is_stock_item": int(item.is_stock_item or 0),
         "uom":          item.stock_uom or _default_uom(),
         "warehouse":    warehouse,
@@ -240,7 +241,7 @@ def search_items(txt: str = "", company: str = None) -> list:
             ["item_name", "like", f"%{txt}%"],
         ],
         fields=["name as item_code", "item_name", "item_group",
-                "has_serial_no", "is_stock_item", "stock_uom"],
+                "has_serial_no", "has_batch_no", "is_stock_item", "stock_uom"],
         order_by="item_code asc",
         limit=25,
     )
@@ -256,6 +257,7 @@ def search_items(txt: str = "", company: str = None) -> list:
             "item_name":    r.item_name,
             "item_group":   r.item_group,
             "has_serial_no": int(r.has_serial_no or 0),
+            "has_batch_no": int(r.has_batch_no or 0),
             "is_stock_item": int(r.is_stock_item or 0),
             "uom":          r.stock_uom or _default_uom(),
             "warehouse":    wh,
@@ -505,9 +507,11 @@ def get_purchase_invoice(name: str, company: str = None) -> dict:
         frappe.throw("No tiene permisos para ver esta factura de compra.")
     d = doc.as_dict()
     for item in d.get("items", []):
-        item["has_serial_no"] = int(
-            frappe.db.get_value("Item", item.get("item_code"), "has_serial_no") or 0
-        )
+        meta = frappe.db.get_value(
+            "Item", item.get("item_code"), ["has_serial_no", "has_batch_no"], as_dict=True
+        ) or {}
+        item["has_serial_no"] = int(meta.get("has_serial_no") or 0)
+        item["has_batch_no"] = int(meta.get("has_batch_no") or 0)
     return d
 
 
@@ -555,6 +559,7 @@ def save_purchase_invoice(data_json: str) -> dict:
     doc.bfel_multi_tipo      = data.get("bfel_multi_tipo") or ""
 
     from facex_multi.api.permissions import get_facex_allowed_warehouses
+    from facex_multi.api.stock import _resolve_batch
     allowed_warehouses = get_facex_allowed_warehouses(company)
 
     for row in data.get("items", []):
@@ -570,11 +575,14 @@ def save_purchase_invoice(data_json: str) -> dict:
             # bodega resuelta automáticamente desde el Item — reemplazar por la primera permitida
             wh = allowed_warehouses[0] if allowed_warehouses else ""
         serial_no = (row.get("serial_no") or "").strip()
+        batch_no  = (row.get("batch_no") or "").strip()
 
         item_info  = frappe.db.get_value(
-            "Item", item_code, ["has_serial_no", "is_stock_item", "stock_uom"], as_dict=True
+            "Item", item_code,
+            ["has_serial_no", "has_batch_no", "is_stock_item", "stock_uom"], as_dict=True
         )
         has_serial = int(item_info.has_serial_no or 0)
+        has_batch  = int(item_info.has_batch_no or 0)
         is_stock   = int(item_info.is_stock_item or 0)
         stock_uom  = item_info.stock_uom or _default_uom()
 
@@ -595,7 +603,14 @@ def save_purchase_invoice(data_json: str) -> dict:
             "warehouse":         wh if is_stock else "",
         }
         if has_serial and serial_no:
+            item_row["use_serial_batch_fields"] = 1
             item_row["serial_no"] = serial_no
+        if has_batch:
+            # Compra = recepción de mercadería: se auto-crea el maestro Batch si
+            # el código del proveedor aún no existe (mismo criterio que Entradas
+            # de inventario, mode='in').
+            item_row["use_serial_batch_fields"] = 1
+            item_row["batch_no"] = _resolve_batch(item_code, batch_no, "in")
 
         doc.append("items", item_row)
 
@@ -655,8 +670,9 @@ def process_purchase_excel(file_url: str, company: str = None) -> dict:
     """
     Parsea Excel con 2 hojas:
       Hoja 1 – ENCABEZADO (fila 2): proveedor | fecha_registro | no_factura | fecha_factura | moneda
-      Hoja 2 – DETALLE (desde fila 2): codigo_item | precio_unitario | serie
-    Una fila por unidad para ítems con serie; varias filas sin serie se acumulan.
+      Hoja 2 – DETALLE (desde fila 2): codigo_item | precio_unitario | serie | lote
+    Una fila por unidad para ítems con serie; varias filas sin serie se acumulan
+    (agrupadas por código + lote).
     """
     import openpyxl
     from frappe.utils.file_manager import get_file_path
@@ -691,7 +707,7 @@ def process_purchase_excel(file_url: str, company: str = None) -> dict:
     ws_d   = wb.worksheets[1]
     rows_d = list(ws_d.iter_rows(min_row=2, values_only=True))
 
-    # Agrupar por item_code manteniendo orden de aparición
+    # Agrupar por (item_code, lote) manteniendo orden de aparición
     order  = []
     groups = {}
     for row in rows_d:
@@ -700,24 +716,27 @@ def process_purchase_excel(file_url: str, company: str = None) -> dict:
         item_code = str(row[0]).strip()
         rate      = flt(row[1] if len(row) > 1 else 0)
         serial    = str(row[2]).strip() if len(row) > 2 and row[2] else ""
+        batch     = str(row[3]).strip() if len(row) > 3 and row[3] else ""
 
-        if item_code not in groups:
-            order.append(item_code)
-            groups[item_code] = {"rate": rate, "serials": [], "qty": 0}
+        key = (item_code, batch)
+        if key not in groups:
+            order.append(key)
+            groups[key] = {"rate": rate, "serials": [], "qty": 0, "batch": batch}
         if serial:
-            groups[item_code]["serials"].append(serial)
+            groups[key]["serials"].append(serial)
         else:
-            groups[item_code]["qty"] += 1
+            groups[key]["qty"] += 1
         if rate:
-            groups[item_code]["rate"] = rate
+            groups[key]["rate"] = rate
 
     items = []
     errors = []
-    for item_code in order:
-        g    = groups[item_code]
+    for key in order:
+        item_code = key[0]
+        g    = groups[key]
         info = frappe.db.get_value(
             "Item", item_code,
-            ["item_name", "item_group", "has_serial_no", "is_stock_item"],
+            ["item_name", "item_group", "has_serial_no", "has_batch_no", "is_stock_item"],
             as_dict=True,
         )
         if not info:
@@ -725,6 +744,7 @@ def process_purchase_excel(file_url: str, company: str = None) -> dict:
             continue
 
         has_serial = int(info.has_serial_no or 0)
+        has_batch  = int(info.has_batch_no or 0)
         wh         = _resolve_item_warehouse(item_code, company, allowed_warehouses) if info.is_stock_item else ""
 
         if has_serial and g["serials"]:
@@ -736,17 +756,21 @@ def process_purchase_excel(file_url: str, company: str = None) -> dict:
 
         if has_serial and not serial_no:
             errors.append(f"'{item_code}' maneja series pero no se encontraron números de serie.")
+        if has_batch and not g["batch"]:
+            errors.append(f"'{item_code}' se gestiona por lote pero la columna 'lote' viene vacía.")
 
         items.append({
             "item_code":     item_code,
             "item_name":     info.item_name,
             "item_group":    info.item_group,
             "has_serial_no": has_serial,
+            "has_batch_no":  has_batch,
             "qty":           qty,
             "rate":          g["rate"],
             "amount":        qty * g["rate"],
             "warehouse":     wh,
             "serial_no":     serial_no,
+            "batch_no":      g["batch"],
         })
 
     return {"header": header, "items": items, "errors": errors}

@@ -313,6 +313,7 @@ def get_item(name: str, price_list: str = None, company: str = None):
         "costo_estandar": (float(doc.get("custom_costo_estandar") or 0)
                            if get_facex_can_view_costs(company) else None),
         "palabras_busqueda": doc.get("custom_facex_palabras_busqueda") or "",
+        "familia": doc.get("custom_facex_familia") or "",
     }
 
 
@@ -504,6 +505,8 @@ def create_or_update_item(data_json: str, company: str = None):
     doc.item_group = data.get("item_group") or doc.item_group
     if doc.meta.has_field("custom_facex_palabras_busqueda") and "palabras_busqueda" in data:
         doc.custom_facex_palabras_busqueda = data.get("palabras_busqueda") or ""
+    if doc.meta.has_field("custom_facex_familia") and "familia" in data:
+        doc.custom_facex_familia = (data.get("familia") or "").strip() or None
     # El Costo Estándar solo se escribe si el usuario tiene permiso de ver costos
     # — así un usuario sin permiso (que no ve el campo) no lo pisa con 0 al guardar.
     if (doc.meta.has_field("custom_costo_estandar") and "costo_estandar" in data
@@ -546,11 +549,21 @@ def create_or_update_item(data_json: str, company: str = None):
     if price_val is not None:
         update_item_price(doc.name, price_val, price_list, company)
 
-    return {"item_code": doc.name, "item_name": doc.item_name}
+    # Ítem nuevo con Familia y SIN precio explícito → repartición desde la matriz
+    # de la familia (Item Price en todas sus listas + costo estándar sugerido).
+    fanout = None
+    if is_new and price_val is None and doc.get("custom_facex_familia"):
+        from facex_multi.api.familia import fanout_new_item_from_familia
+        fanout = fanout_new_item_from_familia(
+            doc.name, doc.custom_facex_familia, company, valid_from=data.get("valid_from")
+        )
+
+    return {"item_code": doc.name, "item_name": doc.item_name, "fanout": fanout}
 
 
 @frappe.whitelist()
-def get_all_prices(price_list: str, txt: str = None, codigo: str = None, grupo: str = None, company: str = None):
+def get_all_prices(price_list: str, txt: str = None, codigo: str = None, grupo: str = None,
+                   familia: str = None, company: str = None):
     """Obtiene una lista de productos filtrados por compañía con sus precios, para el
     Mantenimiento de Precios. txt/codigo/grupo filtran nombre/código/grupo de artículos
     respectivamente y se combinan con AND — alimentan los campos de filtro en los
@@ -578,15 +591,21 @@ def get_all_prices(price_list: str, txt: str = None, codigo: str = None, grupo: 
         conditions.append("item_group LIKE %(grupo)s")
         params["grupo"] = f"%{grupo}%"
 
+    familia = (familia or "").strip()
+    if familia:
+        conditions.append("custom_facex_familia = %(familia)s")
+        params["familia"] = familia
+
     company_filter = """(
               bfel_company = %(company)s
               OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
           )"""
     where = " AND ".join(["disabled = 0", company_filter] + conditions)
 
+    fam_col = ", custom_facex_familia AS familia" if frappe.get_meta("Item").has_field("custom_facex_familia") else ", '' AS familia"
     items = frappe.db.sql(
         f"""
-        SELECT name, item_name, item_group, stock_uom
+        SELECT name, item_name, item_group, stock_uom{fam_col}
         FROM `tabItem`
         WHERE {where}
         ORDER BY item_name ASC
@@ -610,6 +629,7 @@ def get_all_prices(price_list: str, txt: str = None, codigo: str = None, grupo: 
             "item_code": it["name"],
             "item_name": it["item_name"],
             "item_group": it["item_group"] or "",
+            "familia": it.get("familia") or "",
             "stock_uom": it["stock_uom"],
             "price": float(price),
             "currency": currency
@@ -1357,6 +1377,7 @@ def _check_costos_items_permission(company: str) -> None:
 @frappe.whitelist()
 def get_item_costs_maintenance(company: str = None, codigo: str = None, grupo: str = None,
                                uom: str = None, con_costo: int = 0, sin_costo: int = 0,
+                               familia: str = None,
                                start: int = 0, page_length: int = 50):
     """Filas para la pantalla «Costos a Ítems». Muestra las 3 bases de costo; solo
     el Costo Estándar es editable. `con_costo`/`sin_costo` filtran por
@@ -1388,6 +1409,10 @@ def get_item_costs_maintenance(company: str = None, codigo: str = None, grupo: s
     if uom:
         conditions.append("stock_uom = %(uom)s")
         params["uom"] = uom
+    familia = (familia or "").strip()
+    if familia:
+        conditions.append("custom_facex_familia = %(familia)s")
+        params["familia"] = familia
 
     if has_field and con_costo and not sin_costo:
         conditions.append("IFNULL(custom_costo_estandar, 0) > 0")
@@ -1396,9 +1421,10 @@ def get_item_costs_maintenance(company: str = None, codigo: str = None, grupo: s
 
     where = " AND ".join(conditions)
     total = frappe.db.sql(f"SELECT COUNT(*) FROM `tabItem` WHERE {where}", params)[0][0]
+    fam_col = ", custom_facex_familia AS familia" if frappe.get_meta("Item").has_field("custom_facex_familia") else ", '' AS familia"
     items = frappe.db.sql(
         f"""
-        SELECT name AS item_code, item_name, item_group, stock_uom
+        SELECT name AS item_code, item_name, item_group, stock_uom{fam_col}
         FROM `tabItem`
         WHERE {where}
         ORDER BY item_name ASC
@@ -1454,9 +1480,10 @@ def save_item_costs(rows_json: str, company: str = None):
 
 @frappe.whitelist()
 def export_item_costs_maintenance_excel(company: str = None, codigo: str = None, grupo: str = None,
-                                        uom: str = None, con_costo: int = 0, sin_costo: int = 0):
+                                        uom: str = None, con_costo: int = 0, sin_costo: int = 0,
+                                        familia: str = None):
     data = get_item_costs_maintenance(company, codigo, grupo, uom, con_costo, sin_costo,
-                                      start=0, page_length=100000)
+                                      familia=familia, start=0, page_length=100000)
     rows = data["rows"]
     if not rows:
         frappe.throw("No hay ítems para exportar con los filtros seleccionados.")

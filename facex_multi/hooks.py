@@ -48,7 +48,10 @@ doc_events = {
     },
     "Item": {
         "before_save": "facex_multi.api.item.sync_description_from_item_name",
-        "validate": "facex_multi.api.item.validate_lista_materiales",
+        "validate": [
+            "facex_multi.api.item.validate_lista_materiales",
+            "facex_multi.api.familia.validate_item_familia"
+        ],
         "on_update": "facex_multi.api.item.sync_lista_materiales_product_bundle"
     },
     "Sales Invoice": {
@@ -62,7 +65,8 @@ after_migrate = [
     "facex_multi.api.permissions.ensure_stock_entry_naming_series",
     "facex_multi.api.permissions.ensure_warehouse_establecimiento_field",
     "facex_multi.api.permissions.ensure_warehouse_tipo_almacen_field",
-    "facex_multi.api.invoice.ensure_efast_payment_custom_fields"
+    "facex_multi.api.invoice.ensure_efast_payment_custom_fields",
+    "facex_multi.api.familia.ensure_item_familia_field"
 ]
 
 fixtures = [

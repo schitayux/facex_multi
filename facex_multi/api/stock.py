@@ -17,9 +17,12 @@ from facex_multi.api.permissions import (
     get_facex_allowed_warehouses,
     get_facex_can_administer_transportistas,
     get_facex_can_edit_guias_transporte,
+    get_facex_can_maintain_familias,
     get_facex_can_maintain_item_costs,
     get_facex_can_maintain_warehouses,
     get_facex_can_receive_traslados,
+    get_facex_can_view_familias,
+    get_facex_requires_item_familia,
     get_facex_can_upload_liquidaciones_transporte,
     get_facex_can_view_costs,
     get_facex_see_only_own_movements,
@@ -949,6 +952,10 @@ def get_inventory_defaults(company: str = None):
     # Maestros de Inventario: Costos a Ítems / Almacenes (deny-by-default).
     permissions["mantiene_costos_items"] = int(get_facex_can_maintain_item_costs(company))
     permissions["mantiene_almacenes"] = int(get_facex_can_maintain_warehouses(company))
+    # Familias de Precio: mantenimiento (ver/editar) + política de obligatoriedad.
+    permissions["puede_consultar_familias"] = int(get_facex_can_view_familias(company))
+    permissions["puede_mantener_familias"] = int(get_facex_can_maintain_familias(company))
+    permissions["exige_familia_item"] = int(get_facex_requires_item_familia(company))
     # Maestro de Ítems: reusa los permisos generales de catálogo (Mantenimiento).
     permissions["crea_items"] = general_perms.get("crea_items", 0)
     permissions["modifica_items"] = general_perms.get("modifica_items", 0)

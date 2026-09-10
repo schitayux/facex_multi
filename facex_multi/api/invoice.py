@@ -424,8 +424,11 @@ def get_defaults(company: str = None):
         get_facex_can_view_transporte_kpis, get_facex_default_sales_partner,
         get_facex_can_edit_price, get_facex_default_price_list,
         get_facex_allowed_price_lists, get_facex_can_view_costs,
+        get_facex_can_view_familias, get_facex_can_maintain_familias,
     )
     permissions = get_facex_permissions_for_company(company)
+    permissions["puede_consultar_familias"] = int(get_facex_can_view_familias(company))
+    permissions["puede_mantener_familias"] = int(get_facex_can_maintain_familias(company))
     permissions["puede_ver_costos"] = int(get_facex_can_view_costs(company))
     permissions["puede_editar_precio"] = int(get_facex_can_edit_price(company))
     permissions["puede_eliminar_ventas_espera"] = int(get_facex_can_delete_held_sales(company))

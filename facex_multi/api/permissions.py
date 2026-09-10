@@ -79,6 +79,7 @@ _COMPANY_CONFIG_FIELDS = [
     "maneja_inventario", "tipo_x_defecto",
     "mostrar_almacen", "mostrar_desc_pct", "mostrar_adenda", "mostrar_tipo",
     "exige_pago_completo", "permite_pago_credito", "permite_pago_contra_entrega",
+    "exige_familia_item",
 ]
 # Campos texto (Select/Data) — no convertir a int
 _CONFIG_TEXT_FIELDS = {"tipo_x_defecto"}
@@ -340,12 +341,17 @@ def get_facex_company_config(company: str) -> dict:
     """
     if not company:
         return _config_default()
+    # Solo columnas que existen físicamente: durante el intervalo entre desplegar
+    # el código y correr `bench migrate` puede faltar alguna (p. ej. campos nuevos
+    # de FacEx Settings todavía sin sincronizar).
+    meta = frappe.get_meta("FacEx Settings")
+    existing = [f for f in _COMPANY_CONFIG_FIELDS if meta.has_field(f)]
     row = frappe.db.get_value(
         "FacEx Settings",
         {"bfel_company": company, "user": ["is", "not set"]},
-        _COMPANY_CONFIG_FIELDS,
+        existing,
         as_dict=True,
-    )
+    ) if existing else None
     if not row:
         return _config_default()
     result = {}
@@ -519,6 +525,50 @@ def get_facex_can_maintain_item_costs(company: str) -> bool:
         "mantiene_costos_items",
     )
     return bool(int(value or 0))
+
+
+def get_facex_can_view_familias(company: str) -> bool:
+    """«Mantenimiento de Familias» en modo lectura. Deny-by-default.
+    Mantener familias implica poder verlas."""
+    if "System Manager" in frappe.get_roles():
+        return True
+    if not company:
+        return False
+    if not frappe.get_meta("FacEx Settings").has_field("consulta_familias"):
+        return False
+    row = frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        ["consulta_familias", "mantiene_familias"],
+        as_dict=True,
+    )
+    if not row:
+        return False
+    return bool(int(row.get("consulta_familias") or 0) or int(row.get("mantiene_familias") or 0))
+
+
+def get_facex_can_maintain_familias(company: str) -> bool:
+    """Crear / editar / eliminar Familias de Precio. Deny-by-default."""
+    if "System Manager" in frappe.get_roles():
+        return True
+    if not company:
+        return False
+    if not frappe.get_meta("FacEx Settings").has_field("mantiene_familias"):
+        return False
+    value = frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "mantiene_familias",
+    )
+    return bool(int(value or 0))
+
+
+def get_facex_requires_item_familia(company: str) -> bool:
+    """Política de la compañía: ¿toda alta/edición de ítems FacEx exige Familia?
+    Se lee del registro de compañía (user='')."""
+    if not company:
+        return False
+    return bool(int(get_facex_company_config(company).get("exige_familia_item") or 0))
 
 
 def get_facex_can_receive_traslados(company: str) -> bool:

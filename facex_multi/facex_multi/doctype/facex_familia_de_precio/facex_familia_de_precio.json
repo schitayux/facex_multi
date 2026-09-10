@@ -1,0 +1,147 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:familia",
+ "creation": "2026-09-10 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "familia",
+  "descripcion",
+  "activa",
+  "column_break_datos",
+  "bfel_company",
+  "uom",
+  "item_group",
+  "section_break_valores",
+  "costo_estandar",
+  "section_break_precios",
+  "precios"
+ ],
+ "fields": [
+  {
+   "fieldname": "familia",
+   "fieldtype": "Data",
+   "label": "Familia",
+   "reqd": 1,
+   "unique": 1,
+   "description": "Código de la familia de precio, ej. PL-A-A2. Agrupa a todos los SKU que comparten precio y costo."
+  },
+  {
+   "fieldname": "descripcion",
+   "fieldtype": "Data",
+   "label": "Descripción"
+  },
+  {
+   "default": "1",
+   "fieldname": "activa",
+   "fieldtype": "Check",
+   "label": "Activa"
+  },
+  {
+   "fieldname": "column_break_datos",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "bfel_company",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Compañía",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "fieldname": "uom",
+   "fieldtype": "Link",
+   "label": "Unidad de Medida",
+   "options": "UOM",
+   "reqd": 1,
+   "description": "UOM con la que se generan los Item Price de esta familia (ej. Docena, Unidad)."
+  },
+  {
+   "fieldname": "item_group",
+   "fieldtype": "Link",
+   "label": "Grupo de Artículo",
+   "options": "Item Group"
+  },
+  {
+   "fieldname": "section_break_valores",
+   "fieldtype": "Section Break",
+   "label": "Costo"
+  },
+  {
+   "fieldname": "costo_estandar",
+   "fieldtype": "Currency",
+   "label": "Costo Estándar (FacEx) sugerido"
+  },
+  {
+   "fieldname": "section_break_precios",
+   "fieldtype": "Section Break",
+   "label": "Precios por Lista"
+  },
+  {
+   "fieldname": "precios",
+   "fieldtype": "Table",
+   "label": "Precios",
+   "options": "FacEx Familia de Precio Lista"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-09-10 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FacEx Multi",
+ "name": "FacEx Familia de Precio",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Sales User"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Accounts User"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

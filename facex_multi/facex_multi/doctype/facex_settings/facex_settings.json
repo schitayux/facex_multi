@@ -113,6 +113,11 @@
   "mantiene_costos_items",
   "cb_inv_maestros",
   "mantiene_almacenes",
+  "sb_familias",
+  "consulta_familias",
+  "mantiene_familias",
+  "cb_familias",
+  "exige_familia_item",
   "sb_pagos",
   "exige_pago_completo",
   "cb_pagos",
@@ -838,6 +843,36 @@
    "fieldtype": "Check",
    "label": "Ver KPIs de Transporte",
    "description": "Muestra el panel de indicadores (guías por estado, envíos por día, COD pendiente de liquidar) dentro del menú Transporte de FacEx Screen."
+  },
+  {
+   "fieldname": "sb_familias",
+   "fieldtype": "Section Break",
+   "label": "Familias de Precio"
+  },
+  {
+   "default": "0",
+   "fieldname": "consulta_familias",
+   "fieldtype": "Check",
+   "label": "Ver Familias de Precio",
+   "description": "Permite abrir el «Mantenimiento de Familias» (solo lectura) en FacEx Clásico e Inventario."
+  },
+  {
+   "default": "0",
+   "fieldname": "mantiene_familias",
+   "fieldtype": "Check",
+   "label": "Mantener Familias de Precio",
+   "description": "Permite crear, editar y eliminar Familias de Precio. Implica poder verlas."
+  },
+  {
+   "fieldname": "cb_familias",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "exige_familia_item",
+   "fieldtype": "Check",
+   "label": "Exigir Familia en los ítems (política de la compañía)",
+   "description": "Si está marcado en el registro de la COMPAÑÍA (sin usuario), toda alta o edición de ítems de esta compañía desde FacEx obliga a asignar una Familia de Precio."
   }
  ],
  "index_web_pages_for_search": 0,

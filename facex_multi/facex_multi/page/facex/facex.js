@@ -1276,6 +1276,9 @@ class EFastSalePage {
       <button class="ef-tab-btn ef-maint-tab-btn" data-maint-tab="precios">
         Precios
       </button>
+      <button class="ef-tab-btn ef-maint-tab-btn" data-maint-tab="familias">
+        Familias
+      </button>
       <button class="ef-tab-btn ef-maint-tab-btn" data-maint-tab="asignacion-precios">
         Asignación de Precios
       </button>
@@ -1456,6 +1459,10 @@ class EFastSalePage {
             <div class="ef-field-group">
               <label class="ef-label">Grupo de Artículos</label>
               <div id="ef-maint-item-group-ctrl" class="ef-link-ctrl" style="min-height: 32px;"></div>
+            </div>
+            <div class="ef-field-group" id="ef-maint-item-familia-group">
+              <label class="ef-label">Familia <span id="ef-maint-item-familia-req" style="color:#dc2626; display:none;">*</span> <span style="color:#64748b; font-weight:400; font-size:11px;">(precio y costo compartidos)</span></label>
+              <div id="ef-maint-item-familia-ctrl" class="ef-link-ctrl" style="min-height: 32px;"></div>
             </div>
             <div class="ef-field-group">
               <label class="ef-label">Gestionado por</label>
@@ -1670,6 +1677,18 @@ class EFastSalePage {
           </div>
           <div id="ef-maint-prices-status" style="font-size:11px; color:#64748b;"></div>
         </div>
+        <div id="ef-maint-prices-familia-bar" style="display:flex; align-items:flex-end; gap:10px; flex-wrap:wrap; background:#eef4ff; border:1px solid #b9d0ff; border-radius:8px; padding:10px 14px; margin-bottom:12px;">
+          <div style="display:flex; flex-direction:column; gap:2px;">
+            <label style="font-size:11px; color:#1b4b91; font-weight:600;">Familia</label>
+            <select id="ef-maint-prices-f-familia" class="ef-select" style="min-width:220px; padding:4px 8px; font-size:13px;"><option value="">(todas)</option></select>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:2px;">
+            <label style="font-size:11px; color:#1b4b91; font-weight:600;">Precio para la familia</label>
+            <input type="number" id="ef-maint-prices-familia-rate" class="ef-input ef-input-num" style="width:140px;" step="any" min="0" placeholder="0.00" />
+          </div>
+          <button id="ef-maint-prices-familia-apply" class="ef-btn ef-btn-sm ef-btn-primary" disabled>Aplicar a la familia</button>
+          <span style="flex:1 1 auto; font-size:11px; color:#1b4b91;">Asigna el precio a <b>todos</b> los ítems de la familia en la lista seleccionada (se guarda de inmediato, con la UOM de la familia).</span>
+        </div>
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
           <div>
             <button id="ef-maint-prices-btn-mark-all" class="ef-btn ef-btn-sm ef-btn-secondary">Marcar todos</button>
@@ -1688,6 +1707,7 @@ class EFastSalePage {
                 <th class="ef-th" style="width:150px;">Código</th>
                 <th class="ef-th">Nombre Producto</th>
                 <th class="ef-th" style="width:160px;">Grupo de Productos</th>
+                <th class="ef-th" style="width:110px;">Familia</th>
                 <th class="ef-th" style="width:100px;">UOM</th>
                 <th class="ef-th" style="width:180px; text-align:right;">Precio Standard</th>
                 <th class="ef-th" style="width:120px;"></th>
@@ -1700,11 +1720,42 @@ class EFastSalePage {
                 <td></td>
                 <td></td>
                 <td></td>
+                <td></td>
               </tr>
             </thead>
             <tbody id="ef-maint-prices-tbody">
               <!-- Dynamically loaded -->
             </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Maint Tab Content: Familias -->
+    <div class="ef-maint-tab-content" id="ef-maint-tab-familias" style="display:none;">
+      <div class="ef-analytics-card" style="box-shadow: var(--ef-shadow); padding:20px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:12px;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-weight:700; color:var(--ef-primary); font-size:16px;">Familias de Precio</span>
+            <input type="text" id="ef-fam-search" class="ef-input" placeholder="Buscar código o descripción..." style="width:260px; font-size:13px; padding:4px 8px;" />
+          </div>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span id="ef-fam-status" style="font-size:11px; color:#64748b;"></span>
+            <button id="ef-fam-btn-new" class="ef-btn ef-btn-sm ef-btn-primary">+ Nueva Familia</button>
+          </div>
+        </div>
+        <div class="ef-table-wrapper" style="max-height: 640px; overflow-y: auto;">
+          <table class="ef-table">
+            <thead><tr>
+              <th class="ef-th" style="width:150px;">Familia</th>
+              <th class="ef-th">Descripción</th>
+              <th class="ef-th" style="width:90px;">UOM</th>
+              <th class="ef-th" style="width:150px;">Grupo</th>
+              <th class="ef-th" style="width:70px; text-align:right;">Hijos</th>
+              <th class="ef-th" style="width:70px; text-align:center;">Activa</th>
+              <th class="ef-th" style="width:90px;"></th>
+            </tr></thead>
+            <tbody id="ef-fam-tbody"><tr><td colspan="7" style="text-align:center; padding:10px; color:#64748b;">Cargando...</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -5692,6 +5743,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 		}
 		if (!p.asignacion_precios) {
 			this.$body.find(".ef-maint-tab-btn[data-maint-tab='asignacion-precios']").hide();
+		}
+		if (!p.puede_consultar_familias && !p.puede_mantener_familias) {
+			this.$body.find(".ef-maint-tab-btn[data-maint-tab='familias']").hide();
 		}
 		if (!p.gestiona_listas_materiales) {
 			this.$body.find(".ef-maint-tab-btn[data-maint-tab='listas-materiales']").hide();
@@ -10197,6 +10251,37 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this.maint_item_group_ctrl.refresh();
 		}
 
+		if (!this.maint_item_familia_ctrl) {
+			const fam_query = () => ({
+				filters: {
+					bfel_company: this.doc.company || this.defaults.company || "",
+					activa: 1,
+				},
+			});
+			this.maint_item_familia_ctrl = frappe.ui.form.make_control({
+				parent: this.$body.find("#ef-maint-item-familia-ctrl")[0],
+				df: {
+					only_select: 1,
+					label: "Familia",
+					fieldtype: "Link",
+					fieldname: "familia",
+					options: "FacEx Familia de Precio",
+					reqd: 0,
+					only_input: 1,
+					get_query: fam_query,
+				},
+				render_input: true,
+				only_input: false,
+			});
+			this.maint_item_familia_ctrl.get_query = fam_query;
+			this.maint_item_familia_ctrl.refresh();
+		}
+		// El asterisco de obligatorio + visibilidad según política de la compañía.
+		{
+			const exige = !!(this.company_config || {}).exige_familia_item;
+			this.$body.find("#ef-maint-item-familia-req").toggle(exige);
+		}
+
 		// ── Asignación de Precios: controles de filtro ──
 		if (!this.ap_supplier_ctrl) {
 			this.ap_supplier_ctrl = frappe.ui.form.make_control({
@@ -10445,6 +10530,22 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this._load_maint_prices();
 		});
 
+		this.$body.find("#ef-maint-prices-f-familia").on("change", () => {
+			const fam = this.$body.find("#ef-maint-prices-f-familia").val();
+			this.$body.find("#ef-maint-prices-familia-apply").prop("disabled", !fam);
+			this._load_maint_prices();
+		});
+
+		this.$body.find("#ef-maint-prices-familia-apply").on("click", () => this._apply_precio_familia());
+
+		// ── Familias ──
+		let famTimer = null;
+		this.$body.find("#ef-fam-search").on("input", () => {
+			clearTimeout(famTimer);
+			famTimer = setTimeout(() => this._load_familias_maint(), 250);
+		});
+		this.$body.find("#ef-fam-btn-new").on("click", () => this._familia_dialog(null, true));
+
 		this.$body.find("#ef-maint-prices-select-all").on("change", (e) => {
 			const checked = $(e.target).prop("checked");
 			this.$body.find(".ef-price-chk").prop("checked", checked);
@@ -10533,6 +10634,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this._set_maint_lm_form_mode("search");
 		} else if (tab === "precios") {
 			this._load_price_lists_dropdown_then_load_prices();
+		} else if (tab === "familias") {
+			this._load_familias_maint();
 		} else if (tab === "asignacion-precios") {
 			this._load_pricing_assignment();
 		} else if (tab === "proveedores") {
@@ -10574,6 +10677,20 @@ body.facex-fullscreen-mode .ef-main-layout {
 				this._load_maint_prices();
 			}
 		});
+
+		// Poblar el selector de Familia (solo una vez).
+		const $fam = this.$body.find("#ef-maint-prices-f-familia");
+		if ($fam.length && $fam.find("option").length <= 1) {
+			frappe.call({
+				method: "facex_multi.api.familia.list_familia_codes",
+				args: { company: this.doc.company || this.defaults.company || "" },
+				callback: (r) => {
+					(r.message || []).forEach((f) => {
+						$fam.append(`<option value="${_esc(f.familia)}">${_esc(f.familia)}${f.descripcion ? " — " + _esc(f.descripcion) : ""}</option>`);
+					});
+				},
+			});
+		}
 	}
 
 	// ── Asignación de Precios por Utilidad ──
@@ -11512,7 +11629,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			"#ef-maint-item-is-stock, #ef-maint-item-desc, #ef-maint-item-keywords, #ef-maint-item-costo-estandar"
 		).prop("disabled", !enable);
 
-		[this.maint_item_uom_ctrl, this.maint_item_group_ctrl].forEach((ctrl) => {
+		[this.maint_item_uom_ctrl, this.maint_item_group_ctrl, this.maint_item_familia_ctrl].forEach((ctrl) => {
 			if (!ctrl) return;
 			ctrl.df.read_only = !enable;
 			ctrl.refresh();
@@ -11555,6 +11672,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 					}
 					if (this.maint_item_group_ctrl) {
 						this.maint_item_group_ctrl.set_value(it.item_group || "");
+					}
+					if (this.maint_item_familia_ctrl) {
+						this.maint_item_familia_ctrl.set_value(it.familia || "");
 					}
 					this.$body.find("#ef-maint-item-desc").val(it.description);
 					const gestionado = it.has_serial_no ? "Serie" : (it.has_batch_no ? "Lote" : "General");
@@ -11767,6 +11887,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 		if (this.maint_item_group_ctrl) {
 			this.maint_item_group_ctrl.set_value("");
 		}
+		if (this.maint_item_familia_ctrl) {
+			this.maint_item_familia_ctrl.set_value("");
+		}
 		this.$body.find("#ef-maint-item-desc").val("");
 		this.$body.find("#ef-maint-item-gestionado-por").val("General");
 		this.$body.find("#ef-maint-item-is-stock").prop("checked", false).prop("disabled", false);
@@ -11789,6 +11912,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 			return;
 		}
 
+		const familia = this.maint_item_familia_ctrl ? (this.maint_item_familia_ctrl.get_value() || "") : "";
+		const exige_fam = !!(this.company_config || {}).exige_familia_item;
+		if (exige_fam && !familia) {
+			frappe.show_alert({ message: "Debe asignar una Familia al producto.", indicator: "red" });
+			return;
+		}
+
 		const plist = this.$body.find("#ef-maint-price-list-select").val() || "";
 		const data = {
 			item_code: is_new ? (auto_code ? "" : item_code) : this._current_maint_item_code,
@@ -11796,6 +11926,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			auto_code,
 			stock_uom: this.maint_item_uom_ctrl ? this.maint_item_uom_ctrl.get_value() : "Nos",
 			item_group: this.maint_item_group_ctrl ? this.maint_item_group_ctrl.get_value() : "",
+			familia,
 			price_list: plist,
 			description: this.$body.find("#ef-maint-item-desc").val(),
 			gestionado_por: this.$body.find("#ef-maint-item-gestionado-por").val() || "General",
@@ -12239,25 +12370,26 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const txt = this.$body.find("#ef-maint-prices-f-nombre").val() || "";
 		const codigo = this.$body.find("#ef-maint-prices-f-codigo").val() || "";
 		const grupo = this.$body.find("#ef-maint-prices-f-grupo").val() || "";
+		const familia = this.$body.find("#ef-maint-prices-f-familia").val() || "";
 
 		if (!plist) {
-			$tbody.html('<tr><td colspan="7" style="text-align:center; padding:10px; color:#64748b;">Seleccione una Lista de Precios primero</td></tr>');
+			$tbody.html('<tr><td colspan="8" style="text-align:center; padding:10px; color:#64748b;">Seleccione una Lista de Precios primero</td></tr>');
 			this._update_maint_prices_selected_count();
 			return;
 		}
 
-		$tbody.html('<tr><td colspan="7" style="text-align:center; padding:10px; color:#64748b;">Cargando precios...</td></tr>');
+		$tbody.html('<tr><td colspan="8" style="text-align:center; padding:10px; color:#64748b;">Cargando precios...</td></tr>');
 
 		frappe.call({
 			method: "facex_multi.api.item.get_all_prices",
-			args: { price_list: plist, txt, codigo, grupo, company: this.doc.company || this.defaults.company || "" },
+			args: { price_list: plist, txt, codigo, grupo, familia, company: this.doc.company || this.defaults.company || "" },
 			callback: (r) => {
 				$tbody.empty();
 				const items = r.message || [];
 				$status.text(items.length ? `${items.length} producto(s).` : "");
 				this.$body.find("#ef-maint-prices-select-all").prop("checked", false);
 				if (items.length === 0) {
-					$tbody.html('<tr><td colspan="7" style="text-align:center; padding:10px; color:#64748b;">Sin productos</td></tr>');
+					$tbody.html('<tr><td colspan="8" style="text-align:center; padding:10px; color:#64748b;">Sin productos</td></tr>');
 					this._update_maint_prices_selected_count();
 					return;
 				}
@@ -12268,6 +12400,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 							<td class="ef-td font-weight-bold ef-lbl-code"></td>
 							<td class="ef-td ef-lbl-name"></td>
 							<td class="ef-td ef-lbl-group"></td>
+							<td class="ef-td ef-lbl-familia" style="font-size:11px; color:#475569;"></td>
 							<td class="ef-td ef-lbl-uom"></td>
 							<td class="ef-td" style="text-align:right;">
 								<span style="font-size:12px; font-weight:600; color:#64748b; margin-right:4px;" class="ef-lbl-currency"></span>
@@ -12281,6 +12414,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					$row.find(".ef-lbl-code").text(it.item_code);
 					$row.find(".ef-lbl-name").text(it.item_name);
 					$row.find(".ef-lbl-group").text(it.item_group || "");
+					$row.find(".ef-lbl-familia").text(it.familia || "");
 					$row.find(".ef-lbl-uom").text(it.stock_uom);
 					$row.find(".ef-lbl-currency").text(it.currency || "GTQ");
 
@@ -12312,6 +12446,185 @@ body.facex-fullscreen-mode .ef-main-layout {
 				});
 				this._update_maint_prices_selected_count();
 			}
+		});
+	}
+
+	_apply_precio_familia() {
+		const familia = this.$body.find("#ef-maint-prices-f-familia").val();
+		const plist = this.$body.find("#ef-maint-price-list-select").val();
+		const rate = parseFloat(this.$body.find("#ef-maint-prices-familia-rate").val());
+		const company = this.doc.company || this.defaults.company || "";
+		if (!familia) return;
+		if (!plist) { frappe.msgprint("Seleccione una lista de precios."); return; }
+		if (!(rate >= 0)) { frappe.msgprint("Indique un precio válido."); return; }
+
+		frappe.call({
+			method: "facex_multi.api.familia.get_familia_members",
+			args: { familia, company, price_list: plist },
+			callback: (r) => {
+				const m = r.message || {};
+				let warn = "";
+				if ((m.con_precio_existente || []).length)
+					warn += `<br><span style="color:#b45309;">${m.con_precio_existente.length} ítem(s) ya tienen precio en «${_esc(plist)}» y se sobrescribirán.</span>`;
+				if ((m.uom_mismatch || []).length)
+					warn += `<br><span style="color:#b45309;">${m.uom_mismatch.length} ítem(s) tienen otra UOM; el Item Price quedará con UOM «${_esc(m.uom || "")}».</span>`;
+				if (m.disabled)
+					warn += `<br><span style="color:#c0392b;">${m.disabled} deshabilitado(s) también recibirán el precio.</span>`;
+				frappe.confirm(
+					`Se asignará <b>${format_currency(rate)}</b> en «${_esc(plist)}» a los <b>${m.count}</b> ítem(s) de la familia <b>${_esc(familia)}</b>.${warn}<br><br>Se guarda de inmediato. ¿Continuar?`,
+					() => {
+						frappe.call({
+							method: "facex_multi.api.familia.apply_familia_price",
+							args: { familia, price_list: plist, rate, company },
+							freeze: true,
+							freeze_message: "Aplicando precio a la familia…",
+							callback: (res) => {
+								if (res.exc) return;
+								const d = res.message || {};
+								frappe.show_alert({ message: `${(d.updated || []).length} ítem(s) actualizados.`, indicator: "green" });
+								if ((d.errors || []).length)
+									frappe.msgprint({ title: "Errores", indicator: "red", message: d.errors.map((e) => `${e.item_code}: ${e.error}`).join("<br>") });
+								this._load_maint_prices();
+							},
+						});
+					}
+				);
+			},
+		});
+	}
+
+	// ── Familias de Precio ──
+
+	_load_familias_maint() {
+		const $tbody = this.$body.find("#ef-fam-tbody");
+		const $status = this.$body.find("#ef-fam-status");
+		const company = this.doc.company || this.defaults.company || "";
+		const canEdit = !!(this.perms || {}).puede_mantener_familias;
+		this.$body.find("#ef-fam-btn-new").toggle(canEdit);
+		$tbody.html('<tr><td colspan="7" style="text-align:center; padding:10px; color:#64748b;">Cargando...</td></tr>');
+		frappe.call({
+			method: "facex_multi.api.familia.search_familias",
+			args: { company, txt: this.$body.find("#ef-fam-search").val() || "", page_length: 200 },
+			callback: (r) => {
+				const rows = (r.message || {}).rows || [];
+				$status.text(rows.length ? `${rows.length} familia(s).` : "Sin familias.");
+				if (!rows.length) {
+					$tbody.html('<tr><td colspan="7" style="text-align:center; padding:10px; color:#64748b;">No hay familias. Cree una con «+ Nueva Familia».</td></tr>');
+					return;
+				}
+				$tbody.empty();
+				rows.forEach((f) => {
+					const $tr = $(`
+						<tr class="ef-tr">
+							<td class="ef-td font-weight-bold"></td>
+							<td class="ef-td ef-fam-desc"></td>
+							<td class="ef-td ef-fam-uom"></td>
+							<td class="ef-td ef-fam-group"></td>
+							<td class="ef-td" style="text-align:right;">${f.items || 0}</td>
+							<td class="ef-td" style="text-align:center;">${f.activa ? "✔️" : "—"}</td>
+							<td class="ef-td" style="text-align:center;">
+								<button class="ef-btn ef-btn-sm ef-btn-secondary ef-fam-edit" style="padding:3px 10px; font-size:11px;">${canEdit ? "Editar" : "Ver"}</button>
+							</td>
+						</tr>`);
+					$tr.children().eq(0).text(f.familia);
+					$tr.find(".ef-fam-desc").text(f.descripcion || "");
+					$tr.find(".ef-fam-uom").text(f.uom || "");
+					$tr.find(".ef-fam-group").text(f.item_group || "");
+					$tr.find(".ef-fam-edit").on("click", () => this._familia_dialog(f.familia, canEdit));
+					$tbody.append($tr);
+				});
+			},
+		});
+	}
+
+	_familia_dialog(name, canEdit) {
+		const company = this.doc.company || this.defaults.company || "";
+		frappe.call({
+			method: "facex_multi.api.familia.get_familia_context",
+			args: { company },
+			callback: (ctx) => {
+				const c = ctx.message || {};
+				const editable = canEdit && !!c.can_edit;
+				const build = (data) => {
+					const d = new frappe.ui.Dialog({
+						title: name ? `Familia ${name}` : "Nueva Familia",
+						size: "large",
+						fields: [
+							{ fieldtype: "Data", fieldname: "familia", label: "Código de la familia", reqd: 1, read_only: !!name || !editable },
+							{ fieldtype: "Data", fieldname: "descripcion", label: "Descripción", read_only: !editable },
+							{ fieldtype: "Column Break" },
+							{ fieldtype: "Link", fieldname: "uom", label: "Unidad de Medida", options: "UOM", reqd: 1, read_only: !editable },
+							{ fieldtype: "Link", fieldname: "item_group", label: "Grupo de Artículo", options: "Item Group", read_only: !editable },
+							{ fieldtype: "Check", fieldname: "activa", label: "Activa", default: 1, read_only: !editable },
+							{ fieldtype: "Section Break", label: "Costo" },
+							{ fieldtype: "Currency", fieldname: "costo_estandar", label: "Costo Estándar sugerido", read_only: !editable },
+							{ fieldtype: "Section Break", label: "Precios por Lista" },
+							{
+								fieldtype: "Table", fieldname: "precios", label: "Precios",
+								cannot_add_rows: !editable, cannot_delete_rows: !editable, in_place_edit: true,
+								data: (data.precios || []).map((p) => ({ ...p })),
+								get_data: () => (data.precios || []),
+								fields: [
+									{ fieldtype: "Link", fieldname: "price_list", options: "Price List", label: "Lista de Precios", in_list_view: 1, columns: 7, reqd: 1, read_only: !editable },
+									{ fieldtype: "Currency", fieldname: "price_list_rate", label: "Precio", in_list_view: 1, columns: 3, reqd: 1, read_only: !editable },
+								],
+							},
+						],
+						primary_action_label: editable ? "Guardar" : null,
+						primary_action: editable ? (v) => {
+							d.get_primary_btn().prop("disabled", true);
+							frappe.call({
+								method: "facex_multi.api.familia.create_or_update_familia",
+								args: { data_json: JSON.stringify({ ...v, familia: name || v.familia }), company },
+								callback: (res) => {
+									d.get_primary_btn().prop("disabled", false);
+									if (res.exc) return;
+									frappe.show_alert({ message: "Familia guardada.", indicator: "green" });
+									d.hide();
+									this._load_familias_maint();
+								},
+								error: () => d.get_primary_btn().prop("disabled", false),
+							});
+						} : null,
+					});
+					if (name && editable) {
+						d.set_secondary_action_label("Eliminar");
+						d.set_secondary_action(() => {
+							frappe.confirm(`¿Eliminar la familia <b>${name}</b>? Solo se permite si ningún ítem la usa.`, () => {
+								frappe.call({
+									method: "facex_multi.api.familia.delete_familia",
+									args: { name, company },
+									callback: (res) => {
+										if (res.exc) return;
+										frappe.show_alert({ message: "Familia eliminada.", indicator: "orange" });
+										d.hide();
+										this._load_familias_maint();
+									},
+								});
+							});
+						});
+					}
+					d.show();
+					d.set_values({
+						familia: data.familia || "",
+						descripcion: data.descripcion || "",
+						uom: data.uom || "",
+						item_group: data.item_group || "",
+						activa: data.activa != null ? data.activa : 1,
+						costo_estandar: data.costo_estandar || 0,
+					});
+				};
+
+				if (name) {
+					frappe.call({
+						method: "facex_multi.api.familia.get_familia",
+						args: { name, company },
+						callback: (r2) => build(r2.message || {}),
+					});
+				} else {
+					build({ activa: 1, precios: [] });
+				}
+			},
 		});
 	}
 
@@ -12940,6 +13253,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 						item_code:    it.item_code,
 						item_name:    it.item_name || it.item_code,
 						has_serial_no: it.has_serial_no || 0,
+						has_batch_no: it.has_batch_no || 0,
 						is_stock_item: it.is_stock_item || 1,
 						qty:          it.qty,
 						rate:         it.rate,
@@ -12947,6 +13261,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 						warehouse:    it.warehouse || "",
 						bfel_multi_tipo: it.bfel_multi_tipo || "",
 						serial_no:    it.serial_no || "",
+						batch_no:     it.batch_no || "",
 						update_stock: it.is_stock_item !== 0 ? 1 : 0,
 						_fetched:     true,
 					})),
@@ -13005,6 +13320,19 @@ body.facex-fullscreen-mode .ef-main-layout {
 				  </div>`
 				: "";
 
+			const batchBlock = it.has_batch_no
+				? `<div style="margin-top:5px;border-top:1px dashed #e2e8f0;padding-top:4px">
+					<div style="font-size:10px;font-weight:600;color:#64748b;margin-bottom:3px;text-transform:uppercase;letter-spacing:.04em">
+						No. de Lote <span style="font-weight:400;color:#94a3b8">(del proveedor)</span>
+					</div>
+					<input type="text" id="ef-pi-batch-${idx}" class="ef-pi-batch" data-idx="${idx}"
+						value="${_esc(it.batch_no || "")}"
+						style="width:100%;font-size:11px;font-family:monospace;border:1px solid #cbd5e1;border-radius:4px;padding:4px 6px;box-sizing:border-box;background:${isEditable ? "#f8fafc" : "#f1f5f9"}"
+						placeholder="Ej. LOTE-2026-001"
+						${!isEditable ? "disabled" : ""}>
+				  </div>`
+				: "";
+
 			const qtyCell = it.has_serial_no
 				? `<div style="text-align:center">
 					<span id="ef-pi-qty-${idx}" style="font-size:18px;font-weight:800;color:#1e3a5f;display:block;line-height:1">${it.qty || 0}</span>
@@ -13031,6 +13359,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 				<td class="ef-td" style="font-size:12px">
 					<div style="color:#334155;font-weight:500">${_esc(it.item_name || it.item_code)}</div>
 					${serialBlock}
+					${batchBlock}
 				</td>
 				<td class="ef-td" style="padding-top:10px">${qtyCell}</td>
 				<td class="ef-td" style="padding-top:10px;font-size:12px;color:#64748b">${_esc(it.uom || "")}</td>
@@ -13103,6 +13432,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 			const idx = parseInt($(e.target).data("idx"));
 			const it  = this._purch_doc.items[idx];
 			if (it) it.update_stock = e.target.checked ? 1 : 0;
+		}).on("input", ".ef-pi-batch", (e) => {
+			const idx = parseInt($(e.target).data("idx"));
+			const it  = this._purch_doc.items[idx];
+			if (it) it.batch_no = e.target.value.trim();
 		}).on("input", ".ef-pi-serial", (e) => {
 			const idx     = parseInt($(e.target).data("idx"));
 			const it      = this._purch_doc.items[idx];
@@ -13196,6 +13529,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					item_name:     info.item_name,
 					item_group:    info.item_group,
 					has_serial_no: info.has_serial_no,
+					has_batch_no:  info.has_batch_no || 0,
 					is_stock_item: info.is_stock_item,
 					qty,
 					rate,
@@ -13204,6 +13538,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					warehouse:    info.warehouse,
 					bfel_multi_tipo: this._purch_doc.bfel_multi_tipo || "",
 					serial_no:    "",
+					batch_no:     "",
 					update_stock: info.is_stock_item ? 1 : 0,
 					_fetched:     true,
 				});
@@ -13237,9 +13572,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 						r.message.forEach(it => {
 							const badge = it.has_serial_no
 								? `<span style="background:#fef3c7;color:#92400e;border-radius:4px;padding:1px 5px;font-size:10px;margin-left:4px">Serie</span>`
-								: it.is_stock_item
-									? `<span style="background:#dcfce7;color:#15803d;border-radius:4px;padding:1px 5px;font-size:10px;margin-left:4px">Stock</span>`
-									: `<span style="background:#f1f5f9;color:#64748b;border-radius:4px;padding:1px 5px;font-size:10px;margin-left:4px">Servicio</span>`;
+								: it.has_batch_no
+									? `<span style="background:#e0e7ff;color:#3730a3;border-radius:4px;padding:1px 5px;font-size:10px;margin-left:4px">Lote</span>`
+									: it.is_stock_item
+										? `<span style="background:#dcfce7;color:#15803d;border-radius:4px;padding:1px 5px;font-size:10px;margin-left:4px">Stock</span>`
+										: `<span style="background:#f1f5f9;color:#64748b;border-radius:4px;padding:1px 5px;font-size:10px;margin-left:4px">Servicio</span>`;
 							const $row = $(`<div class="ef-pi-add-res-row" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:12px;display:flex;justify-content:space-between;align-items:center">
 								<div>
 									<strong style="color:#1e3a5f">${_esc(it.item_code)}</strong>${badge}<br>
@@ -13255,6 +13592,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 								$results.hide().empty();
 								$sel.html(`<strong>${_esc(it.item_code)}</strong> – ${_esc(it.item_name)}
 									${it.has_serial_no ? " <em>(maneja series)</em>" : ""}
+									${it.has_batch_no ? " <em>(se gestiona por lote)</em>" : ""}
 									${it.warehouse ? ` · Bodega: <strong>${_esc(it.warehouse)}</strong>` : ""}`)
 									.show();
 								// Si es serial, ocultamos el campo qty
@@ -13298,6 +13636,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 			} else if (!it.qty || it.qty <= 0) {
 				errors.push(`Línea ${n} (${it.item_code}): la cantidad debe ser mayor a 0.`);
 			}
+			if (it.has_batch_no && !(it.batch_no || "").trim())
+				errors.push(`Línea ${n} (${it.item_code}): ingrese el número de lote.`);
 			if (it.is_stock_item && it.update_stock && !it.warehouse)
 				errors.push(`Línea ${n} (${it.item_code}): bodega requerida para ítem de inventario.`);
 		});
@@ -13415,8 +13755,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 					options: `<div style="margin-bottom:12px;font-size:12px;color:#475569;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:12px">
 						<strong>Estructura del archivo Excel:</strong><br>
 						<strong>Hoja 1 – ENCABEZADO</strong> (fila 2): Proveedor | Fecha Registro | No. Factura | Fecha Factura | Moneda<br>
-						<strong>Hoja 2 – DETALLE</strong> (desde fila 2): Código Ítem | Precio Unitario | Serie<br>
-						<em>Para ítems con serie: una fila por unidad. Para ítems sin serie: una fila por ítem (la columna Serie va vacía).</em>
+						<strong>Hoja 2 – DETALLE</strong> (desde fila 2): Código Ítem | Precio Unitario | Serie | Lote<br>
+						<em>Para ítems con serie: una fila por unidad. Para ítems sin serie: una fila por ítem (la columna Serie va vacía).
+						Para ítems por lote: indique el No. de Lote en la 4ª columna (una fila por lote; la cantidad se ajusta luego en la revisión).</em>
 					</div>`,
 				},
 				{ fieldtype: "Attach", fieldname: "excel_file", label: "Archivo Excel (.xlsx)", reqd: 1 },
@@ -13459,6 +13800,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			item_name:    it.item_name  || it.item_code,
 			item_group:   it.item_group || "",
 			has_serial_no: it.has_serial_no || 0,
+			has_batch_no:  it.has_batch_no || 0,
 			is_stock_item: 1,
 			qty:           it.qty,
 			rate:          it.rate,
@@ -13466,6 +13808,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			warehouse:     it.warehouse || "",
 			bfel_multi_tipo: it.bfel_multi_tipo || "",
 			serial_no:     it.serial_no || "",
+			batch_no:      it.batch_no || "",
 			update_stock:  1,
 			_errors:       [],  // se llena en revalidar
 		}));
@@ -13524,6 +13867,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			} else if (!row.qty || row.qty <= 0) {
 				errs.push("Cantidad debe ser > 0.");
 			}
+			if (row.has_batch_no && !(row.batch_no || "").trim()) errs.push("Requiere número de lote.");
 			if (row.is_stock_item && row.update_stock && !row.warehouse) errs.push("Bodega requerida.");
 			row._errors = errs;
 		});
@@ -13545,11 +13889,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 			const $rate = this.$body.find(`.ef-stg-rate[data-sidx="${i}"]`);
 			const $wh   = this.$body.find(`.ef-stg-wh[data-sidx="${i}"]`);
 			const $ser  = this.$body.find(`.ef-stg-serial[data-sidx="${i}"]`);
+			const $bat  = this.$body.find(`.ef-stg-batch[data-sidx="${i}"]`);
 			const $stk  = this.$body.find(`.ef-stg-stock[data-sidx="${i}"]`);
 
 			if ($qty.length)  row.qty          = parseFloat($qty.val())  || row.qty;
 			if ($rate.length) row.rate         = parseFloat($rate.val()) || row.rate;
 			if ($wh.length)   row.warehouse    = $wh.val();
+			if ($bat.length)  row.batch_no     = ($bat.val() || "").trim();
 			if ($stk.length)  row.update_stock = $stk.is(":checked") ? 1 : 0;
 			if ($ser.length) {
 				const serials = $ser.val().split("\n").map(s => s.trim()).filter(Boolean);
@@ -13582,6 +13928,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 					style="width:100%;font-size:10px;font-family:monospace;resize:vertical;border:none">${_esc(row.serial_no || "")}</textarea>`
 				: "";
 
+			const batchCell = row.has_batch_no
+				? `<input type="text" class="ef-cell-input ef-stg-batch" data-sidx="${i}"
+					value="${_esc(row.batch_no || "")}" placeholder="No. de lote"
+					style="width:100%;font-size:10px;font-family:monospace;border:1px solid #cbd5e1;border-radius:3px;padding:2px 4px;margin-top:2px">`
+				: "";
+
 			const stockCell = row.has_serial_no
 				? `<span style="display:block;text-align:center;color:#94a3b8;font-size:11px">auto</span>`
 				: `<input type="checkbox" class="ef-stg-stock" data-sidx="${i}" ${row.update_stock ? "checked" : ""}
@@ -13593,7 +13945,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 				<td class="ef-td" style="padding:4px 6px">${statusIco}</td>
 				<td class="ef-td" style="font-weight:600;font-size:12px;color:#1e3a5f">${_esc(row.item_code)}</td>
 				<td class="ef-td" style="font-size:11px;color:#475569">${_esc(row.item_name)}
-					${serialCell}</td>
+					${serialCell}${batchCell}</td>
 				<td class="ef-td">
 					${row.has_serial_no
 						? `<span class="ef-stg-qty-display" data-sidx="${i}" style="display:block;text-align:center;font-weight:700;color:#1e3a5f">${row.qty}</span>`
@@ -13643,6 +13995,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 		$tbody.find(".ef-stg-wh").off("change").on("change", (e) => {
 			const i = parseInt($(e.target).data("sidx"));
 			if (this._stg_rows[i]) this._stg_rows[i].warehouse = e.target.value;
+		});
+
+		$tbody.find(".ef-stg-batch").off("input").on("input", (e) => {
+			const i = parseInt($(e.target).data("sidx"));
+			if (this._stg_rows[i]) this._stg_rows[i].batch_no = e.target.value.trim();
 		});
 
 		$tbody.find(".ef-stg-stock").off("change").on("change", (e) => {
@@ -13718,6 +14075,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			item_name:     row.item_name,
 			item_group:    row.item_group,
 			has_serial_no: row.has_serial_no,
+			has_batch_no:  row.has_batch_no || 0,
 			is_stock_item: row.is_stock_item,
 			qty:           row.qty,
 			rate:          row.rate,
@@ -13725,6 +14083,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			warehouse:     row.warehouse,
 			bfel_multi_tipo: row.bfel_multi_tipo || "",
 			serial_no:     row.serial_no || "",
+			batch_no:      row.batch_no || "",
 			update_stock:  row.update_stock,
 			_fetched:      true,
 		}));

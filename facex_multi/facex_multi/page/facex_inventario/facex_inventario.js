@@ -1362,6 +1362,17 @@ class FacexInventario {
 		}
 		if (!this.entry_rows.length) { frappe.show_alert({ message: "Agregue al menos un producto.", indicator: "orange" }); return; }
 
+		const sinLote = this.entry_rows.find((r) => r.has_batch_no && !(r.batch_no || "").trim());
+		if (sinLote) {
+			frappe.show_alert({ message: `El producto ${frappe.utils.escape_html(sinLote.item_code)} se gestiona por lote — indique el número de lote.`, indicator: "orange" });
+			return;
+		}
+		const sinSerie = this.entry_rows.find((r) => r.has_serial_no && !(r.serial_no || "").trim());
+		if (sinSerie) {
+			frappe.show_alert({ message: `El producto ${frappe.utils.escape_html(sinSerie.item_code)} requiere número(s) de serie.`, indicator: "orange" });
+			return;
+		}
+
 		if (this.mode === "in" && this.entry_rows.some((r) => r._has_estandar === false)) {
 			frappe.show_alert({ message: "Hay productos sin Costo Estándar FacEx. Asígnelo en «Costos a Ítems».", indicator: "red" });
 			return;
@@ -2868,10 +2879,17 @@ ${rows.map(r => `<tr>
 
 	_maestro_item_dialog(item_code) {
 		const cc = this._can_costs;
+		const exige_fam = !!(this.defaults.permissions || {}).exige_familia_item;
 		const fields = [
 			{ fieldtype: "Data", fieldname: "item_code", label: "Código", reqd: 1, read_only: !!item_code },
 			{ fieldtype: "Data", fieldname: "item_name", label: "Nombre", reqd: 1 },
 			{ fieldtype: "Data", fieldname: "item_group", label: "Grupo de artículo" },
+			{
+				fieldtype: "Link", fieldname: "familia", label: "Familia", options: "FacEx Familia de Precio",
+				reqd: exige_fam ? 1 : 0,
+				get_query: () => ({ filters: { bfel_company: this.defaults.company, activa: 1 } }),
+				description: "Agrupa los ítems que comparten precio y costo. Al crear un ítem nuevo con familia se le generan solos sus precios.",
+			},
 			{ fieldtype: "Data", fieldname: "stock_uom", label: "UOM (unidad)" },
 			{ fieldtype: "Select", fieldname: "gestionado_por", label: "Gestión de stock", options: "General\nLote\nSerie", default: "General" },
 		];
@@ -2908,6 +2926,7 @@ ${rows.map(r => `<tr>
 						item_code: it.item_code || item_code,
 						item_name: it.item_name || "",
 						item_group: it.item_group || "",
+						familia: it.familia || "",
 						stock_uom: it.stock_uom || "",
 						gestionado_por: it.has_serial_no ? "Serie" : (it.has_batch_no ? "Lote" : "General"),
 						costo_estandar: it.costo_estandar || 0,
@@ -2934,6 +2953,7 @@ ${rows.map(r => `<tr>
 	_open_costos_items() {
 		this._ci_start = 0;
 		this._ci_dirty = {};
+		this._ci_familias = [];
 		this._render_costos_items();
 	}
 
@@ -2942,6 +2962,7 @@ ${rows.map(r => `<tr>
   <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;margin-bottom:12px;display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
     <div><label class="inv-label">Código</label><input type="text" id="inv-ci-codigo" class="inv-select"></div>
     <div><label class="inv-label">Grupo</label><input type="text" id="inv-ci-grupo" class="inv-select"></div>
+    <div><label class="inv-label">Familia</label><select id="inv-ci-familia" class="inv-select"><option value="">(todas)</option></select></div>
     <div><label class="inv-label">UOM</label><input type="text" id="inv-ci-uom" class="inv-select" style="width:100px;"></div>
     <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="inv-ci-con"> Solo con costo</label>
     <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="inv-ci-sin"> Solo sin costo</label>
@@ -2949,11 +2970,19 @@ ${rows.map(r => `<tr>
     <button type="button" id="inv-ci-export" class="inv-btn inv-btn-secondary">Exportar a Excel</button>
     <button type="button" id="inv-ci-save" class="inv-btn inv-btn-primary" style="margin-left:auto;">Guardar cambios</button>
   </div>
+  <div class="card" id="inv-ci-familia-box" style="display:none;background:#eef4ff;border:1px solid #b9d0ff;border-radius:6px;padding:12px 16px;margin-bottom:12px;gap:12px;flex-wrap:wrap;align-items:flex-end;">
+    <div style="flex:1 1 auto;font-size:13px;color:#1b4b91;">
+      <strong>Aplicar a toda la familia</strong><br>
+      <span>Asigna el mismo Costo Estándar a <b>todos</b> los ítems de la familia seleccionada (se guarda de inmediato).</span>
+    </div>
+    <div><label class="inv-label">Costo para la familia</label><input type="number" min="0" step="any" id="inv-ci-familia-costo" class="inv-select" style="width:150px;"></div>
+    <button type="button" id="inv-ci-familia-apply" class="inv-btn inv-btn-primary">Aplicar a la familia</button>
+  </div>
   <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;overflow-x:auto;">
     <table class="inv-table" style="width:100%;">
-      <thead><tr><th>Código</th><th>Nombre</th><th>Grupo</th><th style="width:80px;">UOM</th>
+      <thead><tr><th>Código</th><th>Nombre</th><th>Grupo</th><th style="width:110px;">Familia</th><th style="width:80px;">UOM</th>
         <th style="width:150px;">Costo Estándar (FacEx)</th><th style="width:130px;">Prom. Ponderado</th><th style="width:130px;">Última Compra</th></tr></thead>
-      <tbody id="inv-ci-tbody"><tr><td colspan="7" style="text-align:center;color:#adb5bd;padding:20px;">Busque productos.</td></tr></tbody>
+      <tbody id="inv-ci-tbody"><tr><td colspan="8" style="text-align:center;color:#adb5bd;padding:20px;">Busque productos.</td></tr></tbody>
     </table>
     <div id="inv-ci-pager" style="margin-top:10px;text-align:center;"></div>
   </div>`;
@@ -2964,8 +2993,55 @@ ${rows.map(r => `<tr>
 		this.$body.on("click", ".inv-ci-page", (e) => { this._ci_start = $(e.currentTarget).data("start"); this._load_costos_items(); });
 		this.$body.on("change", ".inv-ci-cost", (e) => { this._ci_dirty[$(e.currentTarget).data("code")] = flt(e.currentTarget.value); });
 		this.$body.on("click", "#inv-ci-save", () => this._save_costos_items());
+		this.$body.on("change", "#inv-ci-familia", () => {
+			const fam = this.$body.find("#inv-ci-familia").val();
+			this.$body.find("#inv-ci-familia-box").css("display", fam ? "flex" : "none");
+		});
+		this.$body.on("click", "#inv-ci-familia-apply", () => this._apply_costo_familia());
 		this.$body.on("click", "#inv-ci-export", () => window.open(this._export_url("facex_multi.api.item.export_item_costs_maintenance_excel", this._costos_items_params()), "_blank"));
+		frappe.call({
+			method: "facex_multi.api.familia.list_familia_codes",
+			args: { company: this.defaults.company },
+			callback: (r) => {
+				this._ci_familias = r.message || [];
+				const $sel = this.$body.find("#inv-ci-familia");
+				this._ci_familias.forEach((f) => $sel.append(`<option value="${frappe.utils.escape_html(f.familia)}">${frappe.utils.escape_html(f.familia)}${f.descripcion ? " — " + frappe.utils.escape_html(f.descripcion) : ""}</option>`));
+			},
+		});
 		this._load_costos_items();
+	}
+
+	_apply_costo_familia() {
+		const familia = this.$body.find("#inv-ci-familia").val();
+		const costo = flt(this.$body.find("#inv-ci-familia-costo").val());
+		if (!familia) return;
+		if (!(costo >= 0)) { frappe.msgprint("Indique un costo válido."); return; }
+		frappe.call({
+			method: "facex_multi.api.familia.get_familia_members",
+			args: { familia, company: this.defaults.company },
+			callback: (r) => {
+				const m = r.message || {};
+				let warn = "";
+				if (m.disabled) warn += `<br><span style="color:#c0392b;">${m.disabled} deshabilitado(s) también recibirán el costo.</span>`;
+				frappe.confirm(
+					`Se asignará <b>Costo Estándar = ${format_currency(costo)}</b> a los <b>${m.count}</b> ítem(s) de la familia <b>${frappe.utils.escape_html(familia)}</b>.${warn}<br><br>Se guarda de inmediato. ¿Continuar?`,
+					() => {
+						frappe.call({
+							method: "facex_multi.api.familia.apply_familia_costo",
+							args: { familia, costo, company: this.defaults.company },
+							freeze: true, freeze_message: "Aplicando costo a la familia…",
+							callback: (res) => {
+								if (res.exc) return;
+								const d = res.message || {};
+								frappe.show_alert({ message: `${(d.updated || []).length} ítem(s) actualizados.`, indicator: "green" });
+								this._ci_dirty = {};
+								this._load_costos_items();
+							},
+						});
+					}
+				);
+			},
+		});
 	}
 
 	_costos_items_params() {
@@ -2973,6 +3049,7 @@ ${rows.map(r => `<tr>
 			company: this.defaults.company,
 			codigo: this.$body.find("#inv-ci-codigo").val(),
 			grupo: this.$body.find("#inv-ci-grupo").val(),
+			familia: this.$body.find("#inv-ci-familia").val(),
 			uom: this.$body.find("#inv-ci-uom").val(),
 			con_costo: this.$body.find("#inv-ci-con").is(":checked") ? 1 : 0,
 			sin_costo: this.$body.find("#inv-ci-sin").is(":checked") ? 1 : 0,
@@ -2981,7 +3058,7 @@ ${rows.map(r => `<tr>
 
 	_load_costos_items() {
 		const $tbody = this.$body.find("#inv-ci-tbody");
-		$tbody.html(`<tr><td colspan="7" style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr>`);
+		$tbody.html(`<tr><td colspan="8" style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr>`);
 		const PAGE = 50;
 		frappe.call({
 			method: "facex_multi.api.item.get_item_costs_maintenance",
@@ -2989,7 +3066,7 @@ ${rows.map(r => `<tr>
 			callback: (r) => {
 				const m = r.message || {};
 				const rows = m.rows || [];
-				if (!rows.length) { $tbody.html(`<tr><td colspan="7" style="text-align:center;color:#adb5bd;padding:20px;">Sin resultados.</td></tr>`); this.$body.find("#inv-ci-pager").html(""); return; }
+				if (!rows.length) { $tbody.html(`<tr><td colspan="8" style="text-align:center;color:#adb5bd;padding:20px;">Sin resultados.</td></tr>`); this.$body.find("#inv-ci-pager").html(""); return; }
 				$tbody.html(rows.map((row) => {
 					const dirty = this._ci_dirty[row.item_code];
 					const val = dirty !== undefined ? dirty : row.costo_estandar;
@@ -2998,6 +3075,7 @@ ${rows.map(r => `<tr>
   <td><strong>${frappe.utils.escape_html(row.item_code)}</strong></td>
   <td>${frappe.utils.escape_html(row.item_name || "")}</td>
   <td>${frappe.utils.escape_html(row.item_group || "")}</td>
+  <td>${frappe.utils.escape_html(row.familia || "")}</td>
   <td>${frappe.utils.escape_html(row.stock_uom || "")}</td>
   <td><input type="number" min="0" step="any" class="inv-e-field inv-ci-cost inv-maint-editable" data-code="${frappe.utils.escape_html(row.item_code)}" value="${val || ""}" placeholder="0.00"></td>
   <td style="text-align:right;color:#6c757d;">${frappe.format(row.costo_ponderado, { fieldtype: "Currency" })}</td>

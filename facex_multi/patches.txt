@@ -1,3 +1,4 @@
+[pre_model_sync]
 facex_multi.patches.v1_0.create_custom_fields
 facex_multi.patches.v1_0.fix_workspace_conflict
 facex_multi.patches.v1_0.add_bfel_establishments
@@ -23,3 +24,8 @@ facex_multi.patches.v1_0.add_inventario_costos_maestros
 facex_multi.patches.v1_0.add_recepcion_traslados
 facex_multi.patches.v1_0.add_inventario_estados_movimiento
 facex_multi.patches.v1_0.add_ver_solo_mis_movimientos
+
+[post_model_sync]
+facex_multi.patches.v1_0.add_familia_permissions
+facex_multi.patches.v1_0.add_item_familia_field
+facex_multi.patches.v1_0.backfill_neko_familias
