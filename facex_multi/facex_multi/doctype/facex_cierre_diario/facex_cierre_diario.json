@@ -1,0 +1,415 @@
+{
+ "actions": [],
+ "autoname": "naming_series:",
+ "creation": "2026-09-11 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "company",
+  "fecha",
+  "usuario",
+  "usuario_nombre",
+  "almacen",
+  "cb_cabecera",
+  "estado",
+  "num_facturas",
+  "cerrado_por",
+  "cerrado_en",
+  "reabierto_por",
+  "reabierto_en",
+  "motivo_reapertura",
+  "sb_ventas",
+  "venta_sin_descuento",
+  "venta_con_descuento",
+  "ajuste_impuestos",
+  "cb_ventas",
+  "flete_facturado",
+  "total_venta",
+  "flete_pagado_transportista",
+  "sb_cobros",
+  "cobro_efectivo",
+  "cobro_transferencia",
+  "cobro_cheque",
+  "cobro_tarjeta",
+  "cb_cobros",
+  "cobro_contra_entrega",
+  "al_credito",
+  "total_cobros",
+  "abonos_anteriores",
+  "sb_egresos",
+  "egresos",
+  "total_egresos",
+  "cb_egresos",
+  "total_a_depositar",
+  "observaciones",
+  "sb_detalle",
+  "detalle_familias",
+  "sb_facturas",
+  "facturas",
+  "sb_snapshot",
+  "snapshot_json"
+ ],
+ "fields": [
+  {
+   "default": "CD-.YYYY.-",
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "label": "Serie",
+   "options": "CD-.YYYY.-"
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Compañía",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "fieldname": "fecha",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Fecha del Cierre",
+   "reqd": 1
+  },
+  {
+   "description": "Usuario cuyas ventas del día se cierran. Cada usuario cierra su propia caja.",
+   "fieldname": "usuario",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Usuario (Caja)",
+   "options": "User",
+   "reqd": 1
+  },
+  {
+   "fetch_from": "usuario.full_name",
+   "fieldname": "usuario_nombre",
+   "fieldtype": "Data",
+   "label": "Nombre del Usuario",
+   "read_only": 1
+  },
+  {
+   "description": "Solo informativo — se imprime en el encabezado del cierre.",
+   "fieldname": "almacen",
+   "fieldtype": "Link",
+   "label": "Almacén (referencia)",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "cb_cabecera",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Borrador",
+   "fieldname": "estado",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Estado",
+   "options": "Borrador\nCerrado\nReabierto",
+   "read_only": 1
+  },
+  {
+   "fieldname": "num_facturas",
+   "fieldtype": "Int",
+   "label": "Facturas incluidas",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cerrado_por",
+   "fieldtype": "Link",
+   "label": "Cerrado por",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cerrado_en",
+   "fieldtype": "Datetime",
+   "label": "Cerrado en",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reabierto_por",
+   "fieldtype": "Link",
+   "label": "Reabierto por",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reabierto_en",
+   "fieldtype": "Datetime",
+   "label": "Reabierto en",
+   "read_only": 1
+  },
+  {
+   "fieldname": "motivo_reapertura",
+   "fieldtype": "Small Text",
+   "label": "Motivo de Reapertura",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_ventas",
+   "fieldtype": "Section Break",
+   "label": "Ventas"
+  },
+  {
+   "description": "Todo lo que no sea flete y no tenga líneas con descuento.",
+   "fieldname": "venta_sin_descuento",
+   "fieldtype": "Currency",
+   "label": "Ventas sin descuento (sin flete)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "venta_con_descuento",
+   "fieldtype": "Currency",
+   "label": "Piezas en oferta (líneas con descuento)",
+   "read_only": 1
+  },
+  {
+   "description": "Diferencia entre el total de las facturas y la suma de sus líneas (descuentos a nivel de factura, redondeos).",
+   "fieldname": "ajuste_impuestos",
+   "fieldtype": "Currency",
+   "label": "Ajustes (descuento global / redondeo)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_ventas",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Suma de las líneas del Ítem de Flete (FacEx Settings) en las facturas del día.",
+   "fieldname": "flete_facturado",
+   "fieldtype": "Currency",
+   "label": "Fletes facturados",
+   "read_only": 1
+  },
+  {
+   "bold": 1,
+   "fieldname": "total_venta",
+   "fieldtype": "Currency",
+   "label": "TOTAL VENTA DEL DÍA",
+   "read_only": 1
+  },
+  {
+   "description": "Anotación manual: lo pagado en el día a transportistas por fletes.",
+   "fieldname": "flete_pagado_transportista",
+   "fieldtype": "Currency",
+   "label": "Flete pagado al transportista"
+  },
+  {
+   "fieldname": "sb_cobros",
+   "fieldtype": "Section Break",
+   "label": "Cobros y Créditos"
+  },
+  {
+   "fieldname": "cobro_efectivo",
+   "fieldtype": "Currency",
+   "label": "Pago Efectivo",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cobro_transferencia",
+   "fieldtype": "Currency",
+   "label": "Transferencia",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cobro_cheque",
+   "fieldtype": "Currency",
+   "label": "Cheques",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cobro_tarjeta",
+   "fieldtype": "Currency",
+   "label": "Tarjeta de Crédito",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_cobros",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "cobro_contra_entrega",
+   "fieldtype": "Currency",
+   "label": "Contra Entrega",
+   "read_only": 1
+  },
+  {
+   "fieldname": "al_credito",
+   "fieldtype": "Currency",
+   "label": "Al Crédito",
+   "read_only": 1
+  },
+  {
+   "bold": 1,
+   "fieldname": "total_cobros",
+   "fieldtype": "Currency",
+   "label": "TOTAL COBROS Y CRÉDITOS",
+   "read_only": 1
+  },
+  {
+   "description": "Informativo: pagos con fecha de hoy aplicados a facturas de días anteriores de este usuario. No entra en el Total a Depositar.",
+   "fieldname": "abonos_anteriores",
+   "fieldtype": "Currency",
+   "label": "Abonos recibidos hoy de facturas anteriores",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_egresos",
+   "fieldtype": "Section Break",
+   "label": "Egresos"
+  },
+  {
+   "fieldname": "egresos",
+   "fieldtype": "Table",
+   "label": "Egresos",
+   "options": "FacEx Cierre Diario Egreso"
+  },
+  {
+   "bold": 1,
+   "fieldname": "total_egresos",
+   "fieldtype": "Currency",
+   "label": "TOTAL EGRESOS",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_egresos",
+   "fieldtype": "Column Break"
+  },
+  {
+   "bold": 1,
+   "description": "Total Venta del Día − Total Egresos.",
+   "fieldname": "total_a_depositar",
+   "fieldtype": "Currency",
+   "label": "TOTAL A DEPOSITAR",
+   "read_only": 1
+  },
+  {
+   "fieldname": "observaciones",
+   "fieldtype": "Small Text",
+   "label": "Observaciones"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "sb_detalle",
+   "fieldtype": "Section Break",
+   "label": "Detalle de Venta por Familia"
+  },
+  {
+   "fieldname": "detalle_familias",
+   "fieldtype": "Table",
+   "label": "Detalle por Familia",
+   "options": "FacEx Cierre Diario Familia",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "sb_facturas",
+   "fieldtype": "Section Break",
+   "label": "Facturas incluidas"
+  },
+  {
+   "fieldname": "facturas",
+   "fieldtype": "Table",
+   "label": "Facturas",
+   "options": "FacEx Cierre Diario Factura",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_snapshot",
+   "fieldtype": "Section Break",
+   "hidden": 1,
+   "label": "Snapshot"
+  },
+  {
+   "fieldname": "snapshot_json",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "label": "Snapshot JSON",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-09-11 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FacEx Multi",
+ "name": "FacEx Cierre Diario",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Manager",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Sales User",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts User",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "facex_multi",
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "usuario_nombre",
+ "track_changes": 1
+}

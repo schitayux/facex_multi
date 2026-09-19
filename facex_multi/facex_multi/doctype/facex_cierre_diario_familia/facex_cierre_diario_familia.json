@@ -1,0 +1,95 @@
+{
+ "actions": [],
+ "creation": "2026-09-11 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "es_oferta",
+  "familia",
+  "descripcion",
+  "cantidad",
+  "precio_unidad",
+  "total",
+  "cantidad_original",
+  "uom",
+  "conversion",
+  "num_lineas"
+ ],
+ "fields": [
+  {
+   "default": "0",
+   "fieldname": "es_oferta",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Piezas en Oferta"
+  },
+  {
+   "fieldname": "familia",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Familia / Ítem"
+  },
+  {
+   "fieldname": "descripcion",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Descripción"
+  },
+  {
+   "description": "Cantidad convertida a unidades de stock (piezas).",
+   "fieldname": "cantidad",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Cantidad (unidades)"
+  },
+  {
+   "description": "Total / Cantidad en unidades (promedio ponderado).",
+   "fieldname": "precio_unidad",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Precio por Unidad"
+  },
+  {
+   "fieldname": "total",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Total"
+  },
+  {
+   "description": "Uso interno: cantidad tal como se facturó (en la UoM de venta).",
+   "fieldname": "cantidad_original",
+   "fieldtype": "Float",
+   "label": "Cantidad Original (sistema)"
+  },
+  {
+   "description": "Uso interno: UoM de venta (\"Varias\" si se mezclaron).",
+   "fieldname": "uom",
+   "fieldtype": "Data",
+   "label": "UoM"
+  },
+  {
+   "description": "Uso interno: factor de conversión a unidades de stock.",
+   "fieldname": "conversion",
+   "fieldtype": "Float",
+   "label": "Conversión"
+  },
+  {
+   "fieldname": "num_lineas",
+   "fieldtype": "Int",
+   "label": "Líneas"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-11 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FacEx Multi",
+ "name": "FacEx Cierre Diario Familia",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

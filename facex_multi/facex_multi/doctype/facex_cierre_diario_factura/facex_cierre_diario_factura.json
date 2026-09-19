@@ -1,0 +1,98 @@
+{
+ "actions": [],
+ "creation": "2026-09-11 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "sales_invoice",
+  "customer_name",
+  "grand_total",
+  "pagado",
+  "contra_entrega",
+  "credito",
+  "flete",
+  "formas_pago",
+  "tiene_descuento",
+  "es_devolucion",
+  "bfel_status"
+ ],
+ "fields": [
+  {
+   "fieldname": "sales_invoice",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Factura",
+   "options": "Sales Invoice"
+  },
+  {
+   "fieldname": "customer_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Cliente"
+  },
+  {
+   "fieldname": "grand_total",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Total"
+  },
+  {
+   "fieldname": "pagado",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Cobrado"
+  },
+  {
+   "fieldname": "contra_entrega",
+   "fieldtype": "Currency",
+   "label": "Contra Entrega"
+  },
+  {
+   "fieldname": "credito",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Al Crédito"
+  },
+  {
+   "fieldname": "flete",
+   "fieldtype": "Currency",
+   "label": "Flete"
+  },
+  {
+   "fieldname": "formas_pago",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Formas de Pago"
+  },
+  {
+   "default": "0",
+   "fieldname": "tiene_descuento",
+   "fieldtype": "Check",
+   "label": "Con Descuento"
+  },
+  {
+   "default": "0",
+   "fieldname": "es_devolucion",
+   "fieldtype": "Check",
+   "label": "Devolución"
+  },
+  {
+   "fieldname": "bfel_status",
+   "fieldtype": "Data",
+   "label": "Estado FEL"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-11 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FacEx Multi",
+ "name": "FacEx Cierre Diario Factura",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
