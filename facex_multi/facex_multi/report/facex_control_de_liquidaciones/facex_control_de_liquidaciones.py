@@ -57,6 +57,13 @@ def get_data(filters):
 	elif filters.estado_liquidacion == "Liquidado":
 		conditions.append("g.liquidado = 1")
 
+	owners = filters.get("owners")
+	if isinstance(owners, str):
+		owners = frappe.parse_json(owners) if owners else []
+	if owners:
+		conditions.append("g.owner in %(owners)s")
+		values["owners"] = tuple(owners)
+
 	where_clause = " and ".join(conditions)
 
 	rows = frappe.db.sql(

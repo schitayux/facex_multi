@@ -48,6 +48,13 @@ def get_data(filters):
 		conditions.append("g.transportista = %(transportista)s")
 		values["transportista"] = filters.transportista
 
+	owners = filters.get("owners")
+	if isinstance(owners, str):
+		owners = frappe.parse_json(owners) if owners else []
+	if owners:
+		conditions.append("g.owner in %(owners)s")
+		values["owners"] = tuple(owners)
+
 	where_clause = " and ".join(conditions)
 
 	rows = frappe.db.sql(

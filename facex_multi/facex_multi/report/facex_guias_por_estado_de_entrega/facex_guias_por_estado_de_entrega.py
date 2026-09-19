@@ -58,6 +58,13 @@ def get_data(filters):
 		conditions.append("si.company = %(company)s")
 		values["company"] = filters.company
 
+	owners = filters.get("owners")
+	if isinstance(owners, str):
+		owners = frappe.parse_json(owners) if owners else []
+	if owners:
+		conditions.append("g.owner in %(owners)s")
+		values["owners"] = tuple(owners)
+
 	where_clause = " and ".join(conditions)
 
 	return frappe.db.sql(
