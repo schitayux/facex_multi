@@ -263,6 +263,11 @@ class EFastSalePage {
          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
          <span id="ef-back-chip-label">Volver</span>
        </button>
+       <button id="ef-cmdk-trigger" class="ef-btn" style="margin-left:8px; font-size:11px; padding:4px 10px; border-radius:6px; display:flex; align-items:center; gap:6px; border:1px solid var(--ef-border); background:var(--ef-card); color:var(--ef-text-muted);" title="Buscar pantallas, reportes y facturas">
+         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+         <span>Buscar</span>
+         <kbd class="ef-cmdk-kbd">Ctrl+M</kbd>
+       </button>
      </div>
 
      <div id="ef-navbar-company-badge" style="display: none; align-items: center; gap: 6px; background: #eef2ff; color: #4361ee; padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 700; border: 1px solid #c7d2fe; box-shadow: 0 1px 2px rgba(0,0,0,0.05); text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer;" title="Ir al menú principal">
@@ -2585,6 +2590,73 @@ class EFastSalePage {
 		}
 	}
 
+	// Deny-by-default: un reporte sin flag en _report_perm_map() no se corre ni
+	// aparece en la paleta hasta que se le asigne uno.
+	_can_run_report(report_id) {
+		const flag = this._report_perm_map()[report_id];
+		return !!(flag && (this.perms || {})[flag]);
+	}
+
+	// Los filtros activos viajan en la URL para poder pasarle a alguien el
+	// reporte tal como uno lo está viendo. Sólo se serializa lo que tiene
+	// valor, así el link no se llena de parámetros vacíos.
+	// Compañía y lista de precios quedan fuera a propósito: sus <select> se
+	// llenan con una llamada al servidor y al restaurar todavía no existen sus
+	// opciones, así que el valor no pegaría.
+	_report_url_params() {
+		const val = (sel) => this.$body.find(sel).val() || "";
+		const ctrl = (c) => (c && c.get_value ? c.get_value() : "");
+		const list = (c) => { const v = ctrl(c); return Array.isArray(v) ? v.join(",") : (v || ""); };
+		const params = {
+			view: "reports",
+			report: this._active_report || "",
+			desde: val("#ef-rep-start-date"),
+			hasta: val("#ef-rep-end-date"),
+			est: val("#ef-rep-establecimiento"),
+			metodo: val("#ef-rep-payment-method"),
+			tipo: val("#ef-rep-doc-type"),
+			anio: val("#ef-rep-year"),
+			mes: val("#ef-rep-month"),
+			costo: val("#ef-rep-cost-basis"),
+			cliente: ctrl(this.rep_customer_ctrl),
+			item: ctrl(this.rep_item_ctrl),
+			grupo: ctrl(this.rep_item_group_ctrl),
+			proveedor: ctrl(this.rep_supplier_ctrl),
+			bodegas: list(this.rep_warehouse_ctrl),
+			usuarios: list(this.rep_owner_ctrl),
+		};
+		Object.keys(params).forEach((k) => { if (!params[k]) delete params[k]; });
+		return params;
+	}
+
+	// Restaura lo que traiga el link. Corre después de _setup_report_filters(),
+	// que sólo pone fechas por defecto si están vacías, así que estos valores
+	// mandan sobre las de por defecto.
+	_apply_pending_report_filters() {
+		const p = this._pending_report_filters;
+		if (!p) return;
+		this._pending_report_filters = null;
+
+		const set = (sel, v) => { if (v) this.$body.find(sel).val(v); };
+		const set_ctrl = (c, v) => { if (c && v) c.set_value(v); };
+		const set_list = (c, v) => { if (c && v) c.set_value(String(v).split(",")); };
+
+		set("#ef-rep-start-date", p.desde);
+		set("#ef-rep-end-date", p.hasta);
+		set("#ef-rep-establecimiento", p.est);
+		set("#ef-rep-payment-method", p.metodo);
+		set("#ef-rep-doc-type", p.tipo);
+		set("#ef-rep-year", p.anio);
+		set("#ef-rep-month", p.mes);
+		set("#ef-rep-cost-basis", p.costo);
+		set_ctrl(this.rep_customer_ctrl, p.cliente);
+		set_ctrl(this.rep_item_ctrl, p.item);
+		set_ctrl(this.rep_item_group_ctrl, p.grupo);
+		set_ctrl(this.rep_supplier_ctrl, p.proveedor);
+		set_list(this.rep_warehouse_ctrl, p.bodegas);
+		set_list(this.rep_owner_ctrl, p.usuarios);
+	}
+
 	// Aterrizaje según la URL: ?invoice=… abre esa factura, ?view=… esa vista.
 	// Permite compartir un link o abrir en pestaña nueva y caer en el mismo
 	// lugar. Sin parámetros (o sin permiso) cae en Inicio, como siempre.
@@ -2593,6 +2665,13 @@ class EFastSalePage {
 		if (params.invoice) {
 			this.load_invoice(params.invoice);
 			return;
+		}
+		// Link compartido de un reporte: el id viene de la URL, así que se
+		// revalida el permiso antes de aceptarlo; los filtros se aplican
+		// cuando la vista de Reportes ya creó sus controles.
+		if (params.view === "reports" && this._can_run_report(params.report)) {
+			this._active_report = params.report;
+			this._pending_report_filters = params;
 		}
 		this._new_invoice();
 		this._switch_view(this._can_access_view(params.view) ? params.view : "home");
@@ -3210,16 +3289,12 @@ class EFastSalePage {
 			cmds.push({ group: "Pantallas", label: "Cierre Diario", run: () => { window.location.href = "/app/facex-cierre"; } });
 		}
 
-		// Los botones del panel de Reportes ya fueron filtrados por _apply_perms,
-		// así que se leen de ahí y la paleta no duplica el criterio ni las etiquetas.
-		const REPORT_PERM = this._report_perm_map();
+		// Las etiquetas se leen de los botones del panel de Reportes para no
+		// mantenerlas en dos lugares; el permiso lo decide _can_run_report().
 		this.$body.find(".ef-report-nav-btn").each((_, el) => {
 			const $el = $(el);
 			const id = $el.data("report");
-			// Deny-by-default: un reporte que se agregue sin su flag en
-			// _report_perm_map() no aparece acá hasta que se le asigne uno.
-			const flag = REPORT_PERM[id];
-			if (!flag || !p[flag]) return;
+			if (!this._can_run_report(id)) return;
 			cmds.push({
 				group: "Reportes",
 				label: ($el.text() || "").trim(),
@@ -3236,6 +3311,7 @@ class EFastSalePage {
 
 	_setup_cmdk() {
 		this.$body.find("#ef-cmdk-backdrop").on("click", () => this._close_cmdk());
+		this.$body.find("#ef-cmdk-trigger").on("click", () => this._open_cmdk());
 
 		const $input = this.$body.find("#ef-cmdk-input");
 		$input.on("input", () => {
@@ -9753,6 +9829,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 				this.$body.find("#ef-report-data-card").show();
 
 				this._setup_report_filters();
+				this._apply_pending_report_filters();
 				this._setup_report_events();
 
 				if (!this._active_report) {
@@ -10251,6 +10328,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 			});
 			return;
 		}
+
+		// La URL refleja el reporte y los filtros que se están viendo, así el
+		// link de la barra de direcciones sirve para compartirlo tal cual.
+		frappe.set_route("facex", "", this._report_url_params());
 
 		let method = "";
 		let args = {};
