@@ -441,8 +441,28 @@ def create_or_update_customer(data_json: str, company: str = None):
     return {"name": doc.name, "customer_name": doc.customer_name}
 
 
+def normalize_customer_casing(doc, method=None):
+    """Hooks Customer.before_insert + Customer.validate: política de la
+    compañía (FacEx Settings, registro sin usuario) para forzar el Nombre
+    de Clientes a mayúsculas. Registrado también en before_insert porque,
+    según "Nombramiento de Cliente" (Selling Settings), el name del
+    documento puede derivarse del customer_name al crear (cust_master_name
+    = "Customer Name") — igual que item_code en Item — así que forzar el
+    caso solo en validate dejaría el name del documento en minúscula
+    mientras el campo queda en mayúscula. No afecta a "Consumidor Final",
+    comparado por string exacto en varios lugares del código."""
+    if not (doc.meta.has_field("bfel_company") and doc.customer_name
+            and doc.customer_name != "Consumidor Final"):
+        return
+    from facex_multi.api.permissions import get_facex_uppercase_customers
+    if get_facex_uppercase_customers(doc.get("bfel_company")):
+        doc.customer_name = doc.customer_name.upper()
+
+
 def validate_customer_on_save(doc, method=None):
     """Sincroniza tax_id y valida la lista de precios antes de guardar el cliente."""
+    normalize_customer_casing(doc)
+
     if doc.meta.has_field("bfel_id_receptor"):
         nit = doc.get("bfel_id_receptor") or doc.get("tax_id") or ""
         if nit:

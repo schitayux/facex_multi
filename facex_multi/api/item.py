@@ -441,6 +441,10 @@ def create_or_update_item(data_json: str, company: str = None):
     company = get_effective_company(company)
     abbr = frappe.db.get_value("Company", company, "abbr") or ""
 
+    # Política de la compañía: guardar el código sin el sufijo "-ABBR".
+    from facex_multi.api.permissions import get_facex_item_code_without_suffix
+    suffix = f"-{abbr}" if abbr and not get_facex_item_code_without_suffix(company) else ""
+
     is_new = True
     if item_code and frappe.db.exists("Item", item_code):
         doc = frappe.get_doc("Item", item_code)
@@ -450,39 +454,34 @@ def create_or_update_item(data_json: str, company: str = None):
     else:
         auto_code = int(data.get("auto_code") or 0)
         if auto_code:
-            # Generar código automático: AXXX-ABBR
-            # Encontrar el correlativo XXX más alto para esta compañía y abreviatura
-            like_pattern = f"A%-{abbr}"
+            # Generar código automático: AXXX-ABBR (o AXXX si la compañía no
+            # concatena sufijo). El correlativo se calcula sobre ambos formatos
+            # para no repetir números si la política cambia con el tiempo.
             latest_items = frappe.db.sql(
                 """
-                SELECT name 
-                FROM `tabItem` 
-                WHERE name LIKE %(pattern)s AND bfel_company = %(company)s
-                ORDER BY name DESC
+                SELECT name
+                FROM `tabItem`
+                WHERE name LIKE 'A%%' AND bfel_company = %(company)s
                 """,
-                {"pattern": like_pattern, "company": company},
+                {"company": company},
                 as_dict=True
             )
-            
-            next_num = 1
-            if latest_items:
-                max_num = 0
-                for it in latest_items:
-                    code_str = it["name"]
-                    if code_str.endswith(f"-{abbr}"):
-                        num_part = code_str[:-len(f"-{abbr}")]
-                        if num_part.startswith("A") and num_part[1:].isdigit():
-                            num = int(num_part[1:])
-                            if num > max_num:
-                                max_num = num
-                next_num = max_num + 1
-            
-            item_code = f"A{next_num:03d}-{abbr}"
+
+            max_num = 0
+            for it in latest_items:
+                code_str = it["name"]
+                if abbr and code_str.endswith(f"-{abbr}"):
+                    code_str = code_str[:-len(f"-{abbr}")]
+                if code_str.startswith("A") and code_str[1:].isdigit():
+                    max_num = max(max_num, int(code_str[1:]))
+            next_num = max_num + 1
+
+            item_code = f"A{next_num:03d}{suffix}"
         else:
-            # Código personalizado. Forzar sufijo: -.ABBR
-            if abbr and not item_code.endswith(f"-{abbr}"):
-                item_code = f"{item_code}-{abbr}"
-        
+            # Código personalizado. Forzar sufijo -ABBR salvo política en contra.
+            if suffix and not item_code.endswith(suffix):
+                item_code = f"{item_code}{suffix}"
+
         if not item_code:
             frappe.throw("El código de producto es obligatorio.")
 
@@ -501,7 +500,15 @@ def create_or_update_item(data_json: str, company: str = None):
 
     doc.item_name = data.get("item_name", doc.item_name)
     doc.description = doc.item_name
-    doc.stock_uom = data.get("stock_uom") or doc.stock_uom or "Nos"
+    stock_uom = (data.get("stock_uom") or "").strip()
+    if is_new and not stock_uom and data.get("familia") and frappe.db.table_exists("FacEx Familia de Precio"):
+        # Sin UdM explícita: hereda la de la familia para que los precios
+        # repartidos desde la familia sean válidos (misma UdM).
+        stock_uom = frappe.db.get_value("FacEx Familia de Precio", data.get("familia"), "uom") or ""
+    doc.stock_uom = (
+        stock_uom or doc.stock_uom
+        or frappe.db.get_single_value("Stock Settings", "stock_uom") or "Nos"
+    )
     doc.item_group = data.get("item_group") or doc.item_group
     if doc.meta.has_field("custom_facex_palabras_busqueda") and "palabras_busqueda" in data:
         doc.custom_facex_palabras_busqueda = data.get("palabras_busqueda") or ""
@@ -991,6 +998,23 @@ def delete_item_image(item_code: str, file_name: str = None):
 
     frappe.db.commit()
     return {"success": True}
+
+
+def normalize_item_casing(doc, method=None):
+    """Hooks Item.before_insert + Item.validate: política de la compañía
+    (FacEx Settings, registro sin usuario) para forzar mayúsculas.
+    El Nombre se fuerza en cada guardado (alta y edición). El Código es el
+    name del documento (autoname = field:item_code): solo se fuerza al
+    crear, antes del autoname — editarlo después exigiría un rename_doc."""
+    if not doc.meta.has_field("bfel_company"):
+        return
+    from facex_multi.api.permissions import get_facex_uppercase_items
+    if not get_facex_uppercase_items(doc.get("bfel_company")):
+        return
+    if doc.item_name:
+        doc.item_name = doc.item_name.upper()
+    if doc.is_new() and doc.item_code:
+        doc.item_code = doc.item_code.upper()
 
 
 def sync_description_from_item_name(doc, method=None):
