@@ -20,6 +20,8 @@ from facex_multi.api.permissions import (
     get_facex_can_maintain_familias,
     get_facex_can_maintain_item_costs,
     get_facex_can_maintain_warehouses,
+    get_facex_can_view_item_groups,
+    get_facex_can_maintain_item_groups,
     get_facex_can_receive_traslados,
     get_facex_can_view_familias,
     get_facex_requires_item_familia,
@@ -81,6 +83,17 @@ def _assert_warehouse_allowed(warehouse: str, company: str = None):
         )
 
 
+def _assert_warehouse_operacion(warehouse: str, company: str, operacion: str):
+    """frappe.throw si `warehouse` no tiene marcada `operacion` en el grid de
+    Bodegas Habilitadas del usuario. Sin restricción → no hace nada."""
+    from facex_multi.api.permissions import warehouse_allows
+    if not warehouse_allows(warehouse, company, operacion):
+        frappe.throw(
+            f"La bodega '{warehouse}' no está habilitada para {operacion} en su configuración.",
+            frappe.PermissionError,
+        )
+
+
 def get_warehouses_for_establecimiento(company: str, establecimiento_id: str):
     """Nombres de almacén que pertenecen a esa sucursal. '' o None -> sin asignar."""
     meta = get_warehouses_meta(company)
@@ -98,30 +111,39 @@ def get_establishments_for_company(company: str = None):
 
 # Entradas, Salidas y Transferencias comparten toda la lógica de construcción/
 # validación de Stock Entry — solo cambian estos parámetros.
+# `op_source`/`op_target` son la operación que cada extremo exige en el grid de
+# Bodegas Habilitadas del usuario (checks por bodega de FacEx Settings).
 _MOVEMENT_CONFIG = {
     "in": {
         "purpose": "Material Receipt",
         "naming_series": "ING-.ABBR.-.####",
         "perm_field": "puede_hacer_entradas",
+        "op_target": "entrada",
     },
     "out": {
         "purpose": "Material Issue",
         "naming_series": "SAL-.ABBR.-.####",
         "perm_field": "puede_hacer_salidas",
+        "op_source": "salida",
     },
     "transfer": {
         "purpose": "Material Transfer",
         "naming_series": "TRA-.ABBR.-.####",
         "perm_field": "puede_hacer_transferencias",
+        "op_source": "transferencia",
+        "op_target": "transferencia",
     },
     # Transformación: no pasa por _create_stock_movement (mezcla filas de salida de
     # componentes + una fila de entrada del padre con is_finished_item), pero comparte
     # esta tabla para el listado/detalle de movimientos (ver _list_stock_movements).
+    # Consume componentes y produce el padre, así que exige ambas operaciones.
     "transform": {
         "purpose": "Manufacture",
         "naming_series": "TRF-.ABBR.-.####",
         "perm_field": "puede_hacer_transformaciones",
         "extra_filter": "AND se.bfel_transformacion = 1",
+        "op_source": "salida",
+        "op_target": "entrada",
     },
 }
 
@@ -283,9 +305,24 @@ def _build_stock_entry_items(
     basis = normalize_basis(cost_basis or get_facex_default_cost_basis(company))
     can_view_costs = get_facex_can_view_costs(company)
 
-    def _check_warehouse_allowed(i, item_code, warehouse):
-        if warehouse and allowed_warehouses is not None and warehouse not in allowed_warehouses:
+    cfg = _MOVEMENT_CONFIG[mode]
+    allowed_por_extremo = {
+        "s_warehouse": get_facex_allowed_warehouses(company, cfg["op_source"]) if cfg.get("op_source") else None,
+        "t_warehouse": get_facex_allowed_warehouses(company, cfg["op_target"]) if cfg.get("op_target") else None,
+    }
+
+    def _check_warehouse_allowed(i, item_code, warehouse, extremo):
+        if not warehouse:
+            return
+        if allowed_warehouses is not None and warehouse not in allowed_warehouses:
             frappe.throw(f"Fila {i} ({item_code}): no tiene permiso para utilizar la bodega '{warehouse}'.")
+        permitidas = allowed_por_extremo[extremo]
+        if permitidas is not None and warehouse not in permitidas:
+            operacion = cfg["op_source"] if extremo == "s_warehouse" else cfg["op_target"]
+            frappe.throw(
+                f"Fila {i} ({item_code}): la bodega '{warehouse}' no está habilitada "
+                f"para {operacion} en su configuración."
+            )
 
     built = []
     for i, row in enumerate(rows, start=1):
@@ -339,14 +376,14 @@ def _build_stock_entry_items(
             s_warehouse = row.get("source_warehouse") or default_source
             if not s_warehouse:
                 frappe.throw(f"Fila {i} ({item_code}): falta el almacén origen.")
-            _check_warehouse_allowed(i, item_code, s_warehouse)
+            _check_warehouse_allowed(i, item_code, s_warehouse, "s_warehouse")
             entry_row["s_warehouse"] = s_warehouse
 
         if mode in ("in", "transfer"):
             t_warehouse = row.get("target_warehouse") or default_target
             if not t_warehouse:
                 frappe.throw(f"Fila {i} ({item_code}): falta el almacén destino.")
-            _check_warehouse_allowed(i, item_code, t_warehouse)
+            _check_warehouse_allowed(i, item_code, t_warehouse, "t_warehouse")
             entry_row["t_warehouse"] = t_warehouse
 
         if mode == "transfer" and entry_row.get("s_warehouse") == entry_row.get("t_warehouse"):
@@ -419,6 +456,13 @@ def _create_stock_movement(mode: str, payload: str, client_token: str = None):
 
     source_warehouse = data.get("source_warehouse")
     target_warehouse = data.get("target_warehouse")
+
+    # La cabecera termina en from_warehouse/to_warehouse del Stock Entry aunque
+    # cada fila traiga su propia bodega, así que se valida aparte de las filas.
+    if cfg.get("op_source"):
+        _assert_warehouse_operacion(source_warehouse, company, cfg["op_source"])
+    if cfg.get("op_target"):
+        _assert_warehouse_operacion(target_warehouse, company, cfg["op_target"])
 
     if mode == "transfer" and source_warehouse and target_warehouse and source_warehouse == target_warehouse:
         frappe.throw("El almacén origen y destino no pueden ser el mismo.")
@@ -699,6 +743,9 @@ def _build_transform_items(
     allowed_warehouses = get_facex_allowed_warehouses(company)
     if allowed_warehouses is not None and target_warehouse not in allowed_warehouses:
         frappe.throw(f"No tiene permiso para utilizar la bodega '{target_warehouse}'.")
+    # El padre se da de alta (entrada) y los componentes se descargan (salida).
+    _assert_warehouse_operacion(target_warehouse, company, _MOVEMENT_CONFIG["transform"]["op_target"])
+    allowed_salida = get_facex_allowed_warehouses(company, _MOVEMENT_CONFIG["transform"]["op_source"])
 
     bom_rows = frappe.get_all(
         "FacEx Lista Materiales Item",
@@ -718,6 +765,11 @@ def _build_transform_items(
             frappe.throw(f"Falta el almacén origen del componente '{bom_row.item_code}'.")
         if allowed_warehouses is not None and comp_input["source_warehouse"] not in allowed_warehouses:
             frappe.throw(f"No tiene permiso para utilizar la bodega '{comp_input['source_warehouse']}'.")
+        if allowed_salida is not None and comp_input["source_warehouse"] not in allowed_salida:
+            frappe.throw(
+                f"Componente '{bom_row.item_code}': la bodega '{comp_input['source_warehouse']}' "
+                "no está habilitada para salida en su configuración."
+            )
 
         _check_item_company(bom_row.item_code, company)
 
@@ -956,6 +1008,9 @@ def get_inventory_defaults(company: str = None):
     permissions["puede_consultar_familias"] = int(get_facex_can_view_familias(company))
     permissions["puede_mantener_familias"] = int(get_facex_can_maintain_familias(company))
     permissions["exige_familia_item"] = int(get_facex_requires_item_familia(company))
+    # Grupo de Ítems: mantenimiento (ver/editar), igual criterio que Familias.
+    permissions["puede_consultar_grupo_items"] = int(get_facex_can_view_item_groups(company))
+    permissions["puede_mantener_grupo_items"] = int(get_facex_can_maintain_item_groups(company))
     # Maestro de Ítems: reusa los permisos generales de catálogo (Mantenimiento).
     permissions["crea_items"] = general_perms.get("crea_items", 0)
     permissions["modifica_items"] = general_perms.get("modifica_items", 0)
@@ -981,9 +1036,33 @@ def get_inventory_defaults(company: str = None):
     permissions["puede_cargar_liquidaciones_transporte"] = int(get_facex_can_upload_liquidaciones_transporte(company))
     permissions["puede_ver_kpis_transporte"] = int(get_facex_can_view_transporte_kpis(company))
     warehouses = get_warehouses(company) if permissions.get("puede_ver_inventario") else []
+    # `warehouses` es la capa de visibilidad (la que usan los reportes). Los
+    # selectores de cada documento se arman desde este mapa, para que una bodega
+    # que el usuario ve en Kardex pero no puede, p.ej., recibir entradas, no
+    # aparezca como opción al registrar una Entrada.
+    if permissions.get("puede_ver_inventario"):
+        from facex_multi.api.permissions import BODEGA_OPERACIONES
+        warehouses_por_operacion = {
+            op: get_warehouses(company, op) for op in BODEGA_OPERACIONES
+        }
+    else:
+        warehouses_por_operacion = {}
     establishments = _get_establishments(company) if permissions.get("puede_ver_inventario") else []
     warehouses_meta = get_warehouses_meta(company) if permissions.get("puede_ver_inventario") else []
     item_groups = _get_company_item_groups(company) if permissions.get("puede_ver_inventario") else []
+    # Usuarios activos, para el filtro "Usuario Creador" (selección múltiple)
+    # de los reportes de inventario — misma idea que `warehouses` arriba.
+    # Excluye System Manager: ya tienen acceso total, no aportan como filtro
+    # (mismo criterio que facex_multi.api.security._system_manager_users).
+    if permissions.get("puede_ver_inventario"):
+        from facex_multi.api.security import _system_manager_users
+        report_users = frappe.get_all(
+            "User",
+            filters={"enabled": 1, "user_type": "System User", "name": ["not in", _system_manager_users()]},
+            fields=["name", "full_name"], order_by="full_name asc",
+        )
+    else:
+        report_users = []
 
     permissions["ver_solo_mis_movimientos"] = int(get_facex_see_only_own_movements(company))
 
@@ -991,9 +1070,11 @@ def get_inventory_defaults(company: str = None):
         "company": company,
         "companies": allowed_companies,
         "warehouses": warehouses,
+        "warehouses_por_operacion": warehouses_por_operacion,
         "warehouses_meta": warehouses_meta,
         "establishments": establishments,
         "item_groups": item_groups,
+        "report_users": report_users,
         "permissions": permissions,
         "movimiento_print_format": "Movimiento de Inventario FacEx",
         "letter_head": _resolve_letter_head(company),

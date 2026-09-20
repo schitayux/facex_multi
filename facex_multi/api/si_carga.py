@@ -412,7 +412,7 @@ def create_invoices(
         naming_series = _get_naming_series_for_company(company)[0] if _get_naming_series_for_company(company) else "SINV-.YYYY.-"
 
     from facex_multi.api.permissions import get_facex_allowed_warehouses
-    _allowed_wh = get_facex_allowed_warehouses(company)
+    _allowed_wh = get_facex_allowed_warehouses(company, "venta")
     _wh_filters = {"company": company, "is_group": 0, "disabled": 0}
     if _allowed_wh is not None:
         _wh_filters["name"] = ["in", _allowed_wh]

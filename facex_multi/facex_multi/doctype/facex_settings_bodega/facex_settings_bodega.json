@@ -5,22 +5,68 @@
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
-  "warehouse"
+  "warehouse",
+  "permite_venta",
+  "permite_compra",
+  "permite_entrada",
+  "permite_salida",
+  "permite_transferencia"
  ],
  "fields": [
   {
+   "columns": 3,
    "fieldname": "warehouse",
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Bodega",
    "options": "Warehouse",
    "reqd": 1
+  },
+  {
+   "default": "1",
+   "description": "Permite facturar desde esta bodega en FacEx Screen y Factura Rápida.",
+   "fieldname": "permite_venta",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Venta"
+  },
+  {
+   "default": "1",
+   "description": "Permite recibir mercadería en esta bodega desde el módulo de Compras.",
+   "fieldname": "permite_compra",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Compra"
+  },
+  {
+   "default": "1",
+   "description": "Permite Entradas de Inventario hacia esta bodega.",
+   "fieldname": "permite_entrada",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Entrada"
+  },
+  {
+   "default": "1",
+   "description": "Permite Salidas de Inventario desde esta bodega.",
+   "fieldname": "permite_salida",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Salida"
+  },
+  {
+   "default": "1",
+   "description": "Permite Transferencias y Recepción de Traslados con esta bodega (origen o destino).",
+   "fieldname": "permite_transferencia",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Transferencia"
   }
  ],
  "index_web_pages_for_search": 0,
  "istable": 1,
  "links": [],
- "modified": "2026-08-11 00:00:00.000000",
+ "modified": "2026-09-18 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Settings Bodega",

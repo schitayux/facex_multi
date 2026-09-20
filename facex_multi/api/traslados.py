@@ -50,18 +50,20 @@ def _require_transito(company: str) -> str:
     transito = get_facex_transito_warehouse(company)
     if not transito:
         frappe.throw("No tiene configurado un Almacén de Tránsito en FacEx Settings.")
-    allowed = get_facex_allowed_warehouses(company)
+    # La recepción es un Material Transfer tránsito → destino: ambos extremos
+    # exigen la operación "transferencia" en el grid de Bodegas Habilitadas.
+    allowed = get_facex_allowed_warehouses(company, "transferencia")
     if allowed is not None and transito not in allowed:
         frappe.throw(
-            "Su Almacén de Tránsito no está entre sus Bodegas Habilitadas. "
-            "Pida a un administrador que lo agregue."
+            "Su Almacén de Tránsito no está habilitado para transferencia en sus "
+            "Bodegas Habilitadas. Pida a un administrador que lo marque."
         )
     return transito
 
 
 def _allowed_destinos(company: str) -> list:
     """Bodegas a las que el usuario puede dar de alta / devolver stock."""
-    allowed = get_facex_allowed_warehouses(company)
+    allowed = get_facex_allowed_warehouses(company, "transferencia")
     todas = get_warehouses(company) or []
     if allowed is None:
         return todas

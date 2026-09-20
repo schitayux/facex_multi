@@ -209,7 +209,7 @@ def get_item_purchase_info(item_code: str, company: str = None) -> dict:
         frappe.throw(f"Producto '{item_code}' no encontrado.")
 
     from facex_multi.api.permissions import get_facex_allowed_warehouses
-    allowed_warehouses = get_facex_allowed_warehouses(company)
+    allowed_warehouses = get_facex_allowed_warehouses(company, "compra")
     warehouse = _resolve_item_warehouse(item_code, company, allowed_warehouses) if item.is_stock_item else ""
 
     return {
@@ -247,7 +247,7 @@ def search_items(txt: str = "", company: str = None) -> list:
     )
 
     from facex_multi.api.permissions import get_facex_allowed_warehouses
-    allowed_warehouses = get_facex_allowed_warehouses(company)
+    allowed_warehouses = get_facex_allowed_warehouses(company, "compra")
 
     out = []
     for r in results:
@@ -560,7 +560,7 @@ def save_purchase_invoice(data_json: str) -> dict:
 
     from facex_multi.api.permissions import get_facex_allowed_warehouses
     from facex_multi.api.stock import _resolve_batch
-    allowed_warehouses = get_facex_allowed_warehouses(company)
+    allowed_warehouses = get_facex_allowed_warehouses(company, "compra")
 
     for row in data.get("items", []):
         item_code = (row.get("item_code") or "").strip()
@@ -571,7 +571,7 @@ def save_purchase_invoice(data_json: str) -> dict:
         wh        = row.get("warehouse") or _resolve_item_warehouse(item_code, company, allowed_warehouses)
         if wh and allowed_warehouses is not None and wh not in allowed_warehouses:
             if row.get("warehouse"):
-                frappe.throw(f"No tiene permiso para utilizar la bodega '{wh}' en esta compra.")
+                frappe.throw(f"La bodega '{wh}' no está habilitada para compra en su configuración.")
             # bodega resuelta automáticamente desde el Item — reemplazar por la primera permitida
             wh = allowed_warehouses[0] if allowed_warehouses else ""
         serial_no = (row.get("serial_no") or "").strip()
@@ -683,7 +683,7 @@ def process_purchase_excel(file_url: str, company: str = None) -> dict:
     wb        = openpyxl.load_workbook(file_path, data_only=True)
 
     from facex_multi.api.permissions import get_facex_allowed_warehouses
-    allowed_warehouses = get_facex_allowed_warehouses(company)
+    allowed_warehouses = get_facex_allowed_warehouses(company, "compra")
 
     # ── Hoja 1: Encabezado ──────────────────────────────────────────
     ws_h   = wb.worksheets[0]
