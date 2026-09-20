@@ -92,27 +92,45 @@ def _check_report_access(company: str, perm_field: str) -> str:
     return company
 
 
-def _warehouse_condition(company: str, warehouse: str, alias: str = "sle"):
+def _warehouse_condition(company: str, warehouse, alias: str = "sle"):
     """
     Retorna (condicion_sql_o_None, params_dict) acotando el reporte a las
     bodegas habilitadas del usuario (FacEx Settings > bodegas_habilitadas).
-    - Bodega explícita fuera de lo permitido -> PermissionError.
+    `warehouse` acepta selección múltiple (lista, JSON de lista o CSV, vía
+    _parse_list) o un solo código (retrocompatible).
+    - Bodega(s) explícita(s) fuera de lo permitido -> PermissionError.
     - Sin bodega explícita y hay restricción -> condición IN sobre la lista
       permitida (no se puede dejar "todas" cuando el usuario está acotado).
     - Sin restricción configurada -> sin condición (comportamiento actual).
     """
     from facex_multi.api.permissions import get_facex_allowed_warehouses
     allowed = get_facex_allowed_warehouses(company)
+    warehouses = _parse_list(warehouse)
 
-    if warehouse:
-        if allowed is not None and warehouse not in allowed:
-            frappe.throw(f"No tiene permiso para ver la bodega '{warehouse}' en este informe.", frappe.PermissionError)
-        return f"{alias}.warehouse = %(warehouse)s", {"warehouse": warehouse}
+    if warehouses:
+        if allowed is not None:
+            invalid = [w for w in warehouses if w not in allowed]
+            if invalid:
+                frappe.throw(
+                    f"No tiene permiso para ver la bodega '{invalid[0]}' en este informe.",
+                    frappe.PermissionError,
+                )
+        return f"{alias}.warehouse IN %(warehouse_list)s", {"warehouse_list": tuple(warehouses)}
 
     if allowed is not None:
         return f"{alias}.warehouse IN %(allowed_warehouses)s", {"allowed_warehouses": tuple(allowed) or ("",)}
 
     return None, {}
+
+
+def _owner_condition(owners, alias: str = None):
+    """Retorna (condicion_sql_o_None, params_dict) acotando el reporte a una
+    selección múltiple de usuarios creadores. None sin filtro (todos)."""
+    owner_list = _parse_list(owners)
+    if not owner_list:
+        return None, {}
+    col = f"{alias}.owner" if alias else "owner"
+    return f"{col} IN %(owner_list)s", {"owner_list": tuple(owner_list)}
 
 
 class _NoWarehousesForEstablecimiento(Exception):
@@ -146,6 +164,7 @@ def get_kardex(
     warehouse: str = None,
     item_code: str = None,
     establecimiento: str = None,
+    owners=None,
 ):
     """
     Kardex completo: TODO documento que haya afectado el stock de la compañía
@@ -184,6 +203,11 @@ def get_kardex(
     if wh_cond:
         conditions.append(wh_cond)
         params.update(wh_params)
+
+    owner_cond, owner_params = _owner_condition(owners, "sle")
+    if owner_cond:
+        conditions.append(owner_cond)
+        params.update(owner_params)
 
     if item_code:
         conditions.append("sle.item_code = %(item_code)s")
@@ -513,7 +537,7 @@ def export_existencias(company: str = None, tab: str = "status", formato: str = 
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_serial_traceability(company: str = None, item_code: str = None, serial_no: str = None, warehouse: str = None, establecimiento: str = None):
+def get_serial_traceability(company: str = None, item_code: str = None, serial_no: str = None, warehouse: str = None, establecimiento: str = None, owners=None):
     company = _check_report_access(company, "reporte_inv_trazabilidad")
 
     conditions = ["s.company = %(company)s"]
@@ -528,6 +552,10 @@ def get_serial_traceability(company: str = None, item_code: str = None, serial_n
     if wh_cond:
         conditions.append(wh_cond)
         params.update(wh_params)
+    owner_cond, owner_params = _owner_condition(owners, "s")
+    if owner_cond:
+        conditions.append(owner_cond)
+        params.update(owner_params)
     try:
         est_cond, est_val = _establecimiento_condition(company, establecimiento, "s")
     except _NoWarehousesForEstablecimiento:
@@ -577,7 +605,7 @@ def get_serial_traceability(company: str = None, item_code: str = None, serial_n
 
 
 @frappe.whitelist()
-def get_batch_traceability(company: str = None, item_code: str = None, batch_no: str = None, warehouse: str = None, establecimiento: str = None):
+def get_batch_traceability(company: str = None, item_code: str = None, batch_no: str = None, warehouse: str = None, establecimiento: str = None, owners=None):
     company = _check_report_access(company, "reporte_inv_trazabilidad")
 
     conditions = ["sle.company = %(company)s", "sle.batch_no IS NOT NULL", "sle.batch_no != ''", "sle.is_cancelled = 0"]
@@ -592,6 +620,10 @@ def get_batch_traceability(company: str = None, item_code: str = None, batch_no:
     if wh_cond:
         conditions.append(wh_cond)
         params.update(wh_params)
+    owner_cond, owner_params = _owner_condition(owners, "sle")
+    if owner_cond:
+        conditions.append(owner_cond)
+        params.update(owner_params)
     try:
         est_cond, est_val = _establecimiento_condition(company, establecimiento, "sle")
     except _NoWarehousesForEstablecimiento:
@@ -683,7 +715,7 @@ def _allowed_wh(company: str):
 @frappe.whitelist()
 def get_kardex_producto(company: str = None, item_code: str = None, from_date: str = None,
                         to_date: str = None, warehouse: str = None, establecimiento: str = None,
-                        cost_basis: str = "estandar"):
+                        cost_basis: str = "estandar", owners=None):
     """Kardex de un solo producto: saldo corrido en unidades y valorizado a la
     base de costo elegida (estándar FacEx / promedio ponderado / última compra).
     El 'valor real SLE' se muestra aparte como referencia."""
@@ -710,6 +742,11 @@ def get_kardex_producto(company: str = None, item_code: str = None, from_date: s
         conditions.append(wh_cond)
         params.update(wh_params)
 
+    owner_cond, owner_params = _owner_condition(owners, "sle")
+    if owner_cond:
+        conditions.append(owner_cond)
+        params.update(owner_params)
+
     try:
         est_cond, est_val = _establecimiento_condition(company, establecimiento, "sle")
     except _NoWarehousesForEstablecimiento:
@@ -727,6 +764,9 @@ def get_kardex_producto(company: str = None, item_code: str = None, from_date: s
     if owh_cond:
         open_conditions.append(owh_cond)
         open_params.update(owh_params)
+    if owner_cond:
+        open_conditions.append(owner_cond)
+        open_params.update(owner_params)
     if est_cond:
         open_conditions.append(est_cond)
         open_params["wh_list"] = est_val
@@ -792,8 +832,8 @@ def get_kardex_producto(company: str = None, item_code: str = None, from_date: s
 @frappe.whitelist()
 def export_kardex_producto_excel(company: str = None, item_code: str = None, from_date: str = None,
                                  to_date: str = None, warehouse: str = None, establecimiento: str = None,
-                                 cost_basis: str = "estandar"):
-    data = get_kardex_producto(company, item_code, from_date, to_date, warehouse, establecimiento, cost_basis)
+                                 cost_basis: str = "estandar", owners=None):
+    data = get_kardex_producto(company, item_code, from_date, to_date, warehouse, establecimiento, cost_basis, owners)
     rows = data["rows"]
     if not rows:
         frappe.throw("No hay movimientos para exportar con los filtros seleccionados.")
@@ -1034,7 +1074,7 @@ def export_expiring_batches_excel(company: str = None, warehouse: str = None, it
 @frappe.whitelist()
 def get_stock_turnover_abc(company: str = None, warehouse: str = None, item_group: str = None,
                            establecimiento: str = None, from_date: str = None, to_date: str = None,
-                           cost_basis: str = "estandar"):
+                           cost_basis: str = "estandar", owners=None):
     """Rotación de inventario y clasificación ABC por valor de consumo del periodo
     (por defecto, últimos 90 días). La clase ABC y la rotación se muestran siempre;
     los montos de valor solo con permiso `puede_ver_costos`."""
@@ -1051,6 +1091,10 @@ def get_stock_turnover_abc(company: str = None, warehouse: str = None, item_grou
     if wh_cond:
         mv_conditions.append(wh_cond)
         params.update(wh_params)
+    owner_cond, owner_params = _owner_condition(owners, "sle")
+    if owner_cond:
+        mv_conditions.append(owner_cond)
+        params.update(owner_params)
     if item_group:
         mv_conditions.append("i.item_group = %(item_group)s")
         params["item_group"] = item_group
@@ -1157,8 +1201,8 @@ def get_stock_turnover_abc(company: str = None, warehouse: str = None, item_grou
 @frappe.whitelist()
 def export_stock_turnover_abc_excel(company: str = None, warehouse: str = None, item_group: str = None,
                                     establecimiento: str = None, from_date: str = None, to_date: str = None,
-                                    cost_basis: str = "estandar"):
-    data = get_stock_turnover_abc(company, warehouse, item_group, establecimiento, from_date, to_date, cost_basis)
+                                    cost_basis: str = "estandar", owners=None):
+    data = get_stock_turnover_abc(company, warehouse, item_group, establecimiento, from_date, to_date, cost_basis, owners)
     rows = data["rows"]
     if not rows:
         frappe.throw("No hay datos para exportar con los filtros seleccionados.")
@@ -1183,7 +1227,8 @@ def export_stock_turnover_abc_excel(company: str = None, warehouse: str = None, 
 
 @frappe.whitelist()
 def get_receipts_by_supplier(company: str = None, from_date: str = None, to_date: str = None,
-                             supplier: str = None, item_code: str = None, establecimiento: str = None):
+                             supplier: str = None, item_code: str = None, establecimiento: str = None,
+                             owners=None):
     """Resumen de ingresos de mercadería vía Facturas de Compra validadas del
     periodo, agrupado por proveedor y producto. (Purchase Receipt / Stock Entry
     manual quedan fuera de este reporte.)"""
@@ -1195,6 +1240,10 @@ def get_receipts_by_supplier(company: str = None, from_date: str = None, to_date
     conditions = ["pi.docstatus = 1", "pi.company = %(company)s",
                   "pi.posting_date BETWEEN %(from_date)s AND %(to_date)s"]
     params = {"company": company, "from_date": from_date, "to_date": to_date}
+    owner_cond, owner_params = _owner_condition(owners, "pi")
+    if owner_cond:
+        conditions.append(owner_cond)
+        params.update(owner_params)
     if supplier:
         conditions.append("pi.supplier = %(supplier)s")
         params["supplier"] = supplier
@@ -1254,8 +1303,9 @@ def get_receipts_by_supplier(company: str = None, from_date: str = None, to_date
 
 @frappe.whitelist()
 def export_receipts_by_supplier_excel(company: str = None, from_date: str = None, to_date: str = None,
-                                      supplier: str = None, item_code: str = None, establecimiento: str = None):
-    data = get_receipts_by_supplier(company, from_date, to_date, supplier, item_code, establecimiento)
+                                      supplier: str = None, item_code: str = None, establecimiento: str = None,
+                                      owners=None):
+    data = get_receipts_by_supplier(company, from_date, to_date, supplier, item_code, establecimiento, owners)
     rows = data["rows"]
     if not rows:
         frappe.throw("No hay entradas para exportar con los filtros seleccionados.")

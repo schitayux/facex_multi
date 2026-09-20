@@ -67,6 +67,63 @@ def _sales_partner_condition(alias: str = None) -> tuple:
     return f"{col} = %(facex_sp)s", {"facex_sp": sp}
 
 
+def _owner_condition(owners, alias: str = None) -> tuple:
+    """Retorna (condicion_sql, valores_dict) para acotar un informe a una
+    selección múltiple de usuarios creadores. ("1=1", {}) sin filtro (todos)."""
+    if isinstance(owners, str):
+        owners = frappe.parse_json(owners) if owners else []
+    owners = [o for o in (owners or []) if o]
+    if not owners:
+        return "1=1", {}
+    col = f"{alias}.owner" if alias else "owner"
+    return f"{col} IN %(owners)s", {"owners": tuple(owners)}
+
+
+def _resolve_owner_filter(company: str, owners, alias: str = None) -> tuple:
+    """Igual patrón que _resolve_warehouse_filter, aplicado al filtro
+    "Usuario Creador" de los reportes de FacEx Clásico:
+    - Rol de Clasificación "Gerencia" (FacEx Settings > rol_clasificacion) o
+      System Manager: puede elegir cualquier usuario creador (o ninguno =
+      todos).
+    - Cualquier otro caso (rol distinto, vacío, o sin fila de FacEx
+      Settings): SIEMPRE forzado a ver solo sus propias operaciones, sin
+      importar qué haya seleccionado en el filtro del frontend.
+    """
+    from facex_multi.api.permissions import get_facex_is_gerencia
+    eff_company = get_effective_company(company)
+    if "System Manager" in frappe.get_roles() or get_facex_is_gerencia(eff_company):
+        return _owner_condition(owners, alias)
+    return _owner_condition([frappe.session.user], alias)
+
+
+@frappe.whitelist()
+def user_query_for_reports(doctype=None, txt="", searchfield=None, start=0, page_length=20, filters=None):
+    """Query override para el filtro "Usuario Creador" (selección múltiple) de
+    todos los reportes de FacEx: usuarios habilitados, excluye System Manager
+    (mismo criterio que el módulo Seguridad — ver
+    facex_multi.api.security._system_manager_users — un System Manager no
+    aporta nada útil como filtro porque ya tiene acceso total en todo)."""
+    from facex_multi.api.security import _system_manager_users
+
+    return frappe.db.sql(
+        """
+        SELECT name, full_name
+        FROM `tabUser`
+        WHERE enabled = 1 AND user_type = 'System User'
+            AND name NOT IN %(system_managers)s
+            AND (name LIKE %(txt)s OR full_name LIKE %(txt)s)
+        ORDER BY full_name ASC
+        LIMIT %(page_length)s OFFSET %(start)s
+        """,
+        {
+            "system_managers": _system_manager_users(),
+            "txt": f"%{txt}%",
+            "start": start,
+            "page_length": page_length,
+        },
+    )
+
+
 @frappe.whitelist()
 def has_reports_permission() -> bool:
     """
@@ -99,28 +156,44 @@ def _require_report(company: str, flag: str) -> None:
         frappe.throw("No tiene permiso para ver este informe.", frappe.PermissionError)
 
 
-def _resolve_warehouse_filter(company: str, warehouse: str):
+def _resolve_warehouse_filter(company: str, warehouse):
     """
     Acota el filtro de bodega a las bodegas habilitadas del usuario (FacEx
-    Settings > bodegas_habilitadas). Retorna (mode, value):
-    - ("eq", warehouse): bodega explícita, ya validada contra lo permitido.
-    - ("in", tuple_de_bodegas): sin bodega explícita pero el usuario está
-      restringido — acotar a su lista.
+    Settings > bodegas_habilitadas). `warehouse` acepta selección múltiple
+    (lista, o JSON de lista como llega del filtro MultiSelectList del
+    frontend) o un solo código (retrocompatible). Retorna (mode, value):
+    - ("in", tuple_de_bodegas): una o más bodegas explícitas (intersectadas
+      con lo permitido) o, sin selección explícita, la lista completa de
+      bodegas permitidas del usuario.
     - (None, None): sin filtro que aplicar (sin restricción, o compañía
       vacía/"Todas" — las listas permitidas son por compañía y no combinan
       entre varias, así que en ese caso se deja sin acotar).
     """
     company = (company or "").strip()
+    if isinstance(warehouse, str):
+        warehouse = frappe.parse_json(warehouse) if warehouse.startswith("[") else ([warehouse] if warehouse else [])
+    warehouse = [w for w in (warehouse or []) if w]
+
     if not company:
         return None, None
 
-    from facex_multi.api.permissions import get_facex_allowed_warehouses
-    allowed = get_facex_allowed_warehouses(company)
+    from facex_multi.api.permissions import get_facex_allowed_warehouses, get_facex_is_gerencia
+    if "System Manager" in frappe.get_roles() or get_facex_is_gerencia(company):
+        # Gerencia (o System Manager): sin restricción, puede ver cualquier
+        # almacén de la compañía en los reportes de FacEx Clásico.
+        allowed = None
+    else:
+        allowed = get_facex_allowed_warehouses(company)
 
     if warehouse:
-        if allowed is not None and warehouse not in allowed:
-            frappe.throw(f"No tiene permiso para ver la bodega '{warehouse}' en este informe.", frappe.PermissionError)
-        return "eq", warehouse
+        if allowed is not None:
+            invalid = [w for w in warehouse if w not in allowed]
+            if invalid:
+                frappe.throw(
+                    f"No tiene permiso para ver la bodega '{invalid[0]}' en este informe.",
+                    frappe.PermissionError,
+                )
+        return "in", tuple(warehouse)
 
     if allowed is not None:
         return "in", (tuple(allowed) or ("",))
@@ -133,32 +206,42 @@ def _resolve_warehouse_filter(company: str, warehouse: str):
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_sales_by_date(start_date: str, end_date: str, customer: str = None, warehouse: str = None, company: str = None, establecimiento: str = None) -> dict:
+def get_sales_by_date(start_date: str, end_date: str, customer: str = None, warehouse=None,
+                       owners=None, company: str = None, establecimiento: str = None) -> dict:
     _require_report(company, "reporte_ventas_fecha")
 
     company_cond, company_vals = _build_company_condition(company)
     sp_cond, sp_vals = _sales_partner_condition()
-    conditions = ["docstatus = 1", "COALESCE(bfel_documento_anulado, 0) != 1", company_cond, sp_cond]
-    values = {"start": start_date, "end": end_date, **company_vals, **sp_vals}
+    owner_cond, owner_vals = _resolve_owner_filter(company, owners)
+    conditions = ["docstatus = 1", "COALESCE(bfel_documento_anulado, 0) != 1", company_cond, sp_cond, owner_cond]
+    values = {"start": start_date, "end": end_date, **company_vals, **sp_vals, **owner_vals}
 
     if customer:
         conditions.append("customer = %(customer)s")
         values["customer"] = customer
 
     wh_mode, wh_val = _resolve_warehouse_filter(company, warehouse)
-    if wh_mode == "eq":
-        conditions.append("name IN (SELECT parent FROM `tabSales Invoice Item` WHERE warehouse = %(warehouse)s)")
-        values["warehouse"] = wh_val
-    elif wh_mode == "in":
+    if wh_mode == "in":
         conditions.append("name IN (SELECT parent FROM `tabSales Invoice Item` WHERE warehouse IN %(allowed_warehouses)s)")
         values["allowed_warehouses"] = wh_val
 
     if establecimiento:
         conditions.append("bfel_establecimiento = %(establecimiento)s")
         values["establecimiento"] = establecimiento
-        
+
+    # outstanding_amount NO sirve aquí: FacEx registra los pagos como Payment
+    # Entry en BORRADOR (ver invoice.save_payments) y ese campo de ERPNext solo
+    # se actualiza cuando el PE se valida/concilia, así que una factura pagada
+    # por FacEx pero con PE en borrador seguía apareciendo "Pendiente" por su
+    # total completo. Se recalcula el saldo real desde custom_efast_payments,
+    # igual que ya hacen Estados de Cuenta y Antigüedad de Saldos.
     query = f"""
-        SELECT name, posting_date, customer, customer_name, total, total_taxes_and_charges, grand_total, outstanding_amount
+        SELECT name, posting_date, customer, customer_name, total, total_taxes_and_charges, grand_total,
+            GREATEST(grand_total - COALESCE((
+                SELECT SUM(amount)
+                FROM `tabeFast Invoice Payment`
+                WHERE parent = `tabSales Invoice`.name AND parenttype = 'Sales Invoice' AND parentfield = 'custom_efast_payments'
+            ), 0), 0) AS outstanding_amount
         FROM `tabSales Invoice`
         WHERE posting_date BETWEEN %(start)s AND %(end)s AND { " AND ".join(conditions) }
         ORDER BY posting_date DESC, name DESC
@@ -188,14 +271,16 @@ def get_sales_by_date(start_date: str, end_date: str, customer: str = None, ware
 
 @frappe.whitelist()
 def get_sales_by_product(start_date: str, end_date: str, item_code: str = None,
-                         item_group: str = None, customer: str = None, warehouse: str = None, company: str = None, establecimiento: str = None) -> dict:
+                         item_group: str = None, customer: str = None, warehouse=None,
+                         owners=None, company: str = None, establecimiento: str = None) -> dict:
     _require_report(company, "reporte_ventas_producto")
 
     company_cond, company_vals = _build_company_condition_alias(company, "p")
     sp_cond, sp_vals = _sales_partner_condition("p")
-    conditions = ["p.docstatus = 1", "COALESCE(p.bfel_documento_anulado, 0) != 1", "p.posting_date BETWEEN %(start)s AND %(end)s", company_cond, sp_cond]
-    values = {"start": start_date, "end": end_date, **company_vals, **sp_vals}
-    
+    owner_cond, owner_vals = _resolve_owner_filter(company, owners, "p")
+    conditions = ["p.docstatus = 1", "COALESCE(p.bfel_documento_anulado, 0) != 1", "p.posting_date BETWEEN %(start)s AND %(end)s", company_cond, sp_cond, owner_cond]
+    values = {"start": start_date, "end": end_date, **company_vals, **sp_vals, **owner_vals}
+
     if item_code:
         conditions.append("i.item_code = %(item_code)s")
         values["item_code"] = item_code
@@ -209,10 +294,7 @@ def get_sales_by_product(start_date: str, end_date: str, item_code: str = None,
         values["customer"] = customer
         
     wh_mode, wh_val = _resolve_warehouse_filter(company, warehouse)
-    if wh_mode == "eq":
-        conditions.append("i.warehouse = %(warehouse)s")
-        values["warehouse"] = wh_val
-    elif wh_mode == "in":
+    if wh_mode == "in":
         conditions.append("i.warehouse IN %(allowed_warehouses)s")
         values["allowed_warehouses"] = wh_val
 
@@ -249,13 +331,15 @@ def get_sales_by_product(start_date: str, end_date: str, item_code: str = None,
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_cancelled_invoices(start_date: str, end_date: str, customer: str = None, company: str = None, establecimiento: str = None) -> dict:
+def get_cancelled_invoices(start_date: str, end_date: str, customer: str = None, owners=None,
+                           company: str = None, establecimiento: str = None) -> dict:
     _require_report(company, "reporte_facturas_canceladas")
 
     company_cond, company_vals = _build_company_condition(company)
     sp_cond, sp_vals = _sales_partner_condition()
-    conditions = ["(docstatus = 2 OR COALESCE(bfel_documento_anulado, 0) = 1)", "posting_date BETWEEN %(start)s AND %(end)s", company_cond, sp_cond]
-    values = {"start": start_date, "end": end_date, **company_vals, **sp_vals}
+    owner_cond, owner_vals = _resolve_owner_filter(company, owners)
+    conditions = ["(docstatus = 2 OR COALESCE(bfel_documento_anulado, 0) = 1)", "posting_date BETWEEN %(start)s AND %(end)s", company_cond, sp_cond, owner_cond]
+    values = {"start": start_date, "end": end_date, **company_vals, **sp_vals, **owner_vals}
     
     if customer:
         conditions.append("customer = %(customer)s")
@@ -289,15 +373,17 @@ def get_cancelled_invoices(start_date: str, end_date: str, customer: str = None,
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_customer_statement(customer: str, start_date: str = None, end_date: str = None, doc_type_filter: str = None, company: str = None, establecimiento: str = None) -> dict:
+def get_customer_statement(customer: str, start_date: str = None, end_date: str = None, doc_type_filter: str = None,
+                            owners=None, company: str = None, establecimiento: str = None) -> dict:
     _require_report(company, "reporte_estados_cuenta")
     if not customer:
         return {"ledger": [], "summary": {}}
-        
+
     company_cond, company_vals = _build_company_condition(company)
     sp_cond, sp_vals = _sales_partner_condition()
-    values = {"customer": customer, **company_vals, **sp_vals}
-    conditions = ["customer = %(customer)s", "docstatus = 1", "COALESCE(bfel_documento_anulado, 0) != 1", company_cond, sp_cond]
+    owner_cond, owner_vals = _resolve_owner_filter(company, owners)
+    values = {"customer": customer, **company_vals, **sp_vals, **owner_vals}
+    conditions = ["customer = %(customer)s", "docstatus = 1", "COALESCE(bfel_documento_anulado, 0) != 1", company_cond, sp_cond, owner_cond]
     
     if start_date and end_date:
         conditions.append("posting_date BETWEEN %(start)s AND %(end)s")
@@ -396,13 +482,14 @@ def get_customer_statement(customer: str, start_date: str = None, end_date: str 
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_aging_receivables(customer: str = None, company: str = None, establecimiento: str = None) -> dict:
+def get_aging_receivables(customer: str = None, owners=None, company: str = None, establecimiento: str = None) -> dict:
     _require_report(company, "reporte_antiguedad_saldos")
 
     company_cond, company_vals = _build_company_condition(company)
     sp_cond, sp_vals = _sales_partner_condition()
-    conditions = ["docstatus = 1", "is_return = 0", "COALESCE(bfel_documento_anulado, 0) != 1", company_cond, sp_cond]
-    values = {**company_vals, **sp_vals}
+    owner_cond, owner_vals = _resolve_owner_filter(company, owners)
+    conditions = ["docstatus = 1", "is_return = 0", "COALESCE(bfel_documento_anulado, 0) != 1", company_cond, sp_cond, owner_cond]
+    values = {**company_vals, **sp_vals, **owner_vals}
     
     if customer:
         conditions.append("customer = %(customer)s")
@@ -517,13 +604,15 @@ def get_aging_receivables(customer: str = None, company: str = None, establecimi
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_quotations_report(start_date: str = None, end_date: str = None, customer: str = None, company: str = None, establecimiento: str = None) -> dict:
+def get_quotations_report(start_date: str = None, end_date: str = None, customer: str = None, owners=None,
+                           company: str = None, establecimiento: str = None) -> dict:
     _require_report(company, "reporte_cotizaciones")
 
     company_cond, company_vals = _build_company_condition(company)
     sp_cond, sp_vals = _sales_partner_condition()
-    conditions = ["docstatus = 0", "is_return = 0", "is_debit_note = 0", "COALESCE(bfel_documento_anulado, 0) != 1", company_cond, sp_cond]
-    values = {**company_vals, **sp_vals}
+    owner_cond, owner_vals = _resolve_owner_filter(company, owners)
+    conditions = ["docstatus = 0", "is_return = 0", "is_debit_note = 0", "COALESCE(bfel_documento_anulado, 0) != 1", company_cond, sp_cond, owner_cond]
+    values = {**company_vals, **sp_vals, **owner_vals}
     
     if start_date and end_date:
         conditions.append("posting_date BETWEEN %(start)s AND %(end)s")
@@ -561,13 +650,15 @@ def get_quotations_report(start_date: str = None, end_date: str = None, customer
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_payments_report(start_date: str, end_date: str, payment_method: str = None, company: str = None, establecimiento: str = None) -> dict:
+def get_payments_report(start_date: str, end_date: str, payment_method: str = None, owners=None,
+                         company: str = None, establecimiento: str = None) -> dict:
     _require_report(company, "reporte_recibos_pagos")
 
     company_cond, company_vals = _build_company_condition_alias(company, "p")
     sp_cond, sp_vals = _sales_partner_condition("p")
-    conditions = ["p.docstatus = 1", "COALESCE(p.bfel_documento_anulado, 0) != 1", "ip.payment_date BETWEEN %(start)s AND %(end)s", company_cond, sp_cond]
-    values = {"start": start_date, "end": end_date, **company_vals, **sp_vals}
+    owner_cond, owner_vals = _resolve_owner_filter(company, owners, "ip")
+    conditions = ["p.docstatus = 1", "COALESCE(p.bfel_documento_anulado, 0) != 1", "ip.payment_date BETWEEN %(start)s AND %(end)s", company_cond, sp_cond, owner_cond]
+    values = {"start": start_date, "end": end_date, **company_vals, **sp_vals, **owner_vals}
     
     if payment_method:
         conditions.append("ip.payment_method = %(method)s")
@@ -614,19 +705,21 @@ def get_payments_report(start_date: str, end_date: str, payment_method: str = No
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_uncertified_invoices(company: str = None, establecimiento: str = None) -> dict:
+def get_uncertified_invoices(owners=None, company: str = None, establecimiento: str = None) -> dict:
     _require_report(company, "reporte_facturas_canceladas")
 
     company_cond, company_vals = _build_company_condition(company)
     sp_cond, sp_vals = _sales_partner_condition()
+    owner_cond, owner_vals = _resolve_owner_filter(company, owners)
     conditions = [
         "docstatus = 1",
         company_cond,
         sp_cond,
+        owner_cond,
         "bfel_status = '01 Enviar'",
         "(bfel_uuid IS NULL OR bfel_uuid = '')"
     ]
-    values = {**company_vals, **sp_vals}
+    values = {**company_vals, **sp_vals, **owner_vals}
     
     if establecimiento:
         conditions.append("bfel_establecimiento = %(establecimiento)s")
@@ -656,11 +749,13 @@ def get_uncertified_invoices(company: str = None, establecimiento: str = None) -
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_sales_growth_analysis(year: str = None, month: str = None, company: str = None, establecimiento: str = None) -> dict:
+def get_sales_growth_analysis(year: str = None, month: str = None, owners=None,
+                               company: str = None, establecimiento: str = None) -> dict:
     _require_report(company, "reporte_crecimiento_ventas")
 
     company_cond, company_vals = _build_company_condition(company)
     sp_cond, sp_vals = _sales_partner_condition()
+    owner_cond, owner_vals = _resolve_owner_filter(company, owners)
     current_year = int(year) if year else datetime.datetime.now().year
     current_month = int(month) if month else datetime.datetime.now().month
 
@@ -672,11 +767,11 @@ def get_sales_growth_analysis(year: str = None, month: str = None, company: str 
         prev_year = current_year
 
     # Ventas diarias año actual/mes seleccionado
-    curr_conditions = ["docstatus = 1", "YEAR(posting_date) = %(year)s", "MONTH(posting_date) = %(month)s", company_cond, sp_cond, "COALESCE(bfel_documento_anulado, 0) != 1"]
-    curr_values = {"year": current_year, "month": current_month, **company_vals, **sp_vals}
+    curr_conditions = ["docstatus = 1", "YEAR(posting_date) = %(year)s", "MONTH(posting_date) = %(month)s", company_cond, sp_cond, owner_cond, "COALESCE(bfel_documento_anulado, 0) != 1"]
+    curr_values = {"year": current_year, "month": current_month, **company_vals, **sp_vals, **owner_vals}
 
-    prev_conditions = ["docstatus = 1", "YEAR(posting_date) = %(year)s", "MONTH(posting_date) = %(month)s", company_cond, sp_cond, "COALESCE(bfel_documento_anulado, 0) != 1"]
-    prev_values = {"year": prev_year, "month": prev_month, **company_vals, **sp_vals}
+    prev_conditions = ["docstatus = 1", "YEAR(posting_date) = %(year)s", "MONTH(posting_date) = %(month)s", company_cond, sp_cond, owner_cond, "COALESCE(bfel_documento_anulado, 0) != 1"]
+    prev_values = {"year": prev_year, "month": prev_month, **company_vals, **sp_vals, **owner_vals}
     
     if establecimiento:
         curr_conditions.append("bfel_establecimiento = %(establecimiento)s")
@@ -752,4 +847,121 @@ def get_sales_growth_analysis(year: str = None, month: str = None, company: str 
             "total_previous": total_prev,
             "overall_growth": round(overall_growth, 2)
         }
+    }
+
+
+# ---------------------------------------------------------------------------
+# 10. Auditoría de Sistema (resumen por usuario)
+# ---------------------------------------------------------------------------
+# Reutiliza get_data() del Script Report "FacEx Auditoria de Sistema" (misma
+# consulta, ya probada) — este endpoint solo la expone dentro del panel de
+# Reportes de FacEx Clásico, gateada por el flag granular de FacEx Settings
+# (el Script Report en Desk solo valida roles, no este flag).
+
+@frappe.whitelist()
+def get_system_audit(start_date: str, end_date: str, owners=None, company: str = None) -> dict:
+    _require_report(company, "reporte_auditoria_sistema")
+
+    from facex_multi.facex_multi.report.facex_auditoria_de_sistema.facex_auditoria_de_sistema import get_data
+
+    rows = get_data(frappe._dict({
+        "from_date": start_date, "to_date": end_date, "owners": owners, "company": company,
+    }))
+
+    count_keys = [
+        "cotizaciones_count", "facturas_no_enviar_count", "facturas_enviar_count",
+        "pagos_count", "guias_pendientes_count",
+    ]
+    amount_keys = [
+        "cotizaciones_monto", "facturas_no_enviar_monto", "facturas_enviar_monto",
+        "pagos_monto", "guias_pendientes_monto",
+    ]
+    return {
+        "rows": rows,
+        "summary": {
+            "user_count": len(rows),
+            "total_operaciones": sum(r.get("total_operaciones", 0) for r in rows),
+            "total_monto": sum(sum(r.get(k, 0) for k in amount_keys) for r in rows),
+            "count": len(rows),
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# 12. Vista rápida de una factura (panel lateral de los reportes)
+# ---------------------------------------------------------------------------
+
+@frappe.whitelist()
+def get_invoice_peek(name: str, company: str = None) -> dict:
+    """Resumen de una factura para mirarla sin salir del reporte.
+
+    La factura tiene que caer dentro del MISMO ámbito que los informes
+    (compañía + socio de ventas + usuario creador). Si no, para este usuario
+    no existe: el nombre llega del cliente y sin esta comprobación cualquiera
+    podría espiar facturas de otro vendedor escribiendo su número.
+
+    Las líneas de pago sólo se incluyen con `reporte_recibos_pagos`, el mismo
+    permiso que exige el informe de Recibos y Pagos.
+    """
+    check_permission()
+
+    company_cond, company_vals = _build_company_condition(company)
+    sp_cond, sp_vals = _sales_partner_condition()
+    owner_cond, owner_vals = _resolve_owner_filter(company, None)
+    values = {"name": name, **company_vals, **sp_vals, **owner_vals}
+
+    rows = frappe.db.sql(
+        f"""
+        SELECT name, posting_date, due_date, customer, customer_name, bfel_nit,
+            company, currency, docstatus, status, total, total_taxes_and_charges,
+            discount_amount, grand_total, bfel_status, bfel_uuid, bfel_docto_serie,
+            bfel_docto_no, bfel_establecimiento, owner,
+            COALESCE(bfel_documento_anulado, 0) AS anulado
+        FROM `tabSales Invoice`
+        WHERE name = %(name)s AND {company_cond} AND {sp_cond} AND {owner_cond}
+        """,
+        values,
+        as_dict=True,
+    )
+    if not rows:
+        frappe.throw("La factura no existe o no está a su alcance.", frappe.PermissionError)
+    inv = rows[0]
+
+    items = frappe.db.sql(
+        """
+        SELECT item_code, item_name, qty, rate, amount
+        FROM `tabSales Invoice Item`
+        WHERE parent = %(name)s
+        ORDER BY idx
+        """,
+        {"name": name},
+        as_dict=True,
+    )
+
+    payments = frappe.db.sql(
+        """
+        SELECT payment_date, payment_method, reference, amount
+        FROM `tabeFast Invoice Payment`
+        WHERE parent = %(name)s AND parenttype = 'Sales Invoice'
+            AND parentfield = 'custom_efast_payments'
+        ORDER BY idx
+        """,
+        {"name": name},
+        as_dict=True,
+    )
+    total_paid = sum(float(p.amount or 0) for p in payments)
+
+    from facex_multi.api.permissions import get_facex_permissions_for_company
+
+    perms = get_facex_permissions_for_company(get_effective_company(company))
+
+    return {
+        "invoice": inv,
+        "items": items,
+        "item_count": len(items),
+        "total_paid": total_paid,
+        "outstanding": max(float(inv.grand_total or 0) - total_paid, 0.0),
+        "payments": payments if perms.get("reporte_recibos_pagos") else [],
+        "can_see_payments": bool(perms.get("reporte_recibos_pagos")),
+        "owner_name": frappe.db.get_value("User", inv.owner, "full_name") or inv.owner,
     }
