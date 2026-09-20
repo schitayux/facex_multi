@@ -1256,6 +1256,11 @@ class EFastSalePage {
             <button id="ef-rep-btn-apply" class="ef-btn ef-btn-primary" style="padding: 8px 16px; font-size: 12px; font-weight: 700;">
               Generar Reporte
             </button>
+            <button id="ef-rep-btn-share" class="ef-btn ef-btn-secondary" style="padding: 8px 14px; font-size: 12px; font-weight: 700; display: flex; align-items: center; gap: 6px;"
+              title="Copiar un link a este reporte con los filtros que tiene puestos">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+              Copiar link
+            </button>
           </div>
         </div>
         
@@ -9943,6 +9948,16 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		this.$body.find("#ef-rep-btn-apply").off("click").on("click", () => {
 			this._run_active_report();
+		});
+
+		// El link se arma con los filtros que están puestos ahora, sin depender
+		// de que la URL ya los refleje (el reporte puede no haberse corrido aún).
+		this.$body.find("#ef-rep-btn-share").off("click").on("click", () => {
+			const qs = new URLSearchParams(this._report_url_params()).toString();
+			frappe.utils.copy_to_clipboard(
+				`${window.location.origin}/app/facex?${qs}`,
+				"Link copiado. Quien lo abra verá este reporte con estos filtros, limitado a lo que sus permisos le dejen ver."
+			);
 		});
 
 		this.$body.find("#ef-report-btn-export").off("click").on("click", () => {
