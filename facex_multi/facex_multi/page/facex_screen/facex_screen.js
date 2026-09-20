@@ -118,6 +118,7 @@ class EFastPOSScreen {
 				this.defaults = d;
 				this.company_config = d.company_config || {};
 				this.perms = d.permissions || {};
+				this.$body.find("#efs-flete-toggle").css("display", this.company_config.item_flete ? "flex" : "none");
 				this.posWarehouse = d.default_pos_warehouse || "";
 				this.doc.company = d.company || "";
 				this.doc.naming_series = (d.naming_series || [])[0] || "";
@@ -185,7 +186,7 @@ class EFastPOSScreen {
 	_load_warehouses() {
 		frappe.call({
 			method: "facex_multi.api.invoice.get_warehouses",
-			args: { company: this.doc.company },
+			args: { company: this.doc.company, operacion: "venta" },
 			callback: (r) => {
 				this.warehouses = r.message || [];
 			},
@@ -218,7 +219,8 @@ class EFastPOSScreen {
 	}
 
 	_apply_customer_price_list(plist) {
-		// La lista de precios de la ficha del cliente SIEMPRE gana.
+		// Solo al cambiar de cliente: se hereda su lista. Si luego el cajero la
+		// cambia a mano, esa elección manda y es la que se factura.
 		const next = plist || this.defaults.default_price_list || this.doc.selling_price_list || "";
 		if ((this.doc.selling_price_list || "") === next) return;
 		this.doc.selling_price_list = next;
@@ -374,6 +376,10 @@ class EFastPOSScreen {
 							<div class="efs-ticket-empty" id="efs-ticket-empty">Toque un producto para agregarlo.</div>
 						</div>
 						<div class="efs-ticket-footer">
+							<label id="efs-flete-toggle" class="efs-flete-toggle" style="display:none; align-items:center; gap:8px; font-size:13px; font-weight:700; color:#153375; background:#eef2ff; border:1px solid #c7d2fe; border-radius:8px; padding:8px 12px; margin-bottom:8px; cursor:pointer; user-select:none;">
+								<input id="efs-flete-check" type="checkbox" style="width:18px; height:18px; cursor:pointer;" />
+								Incluir Flete
+							</label>
 							<div class="efs-total-row efs-total-row-grand">
 								<span>Subtotal</span>
 								<span id="efs-subtotal">Q 0.00</span>
@@ -429,6 +435,7 @@ class EFastPOSScreen {
 			this._render_vendor_bar();
 		});
 		this.$body.find("#efs-btn-suspend").on("click", () => this._suspend_sale());
+		this.$body.find("#efs-flete-check").on("change", (e) => this._toggle_flete(e.target.checked));
 		// Icono de compañía (header): un click lleva siempre al menú principal.
 		this.$body.find("#efs-company-badge").on("click", () => this._show_home());
 		this._bind_user_menu();
@@ -608,6 +615,9 @@ class EFastPOSScreen {
 			items: [
 				{ id: "held", label: __("Ventas en espera"), hotkey: "Ctrl+H", badgeId: "efs-held-badge", action: () => this._show_held_view() },
 				{ id: "history", label: __("Historial"), action: () => this._show_history_view() },
+				...((p.cierre_diario_instalado && (p.puede_crear_cierres || p.es_gerencia))
+					? [{ id: "cierre", label: __("Cierre Diario"), action: () => { window.location.href = "/app/facex-cierre"; } }]
+					: []),
 			],
 		});
 
@@ -1253,7 +1263,9 @@ class EFastPOSScreen {
 		};
 
 		this.$body.find("#efs-cust-search-inline").on("input", (e) => renderList(e.target.value.trim()));
-		this.$body.find("#efs-btn-new-customer-inline").on("click", () => this._show_new_customer_dialog());
+		this.$body.find("#efs-btn-new-customer-inline")
+			.toggle(!!(this.perms || {}).crea_clientes)
+			.on("click", () => this._show_new_customer_dialog());
 		renderList("");
 		this._render_customer_details_panel();
 	}
@@ -1962,9 +1974,46 @@ class EFastPOSScreen {
 	}
 
 	_remove_line(idx) {
+		if (this.doc.items[idx] && this.doc.items[idx]._is_flete_auto) {
+			this.$body.find("#efs-flete-check").prop("checked", false);
+		}
 		this.doc.items.splice(idx, 1);
 		this._render_cart();
 		this._render_grid();
+	}
+
+	// ── Flete automático (Ítem de Flete configurado en FacEx Settings) ─────
+	_toggle_flete(checked) {
+		const fleteCode = (this.company_config || {}).item_flete;
+		if (!fleteCode) return;
+		const idx = this.doc.items.findIndex((r) => r.item_code === fleteCode && r._is_flete_auto);
+		if (checked) {
+			if (idx !== -1) return;
+			frappe.call({
+				method: "facex_multi.api.invoice.get_item_details",
+				args: {
+					item_code: fleteCode,
+					company: this.doc.company || this.defaults.company || "",
+				},
+				callback: (r) => {
+					const d = r.message || {};
+					const newIdx = this._push_cart_row({
+						item_code: fleteCode,
+						item_name: d.item_name || fleteCode,
+						rate: d.rate || 0,
+						stock_uom: d.uom,
+						is_stock_item: d.is_stock_item,
+						has_serial_no: d.has_serial_no,
+						custom_tiene_adenda: d.custom_tiene_adenda,
+					});
+					this.doc.items[newIdx]._is_flete_auto = 1;
+					this._render_cart();
+					this._render_grid();
+				},
+			});
+		} else if (idx !== -1) {
+			this._remove_line(idx);
+		}
 	}
 
 	_calc_line_amount(row) {
@@ -2460,6 +2509,14 @@ class EFastPOSScreen {
 	}
 
 	_show_new_customer_dialog(onCreate) {
+		if (!(this.perms || {}).crea_clientes) {
+			frappe.msgprint({
+				title: __("Sin permiso"),
+				message: __("No tiene permiso para crear clientes."),
+				indicator: "red",
+			});
+			return;
+		}
 		const d = new frappe.ui.Dialog({
 			title: __("Nuevo Cliente"),
 			fields: [
@@ -2517,11 +2574,17 @@ class EFastPOSScreen {
 	// a validar (docstatus=1), porque get_held_sales ya filtra por docstatus=0.
 	_build_save_payload({ suspend = null } = {}) {
 		const d = this.doc;
+		// Respeta la configuración de compañía (maneja_inventario), igual que
+		// FacEx Clásico (_build_save_payload en facex.js) — antes quedaba
+		// hardcodeado en 1, así que una compañía con inventario desactivado
+		// veía su kardex desincronizado entre Clásico y Screen.
+		const _cfg = this.company_config || {};
+		const _update_stock = (_cfg.maneja_inventario && (d.items || []).some(r => r.is_stock_item)) ? 1 : 0;
 		return {
 			doctype: "Sales Invoice",
 			name: d.name || undefined,
 			es_fiscal: 1,
-			update_stock: 1,
+			update_stock: _update_stock,
 			naming_series: !d.name ? d.naming_series : undefined,
 			customer: d.customer,
 			company: d.company,
@@ -2532,7 +2595,7 @@ class EFastPOSScreen {
 			selling_price_list: d.selling_price_list || "",
 			sales_partner: d.sales_partner || "",
 			bfel_establecimiento: String(d.bfel_establecimiento || ""),
-			bfel_status: "01 Enviar",
+			bfel_status: this.defaults.bfel_status_default || "01 Enviar",
 			bfel_venta_suspendida: suspend === null ? (d.bfel_venta_suspendida ? 1 : 0) : (suspend ? 1 : 0),
 			items: (d.items || []).map((r) => ({
 				item_code: r.item_code,
@@ -2914,7 +2977,7 @@ class EFastPOSScreen {
 		$splits.append(`
 			<div class="efs-split-row" data-idx="${idx}">
 				<select class="efs-split-method">
-					${["Efectivo", "Tarjeta de Crédito", "Transferencia", "Cheque"].map((m) => `<option value="${_efs_esc(m)}">${_efs_esc(m)}</option>`).join("")}
+					${["Efectivo", "Tarjeta de Crédito", "Transferencia", "Cheque", "Retención"].map((m) => `<option value="${_efs_esc(m)}">${_efs_esc(m)}</option>`).join("")}
 				</select>
 				<input type="number" class="efs-split-amount" value="${remaining.toFixed(2)}" min="0" step="any" />
 				<input type="text" class="efs-split-reference" placeholder="Referencia…" style="display:none;" />
@@ -2994,6 +3057,22 @@ class EFastPOSScreen {
 
 	_confirm_payment() {
 		const st = this.paymentState;
+
+		// Guardar/Validar/Certificar son un solo flujo aquí (no hay botones
+		// separados como en FacEx Clásico), así que se exigen los 3 permisos
+		// juntos antes de dejar avanzar — mismos flags que ya exige el
+		// backend en save_draft()/submit_invoice()/certify_invoice()
+		// (invoice.py), para no mostrar un flujo de cobro que va a fallar a
+		// medio camino.
+		const p = this.perms || {};
+		if (!p.puede_guardar || !p.puede_validar || !p.puede_certificar) {
+			frappe.msgprint({
+				title: __("Sin permiso"),
+				message: __("No tiene permiso para completar la venta (guardar, validar o certificar la factura). Consulte con un administrador."),
+				indicator: "red",
+			});
+			return;
+		}
 
 		// Venta al crédito: sin pago inmediato, solo certificar la factura.
 		if (st.method === "Crédito") {
@@ -3705,6 +3784,14 @@ class EFastPOSScreen {
 
 	_suspend_sale() {
 		if (!(this.doc.items || []).length) return;
+		if (!(this.perms || {}).puede_guardar) {
+			frappe.msgprint({
+				title: __("Sin permiso"),
+				message: __("No tiene permiso para guardar borradores de factura."),
+				indicator: "red",
+			});
+			return;
+		}
 		frappe.call({
 			method: "facex_multi.api.invoice.save_draft",
 			args: { doc_json: JSON.stringify(this._build_save_payload({ suspend: true })) },
@@ -3938,12 +4025,19 @@ class EFastPOSScreen {
 					// catálogo ya cargado en memoria por item_code. Los datos reales de
 					// serie/adenda (serial_no, tiene_adenda, color, etc.) ya vienen
 					// completos desde la BD, no hay que tocarlos.
+					const fleteCode = (this.company_config || {}).item_flete;
+					let fleteFound = false;
 					(this.doc.items || []).forEach((row) => {
 						const match = this.allItems.find((it) => it.item_code === row.item_code);
 						row._has_serial_no = match ? match.has_serial_no : 0;
 						row._custom_tiene_adenda = match ? match.custom_tiene_adenda : 0;
 						row._item_group = match ? match.item_group : "";
+						if (fleteCode && row.item_code === fleteCode) {
+							row._is_flete_auto = 1;
+							fleteFound = true;
+						}
 					});
+					this.$body.find("#efs-flete-check").prop("checked", fleteFound);
 
 					// ERPNext fuerza posting_date a la fecha de hoy en cada guardado
 					// (esta app no marca "set_posting_time"), así que una venta en
@@ -4255,6 +4349,7 @@ class EFastPOSScreen {
 				this.doc.sales_partner = this.walkinCustomer.default_sales_partner;
 			}
 		}
+		this.$body.find("#efs-flete-check").prop("checked", false);
 		this._render_customer_bar();
 		this._render_cart();
 		this._render_grid();

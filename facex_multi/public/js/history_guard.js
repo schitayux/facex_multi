@@ -25,14 +25,26 @@ frappe.provide("facex_multi");
  * Por eso cada Page debe invocarla tanto en on_page_load como en
  * on_page_show (una vez que el controlador ya existe). Volver a llamarla es
  * seguro: reemplaza el listener anterior en vez de acumularlo.
+ *
+ * `on_back` (opcional) permite que la página resuelva el Atrás por dentro —
+ * volver a la vista anterior del mismo page en vez de abandonarlo. Si
+ * devuelve true el guard se reinserta y no se sale; si devuelve false (o no
+ * se pasa) aplica el comportamiento de siempre: confirmar si hay cambios sin
+ * guardar y salir a `to`.
  */
-facex_multi.setup_back_guard = function ({ to = "/app", is_dirty = () => false } = {}) {
+facex_multi.setup_back_guard = function ({ to = "/app", is_dirty = () => false, on_back = null } = {}) {
 	const push_guard_state = () => history.pushState({ facex_back_guard: true }, "", window.location.href);
 	push_guard_state();
 
 	$(window)
 		.off("popstate.facexBackGuard")
 		.on("popstate.facexBackGuard", () => {
+			// La navegación interna tiene prioridad: solo se considera salir
+			// de la página cuando ya no hay a dónde volver por dentro.
+			if (on_back && on_back()) {
+				push_guard_state();
+				return;
+			}
 			if (is_dirty()) {
 				frappe.confirm(
 					__("Hay cambios sin guardar. ¿Desea salir de todos modos?"),

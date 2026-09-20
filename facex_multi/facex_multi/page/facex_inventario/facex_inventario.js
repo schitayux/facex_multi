@@ -76,10 +76,14 @@ const INV_BOM = [
 
 const WAREHOUSE_FIELD_LABEL = { source: "Almacén origen", target: "Almacén destino" };
 
+// `ops` mapea cada extremo a la operación que esa bodega debe tener marcada en
+// Bodegas Habilitadas (FacEx Settings); debe coincidir con _MOVEMENT_CONFIG del
+// backend, que es quien valida de verdad.
 const MOVEMENT_CONFIG = {
 	in: {
 		label: "Entrada",
 		fields: ["target"],
+		ops: { target: "entrada" },
 		show_cost: true,
 		show_account: true,
 		show_total: true,
@@ -89,6 +93,7 @@ const MOVEMENT_CONFIG = {
 	out: {
 		label: "Salida",
 		fields: ["source"],
+		ops: { source: "salida" },
 		show_cost: false,
 		show_account: true,
 		show_total: true,
@@ -98,6 +103,7 @@ const MOVEMENT_CONFIG = {
 	transfer: {
 		label: "Transferencia",
 		fields: ["source", "target"],
+		ops: { source: "transferencia", target: "transferencia" },
 		show_cost: false,
 		show_account: false,
 		show_total: false,
@@ -617,10 +623,16 @@ class FacexInventario {
 		};
 	}
 
+	// Bodegas que tienen marcada `operacion` en Bodegas Habilitadas del usuario.
+	// Es un subconjunto de defaults.warehouses, que sigue siendo la lista completa
+	// de visibilidad para los reportes.
+	_warehouses_for(operacion) {
+		return (this.defaults.warehouses_por_operacion || {})[operacion] || [];
+	}
+
 	_render_movement() {
 		const d = this.defaults;
 		const cfg = this._movement_cfg();
-		const warehouses = d.warehouses || [];
 		const first_day = frappe.datetime.month_start();
 		const last_day = frappe.datetime.month_end();
 
@@ -647,7 +659,7 @@ class FacexInventario {
           <label class="inv-label">${WAREHOUSE_FIELD_LABEL[f]} <span style="color:#e03e2d;">*</span></label>
           <select id="inv-e-warehouse-${f}" class="inv-select inv-e-warehouse-field" data-wh="${f}" style="width:100%;">
             <option value="">Seleccione...</option>
-            ${warehouses.map(w => `<option value="${frappe.utils.escape_html(w)}" ${w === (f === "source" ? this._entry_prefill_source : this._entry_prefill_target) ? "selected" : ""}>${frappe.utils.escape_html(w)}</option>`).join("")}
+            ${this._warehouses_for(cfg.ops[f]).map(w => `<option value="${frappe.utils.escape_html(w)}" ${w === (f === "source" ? this._entry_prefill_source : this._entry_prefill_target) ? "selected" : ""}>${frappe.utils.escape_html(w)}</option>`).join("")}
           </select>
         </div>`).join("")}
         <div>
@@ -1662,6 +1674,25 @@ class FacexInventario {
 		return val === "__unassigned__" ? "" : val;
 	}
 
+	// Filtro "Usuario Creador" (selección múltiple) — misma fuente
+	// (this.defaults.report_users) reutilizada en todos los reportes de
+	// inventario que la soportan.
+	_owner_filter_html(selectId) {
+		const users = this.defaults.report_users || [];
+		return `
+<div>
+  <label class="inv-label">Usuario Creador</label>
+  <select id="${selectId}" class="inv-select" multiple size="1">
+    ${users.map(u => `<option value="${frappe.utils.escape_html(u.name)}">${frappe.utils.escape_html(u.full_name || u.name)}</option>`).join("")}
+  </select>
+</div>`;
+	}
+
+	// Devuelve un array (posiblemente vacío) de usuarios seleccionados.
+	_owner_param(selectId) {
+		return this.$body.find(`#${selectId}`).val() || [];
+	}
+
 	// Panel de filtros colapsable, reutilizado en Kardex / Existencias / Trazabilidad.
 	// Los campos van en `_filter_panel_html(gridHtml, refreshBtnHtml)`.
 	_filter_panel_html(gridHtml, actionsHtml) {
@@ -1722,12 +1753,12 @@ class FacexInventario {
     </div>
     <div>
       <label class="inv-label">Almacén</label>
-      <select id="inv-k-warehouse" class="inv-select">
-        <option value="">Todos</option>
+      <select id="inv-k-warehouse" class="inv-select" multiple size="1">
         ${warehouses.map(w => `<option value="${frappe.utils.escape_html(w)}">${frappe.utils.escape_html(w)}</option>`).join("")}
       </select>
     </div>
     ${this._sucursal_filter_html("inv-k-establecimiento")}
+    ${this._owner_filter_html("inv-k-owner")}
     <div style="position:relative;">
       <label class="inv-label">Producto</label>
       <input type="text" id="inv-k-item" class="inv-select" placeholder="Código o nombre..." autocomplete="off">
@@ -1834,6 +1865,7 @@ class FacexInventario {
 				warehouse: this.$body.find("#inv-k-warehouse").val(),
 				item_code: this.$body.find("#inv-k-item-code").val(),
 				establecimiento: this._establecimiento_param("inv-k-establecimiento"),
+				owners: this._owner_param("inv-k-owner"),
 			},
 			callback: (r) => {
 				const rows = (r.message && r.message.rows) || [];
@@ -2230,12 +2262,12 @@ class FacexInventario {
     </div>
     <div>
       <label class="inv-label">Almacén</label>
-      <select id="inv-t-warehouse" class="inv-select">
-        <option value="">Todos</option>
+      <select id="inv-t-warehouse" class="inv-select" multiple size="1">
         ${warehouses.map(w => `<option value="${frappe.utils.escape_html(w)}">${frappe.utils.escape_html(w)}</option>`).join("")}
       </select>
     </div>
     ${this._sucursal_filter_html("inv-t-establecimiento")}
+    ${this._owner_filter_html("inv-t-owner")}
   `, `<button type="button" id="inv-t-refresh" class="inv-btn inv-btn-primary">Buscar</button>`)}
 
   <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;overflow-x:auto;">
@@ -2297,19 +2329,20 @@ class FacexInventario {
 		const item_code = this.$body.find("#inv-t-item-code").val();
 		const warehouse = this.$body.find("#inv-t-warehouse").val();
 		const establecimiento = this._establecimiento_param("inv-t-establecimiento");
+		const owners = this._owner_param("inv-t-owner");
 		const $table = this.$body.find("#inv-t-table");
 		$table.html(`<tr><td style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr>`);
 
 		if (this._traz_tab === "serial") {
 			frappe.call({
 				method: "facex_multi.api.stock_reports.get_serial_traceability",
-				args: { company: this.defaults.company, serial_no: search, item_code, warehouse, establecimiento },
+				args: { company: this.defaults.company, serial_no: search, item_code, warehouse, establecimiento, owners },
 				callback: (r) => this._render_traz_serial((r.message && r.message.rows) || []),
 			});
 		} else {
 			frappe.call({
 				method: "facex_multi.api.stock_reports.get_batch_traceability",
-				args: { company: this.defaults.company, batch_no: search, item_code, warehouse, establecimiento },
+				args: { company: this.defaults.company, batch_no: search, item_code, warehouse, establecimiento, owners },
 				callback: (r) => this._render_traz_batch((r.message && r.message.rows) || []),
 			});
 		}
@@ -2443,8 +2476,9 @@ ${rows.map(r => `<tr>
 		const filters = `
       <div><label class="inv-label">Desde</label><input type="date" id="inv-kp-from" class="inv-select" value="${frappe.datetime.month_start()}"></div>
       <div><label class="inv-label">Hasta</label><input type="date" id="inv-kp-to" class="inv-select" value="${frappe.datetime.month_end()}"></div>
-      <div><label class="inv-label">Almacén</label><select id="inv-kp-warehouse" class="inv-select"><option value="">Todos</option>${warehouses.map(w => `<option value="${frappe.utils.escape_html(w)}">${frappe.utils.escape_html(w)}</option>`).join("")}</select></div>
+      <div><label class="inv-label">Almacén</label><select id="inv-kp-warehouse" class="inv-select" multiple size="1">${warehouses.map(w => `<option value="${frappe.utils.escape_html(w)}">${frappe.utils.escape_html(w)}</option>`).join("")}</select></div>
       ${this._sucursal_filter_html("inv-kp-establecimiento")}
+      ${this._owner_filter_html("inv-kp-owner")}
       ${this._report_item_filter("inv-kp-item", "inv-kp-item-code")}
       ${cc ? this._cost_basis_select("inv-kp-basis") : ""}`;
 		const actions = `<button type="button" id="inv-kp-refresh" class="inv-btn inv-btn-primary">Filtrar</button>
@@ -2484,6 +2518,7 @@ ${rows.map(r => `<tr>
 			warehouse: this.$body.find("#inv-kp-warehouse").val(),
 			establecimiento: this._establecimiento_param("inv-kp-establecimiento"),
 			cost_basis: this.$body.find("#inv-kp-basis").val() || "estandar",
+			owners: this._owner_param("inv-kp-owner"),
 		};
 	}
 
@@ -2671,9 +2706,10 @@ ${rows.map(r => `<tr>
 		const filters = `
       <div><label class="inv-label">Desde</label><input type="date" id="inv-abc-from" class="inv-select" value="${frappe.datetime.add_days(frappe.datetime.get_today(), -90)}"></div>
       <div><label class="inv-label">Hasta</label><input type="date" id="inv-abc-to" class="inv-select" value="${frappe.datetime.get_today()}"></div>
-      <div><label class="inv-label">Almacén</label><select id="inv-abc-warehouse" class="inv-select"><option value="">Todos</option>${warehouses.map(w => `<option value="${frappe.utils.escape_html(w)}">${frappe.utils.escape_html(w)}</option>`).join("")}</select></div>
+      <div><label class="inv-label">Almacén</label><select id="inv-abc-warehouse" class="inv-select" multiple size="1">${warehouses.map(w => `<option value="${frappe.utils.escape_html(w)}">${frappe.utils.escape_html(w)}</option>`).join("")}</select></div>
       <div><label class="inv-label">Grupo de artículo</label><input type="text" id="inv-abc-group" class="inv-select" placeholder="Grupo..."></div>
       ${this._sucursal_filter_html("inv-abc-establecimiento")}
+      ${this._owner_filter_html("inv-abc-owner")}
       ${cc ? this._cost_basis_select("inv-abc-basis") : ""}`;
 		const actions = `<button type="button" id="inv-abc-refresh" class="inv-btn inv-btn-primary">Filtrar</button>
       <button type="button" id="inv-abc-export" class="inv-btn inv-btn-secondary">Exportar a Excel</button>`;
@@ -2704,6 +2740,7 @@ ${rows.map(r => `<tr>
 			item_group: this.$body.find("#inv-abc-group").val(),
 			establecimiento: this._establecimiento_param("inv-abc-establecimiento"),
 			cost_basis: this.$body.find("#inv-abc-basis").val() || "estandar",
+			owners: this._owner_param("inv-abc-owner"),
 		};
 	}
 
@@ -2743,7 +2780,8 @@ ${rows.map(r => `<tr>
       <div><label class="inv-label">Hasta</label><input type="date" id="inv-ep-to" class="inv-select" value="${frappe.datetime.month_end()}"></div>
       <div><label class="inv-label">Proveedor</label><input type="text" id="inv-ep-supplier" class="inv-select" placeholder="Nombre exacto del proveedor..."></div>
       ${this._report_item_filter("inv-ep-item", "inv-ep-item-code")}
-      ${this._sucursal_filter_html("inv-ep-establecimiento")}`;
+      ${this._sucursal_filter_html("inv-ep-establecimiento")}
+      ${this._owner_filter_html("inv-ep-owner")}`;
 		const actions = `<button type="button" id="inv-ep-refresh" class="inv-btn inv-btn-primary">Filtrar</button>
       <button type="button" id="inv-ep-export" class="inv-btn inv-btn-secondary">Exportar a Excel</button>`;
 		const body = `
@@ -2772,6 +2810,7 @@ ${rows.map(r => `<tr>
 			supplier: this.$body.find("#inv-ep-supplier").val(),
 			item_code: this.$body.find("#inv-ep-item-code").val(),
 			establecimiento: this._establecimiento_param("inv-ep-establecimiento"),
+			owners: this._owner_param("inv-ep-owner"),
 		};
 	}
 
@@ -2883,14 +2922,23 @@ ${rows.map(r => `<tr>
 		const fields = [
 			{ fieldtype: "Data", fieldname: "item_code", label: "Código", reqd: 1, read_only: !!item_code },
 			{ fieldtype: "Data", fieldname: "item_name", label: "Nombre", reqd: 1 },
-			{ fieldtype: "Data", fieldname: "item_group", label: "Grupo de artículo" },
+			{
+				fieldtype: "Link", fieldname: "item_group", label: "Grupo de artículo", options: "Item Group",
+				only_select: 1,
+				get_query: () => ({
+					or_filters: [
+						["bfel_company", "=", this.defaults.company],
+						["bfel_company_null", "=", 0],
+					],
+				}),
+			},
 			{
 				fieldtype: "Link", fieldname: "familia", label: "Familia", options: "FacEx Familia de Precio",
 				reqd: exige_fam ? 1 : 0,
 				get_query: () => ({ filters: { bfel_company: this.defaults.company, activa: 1 } }),
 				description: "Agrupa los ítems que comparten precio y costo. Al crear un ítem nuevo con familia se le generan solos sus precios.",
 			},
-			{ fieldtype: "Data", fieldname: "stock_uom", label: "UOM (unidad)" },
+			{ fieldtype: "Link", fieldname: "stock_uom", label: "UOM (unidad)", options: "UOM", only_select: 1 },
 			{ fieldtype: "Select", fieldname: "gestionado_por", label: "Gestión de stock", options: "General\nLote\nSerie", default: "General" },
 		];
 		if (cc) fields.push({ fieldtype: "Currency", fieldname: "costo_estandar", label: "Costo Estándar (FacEx)" });
@@ -3952,7 +4000,8 @@ ${rows.map(r => `<tr>
 	_render_transformacion() {
 		const d = this.defaults;
 		const t = this._trf;
-		const warehouses = d.warehouses || [];
+		// El padre se da de alta en la bodega destino: exige "entrada".
+		const warehouses = this._warehouses_for(MOVEMENT_CONFIG.in.ops.target);
 		const first_day = frappe.datetime.month_start();
 		const last_day = frappe.datetime.month_end();
 
@@ -4078,7 +4127,7 @@ ${rows.map(r => `<tr>
   <td>
     <select class="inv-select inv-trf-source" data-comp="${frappe.utils.escape_html(c.item_code)}" style="width:100%;">
       <option value="">Seleccione...</option>
-      ${(this.defaults.warehouses || []).map(w => `<option value="${frappe.utils.escape_html(w)}" ${w === c.source_warehouse ? "selected" : ""}>${frappe.utils.escape_html(w)}</option>`).join("")}
+      ${this._warehouses_for(MOVEMENT_CONFIG.out.ops.source).map(w => `<option value="${frappe.utils.escape_html(w)}" ${w === c.source_warehouse ? "selected" : ""}>${frappe.utils.escape_html(w)}</option>`).join("")}
     </select>
     <div style="font-size:10.5px;color:#6c757d;margin-top:3px;">${stock_hint}</div>
   </td>

@@ -33,7 +33,18 @@ frappe.pages["facex"].on_page_load = function (wrapper) {
 	// It is NOT included in desk.bundle.js, so must be required explicitly.
 	frappe.require(["/assets/facex_multi/js/facex_transporte_module.js", "/assets/facex_multi/js/ef_guide.js", "controls.bundle.js"], function () {
 		wrapper.efast = new EFastSalePage(page, wrapper);
-		facex_multi.setup_back_guard({ to: "/app", is_dirty: () => wrapper.efast._dirty });
+		facex_multi.setup_back_guard({
+			to: "/app",
+			is_dirty: () => wrapper.efast._dirty,
+			on_back: () => wrapper.efast._handle_internal_back(),
+		});
+	});
+	// frappe.container.change_to dispara "hide" solo cuando se sale de la
+	// página a otra ruta; on_page_show lo usa para distinguir una re-entrada
+	// real (hay que recargar la factura) del "show" que provoca cada
+	// frappe.set_route interno (_switch_view) estando ya en la página.
+	$(wrapper).on("hide", function () {
+		if (wrapper.efast) wrapper.efast._page_was_hidden = true;
 	});
 };
 
@@ -43,11 +54,31 @@ frappe.pages["facex"].on_page_show = function (wrapper) {
 	// Rearmar en cada re-entrada: on_page_load solo corre una vez por sesión
 	// de pestaña (ver history_guard.js), así que sin esto el guard del botón
 	// Atrás dejaría de funcionar después de la primera visita a esta página.
-	facex_multi.setup_back_guard({ to: "/app", is_dirty: () => wrapper.efast._dirty });
+	facex_multi.setup_back_guard({
+		to: "/app",
+		is_dirty: () => wrapper.efast._dirty,
+		on_back: () => wrapper.efast._handle_internal_back(),
+	});
 	const params = frappe.urllib.get_dict();
 	if (params.invoice) {
-		wrapper.efast.load_invoice(params.invoice);
+		// Cada _switch_view("billing") hace set_route con ?invoice=… y eso
+		// vuelve a disparar on_page_show: si esa factura ya es la cargada y
+		// la página no se ocultó, la recarga es redundante y su respuesta
+		// (a veces tardía) pisaba this.doc con datos viejos — p. ej. las
+		// líneas de pago recién guardadas "desaparecían" hasta refrescar.
+		const ef = wrapper.efast;
+		const already = ef.doc && ef.doc.name === params.invoice && !ef._page_was_hidden;
+		if (!already) ef.load_invoice(params.invoice);
+	} else if (wrapper.efast._page_was_hidden && params.view) {
+		// Re-entrada real desde OTRA página (Inventario, POS, Cierre…): ahí sí
+		// manda la URL. El guard de _page_was_hidden es lo que evita el ciclo
+		// descrito abajo — un set_route interno nunca pasa por aquí.
+		const ef = wrapper.efast;
+		if (params.view !== ef._current_view && ef._can_access_view(params.view)) {
+			ef._switch_view(params.view);
+		}
 	}
+	wrapper.efast._page_was_hidden = false;
 	// No forzar "home" aquí: cada _switch_view interno llama frappe.set_route
 	// para reflejar la vista actual en la URL, y ese set_route puede volver a
 	// disparar on_page_show antes de que window.location.href refleje el
@@ -76,6 +107,7 @@ class EFastSalePage {
 		this._dirty = false;
 		this._manualPayment = false;
 		this._request_pending = false;
+		this._nav_stack = [];
 
 		this._inject_styles();
 		this._render_html();
@@ -100,6 +132,7 @@ class EFastSalePage {
 						this.$body.find("#ef-navbar-company-badge").css("display", "flex");
 						this.$body.find("#ef-active-company-name").text(this.defaults.company);
 					}
+					this.$body.find("#ef-flete-toggle").css("display", this.company_config.item_flete ? "flex" : "none");
 				}
 				this._setup_header_controls();
 				this._setup_item_table();
@@ -109,6 +142,8 @@ class EFastSalePage {
 				this._setup_invoice_search();
 				this._setup_collapse_btn();
 				this._setup_section_accordion();
+				this._setup_section_rail();
+				this._setup_invoice_peek();
 
 				// Bind analytics button
 				this.$body.find("#ef-btn-show-analytics").on("click", () => {
@@ -120,13 +155,7 @@ class EFastSalePage {
 				this._apply_perms();
 				this._apply_column_visibility();
 
-				const params = frappe.urllib.get_dict();
-				if (params.invoice) {
-					this.load_invoice(params.invoice);
-				} else {
-					this._new_invoice();
-					this._switch_view("home");
-				}
+				this._apply_route_from_url();
 			},
 		});
 
@@ -134,6 +163,7 @@ class EFastSalePage {
 		this.warehouses = [];
 		frappe.call({
 			method: "facex_multi.api.invoice.get_warehouses",
+			args: { operacion: "venta" },
 			callback: (r) => {
 				if (!r.exc && r.message) {
 					this.warehouses = r.message;
@@ -191,7 +221,7 @@ class EFastSalePage {
 		// de una elección manual del cajero — permite que el default más específico
 		// del Cliente (ver _on_customer_change) reemplace al default del usuario.
 		this._sales_partner_is_default = true;
-		this.doc.bfel_status = "01 Enviar";
+		this.doc.bfel_status = this.defaults.bfel_status_default || "01 Enviar";
 		this.doc.posting_date = frappe.datetime.get_today();
 		this.doc.due_date = frappe.datetime.get_today();
 
@@ -228,6 +258,10 @@ class EFastSalePage {
          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 2-3 4"/><path d="M12 17h.01"/></svg>
          <span>Guía</span>
        </button>
+       <button id="ef-back-chip" class="ef-btn" style="display:none; margin-left:8px; font-size:11px; padding:4px 10px; border-radius:6px; align-items:center; gap:5px; border:1px solid var(--ef-border); background:var(--ef-card); color:var(--ef-text);" title="Volver a la pantalla anterior">
+         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+         <span id="ef-back-chip-label">Volver</span>
+       </button>
      </div>
 
      <div id="ef-navbar-company-badge" style="display: none; align-items: center; gap: 6px; background: #eef2ff; color: #4361ee; padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 700; border: 1px solid #c7d2fe; box-shadow: 0 1px 2px rgba(0,0,0,0.05); text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer;" title="Ir al menú principal">
@@ -261,6 +295,10 @@ class EFastSalePage {
                <button type="button" class="ef-nav-btn ef-menu-item" data-view="pos" title="POS">
                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/><line x1="6" y1="14" x2="10" y2="14"/></svg>
                  <span class="ef-menu-item-label">POS</span>
+               </button>
+               <button type="button" class="ef-nav-btn ef-menu-item" data-view="cierre" id="ef-menu-cierre" title="Cierre Diario de Ventas" style="display:none;">
+                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><polyline points="9 16 11 18 15 14"/></svg>
+                 <span class="ef-menu-item-label">Cierre Diario <span class="ef-cierre-badge" id="ef-menu-cierre-badge" style="display:none;"></span></span>
                </button>
              </div>
            </div>
@@ -299,6 +337,10 @@ class EFastSalePage {
                <button type="button" class="ef-nav-btn ef-menu-item" data-view="inventario" title="Inventario">
                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 8V21H3V8"/><path d="M1 3h22v5H1z"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
                  <span class="ef-menu-item-label">Inventario</span>
+               </button>
+               <button type="button" class="ef-nav-btn ef-menu-item" data-view="seguridad" title="Seguridad" style="display:none;">
+                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+                 <span class="ef-menu-item-label">Seguridad</span>
                </button>
              </div>
            </div>
@@ -373,6 +415,10 @@ class EFastSalePage {
         <div class="ef-home-session" id="ef-home-session"></div>
       </div>
       <div class="ef-home-quote" id="ef-home-quote"></div>
+      <!-- Tarjetas de KPI: las arma el servidor según los permisos del usuario
+           (ver facex_multi.api.home.get_home_kpis). Si no tiene ninguno, la
+           fila simplemente no aparece. -->
+      <div class="ef-home-kpis" id="ef-home-kpis" style="display:none;"></div>
       <div class="ef-home-cards" id="ef-home-cards"></div>
       <div class="ef-home-footer" id="ef-home-footer"></div>
     </div>
@@ -518,6 +564,25 @@ class EFastSalePage {
 
   <!-- ── VIEW 2: BILLING INTERFACE ───────────────────────────────── -->
   <div id="ef-billing-view" class="ef-view-content" style="display:none;">
+
+    <!-- Riel de secciones: mapa de la pantalla pegado al borde derecho. Marca
+         en qué sección vas mientras bajás y permite saltar a cualquiera.
+         Se oculta en pantallas angostas (ver Responsive). -->
+    <div class="ef-rail" id="ef-section-rail">
+      <button type="button" class="ef-rail-toggle" id="ef-rail-toggle-all" title="Expandir o colapsar todas las tarjetas">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 13 12 18 17 13"></polyline><polyline points="7 6 12 11 17 6"></polyline></svg>
+      </button>
+      <button type="button" class="ef-rail-item" data-target="cliente"><span class="ef-rail-label">Cliente</span><span class="ef-rail-dot"></span></button>
+      <button type="button" class="ef-rail-item" data-target="documento"><span class="ef-rail-label">Documento</span><span class="ef-rail-dot"></span></button>
+      <button type="button" class="ef-rail-item" data-target="fel"><span class="ef-rail-label">Facturación FEL</span><span class="ef-rail-dot"></span></button>
+      <button type="button" class="ef-rail-item" data-target="detalle"><span class="ef-rail-label">Detalle</span><span class="ef-rail-dot"></span></button>
+      <button type="button" class="ef-rail-item" data-target="totales"><span class="ef-rail-label">Totales</span><span class="ef-rail-dot"></span></button>
+    </div>
+
+    <button type="button" class="ef-to-top" id="ef-to-top" title="Volver arriba">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
+    </button>
+
     <div class="ef-wrapper">
 
       <!-- ── HEADER (tira de identidad + tarjetas Cliente/Documento/FEL) ── -->
@@ -738,6 +803,10 @@ class EFastSalePage {
         <div class="ef-items-header">
           <span class="ef-section-title">Detalle de Productos / Servicios</span>
           <div style="display:flex; gap:8px; align-items:center;">
+            <label id="ef-flete-toggle" class="ef-flete-toggle" style="display:none; align-items:center; gap:6px; font-size:12px; font-weight:700; color:#153375; background:#eef2ff; border:1px solid #c7d2fe; border-radius:8px; padding:6px 10px; cursor:pointer; user-select:none;">
+              <input id="ef-flete-check" type="checkbox" style="width:15px; height:15px; cursor:pointer;" />
+              Incluir Flete
+            </label>
             <input type="text" id="ef-barcode-scan" class="ef-input" style="width:220px;"
               placeholder="Escanear código de barras / QR..." autocomplete="off" title="Escanee un código de barras o QR para agregar el producto (o sumar cantidad si ya está en la lista)." />
             <button id="ef-add-row" class="ef-btn ef-btn-sm ef-btn-secondary">
@@ -881,6 +950,28 @@ class EFastSalePage {
 
   <!-- ── VIEW 3: REPORTS & RECEIPTS PORTAL ───────────────────────── -->
   <div id="ef-reports-view" class="ef-view-content" style="display:none; padding: 24px; max-width: 1300px; margin: 0 auto; font-family: var(--ef-font);">
+
+    <!-- Vista rápida: panel lateral con el resumen de una factura, para
+         mirarla sin perder el reporte ni sus filtros. El contenido lo arma
+         el servidor (ver reports.get_invoice_peek), que además verifica que
+         la factura esté al alcance del usuario. -->
+    <div class="ef-peek-backdrop" id="ef-peek-backdrop" style="display:none;"></div>
+    <aside class="ef-peek" id="ef-peek" style="display:none;" aria-label="Vista rápida de factura">
+      <div class="ef-peek-head">
+        <div>
+          <div class="ef-peek-title" id="ef-peek-title">—</div>
+          <div class="ef-peek-sub" id="ef-peek-sub"></div>
+        </div>
+        <button type="button" class="ef-peek-close" id="ef-peek-close" title="Cerrar (Esc)">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div class="ef-peek-body" id="ef-peek-body"></div>
+      <div class="ef-peek-foot">
+        <button type="button" class="ef-btn ef-btn-secondary ef-btn-sm" id="ef-peek-open">Abrir en el facturador</button>
+      </div>
+    </aside>
+
     <div style="display: grid; grid-template-columns: 280px 1fr; gap: 24px; min-height: 750px;">
       
       <!-- Left Sidebar Menu -->
@@ -970,6 +1061,21 @@ class EFastSalePage {
             <button class="ef-report-nav-btn" data-report="utility_analysis">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>
               <span>Análisis de Utilidad</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Group: Administración -->
+        <div class="ef-report-group" data-group="administracion">
+          <button class="ef-report-group-header" data-group="administracion">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+            <span>Administración</span>
+            <svg class="ef-group-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ef-report-group-items" data-group-items="administracion">
+            <button class="ef-report-nav-btn" data-report="system_audit">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <span>Auditoría de Sistema</span>
             </button>
           </div>
         </div>
@@ -1077,9 +1183,15 @@ class EFastSalePage {
           </div>
 
           <!-- warehouse filter -->
-          <div class="ef-rep-filter ef-filter-warehouse" style="display: flex; flex-direction: column; gap: 4px; width: 160px;">
+          <div class="ef-rep-filter ef-filter-warehouse" style="display: flex; flex-direction: column; gap: 4px; width: 200px;">
             <label class="ef-label" style="font-weight: 700; font-size: 10px;">Bodega / Almacén</label>
             <div id="ef-rep-warehouse-ctrl" class="ef-link-ctrl" style="min-height: 32px;"></div>
+          </div>
+
+          <!-- owners (usuario creador) filter -->
+          <div class="ef-rep-filter ef-filter-owners" style="display: flex; flex-direction: column; gap: 4px; width: 220px;">
+            <label class="ef-label" style="font-weight: 700; font-size: 10px;">Usuario Creador</label>
+            <div id="ef-rep-owner-ctrl" class="ef-link-ctrl" style="min-height: 32px;"></div>
           </div>
 
           <!-- payment method filter -->
@@ -1279,6 +1391,9 @@ class EFastSalePage {
       <button class="ef-tab-btn ef-maint-tab-btn" data-maint-tab="familias">
         Familias
       </button>
+      <button class="ef-tab-btn ef-maint-tab-btn" data-maint-tab="grupo-items">
+        Grupo de Ítems
+      </button>
       <button class="ef-tab-btn ef-maint-tab-btn" data-maint-tab="asignacion-precios">
         Asignación de Precios
       </button>
@@ -1452,8 +1567,8 @@ class EFastSalePage {
               <label class="ef-label">Nombre del Ítem <span class="ef-req">*</span></label>
               <input type="text" id="ef-maint-item-name" class="ef-input" style="width:100%" />
             </div>
-            <div class="ef-field-group" style="display:none;">
-              <label class="ef-label">Unidad de Medida (UOM)</label>
+            <div class="ef-field-group">
+              <label class="ef-label">Unidad de Medida (UOM) <span class="ef-req">*</span></label>
               <div id="ef-maint-item-uom-ctrl" class="ef-link-ctrl" style="min-height: 32px;"></div>
             </div>
             <div class="ef-field-group">
@@ -1756,6 +1871,32 @@ class EFastSalePage {
               <th class="ef-th" style="width:90px;"></th>
             </tr></thead>
             <tbody id="ef-fam-tbody"><tr><td colspan="7" style="text-align:center; padding:10px; color:#64748b;">Cargando...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Maint Tab Content: Grupo de Ítems -->
+    <div class="ef-maint-tab-content" id="ef-maint-tab-grupo-items" style="display:none;">
+      <div class="ef-analytics-card" style="box-shadow: var(--ef-shadow); padding:20px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:12px;">
+          <span style="font-weight:700; color:var(--ef-primary); font-size:16px;">Grupo de Ítems</span>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span id="ef-ig-status" style="font-size:11px; color:#64748b;"></span>
+            <button id="ef-ig-btn-new" class="ef-btn ef-btn-sm ef-btn-primary">+ Nuevo Grupo</button>
+          </div>
+        </div>
+        <div class="ef-table-wrapper" style="max-height: 640px; overflow-y: auto;">
+          <table class="ef-table">
+            <thead><tr>
+              <th class="ef-th">Grupo</th>
+              <th class="ef-th" style="width:180px;">Grupo Padre</th>
+              <th class="ef-th" style="width:70px; text-align:center;">Es Grupo</th>
+              <th class="ef-th" style="width:80px; text-align:right;">Ítems</th>
+              <th class="ef-th" style="width:70px; text-align:center;">Deshabilitado</th>
+              <th class="ef-th" style="width:90px;"></th>
+            </tr></thead>
+            <tbody id="ef-ig-tbody"><tr><td colspan="6" style="text-align:center; padding:10px; color:#64748b;">Cargando...</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -2121,6 +2262,71 @@ class EFastSalePage {
     <div id="ef-transporte-module-container"></div>
   </div>
 
+  <!-- ── VIEW 7: SEGURIDAD (Permisos de Usuarios / Reiniciar Contraseña) ── -->
+  <div id="ef-seguridad-view" class="ef-view-content" style="display:none; padding: 24px; max-width: 1100px; margin: 0 auto; font-family: var(--ef-font);">
+    <div style="background:#fff3cd; border:1px solid #ffe69c; color:#664d03; border-radius:10px; padding:14px 18px; margin-bottom:20px; display:flex; gap:12px; align-items:flex-start;">
+      <span style="font-size:20px; line-height:1;">⚠️</span>
+      <div>
+        <div style="font-weight:700; margin-bottom:2px;">Módulo de Seguridad</div>
+        <div style="font-size:12.5px;">
+          Aquí se editan los permisos de FacEx (FacEx Settings) de otros usuarios y se pueden reiniciar contraseñas.
+          <b>Una mala configuración aquí puede tener consecuencias graves para la operación</b> (accesos indebidos, precios, inventario o facturación).
+          Úselo con cuidado y solo con personal de confianza.
+        </div>
+      </div>
+    </div>
+
+    <div class="ef-analytics-card" style="box-shadow: var(--ef-shadow); padding:20px; margin-bottom:20px;" id="ef-sec-permisos-card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:12px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-weight:700; color:var(--ef-primary); font-size:16px;">Permisos de Usuarios</span>
+          <input type="text" id="ef-sec-user-search" class="ef-input" placeholder="Buscar usuario..." style="width:240px; font-size:13px; padding:4px 8px;" />
+        </div>
+        <span id="ef-sec-user-status" style="font-size:11px; color:#64748b;"></span>
+      </div>
+      <p style="margin:-8px 0 14px 0; font-size:11.5px; color:#64748b;">
+        Solo se listan los permisos <b>por usuario</b>. La configuración a nivel de compañía (columnas visibles en el facturador, series DIGECAM, adendas, tipo de inventario, condiciones de pago) se edita en el registro de FacEx Settings <b>sin usuario asignado</b> de esta compañía, no aquí.
+      </p>
+      <div class="ef-table-wrapper" style="max-height: 420px; overflow-y: auto;">
+        <table class="ef-table">
+          <thead><tr>
+            <th class="ef-th">Usuario</th>
+            <th class="ef-th" style="width:130px; text-align:center;">FacEx Settings</th>
+            <th class="ef-th" style="width:100px;"></th>
+          </tr></thead>
+          <tbody id="ef-sec-user-tbody"><tr><td colspan="3" style="text-align:center; padding:10px; color:#64748b;">Cargando...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="ef-analytics-card" style="box-shadow: var(--ef-shadow); padding:20px;" id="ef-sec-reset-card">
+      <div style="font-weight:700; color:var(--ef-primary); font-size:16px; margin-bottom:6px;">Reiniciar Contraseña</div>
+      <p style="margin:0 0 14px 0; font-size:12px; color:#64748b;">
+        Solo se pueden reiniciar contraseñas de usuarios que NO tengan el rol System Manager. La contraseña se cambia de inmediato, sin enviar correo.
+      </p>
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:14px; align-items:end; max-width:760px;">
+        <div class="ef-field-group">
+          <label class="ef-label">Usuario</label>
+          <div id="ef-sec-reset-user-ctrl" class="ef-link-ctrl" style="min-height:32px;"></div>
+        </div>
+        <div class="ef-field-group">
+          <label class="ef-label">Nueva Contraseña</label>
+          <input type="password" id="ef-sec-reset-pwd1" class="ef-input" style="width:100%;" />
+        </div>
+        <div class="ef-field-group">
+          <label class="ef-label">Confirmar Contraseña</label>
+          <input type="password" id="ef-sec-reset-pwd2" class="ef-input" style="width:100%;" />
+        </div>
+      </div>
+      <div style="margin-top:12px; display:flex; align-items:center; gap:16px;">
+        <label style="font-size:12.5px; display:flex; align-items:center; gap:6px;">
+          <input type="checkbox" id="ef-sec-reset-logout" checked /> Cerrar todas sus sesiones activas
+        </label>
+        <button id="ef-sec-reset-btn" class="ef-btn ef-btn-primary">Reiniciar Contraseña</button>
+      </div>
+    </div>
+  </div>
+
 </div><!-- ef-main-layout -->
 		`);
 
@@ -2135,6 +2341,8 @@ class EFastSalePage {
 				window.location.href = "/app/facex-screen";
 			} else if (view === "inventario") {
 				window.location.href = "/app/facex-inventario";
+			} else if (view === "cierre") {
+				window.location.href = "/app/facex-cierre";
 			} else if (view === "billing" && (!this.doc.name || this.doc.name === "new")) {
 				this._action_new();
 			} else {
@@ -2144,6 +2352,9 @@ class EFastSalePage {
 
 		// Icono de compañía (navbar): un click lleva siempre al menú principal.
 		this.$body.find("#ef-navbar-company-badge").on("click", () => this._switch_view("home"));
+
+		// Equivalente visible del botón Atrás, para quien navega con el mouse.
+		this.$body.find("#ef-back-chip").on("click", () => this._handle_internal_back());
 
 		this._bind_main_menu();
 	}
@@ -2176,6 +2387,13 @@ class EFastSalePage {
 	}
 
 	_switch_view(view, opts = {}) {
+		// Antes de cambiar: recordar de dónde venimos, para que el botón Atrás
+		// del navegador (y el chip "Volver") regresen a la pantalla anterior
+		// en vez de abandonar FacEx. opts.from_history evita que al restaurar
+		// una entrada de la pila se vuelva a apilar la misma vista.
+		if (!opts.from_history && this._current_view && this._current_view !== view) {
+			this._push_nav_history();
+		}
 		this._current_view = view;
 
 		// Toggle buttons in navbar
@@ -2185,11 +2403,7 @@ class EFastSalePage {
 		// Cierra el menú "Menú" agrupado (si estaba abierto) y refleja la
 		// vista actual en el trigger, para que siga siendo obvio dónde está
 		// parado el usuario aunque los botones ya no estén sueltos en la barra.
-		const VIEW_LABELS = {
-			home: "Inicio", dashboard: "Tablero", billing: "Facturador", reports: "Reportes",
-			maintenance: "Mantenimiento", purchase: "Compras", transporte: "Transporte",
-		};
-		this.$body.find("#ef-menu-trigger-label").text(VIEW_LABELS[view] || "Menú");
+		this.$body.find("#ef-menu-trigger-label").text(this._view_label(view));
 		this.$body.find("#ef-menu-panel").hide();
 		this.$body.find(".ef-menu-group").removeClass("ef-menu-group-open");
 
@@ -2229,6 +2443,7 @@ class EFastSalePage {
 			} else {
 				frappe.set_route("facex");
 			}
+			this._refresh_rail();
 			this._focus_first_field();
 		} else if (view === "reports") {
 			this.$body.find("#ef-reports-view").show();
@@ -2257,7 +2472,116 @@ class EFastSalePage {
 			};
 			const method = TRANSPORTE_SECTIONS[opts.section] || "showHub";
 			this._transporte_module()[method]();
+		} else if (view === "seguridad") {
+			this.$body.find("#ef-seguridad-view").show();
+			frappe.set_route("facex", "", { view: "seguridad" });
+			this._load_seguridad_view();
 		}
+
+		this._update_back_chip();
+	}
+
+	// -----------------------------------------------------------------------
+	// Navegación interna (pila de vistas + rutas)
+	// -----------------------------------------------------------------------
+	// FacEx clásico es una sola Page de Frappe con vistas que se muestran y
+	// ocultan, así que el botón Atrás del navegador no distingue entre ellas:
+	// sin esta pila, "Atrás" desde una factura abierta desde Reportes sacaba
+	// al usuario de FacEx (ver setup_back_guard) en vez de devolverlo al
+	// reporte que estaba consultando. Las vistas solo se ocultan (no se
+	// destruyen), así que restaurar una es instantáneo y conserva sus filtros.
+
+	_view_label(view, fallback = "Menú") {
+		const VIEW_LABELS = {
+			home: "Inicio", dashboard: "Tablero", billing: "Facturador", reports: "Reportes",
+			maintenance: "Mantenimiento", purchase: "Compras", transporte: "Transporte",
+			seguridad: "Seguridad",
+		};
+		return VIEW_LABELS[view] || fallback;
+	}
+
+	// Estado mínimo para volver a dejar una vista como estaba. El resto
+	// (filtros, resultados, scroll) sobrevive solo, porque el DOM de la vista
+	// nunca se destruye.
+	_nav_snapshot() {
+		const view = this._current_view;
+		let label = this._view_label(view, "Anterior");
+		if (view === "reports") {
+			const report_title = (this.$body.find("#ef-report-title").text() || "").trim();
+			if (report_title) label += " · " + report_title;
+		}
+		return { view, label, report: this._active_report || null };
+	}
+
+	_push_nav_history() {
+		const snap = this._nav_snapshot();
+		const top = this._nav_stack[this._nav_stack.length - 1];
+		// Ir y venir entre dos vistas no debe acumular entradas repetidas.
+		if (top && top.view === snap.view && top.report === snap.report) return;
+		this._nav_stack.push(snap);
+		// Tope defensivo: sesiones largas de reportes podrían crecer sin fin.
+		if (this._nav_stack.length > 25) this._nav_stack.shift();
+	}
+
+	// Devuelve true si el Atrás se resolvió por dentro. false significa "ya no
+	// hay a dónde volver": el back guard entonces aplica su comportamiento de
+	// siempre (confirmar cambios sin guardar y salir a /app).
+	_handle_internal_back() {
+		if (!this._nav_stack.length) return false;
+		const snap = this._nav_stack.pop();
+		if (snap.view === "reports" && snap.report) this._active_report = snap.report;
+		this._switch_view(snap.view, { from_history: true });
+		return true;
+	}
+
+	_update_back_chip() {
+		const $chip = this.$body.find("#ef-back-chip");
+		const top = this._nav_stack[this._nav_stack.length - 1];
+		if (!top) {
+			$chip.hide();
+			return;
+		}
+		this.$body.find("#ef-back-chip-label").text("Volver a " + top.label);
+		$chip.css("display", "inline-flex");
+	}
+
+	// Gate de las vistas alcanzables por URL. Es el único punto donde la
+	// navegación viene de fuera (link compartido, pestaña nueva, F5), así que
+	// aquí sí hay que revalidar el permiso: el resto de llamadas a
+	// _switch_view salen de botones que _apply_perms ya filtró.
+	// Deny-by-default y mismo criterio exacto que _apply_perms, para que un
+	// permiso quitado en FacEx Settings no se pueda saltar con la URL.
+	_can_access_view(view) {
+		const p = this.perms || {};
+		switch (view) {
+			case "home":        return true;
+			case "billing":     return !!p.puede_facturar;
+			case "dashboard":   return !!p.puede_ver_tablero;
+			case "purchase":    return !!p.puede_compras;
+			case "maintenance": return true;
+			case "reports":     return this._any_report_access();
+			case "transporte":  return this._has_transporte_access();
+			case "seguridad":   return !!(p.puede_ver_facex_settings || p.puede_resetear_password);
+			default:            return false;
+		}
+	}
+
+	// Aterrizaje según la URL: ?invoice=… abre esa factura, ?view=… esa vista.
+	// Permite compartir un link o abrir en pestaña nueva y caer en el mismo
+	// lugar. Sin parámetros (o sin permiso) cae en Inicio, como siempre.
+	_apply_route_from_url() {
+		const params = frappe.urllib.get_dict();
+		if (params.invoice) {
+			this.load_invoice(params.invoice);
+			return;
+		}
+		this._new_invoice();
+		this._switch_view(this._can_access_view(params.view) ? params.view : "home");
+		// El aterrizaje inicial no es "navegación": _new_invoice() pasa por el
+		// facturador antes de llegar aquí y no debe dejar un "Volver a
+		// Facturador" a una pantalla que el usuario nunca visitó.
+		this._nav_stack = [];
+		this._update_back_chip();
 	}
 
 	// Transporte (Maestros, Documentos, Reportes, KPIs) vive por completo en
@@ -2277,6 +2601,208 @@ class EFastSalePage {
 			this._transporteModuleInstance.setContext({ perms: this.perms, company: this.defaults.company });
 		}
 		return this._transporteModuleInstance;
+	}
+
+	// ── Seguridad (Permisos de Usuarios / Reiniciar Contraseña) ──
+	// Ver FacEx Settings.puede_ver_facex_settings / puede_resetear_password.
+	// Deny-by-default: solo se llega aquí si _apply_perms() mostró el botón
+	// del menú (ver rama data-view="seguridad" allá).
+
+	_load_seguridad_view() {
+		const p = this.perms || {};
+		this.$body.find("#ef-sec-permisos-card").toggle(!!p.puede_ver_facex_settings);
+		this.$body.find("#ef-sec-reset-card").toggle(!!(p.puede_ver_facex_settings || p.puede_resetear_password));
+		if (p.puede_ver_facex_settings) this._load_seguridad_users();
+		this._setup_seguridad_reset_password();
+	}
+
+	_load_seguridad_users() {
+		const $tbody = this.$body.find("#ef-sec-user-tbody");
+		const $status = this.$body.find("#ef-sec-user-status");
+		const company = this.doc.company || this.defaults.company || "";
+		const txt = this.$body.find("#ef-sec-user-search").val() || "";
+
+		if (!this._secUserSearchBound) {
+			this._secUserSearchBound = true;
+			let timer = null;
+			this.$body.find("#ef-sec-user-search").on("input", () => {
+				clearTimeout(timer);
+				timer = setTimeout(() => this._load_seguridad_users(), 250);
+			});
+		}
+
+		$tbody.html('<tr><td colspan="3" style="text-align:center; padding:10px; color:#64748b;">Cargando...</td></tr>');
+		frappe.call({
+			method: "facex_multi.api.security.list_users_for_security",
+			args: { company, txt },
+			callback: (r) => {
+				const users = (r.message || {}).users || [];
+				$status.text(users.length ? `${users.length} usuario(s).` : "Sin usuarios.");
+				$tbody.empty();
+				if (!users.length) {
+					$tbody.html('<tr><td colspan="3" style="text-align:center; padding:10px; color:#64748b;">Sin usuarios.</td></tr>');
+					return;
+				}
+				users.forEach((u) => {
+					const $tr = $(`
+						<tr class="ef-tr">
+							<td class="ef-td"></td>
+							<td class="ef-td" style="text-align:center;">${u.has_facex_settings ? "Configurado" : "Sin configurar (acceso total)"}</td>
+							<td class="ef-td" style="text-align:center;">
+								<button class="ef-btn ef-btn-sm ef-btn-secondary ef-sec-user-edit" style="padding:3px 10px; font-size:11px;">Editar</button>
+							</td>
+						</tr>`);
+					$tr.children().eq(0).text(u.full_name ? `${u.full_name} (${u.name})` : u.name);
+					$tr.find(".ef-sec-user-edit").on("click", () => this._seguridad_user_settings_dialog(u.name));
+					$tbody.append($tr);
+				});
+			},
+		});
+	}
+
+	// Diálogo de edición genérico: construye los campos directamente desde el
+	// meta de FacEx Settings (así queda sincronizado automáticamente cuando se
+	// agreguen nuevos permisos al DocType, sin duplicar 130+ campos a mano).
+	// Se omiten las tablas hijas (Bodegas/Listas de Precios Habilitadas): esas
+	// se siguen editando desde el formulario completo del DocType.
+	// Elimina Section/Column Break que quedaron sin ningún campo real debajo
+	// (p. ej. tras sacar los campos de configuración de compañía) — de lo
+	// contrario el diálogo muestra encabezados de sección vacíos.
+	_compact_dialog_breaks(fields) {
+		const BREAKS = new Set(["Section Break", "Column Break"]);
+		let changed = true;
+		while (changed) {
+			changed = false;
+			for (let i = 0; i < fields.length; i++) {
+				if (!BREAKS.has(fields[i].fieldtype)) continue;
+				const next = fields[i + 1];
+				if (!next || BREAKS.has(next.fieldtype)) {
+					fields.splice(i, 1);
+					changed = true;
+					break;
+				}
+			}
+		}
+		return fields;
+	}
+
+	_seguridad_user_settings_dialog(user) {
+		const company = this.doc.company || this.defaults.company || "";
+		frappe.call({
+			method: "facex_multi.api.security.get_company_config_fieldnames",
+			callback: (cfgRes) => {
+				const companyOnlyFields = new Set(cfgRes.message || []);
+				this._seguridad_user_settings_dialog_step2(user, company, companyOnlyFields);
+			},
+		});
+	}
+
+	_seguridad_user_settings_dialog_step2(user, company, companyOnlyFields) {
+		frappe.call({
+			method: "facex_multi.api.security.get_user_facex_settings",
+			args: { user, company },
+			callback: (r) => {
+				const data = r.message || {};
+				frappe.model.with_doctype("FacEx Settings", () => {
+					const meta = frappe.get_meta("FacEx Settings");
+					const SKIP_FIELDNAMES = new Set(["user", "bfel_company"]);
+					const fields = this._compact_dialog_breaks(
+						meta.fields
+							.filter((df) => df.fieldtype !== "Table"
+								&& !SKIP_FIELDNAMES.has(df.fieldname)
+								&& !companyOnlyFields.has(df.fieldname))
+							.map((df) => ({
+								fieldtype: df.fieldtype,
+								fieldname: df.fieldname,
+								label: df.label,
+								options: df.options,
+								description: df.description,
+							}))
+					);
+
+					const d = new frappe.ui.Dialog({
+						title: `Permisos FacEx — ${user}`,
+						size: "extra-large",
+						fields,
+						primary_action_label: "Guardar",
+						primary_action: (values) => {
+							d.get_primary_btn().prop("disabled", true);
+							frappe.call({
+								method: "facex_multi.api.security.save_user_facex_settings",
+								args: { user, company, data_json: JSON.stringify(values) },
+								callback: (res) => {
+									d.get_primary_btn().prop("disabled", false);
+									if (res.exc) return;
+									frappe.show_alert({ message: "Permisos guardados.", indicator: "green" });
+									d.hide();
+									this._load_seguridad_users();
+								},
+								error: () => d.get_primary_btn().prop("disabled", false),
+							});
+						},
+					});
+
+					if (d.fields_dict.bodega_por_defecto) {
+						d.set_df_property("bodega_por_defecto", "get_query", () => ({ filters: { company } }));
+					}
+					if (d.fields_dict.transito_por_defecto) {
+						d.set_df_property("transito_por_defecto", "get_query", () => ({ filters: { company } }));
+					}
+					if (d.fields_dict.lista_precios_por_defecto) {
+						d.set_df_property("lista_precios_por_defecto", "get_query", () => ({ filters: { selling: 1 } }));
+					}
+
+					d.show();
+					d.set_values(data);
+				});
+			},
+		});
+	}
+
+	_setup_seguridad_reset_password() {
+		const company = this.doc.company || this.defaults.company || "";
+		if (!this._secResetCtrl) {
+			this._secResetCtrl = frappe.ui.form.make_control({
+				parent: this.$body.find("#ef-sec-reset-user-ctrl"),
+				df: {
+					fieldtype: "Link",
+					fieldname: "reset_user",
+					label: "Usuario",
+					options: "User",
+					get_query: () => ({
+						query: "facex_multi.api.security.user_query_resettable",
+						filters: { company },
+					}),
+				},
+				render_input: true,
+			});
+			this._secResetCtrl.refresh();
+		}
+
+		if (!this._secResetBound) {
+			this._secResetBound = true;
+			this.$body.find("#ef-sec-reset-btn").on("click", () => {
+				const user = this._secResetCtrl.get_value();
+				const pwd1 = this.$body.find("#ef-sec-reset-pwd1").val();
+				const pwd2 = this.$body.find("#ef-sec-reset-pwd2").val();
+				const logout = this.$body.find("#ef-sec-reset-logout").is(":checked");
+				const co = this.doc.company || this.defaults.company || "";
+				if (!user) { frappe.msgprint("Seleccione un usuario."); return; }
+				if (!pwd1 || pwd1.length < 8) { frappe.msgprint("La nueva contraseña debe tener al menos 8 caracteres."); return; }
+				if (pwd1 !== pwd2) { frappe.msgprint("Las contraseñas no coinciden."); return; }
+				frappe.confirm(`¿Reiniciar la contraseña de <b>${user}</b>? Esta acción es inmediata.`, () => {
+					frappe.call({
+						method: "facex_multi.api.security.reset_user_password",
+						args: { user, new_password: pwd1, company: co, logout_all_sessions: logout ? 1 : 0 },
+						callback: (res) => {
+							if (res.exc) return;
+							frappe.show_alert({ message: "Contraseña reiniciada.", indicator: "green" });
+							this.$body.find("#ef-sec-reset-pwd1, #ef-sec-reset-pwd2").val("");
+						},
+					});
+				});
+			});
+		}
 	}
 
 	// Mismas frases (y misma fórmula de "una por día") que _get_daily_motivational_message()
@@ -2549,6 +3075,13 @@ class EFastSalePage {
 				icon: icon(`<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><path d="M3 20h18"/>`),
 				action: () => this._switch_view("reports"),
 			},
+			this._has_cierre_access() && {
+				label: "Cierre Diario",
+				desc: "Cierre de ventas del día, cuadre de cobros y egresos.",
+				icon: icon(`<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><polyline points="9 16 11 18 15 14"/>`),
+				badge_id: "ef-home-cierre-badge",
+				action: () => { window.location.href = "/app/facex-cierre"; },
+			},
 			p.puede_ver_menu_inventario && {
 				label: "Inventario",
 				desc: "Entradas, salidas y transferencias de stock.",
@@ -2585,13 +3118,202 @@ class EFastSalePage {
 		$cards.html(cards.map((c, i) => `
 			<button class="ef-home-card" data-idx="${i}">
 				<div class="ef-home-card-icon">${c.icon}</div>
-				<div class="ef-home-card-label">${_esc(c.label)}</div>
+				<div class="ef-home-card-label">${_esc(c.label)}${c.badge_id ? ` <span class="ef-cierre-badge" id="${c.badge_id}" style="display:none;"></span>` : ""}</div>
 				<div class="ef-home-card-desc">${_esc(c.desc)}</div>
 			</button>
 		`).join(""));
 		$cards.find(".ef-home-card").off("click").on("click", (e) => {
 			const card = cards[$(e.currentTarget).data("idx")];
 			if (card) card.action();
+		});
+		this._refresh_cierre_pending();
+		this._load_home_kpis();
+	}
+
+	// KPIs de Inicio. El servidor manda sólo los que el usuario puede ver, así
+	// que aquí no hay ninguna decisión de permisos: se dibuja lo que llegue.
+	_load_home_kpis() {
+		frappe.call({
+			method: "facex_multi.api.home.get_home_kpis",
+			args: { company: this.defaults.company || "" },
+			callback: (r) => {
+				const kpis = (r.message || {}).kpis || [];
+				const $row = this.$body.find("#ef-home-kpis");
+				if (!kpis.length) { $row.hide(); return; }
+
+				$row.html(kpis.map((k, i) => `
+					<div class="ef-home-kpi ef-home-kpi-${_esc(k.tone)}${k.report ? " ef-home-kpi-clickable" : ""}"
+						data-idx="${i}"${k.report ? ` title="Ver el informe completo"` : ""}>
+						<div class="ef-home-kpi-label">${_esc(k.label)}</div>
+						<div class="ef-home-kpi-value">${k.format === "currency" ? _fmtCurrency(k.value, "GTQ") : _esc(String(k.value))}</div>
+						<div class="ef-home-kpi-sub">${_esc(k.sub)}</div>
+					</div>
+				`).join("")).show();
+
+				$row.find(".ef-home-kpi-clickable").off("click").on("click", (e) => {
+					const kpi = kpis[$(e.currentTarget).data("idx")];
+					if (!kpi || !kpi.report) return;
+					this._active_report = kpi.report;
+					this._switch_view("reports");
+				});
+			},
+		});
+	}
+
+	// -----------------------------------------------------------------------
+	// Vista rápida de factura (panel lateral de Reportes)
+	// -----------------------------------------------------------------------
+	// Mirar una factura sin abandonar el reporte: el caso frecuente es sólo
+	// confirmar un monto o un pago, no editarla. Quien sí quiera abrirla tiene
+	// el botón del pie. El alcance lo valida el servidor, no este panel.
+
+	_setup_invoice_peek() {
+		this.$body.on("click", ".ef-peek-btn", (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			this._open_invoice_peek($(e.currentTarget).data("peek"));
+		});
+		this.$body.find("#ef-peek-close, #ef-peek-backdrop").on("click", () => this._close_invoice_peek());
+		this.$body.find("#ef-peek-open").on("click", () => {
+			const name = this._peek_invoice;
+			if (!name) return;
+			this._close_invoice_peek();
+			this._switch_view("billing");
+			this._load_invoice_with_dirty_check(name);
+		});
+		$(document).on("keydown.efPeek", (e) => {
+			if (e.key === "Escape" && this._peek_invoice) this._close_invoice_peek();
+		});
+	}
+
+	_close_invoice_peek() {
+		this._peek_invoice = null;
+		this.$body.find("#ef-peek, #ef-peek-backdrop").hide();
+	}
+
+	_open_invoice_peek(name) {
+		if (!name) return;
+		this._peek_invoice = name;
+		this.$body.find("#ef-peek-title").text(name);
+		this.$body.find("#ef-peek-sub").text("Cargando…");
+		this.$body.find("#ef-peek-body").html('<div class="ef-peek-muted">Cargando…</div>');
+		this.$body.find("#ef-peek, #ef-peek-backdrop").show();
+
+		frappe.call({
+			method: "facex_multi.api.reports.get_invoice_peek",
+			args: { name: name, company: this.defaults.company || "" },
+			callback: (r) => {
+				// Si mientras llegaba la respuesta se abrió otra factura (o se
+				// cerró el panel), esta ya no corresponde.
+				if (!r.message || this._peek_invoice !== name) return;
+				this._render_invoice_peek(r.message);
+			},
+			error: () => this._close_invoice_peek(),
+		});
+	}
+
+	_peek_status_label(inv) {
+		if (Number(inv.anulado) === 1 || Number(inv.docstatus) === 2) return "Anulada";
+		if (Number(inv.docstatus) === 0) return "Borrador / cotización";
+		return inv.bfel_uuid ? "Validada y certificada" : "Validada";
+	}
+
+	_render_invoice_peek(data) {
+		const inv = data.invoice || {};
+		const money = (n) => _fmtCurrency(n, inv.currency || "GTQ");
+		const date = (d) => (d ? frappe.datetime.str_to_user(d) : "—");
+		const row = (label, value, cls = "") =>
+			`<div class="ef-peek-row ${cls}"><span class="ef-peek-row-label">${_esc(label)}</span><span class="ef-peek-row-value">${value}</span></div>`;
+
+		this.$body.find("#ef-peek-sub").text(
+			`${inv.customer_name || inv.customer || "—"} · ${date(inv.posting_date)} · ${this._peek_status_label(inv)}`
+		);
+
+		const fel = inv.bfel_uuid
+			? row("UUID", `<span style="font-family:monospace; font-size:11px;">${_esc(inv.bfel_uuid)}</span>`) +
+			  row("Documento", _esc([inv.bfel_docto_serie, inv.bfel_docto_no].filter(Boolean).join("-") || "—"))
+			: row("Estado FEL", _esc(inv.bfel_status || "—"));
+
+		const payments = data.can_see_payments
+			? ((data.payments || []).length
+				? data.payments.map((p) =>
+					row(
+						`${date(p.payment_date)} · ${p.payment_method || "—"}${p.reference ? " · " + p.reference : ""}`,
+						money(p.amount)
+					)
+				).join("")
+				: '<div class="ef-peek-muted">Sin pagos registrados.</div>')
+			: '<div class="ef-peek-muted">No tiene permiso para ver el detalle de pagos.</div>';
+
+		const items = (data.items || []);
+		const shown = items.slice(0, 8);
+		const items_html = shown.length
+			? shown.map((it) =>
+				row(`${it.qty} × ${_esc(it.item_name || it.item_code || "")}`, money(it.amount))
+			).join("") + (items.length > shown.length
+				? `<div class="ef-peek-muted">y ${items.length - shown.length} línea(s) más…</div>`
+				: "")
+			: '<div class="ef-peek-muted">Sin líneas.</div>';
+
+		this.$body.find("#ef-peek-body").html(`
+			<div class="ef-peek-block">
+				<div class="ef-peek-block-title">Documento</div>
+				${row("Cliente", _esc(inv.customer_name || inv.customer || "—"))}
+				${row("NIT", _esc(inv.bfel_nit || "—"))}
+				${row("Establecimiento", _esc(inv.bfel_establecimiento || "—"))}
+				${row("Vence", date(inv.due_date))}
+				${row("Creada por", _esc(data.owner_name || "—"))}
+			</div>
+			<div class="ef-peek-block">
+				<div class="ef-peek-block-title">Facturación FEL</div>
+				${fel}
+			</div>
+			<div class="ef-peek-block">
+				<div class="ef-peek-block-title">Montos</div>
+				${row("Subtotal", money(inv.total))}
+				${Number(inv.discount_amount) ? row("Descuento", money(inv.discount_amount)) : ""}
+				${row("Impuestos", money(inv.total_taxes_and_charges))}
+				${row("Total", money(inv.grand_total), "ef-peek-row-strong")}
+				${row("Pagado", money(data.total_paid))}
+				${row("Saldo", money(data.outstanding))}
+			</div>
+			<div class="ef-peek-block">
+				<div class="ef-peek-block-title">Pagos</div>
+				${payments}
+			</div>
+			<div class="ef-peek-block">
+				<div class="ef-peek-block-title">Detalle (${data.item_count})</div>
+				${items_html}
+			</div>
+		`);
+	}
+
+	// Cierre Diario: puede_crear_cierres (cierra sus propias ventas) o Gerencia
+	// (rol_clasificacion: ve/reabre los cierres de todos).
+	_has_cierre_access() {
+		const p = this.perms || {};
+		return !!(p.cierre_diario_instalado && (p.puede_crear_cierres || p.es_gerencia));
+	}
+
+	// Alerta de días con ventas sin cerrar: badge en la tarjeta de Inicio y en
+	// el ítem del menú, más un aviso (una vez por sesión de pestaña).
+	_refresh_cierre_pending() {
+		if (!this._has_cierre_access()) return;
+		frappe.call({
+			method: "facex_multi.api.cierre.get_pending_closures",
+			callback: (r) => {
+				const pend = r.message || [];
+				const $badges = this.$body.find("#ef-home-cierre-badge, #ef-menu-cierre-badge");
+				if (!pend.length) { $badges.hide(); return; }
+				$badges.text(pend.length).attr("title", `${pend.length} día(s) pendiente(s) de cierre`).show();
+				if (!window.__facex_cierre_alerted) {
+					window.__facex_cierre_alerted = true;
+					frappe.show_alert({
+						message: `<b>Cierres pendientes:</b> ${pend.length} día(s) con ventas sin cerrar. <a href="/app/facex-cierre">Ir a Cierre Diario</a>`,
+						indicator: "orange",
+					}, 10);
+				}
+			},
 		});
 	}
 
@@ -2848,6 +3570,29 @@ class EFastSalePage {
   animation: ef-home-quote-fade .5s ease;
 }
 @keyframes ef-home-quote-fade { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+.ef-home-kpis {
+  display: flex; flex-wrap: wrap; justify-content: center;
+  gap: 10px; margin: 0 0 22px;
+}
+.ef-home-kpi {
+  min-width: 168px; text-align: left;
+  padding: 11px 16px; border-radius: 12px;
+  border: 1px solid var(--ef-border); background: var(--ef-card);
+  box-shadow: var(--ef-shadow);
+}
+.ef-home-kpi-clickable { cursor: pointer; }
+.ef-home-kpi-clickable:hover { border-color: var(--ef-primary); }
+.ef-home-kpi-label {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .4px; color: var(--ef-text-muted);
+}
+.ef-home-kpi-value { font-size: 21px; font-weight: 800; line-height: 1.25; }
+.ef-home-kpi-sub { font-size: 11px; color: var(--ef-text-muted); }
+.ef-home-kpi-primary .ef-home-kpi-value { color: var(--ef-primary); }
+.ef-home-kpi-warning .ef-home-kpi-value { color: #c2410c; }
+.ef-home-kpi-danger  .ef-home-kpi-value { color: #b91c1c; }
+.ef-home-kpi-success .ef-home-kpi-value { color: #15803d; }
+
 .ef-home-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; }
 .ef-home-card {
   display: flex; flex-direction: column; align-items: flex-start; gap: 10px; text-align: left;
@@ -2859,6 +3604,7 @@ class EFastSalePage {
 .ef-home-card-icon { color: var(--ef-primary); }
 .ef-home-card-label { font-weight: 800; font-size: 16px; color: var(--ef-text); }
 .ef-home-card-desc { font-size: 12.5px; color: var(--ef-text-muted); line-height: 1.4; }
+.ef-cierre-badge { display: inline-block; min-width: 18px; padding: 1px 6px; border-radius: 10px; background: #e03e2d; color: #fff; font-size: 11px; font-weight: 700; text-align: center; vertical-align: middle; margin-left: 4px; }
 
 .ef-home-footer {
   margin-top: 30px; padding-top: 18px; border-top: 1px solid var(--ef-border);
@@ -3505,6 +4251,108 @@ body.facex-fullscreen-mode .ef-main-layout {
 .ef-words { font-size: 11px; color: var(--ef-text-muted); font-style: italic; }
 
 /* ── Action Bar ─────────────────────────── */
+/* Vista rápida de factura (panel lateral de Reportes) */
+.ef-peek-backdrop {
+  position: fixed; inset: 0; z-index: 998;
+  background: rgba(15, 23, 42, .28);
+}
+.ef-peek {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 999;
+  width: min(430px, 92vw);
+  display: flex; flex-direction: column;
+  background: var(--ef-card);
+  border-left: 1px solid var(--ef-border);
+  box-shadow: -8px 0 28px rgba(15, 23, 42, .16);
+}
+.ef-peek-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  padding: 14px 16px; border-bottom: 1px solid var(--ef-border);
+}
+.ef-peek-title { font-size: 15px; font-weight: 800; color: var(--ef-text); }
+.ef-peek-sub { font-size: 11.5px; color: var(--ef-text-muted); margin-top: 2px; }
+.ef-peek-close {
+  border: 1px solid var(--ef-border); background: var(--ef-card);
+  color: var(--ef-text-muted); border-radius: 6px; cursor: pointer;
+  width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+  flex: 0 0 auto;
+}
+.ef-peek-close:hover { color: var(--ef-danger, #b91c1c); }
+.ef-peek-body { flex: 1; overflow-y: auto; padding: 14px 16px; font-size: 12.5px; }
+.ef-peek-foot { padding: 12px 16px; border-top: 1px solid var(--ef-border); }
+.ef-peek-foot .ef-btn { width: 100%; justify-content: center; }
+.ef-peek-block { margin-bottom: 16px; }
+.ef-peek-block-title {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .4px; color: var(--ef-text-muted); margin-bottom: 6px;
+}
+.ef-peek-row {
+  display: flex; justify-content: space-between; gap: 12px;
+  padding: 3px 0; border-bottom: 1px dashed var(--ef-border);
+}
+.ef-peek-row:last-child { border-bottom: 0; }
+.ef-peek-row-label { color: var(--ef-text-muted); }
+.ef-peek-row-value { font-weight: 600; text-align: right; }
+.ef-peek-row-strong .ef-peek-row-value { font-size: 15px; font-weight: 800; color: var(--ef-primary); }
+.ef-peek-muted { color: var(--ef-text-muted); font-style: italic; }
+.ef-peek-btn {
+  border: 0; background: none; cursor: pointer; padding: 0 4px;
+  color: var(--ef-text-muted); vertical-align: middle; line-height: 1;
+}
+.ef-peek-btn:hover { color: var(--ef-primary); }
+
+/* Riel de secciones (mapa lateral) + volver arriba */
+.ef-rail {
+  position: fixed;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 7px;
+}
+.ef-rail-toggle {
+  display: flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; margin-bottom: 4px;
+  border: 1px solid var(--ef-border); border-radius: 6px;
+  background: var(--ef-card); color: var(--ef-text-muted);
+  box-shadow: var(--ef-shadow); cursor: pointer;
+}
+.ef-rail-toggle:hover { color: var(--ef-primary); border-color: var(--ef-primary); }
+.ef-rail-toggle.ef-rail-toggle-open svg { transform: rotate(180deg); }
+.ef-rail-item {
+  display: flex; align-items: center; gap: 8px;
+  background: none; border: 0; padding: 2px; cursor: pointer;
+}
+.ef-rail-label {
+  font-size: 11px; font-weight: 700; white-space: nowrap;
+  background: var(--ef-card); color: var(--ef-text);
+  border: 1px solid var(--ef-border); border-radius: 6px;
+  padding: 3px 8px; box-shadow: var(--ef-shadow);
+  opacity: 0; transform: translateX(6px);
+  transition: opacity .15s ease, transform .15s ease;
+  pointer-events: none;
+}
+.ef-rail-dot {
+  width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto;
+  background: var(--ef-border);
+  transition: background .15s ease, transform .15s ease;
+}
+.ef-rail-item:hover .ef-rail-label,
+.ef-rail-item.ef-rail-active .ef-rail-label { opacity: 1; transform: none; }
+.ef-rail-item:hover .ef-rail-dot { background: var(--ef-primary); }
+.ef-rail-item.ef-rail-active .ef-rail-dot { background: var(--ef-primary); transform: scale(1.4); }
+
+.ef-to-top {
+  position: fixed; right: 12px; bottom: 80px; z-index: 40;
+  display: none; align-items: center; justify-content: center;
+  width: 34px; height: 34px; border-radius: 50%;
+  border: 1px solid var(--ef-border); background: var(--ef-card);
+  color: var(--ef-text-muted); box-shadow: var(--ef-shadow); cursor: pointer;
+}
+.ef-to-top:hover { color: var(--ef-primary); border-color: var(--ef-primary); }
+
 .ef-action-bar {
   position: fixed;
   bottom: 0;
@@ -3678,6 +4526,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 .ef-fel-info.ef-visible { display: block; }
 
 /* Responsive */
+@media (max-width: 1100px) {
+  /* El riel le robaría ancho a la tabla; en pantallas angostas el scroll
+     normal y el botón "volver arriba" bastan. */
+  .ef-rail { display: none; }
+}
 @media (max-width: 900px) {
   .ef-hrow { grid-template-columns: repeat(2, 1fr) !important; }
   .ef-sections { grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -4363,9 +5216,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 					this.doc.bfel_nombre = cname;
 					this.$body.find("#ef-bfel-nombre").val(cname);
 
-					// La lista de precios de la ficha del cliente SIEMPRE gana.
-					// Si el cliente no tiene, se usa la lista por defecto del
-					// usuario (FacEx Settings) y, si tampoco, se deja la actual.
+					// Al cambiar de cliente se hereda su lista; si no tiene, la
+					// lista por defecto del usuario (FacEx Settings) y, si
+					// tampoco, se deja la actual. Después de heredarla el
+					// usuario puede cambiarla a mano y esa elección es la que
+					// se factura (ver save_invoice).
 					const _prevList = this.doc.selling_price_list || "";
 					this.doc.selling_price_list =
 						r.message.default_price_list
@@ -4510,6 +5365,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 	_setup_item_table() {
 		this.$body.find("#ef-add-row").on("click", () => this._add_item_row());
+
+		this.$body.find("#ef-flete-check").on("change", (e) => this._toggle_flete(e.target.checked));
 
 		// Escaneo de código de barras / QR: agrega la línea automáticamente,
 		// o suma 1 a la cantidad si el producto ya está en la lista.
@@ -4802,7 +5659,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const row = {
 			item_code: item.item_code || "",
 			item_name: item.item_name || "",
-			warehouse: item.warehouse || defaults.default_warehouse || "",
+			warehouse: item.warehouse || defaults.default_pos_warehouse || defaults.default_warehouse || "",
 			qty: item.qty || 1,
 			uom: item.uom || "",
 			rate: item.rate || 0,
@@ -4825,10 +5682,29 @@ body.facex-fullscreen-mode .ef-main-layout {
 	}
 
 	_remove_item_row(idx) {
+		if (this.doc.items[idx] && this.doc.items[idx]._is_flete_auto) {
+			this.$body.find("#ef-flete-check").prop("checked", false);
+		}
 		this.doc.items.splice(idx, 1);
 		this._render_items();
 		this._update_local_footer();
 		this._mark_dirty();
+	}
+
+	// ── Flete automático (Ítem de Flete configurado en FacEx Settings) ─────
+	_toggle_flete(checked) {
+		const fleteCode = (this.company_config || {}).item_flete;
+		if (!fleteCode) return;
+		const idx = this.doc.items.findIndex((r) => r.item_code === fleteCode && r._is_flete_auto);
+		if (checked) {
+			if (idx !== -1) return;
+			this._add_item_row({ item_code: fleteCode });
+			const newIdx = this.doc.items.length - 1;
+			this.doc.items[newIdx]._is_flete_auto = 1;
+			this._fetch_item_details(newIdx, fleteCode);
+		} else if (idx !== -1) {
+			this._remove_item_row(idx);
+		}
 	}
 
 	_fetch_item_details(idx, item_code) {
@@ -4839,7 +5715,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 				item_code: item_code,
 				company: this.doc.company || this.defaults.company || "",
 				customer: this.doc.customer || "",
-				warehouse: this.defaults.default_warehouse || "",
+				warehouse: this.defaults.default_pos_warehouse || this.defaults.default_warehouse || "",
 				price_list: this.doc.selling_price_list || "",
 			},
 			callback: (r) => {
@@ -4913,8 +5789,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 		if (!$sel.length || !(this._selectable_price_lists || []).length) return;
 		const cur = this.doc.selling_price_list || this.defaults.default_price_list || "";
 		if (cur && this._selectable_price_lists.indexOf(cur) === -1) {
-			// La lista del cliente no está entre las seleccionables: se respeta
-			// igual (el cliente siempre gana) pero se muestra como opción fija.
+			// La lista del cliente no está entre las seleccionables: se hereda
+			// igual (no es una elección del usuario) como opción fija.
 			$sel.append(`<option value="${_esc(cur)}">${_esc(cur)} (del cliente)</option>`);
 		}
 		$sel.val(cur);
@@ -4930,7 +5806,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					item_code: row.item_code,
 					company: this.doc.company || this.defaults.company || "",
 					customer: this.doc.customer || "",
-					warehouse: row.warehouse || this.defaults.default_warehouse || "",
+					warehouse: row.warehouse || this.defaults.default_pos_warehouse || this.defaults.default_warehouse || "",
 					price_list: this.doc.selling_price_list || "",
 				},
 				callback: (r) => {
@@ -5366,7 +6242,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 	_show_serial_picker(idx, callback) {
 		const row = this.doc.items[idx];
-		const warehouse = row.warehouse || this.defaults.default_warehouse || "";
+		const warehouse = row.warehouse || this.defaults.default_pos_warehouse || this.defaults.default_warehouse || "";
 		const item_code = row.item_code;
 
 		const dlg = new frappe.ui.Dialog({
@@ -5630,6 +6506,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			reporte_antiguedad_saldos: 1, reporte_cotizaciones: 1,
 			reporte_recibos_pagos: 1, reporte_crecimiento_ventas: 1,
 			reporte_imprimir_recibo: 1, reporte_analisis_utilidad: 1,
+			reporte_auditoria_sistema: 1,
 		};
 	}
 
@@ -5648,6 +6525,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			sales_growth_analysis: "reporte_crecimiento_ventas",
 			print_receipt:         "reporte_imprimir_recibo",
 			utility_analysis:      "reporte_analisis_utilidad",
+			system_audit:          "reporte_auditoria_sistema",
 		};
 	}
 
@@ -5668,9 +6546,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const p = this.perms;
 
 		// --- Navegación principal ---
-		if (!p.puede_ver_tablero) this.$body.find(".ef-nav-btn[data-view='dashboard']").hide();
-		if (!p.puede_facturar)    this.$body.find(".ef-nav-btn[data-view='billing']").hide();
-		if (!p.puede_compras)     this.$body.find(".ef-nav-btn[data-view='purchase']").hide();
+		// El criterio de cada vista vive en _can_access_view(), que es también
+		// el que gatea la llegada por URL: un solo lugar que cambiar, así el
+		// botón oculto y el link bloqueado nunca se contradicen.
+		if (!this._can_access_view("dashboard")) this.$body.find(".ef-nav-btn[data-view='dashboard']").hide();
+		if (!this._can_access_view("billing"))   this.$body.find(".ef-nav-btn[data-view='billing']").hide();
+		if (!this._can_access_view("purchase"))  this.$body.find(".ef-nav-btn[data-view='purchase']").hide();
 		// Deny-by-default: a diferencia de los anteriores (ON salvo que se
 		// desactiven explícitamente), estos botones arrancan ocultos y solo
 		// se muestran si el permiso viene explícitamente en 1.
@@ -5678,11 +6559,15 @@ body.facex-fullscreen-mode .ef-main-layout {
 		else this.$body.find(".ef-nav-btn[data-view='pos']").hide();
 		if (p.puede_ver_menu_inventario) this.$body.find(".ef-nav-btn[data-view='inventario']").show();
 		else this.$body.find(".ef-nav-btn[data-view='inventario']").hide();
+		this.$body.find("#ef-menu-cierre").toggle(this._has_cierre_access());
+		// Seguridad: visible con cualquiera de los dos permisos (ver módulo
+		// completo, o solo el privilegio de reiniciar contraseñas).
+		this.$body.find(".ef-nav-btn[data-view='seguridad']").toggle(this._can_access_view("seguridad"));
 		// Transporte: el grupo del menú solo aparece si puede_ver_menu_transporte
 		// está activo Y al menos un sub-permiso específico también lo está; cada
 		// ítem del acordeón se muestra/oculta además según su propio permiso
 		// (mismo criterio que ya usan las tarjetas del hub en FacexTransporteModule).
-		const hasTransporteAccess = this._has_transporte_access();
+		const hasTransporteAccess = this._can_access_view("transporte");
 		this.$body.find("#ef-menu-group-transporte").toggle(hasTransporteAccess);
 		if (hasTransporteAccess) {
 			this.$body.find("#ef-menu-transporte-transportistas").toggle(!!p.puede_administrar_transportistas);
@@ -5706,7 +6591,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			if (allHidden) $grp.hide();
 		});
 		// Si ningún reporte visible, ocultar tab Reportes del nav
-		if (!this._any_report_access()) this.$body.find(".ef-nav-btn[data-view='reports']").hide();
+		if (!this._can_access_view("reports")) this.$body.find(".ef-nav-btn[data-view='reports']").hide();
 
 		// Si un grupo del menú agrupado (Ventas / Tablero y Reportes / Gestión)
 		// se queda sin ningún ítem visible tras lo anterior, ocultar también
@@ -5746,6 +6631,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 		}
 		if (!p.puede_consultar_familias && !p.puede_mantener_familias) {
 			this.$body.find(".ef-maint-tab-btn[data-maint-tab='familias']").hide();
+		}
+		if (!p.puede_consultar_grupo_items && !p.puede_mantener_grupo_items) {
+			this.$body.find(".ef-maint-tab-btn[data-maint-tab='grupo-items']").hide();
 		}
 		if (!p.gestiona_listas_materiales) {
 			this.$body.find(".ef-maint-tab-btn[data-maint-tab='listas-materiales']").hide();
@@ -5989,9 +6877,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 		Object.values(this.controls).forEach((ctrl) => {
 			if (ctrl && ctrl.$input) ctrl.$input.prop("disabled", true);
 		});
-		$b.find(".ef-cell-input:not([readonly])").prop("disabled", true);
+		// Solo la pestaña Factura: las filas del desglose de pagos (pestaña
+		// Pagos) tienen su propio bloqueo (PEs validados) y deben seguir
+		// editables en una factura validada.
+		$b.find("#ef-tab-factura .ef-cell-input:not([readonly])").prop("disabled", true);
 		$b.find("#ef-add-row").prop("disabled", true);
-		$b.find(".ef-btn-del").prop("disabled", true).css("visibility", "hidden");
+		$b.find("#ef-tab-factura .ef-btn-del").prop("disabled", true).css("visibility", "hidden");
 	}
 
 	_unlock_fields() {
@@ -6005,9 +6896,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 		Object.values(this.controls).forEach((ctrl) => {
 			if (ctrl && ctrl.$input) ctrl.$input.prop("disabled", false);
 		});
-		$b.find(".ef-cell-input:not([readonly])").prop("disabled", false);
+		$b.find("#ef-tab-factura .ef-cell-input:not([readonly])").prop("disabled", false);
 		$b.find("#ef-add-row").prop("disabled", false);
-		$b.find(".ef-btn-del").prop("disabled", false).css("visibility", "visible");
+		$b.find("#ef-tab-factura .ef-btn-del").prop("disabled", false).css("visibility", "visible");
 	}
 
 	// -----------------------------------------------------------------------
@@ -6038,6 +6929,19 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-terms").val(d.terms || "");
 		this._toggle_escenario_exento(d.taxes_and_charges);
 		this.$body.find("#ef-bfel-escenario-exento").val(d.bfel_escenario_exento || "");
+
+		// Flete: sincronizar la casilla con la fila del ítem de flete (si
+		// existe en el documento, cargado o nuevo) — cubre tanto _new_invoice
+		// como load_invoice, que llaman a este método.
+		const fleteCode = (this.company_config || {}).item_flete;
+		let fleteFound = false;
+		(this.doc.items || []).forEach((row) => {
+			if (fleteCode && row.item_code === fleteCode) {
+				row._is_flete_auto = 1;
+				fleteFound = true;
+			}
+		});
+		this.$body.find("#ef-flete-check").prop("checked", fleteFound);
 
 		this._render_items();
 		this._update_footer();
@@ -6252,13 +7156,18 @@ body.facex-fullscreen-mode .ef-main-layout {
 			show("#ef-btn-open-erp"); enable("#ef-btn-open-erp");
 			show("#ef-btn-duplicate"); enable("#ef-btn-duplicate");
 			// caso 3: pendiente de certificar FEL
+			// puede_anular_facturas gatea Anular/Cancelar (acción destructiva e
+			// irreversible) — mismo flag que ya exige el backend en
+			// cancel_invoice()/cancel_certified_invoice_fel() (invoice.py);
+			// antes el botón se mostraba siempre y solo fallaba al hacer click.
+			const _canCancel = !!(this.perms && this.perms.puede_anular_facturas);
 			if (!isCertified && d.bfel_status !== "00 No enviar") {
 				show("#ef-btn-certify"); enable("#ef-btn-certify");
-				show("#ef-btn-cancel-doc"); enable("#ef-btn-cancel-doc"); // Permitir anular desde ERPNext si aún no es FEL
+				if (_canCancel) { show("#ef-btn-cancel-doc"); enable("#ef-btn-cancel-doc"); } // Permitir anular desde ERPNext si aún no es FEL
 			} else if (isCertified && d.bfel_uuid && !d.bfel_documento_anulado) {
-				show("#ef-btn-cancel-fel"); enable("#ef-btn-cancel-fel");
+				if (_canCancel) { show("#ef-btn-cancel-fel"); enable("#ef-btn-cancel-fel"); }
 			} else if (!isCertified && d.bfel_status === "00 No enviar") {
-				show("#ef-btn-cancel-doc"); enable("#ef-btn-cancel-doc");
+				if (_canCancel) { show("#ef-btn-cancel-doc"); enable("#ef-btn-cancel-doc"); }
 			}
 			// Asociar Guía de Transporte: solo con factura ya validada y permiso
 			// puede_editar_guias_transporte (mismo flag que gatea el botón
@@ -6870,12 +7779,17 @@ body.facex-fullscreen-mode .ef-main-layout {
 	// -----------------------------------------------------------------------
 
 	load_invoice(name) {
+		// Guardia de secuencia: si mientras esta carga estaba en vuelo se
+		// disparó otra (o se guardaron pagos y se aplicó su estado), una
+		// respuesta vieja no debe pisar this.doc.
+		const seq = (this._load_seq = (this._load_seq || 0) + 1);
 		frappe.call({
 			method: "facex_multi.api.invoice.get_invoice",
 			args: { name: name },
 			freeze: true,
 			freeze_message: "Cargando factura...",
 			callback: (r) => {
+				if (seq !== this._load_seq) return;
 				if (!r.exc && r.message) {
 					this._dirty = false;
 					this.doc = r.message;
@@ -7322,7 +8236,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 				item_code: r.item_code,
 				item_name: r.item_name || "",
 				description: r.description || r.item_name || "",
-				warehouse: r.warehouse || this.defaults.default_warehouse || "",
+				warehouse: r.warehouse || this.defaults.default_pos_warehouse || this.defaults.default_warehouse || "",
 				qty: parseFloat(r.qty) || 1,
 				uom: r.uom || "",
 				rate: parseFloat(r.rate) || 0,
@@ -7510,6 +8424,94 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-sec-cliente").addClass("ef-sec-open");
 	}
 
+	// Destinos del riel lateral. Se resuelven en vivo (y no una sola vez) porque
+	// el tab de Pagos oculta Detalle y Totales.
+	_rail_targets() {
+		return {
+			cliente:   "#ef-sec-cliente",
+			documento: "#ef-sec-documento",
+			fel:       "#ef-sec-fel",
+			detalle:   ".ef-items-section",
+			totales:   ".ef-footer",
+		};
+	}
+
+	_setup_section_rail() {
+		const TARGETS = this._rail_targets();
+		const $rail = this.$body.find("#ef-section-rail");
+
+		$rail.on("click", ".ef-rail-item", (e) => {
+			const $target = this.$body.find(TARGETS[$(e.currentTarget).data("target")]);
+			if (!$target.length) return;
+			// Las tarjetas del encabezado son un acordeón: saltar a una también
+			// la abre, si no el usuario aterriza sobre un título colapsado.
+			if ($target.hasClass("ef-sec-card") && !$target.hasClass("ef-sec-open")) {
+				$target.find(".ef-sec-head").trigger("click");
+			}
+			$target[0].scrollIntoView({ behavior: "smooth", block: "start" });
+		});
+
+		this.$body.find("#ef-rail-toggle-all").on("click", () => this._toggle_all_sections());
+
+		// Scrollspy: se marca la sección con más presencia en pantalla.
+		const ratios = new Map();
+		const observer = new IntersectionObserver(
+			(entries) => {
+				entries.forEach((en) => {
+					ratios.set(en.target.dataset.railKey, en.isIntersecting ? en.intersectionRatio : 0);
+				});
+				// Se recorre en el orden del documento, no el de los entries: en
+				// escritorio las tres tarjetas del encabezado van lado a lado y
+				// empatan, y así el resaltado no salta entre ellas.
+				let best = null;
+				let best_ratio = 0;
+				Object.keys(TARGETS).forEach((key) => {
+					const ratio = ratios.get(key) || 0;
+					if (ratio > best_ratio) { best_ratio = ratio; best = key; }
+				});
+				$rail.find(".ef-rail-item").removeClass("ef-rail-active");
+				if (best) $rail.find(`.ef-rail-item[data-target="${best}"]`).addClass("ef-rail-active");
+			},
+			{ threshold: [0, 0.2, 0.5, 0.8, 1] }
+		);
+		Object.entries(TARGETS).forEach(([key, sel]) => {
+			const el = this.$body.find(sel)[0];
+			if (!el) return;
+			el.dataset.railKey = key;
+			observer.observe(el);
+		});
+
+		const $to_top = this.$body.find("#ef-to-top");
+		$to_top.on("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
+		$(window).on("scroll.efRail", () => {
+			const show = this._current_view === "billing" && window.scrollY > 320;
+			$to_top.css("display", show ? "flex" : "none");
+		});
+
+		if (localStorage.getItem("ef_sections_all_open") === "1") this._toggle_all_sections(true);
+	}
+
+	// Las tarjetas son un acordeón (una abierta a la vez), pero en escritorio van
+	// en tres columnas: abrirlas todas cabe sin estorbar y hay quien prefiere ver
+	// el encabezado completo. La elección se recuerda entre sesiones.
+	_toggle_all_sections(force) {
+		const $cards = this.$body.find(".ef-sec-card").not(".ef-sec-locked");
+		const open = force === undefined ? $cards.filter(".ef-sec-open").length < $cards.length : force;
+		$cards.toggleClass("ef-sec-open", open);
+		this.$body.find("#ef-rail-toggle-all").toggleClass("ef-rail-toggle-open", open);
+		localStorage.setItem("ef_sections_all_open", open ? "1" : "0");
+	}
+
+	_refresh_rail() {
+		// Con el facturador oculto todos los destinos miden "no visible" y el
+		// riel se vaciaría hasta el próximo cambio de tab.
+		if (!this.$body.find("#ef-billing-view").is(":visible")) return;
+		const TARGETS = this._rail_targets();
+		this.$body.find("#ef-section-rail .ef-rail-item").each((_, el) => {
+			$(el).toggle(this.$body.find(TARGETS[$(el).data("target")]).is(":visible"));
+		});
+	}
+
 	_update_header_sections() {
 		const d = this.doc;
 		const $b = this.$body;
@@ -7600,6 +8602,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find(`.ef-tab-btn[data-tab="${tabName}"]`).addClass("ef-tab-active");
 		this.$body.find(".ef-tab-content").hide();
 		this.$body.find(`#ef-tab-${tabName}`).show();
+		this._refresh_rail();
 	}
 
 	_update_tabs_state() {
@@ -7924,36 +8927,68 @@ body.facex-fullscreen-mode .ef-main-layout {
 				frappe.show_alert({ message: "Solo se puede marcar como Pagada una factura <strong>Validada</strong>.", indicator: "orange" });
 				return;
 			}
-			this.doc.custom_pagado = checked ? 1 : 0;
+			// Con un desglose de pago detallado el toggle no aplica: el pago
+			// se administra (o se elimina) desde la pestaña Pagos, para no
+			// pisar el detalle con un pago total automático.
+			if (this._has_manual_payment_detail()) {
+				e.target.checked = !checked;
+				this._sync_pagado_ui();
+				frappe.show_alert({
+					message: "Esta factura tiene un <strong>desglose de pago detallado</strong>. Administre el pago desde la pestaña <strong>Pagos</strong>.",
+					indicator: "orange",
+				});
+				return;
+			}
 			if (!checked) {
 				// Desmarcar: eliminar todas las filas de pago y guardar
+				this.doc.custom_pagado = 0;
 				this.doc.custom_efast_payments = [];
 				this._manualPayment = false;
 				this._sync_pagado_ui();
 				this._auto_save_pagado(0);
 				return;
 			}
-			// Marcar: si no es manual, agregar fila automática y guardar
-			if (!this._manualPayment) {
-				this.doc.custom_efast_payments = [{
-					payment_method: "Efectivo",
-					payment_date: this.doc.posting_date || frappe.datetime.get_today(),
-					reference: "Automático x FacEx",
-					// Usar outstanding_amount (no grand_total): cuando la factura
-					// tiene redondeo (rounding_adjustment != 0), ERPNext valida el
-					// Payment Entry contra el saldo pendiente real, no contra el
-					// grand_total sin redondear.
-					amount: parseFloat(this.doc.outstanding_amount) || 0,
-				}];
-			}
-			this._sync_pagado_ui();
-			this._auto_save_pagado(1);
+			// Marcar: pre-confirmación antes de aplicar el pago total automático
+			const currency = this.doc.currency || "GTQ";
+			const monto    = _fmtCurrency(parseFloat(this.doc.outstanding_amount) || 0, currency);
+			const revert   = () => {
+				e.target.checked = false;
+				this._sync_pagado_ui();
+			};
+			frappe.confirm(
+				`¿Está seguro de aplicar un <strong>pago total automático</strong> de <strong>${monto}</strong> ` +
+				`(Efectivo) a la factura <strong>${this.doc.name}</strong>?<br><br>` +
+				`<span style="color:#64748b;font-size:12px">Si el cliente pagó con varias formas de pago o en abonos, ` +
+				`cancele y use <strong>Detalle manual de pago</strong>.</span>`,
+				() => {
+					this.doc.custom_pagado = 1;
+					this.doc.custom_efast_payments = [{
+						payment_method: "Efectivo",
+						payment_date: this.doc.posting_date || frappe.datetime.get_today(),
+						reference: "Automático x FacEx",
+						// Usar outstanding_amount (no grand_total): cuando la factura
+						// tiene redondeo (rounding_adjustment != 0), ERPNext valida el
+						// Payment Entry contra el saldo pendiente real, no contra el
+						// grand_total sin redondear.
+						amount: parseFloat(this.doc.outstanding_amount) || 0,
+					}];
+					this._manualPayment = false;
+					this._sync_pagado_ui();
+					this._auto_save_pagado(1);
+				},
+				revert,
+			);
 		});
 
 		this.$body.on("click", "#ef-btn-manual-payment", () => {
 			this._manualPayment = true;
-			// Clear auto-added payment row
-			this.doc.custom_efast_payments = [];
+			// Solo se limpia la fila automática de un toggle "Pagado" simple.
+			// Si ya hay un desglose manual guardado (una consulta posterior
+			// vuelve a entrar aquí), se respeta tal cual — antes se perdía
+			// y el usuario tenía que reconstruirlo desde cero.
+			const payments = this.doc.custom_efast_payments || [];
+			const isAuto = payments.length === 1 && payments[0].reference === "Automático x FacEx";
+			if (isAuto) this.doc.custom_efast_payments = [];
 			this._sync_pagado_ui();
 			this._render_payments_tab();
 			this._switch_tab("pagos");
@@ -7966,10 +9001,15 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const checked         = !!this.doc.custom_pagado;
 		const isSubmitted     = this.doc.docstatus === 1;
 		const hasSubmittedPEs = !!(this.doc._payment_entries && this.doc._payment_entries.has_submitted);
-		const canToggle       = isSubmitted && !hasSubmittedPEs;
+		const hasManualDetail = this._has_manual_payment_detail();
+		const canToggle       = isSubmitted && !hasSubmittedPEs && !hasManualDetail;
 		const $chk = this.$body.find("#ef-pagado");
 		$chk.prop("checked", checked).prop("disabled", !canToggle);
-		$chk.closest(".ef-toggle").css("opacity", canToggle ? "" : "0.5");
+		$chk.closest(".ef-toggle")
+			.css("opacity", canToggle ? "" : "0.5")
+			.attr("title", hasSubmittedPEs
+				? "Pagos validados en ERPNext: no se puede cambiar desde FacEx."
+				: (hasManualDetail ? "Factura con desglose de pago detallado: administre el pago desde la pestaña Pagos." : ""));
 		this.$body.find("#ef-pagado-label")
 			.text(checked ? "Pagado" : "Pendiente")
 			.removeClass("ef-pagado-pending ef-pagado-done")
@@ -7983,6 +9023,33 @@ body.facex-fullscreen-mode .ef-main-layout {
 			$manualBtn.hide();
 			$autoLbl.hide();
 		}
+	}
+
+	// Un pago "con detalle" es cualquier desglose distinto de la única fila
+	// automática que crea el toggle ("Automático x FacEx"), o bien estar
+	// editando el detalle manual (filas aún sin guardar).
+	_has_manual_payment_detail() {
+		const payments = this.doc.custom_efast_payments || [];
+		if (this.doc.docstatus !== 1) return false;
+		if (this._manualPayment && this.doc.custom_pagado) return true;
+		if (!payments.length) return false;
+		const isAuto = payments.length === 1 && payments[0].reference === "Automático x FacEx";
+		return !isAuto;
+	}
+
+	// Aplica de inmediato el estado que devuelve save_payments (mismo formato
+	// que get_invoice) para que las líneas de pago y el footer se vean al
+	// instante, sin depender de que la recarga completa llegue (o llegue en
+	// orden). load_invoice después trae el resto del documento.
+	_apply_payment_state(res) {
+		if (!res || !this.doc || !this.doc.name || this.doc.name === "new") return;
+		if (Array.isArray(res.custom_efast_payments)) {
+			this.doc.custom_efast_payments = res.custom_efast_payments;
+		}
+		if (res.custom_pagado !== undefined) this.doc.custom_pagado = res.custom_pagado ? 1 : 0;
+		if (res.outstanding_amount !== undefined) this.doc.outstanding_amount = res.outstanding_amount;
+		if (res._payment_entries) this.doc._payment_entries = res._payment_entries;
+		this._render_payments_tab();
 	}
 
 	_render_payments_tab() {
@@ -8031,10 +9098,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this._update_payments_total();
 			this._update_contra_entrega_note();
 
-			// Detect manual vs auto mode from existing payments
+			// Detect manual vs auto mode from existing payments (sin arrastrar
+			// el modo de la factura anterior cuando la actual tiene la fila
+			// automática). Con pagado y sin filas se respeta el modo actual:
+			// es el estado de "Detalle manual de pago" antes de guardar.
 			const _isAuto = payments.length === 1 && payments[0].reference === "Automático x FacEx";
-			if (this.doc.custom_pagado && payments.length > 0 && !_isAuto) {
-				this._manualPayment = true;
+			if (this.doc.custom_pagado && payments.length > 0) {
+				this._manualPayment = !_isAuto;
 			} else if (!this.doc.custom_pagado) {
 				this._manualPayment = false;
 			}
@@ -8148,8 +9218,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 			.text(_fmtCurrency(balance, currency))
 			.css("color", Math.abs(balance) < 0.01 ? "#2dc653" : (balance < 0 ? "#e63946" : "#f8961e"));
 
-		// Enable Guardar Pagos if totalPaid > 0 and totalPaid <= grandTotal and there's at least one payment row
-		const isValid = payments.length > 0 && totalPaid > 0 && totalPaid <= grandTotal;
+		// Enable Guardar Pagos if totalPaid > 0 and totalPaid <= grandTotal and there's at least one payment row.
+		// Sin filas también se permite cuando la factura ya está Pagada: es la
+		// única vía para quitar un desglose detallado (el toggle queda
+		// bloqueado en ese caso) y dejar la factura Pendiente.
+		const isClearing = payments.length === 0 && !!this.doc.custom_pagado;
+		const isValid = isClearing || (payments.length > 0 && totalPaid > 0 && totalPaid <= grandTotal);
 		const $btnSave = this.$body.find("#ef-btn-save-payments");
 		if (isValid) {
 			$btnSave.prop("disabled", false).removeClass("ef-btn-disabled");
@@ -8166,10 +9240,22 @@ body.facex-fullscreen-mode .ef-main-layout {
 			return;
 		}
 		const payments   = this.doc.custom_efast_payments || [];
-		// In manual mode, require at least one row
-		if (this._manualPayment && this.doc.custom_pagado && !payments.length) {
-			frappe.show_alert({ message: "Ingrese al menos una línea de pago en el desglose manual.", indicator: "red" });
-			return;
+		// Sin filas: si la factura está Pagada se confirma que se quiere quitar
+		// el pago (queda Pendiente); si no, no hay nada que guardar.
+		if (!payments.length) {
+			if (!this.doc.custom_pagado) {
+				frappe.show_alert({ message: "Ingrese al menos una línea de pago en el desglose manual.", indicator: "red" });
+				return;
+			}
+			if (!this._confirmedClear) {
+				frappe.confirm(
+					`¿Quitar <strong>todos los pagos</strong> de la factura <strong>${this.doc.name}</strong>?<br>` +
+					`La factura quedará <strong>Pendiente</strong> de cobro y se eliminarán los comprobantes de pago en borrador.`,
+					() => { this._confirmedClear = true; this._save_payments(); },
+				);
+				return;
+			}
+			this._confirmedClear = false;
 		}
 		// Si hay filas de pago, la factura se marca como pagada independientemente del toggle
 		const pagado     = payments.length > 0 ? 1 : 0;
@@ -8199,7 +9285,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 			freeze_message: "Guardando pagos...",
 			callback: (r) => {
 				if (!r.exc && r.message) {
-					frappe.show_alert({ message: "Pagos guardados correctamente.", indicator: "green" });
+					const msg = pagado ? "Pagos guardados correctamente." : "Pagos eliminados; la factura queda <strong>Pendiente</strong>.";
+					frappe.show_alert({ message: msg, indicator: pagado ? "green" : "blue" });
+					if (this.doc.name === invoiceName) {
+						this._manualPayment = pagado ? this._manualPayment : false;
+						this._apply_payment_state(r.message);
+					}
 					this.load_invoice(invoiceName);
 					if (hasContraEntrega) {
 						frappe.confirm(
@@ -8218,7 +9309,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 	_auto_save_pagado(pagadoVal) {
 		if (!this.doc.name || this.doc.name === "new") return;
-		const payments = this.doc.custom_efast_payments || [];
+		const payments    = this.doc.custom_efast_payments || [];
+		const invoiceName = this.doc.name;
 		frappe.call({
 			method: "facex_multi.api.invoice.save_payments",
 			args: {
@@ -8234,8 +9326,14 @@ body.facex-fullscreen-mode .ef-main-layout {
 						? "Factura marcada como <strong>Pagada</strong>."
 						: "Pago <strong>eliminado</strong>.";
 					frappe.show_alert({ message: msg, indicator: pagadoVal ? "green" : "blue" });
-					this.load_invoice(this.doc.name);
+					if (this.doc.name === invoiceName) this._apply_payment_state(r.message);
+					this.load_invoice(invoiceName);
 				}
+			},
+			error: () => {
+				// El servidor rechazó el cambio (p. ej. Cierre Diario): volver al
+				// estado real en vez de dejar el toggle en el valor optimista.
+				if (this.doc.name === invoiceName) this.load_invoice(invoiceName);
 			},
 		});
 	}
@@ -8476,6 +9574,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 			print_receipt: {
 				title: "Imprimir Recibo de Pago",
 				desc: "Busque cualquier factura del sistema para reimprimir su comprobante de pago personalizado."
+			},
+			system_audit: {
+				title: "Auditoría de Sistema",
+				desc: "Resumen por usuario (cantidad y monto) de Cotizaciones, Facturas No Enviar/Enviar, Pagos Aplicados y Guías Pendientes de Liquidar, por rango de fechas."
 			}
 		};
 
@@ -8651,30 +9753,41 @@ body.facex-fullscreen-mode .ef-main-layout {
 		}
 
 		if (!this.rep_warehouse_ctrl) {
-			const get_query_fn = () => {
-				const comp = get_company();
-				const filters = { company: comp };
-				if ((this.warehouses || []).length) {
-					filters.name = ["in", this.warehouses];
-				}
-				return { filters };
-			};
 			this.rep_warehouse_ctrl = frappe.ui.form.make_control({
 				parent: this.$body.find("#ef-rep-warehouse-ctrl")[0],
 				df: {
-					only_select: 1,
 					label: "Bodega",
-					fieldtype: "Link",
+					fieldtype: "MultiSelectList",
 					fieldname: "rep_warehouse",
-					options: "Warehouse",
-					reqd: 0,
-					get_query: get_query_fn
+					get_data: (txt) => {
+						const filters = { company: get_company() };
+						// Gerencia (rol_clasificacion en FacEx Settings): sin restricción,
+						// puede elegir cualquier almacén de la compañía en los reportes.
+						if (!(this.perms || {}).es_gerencia && (this.warehouses || []).length) {
+							filters.name = ["in", this.warehouses];
+						}
+						return frappe.db.get_link_options("Warehouse", txt, filters);
+					},
 				},
 				render_input: true,
 				only_input: false,
 			});
-			this.rep_warehouse_ctrl.get_query = get_query_fn;
 			this.rep_warehouse_ctrl.refresh();
+		}
+
+		if (!this.rep_owner_ctrl) {
+			this.rep_owner_ctrl = frappe.ui.form.make_control({
+				parent: this.$body.find("#ef-rep-owner-ctrl")[0],
+				df: {
+					label: "Usuario Creador",
+					fieldtype: "MultiSelectList",
+					fieldname: "rep_owner",
+					get_data: (txt) => this._user_query_for_reports(txt),
+				},
+				render_input: true,
+				only_input: false,
+			});
+			this.rep_owner_ctrl.refresh();
 		}
 
 		if (!this.rep_print_invoice_ctrl) {
@@ -8793,6 +9906,22 @@ body.facex-fullscreen-mode .ef-main-layout {
 		});
 	}
 
+	// get_data del filtro "Usuario Creador" (MultiSelectList) — excluye System
+	// Manager (ya tienen acceso total, no aportan como filtro) vía el query
+	// override del backend, compartido con Transporte/Inventario/Auditoría.
+	_user_query_for_reports(txt) {
+		return new Promise((resolve) => {
+			frappe.call({
+				method: "facex_multi.api.reports.user_query_for_reports",
+				args: { txt: txt || "" },
+				callback: (r) => {
+					const rows = r.message || [];
+					resolve(rows.map((row) => ({ value: row[0], description: row[1] || row[0] })));
+				},
+			});
+		});
+	}
+
 	_update_filter_visibility(report_id) {
 		this.$body.find(".ef-rep-filter").hide();
 		this.$body.find("#ef-report-filters").show();
@@ -8829,12 +9958,28 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this.$body.find("#ef-report-chart-container").show();
 		} else if (report_id === "utility_analysis") {
 			this.$body.find(".ef-filter-company, .ef-filter-price-list, .ef-filter-cost-basis, .ef-filter-solo-precio, .ef-filter-item, .ef-filter-item-group, .ef-filter-supplier").show();
+		} else if (report_id === "system_audit") {
+			this.$body.find(".ef-filter-company, .ef-filter-date").show();
 		} else if (report_id === "print_receipt") {
 			this.$body.find("#ef-report-filters").hide();
 			this.$body.find("#ef-report-btn-export").hide();
 			this.$body.find("#ef-report-table-title").hide();
 			this.$body.find("#ef-report-table-wrapper").hide();
 			this.$body.find("#ef-report-print-receipt-container").show();
+		}
+
+		// Usuario Creador: selección múltiple, aplica a todos los reportes
+		// transaccionales (todos menos el recibo de impresión, que no es un
+		// listado). Análisis de Utilidad es agregado por producto/proveedor,
+		// sin un owner por fila con sentido — se excluye explícitamente.
+		// Solo Gerencia (rol_clasificacion) puede elegir a QUIÉN filtrar — el
+		// resto siempre ve únicamente sus propias operaciones (forzado en el
+		// backend), así que mostrarles el control sería engañoso.
+		const _esGerencia = !!(this.perms || {}).es_gerencia;
+		if (report_id && report_id !== "print_receipt" && report_id !== "utility_analysis" && _esGerencia) {
+			this.$body.find(".ef-filter-owners").show();
+		} else {
+			this.$body.find(".ef-filter-owners").hide();
 		}
 	}
 
@@ -8847,7 +9992,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const customer = this.rep_customer_ctrl ? this.rep_customer_ctrl.get_value() : "";
 		const item_code = this.rep_item_ctrl ? this.rep_item_ctrl.get_value() : "";
 		const item_group = this.rep_item_group_ctrl ? this.rep_item_group_ctrl.get_value() : "";
-		const warehouse = this.rep_warehouse_ctrl ? this.rep_warehouse_ctrl.get_value() : "";
+		const warehouse = this.rep_warehouse_ctrl ? this.rep_warehouse_ctrl.get_value() : [];
+		const owners = this.rep_owner_ctrl ? this.rep_owner_ctrl.get_value() : [];
 		const payment_method = this.$body.find("#ef-rep-payment-method").val();
 		const doc_type_filter = this.$body.find("#ef-rep-doc-type").val();
 		const year = this.$body.find("#ef-rep-year").val() || new Date().getFullYear();
@@ -8872,34 +10018,37 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		if (report_id === "sales_by_date") {
 			method = "facex_multi.api.reports.get_sales_by_date";
-			args = { start_date, end_date, customer, warehouse, establecimiento };
+			args = { start_date, end_date, customer, warehouse, owners, establecimiento };
 		} else if (report_id === "sales_by_product") {
 			method = "facex_multi.api.reports.get_sales_by_product";
-			args = { start_date, end_date, item_code, item_group, customer, warehouse, establecimiento };
+			args = { start_date, end_date, item_code, item_group, customer, warehouse, owners, establecimiento };
 		} else if (report_id === "cancelled_invoices") {
 			method = "facex_multi.api.reports.get_cancelled_invoices";
-			args = { start_date, end_date, customer, establecimiento };
+			args = { start_date, end_date, customer, owners, establecimiento };
 		} else if (report_id === "customer_statement") {
 			method = "facex_multi.api.reports.get_customer_statement";
-			args = { customer, start_date, end_date, doc_type_filter, establecimiento };
+			args = { customer, start_date, end_date, doc_type_filter, owners, establecimiento };
 		} else if (report_id === "aging_receivables") {
 			method = "facex_multi.api.reports.get_aging_receivables";
-			args = { customer, establecimiento };
+			args = { customer, owners, establecimiento };
 		} else if (report_id === "quotations_report") {
 			method = "facex_multi.api.reports.get_quotations_report";
-			args = { start_date, end_date, customer, establecimiento };
+			args = { start_date, end_date, customer, owners, establecimiento };
 		} else if (report_id === "payments_report") {
 			method = "facex_multi.api.reports.get_payments_report";
-			args = { start_date, end_date, payment_method, establecimiento };
+			args = { start_date, end_date, payment_method, owners, establecimiento };
 		} else if (report_id === "uncertified_invoices") {
 			method = "facex_multi.api.reports.get_uncertified_invoices";
-			args = { establecimiento };
+			args = { owners, establecimiento };
 		} else if (report_id === "sales_growth_analysis") {
 			method = "facex_multi.api.reports.get_sales_growth_analysis";
-			args = { year, month, establecimiento };
+			args = { year, month, owners, establecimiento };
 		} else if (report_id === "utility_analysis") {
 			method = "facex_multi.api.utilidad.get_utility_analysis";
 			args = { cost_basis, item_code, item_group, supplier, price_list: rep_price_list, solo_con_precio };
+		} else if (report_id === "system_audit") {
+			method = "facex_multi.api.reports.get_system_audit";
+			args = { start_date, end_date, owners };
 		}
 
 		// Si el filtro de compañía está en "Todas" (vacío), el backend resolverá por permisos del usuario
@@ -8978,7 +10127,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			invoices.forEach(inv => {
 				$tbody.append(`
 					<tr>
-						<td class="ef-td"><a class="ef-inv-load-link" data-name="${inv.name}" style="color:var(--ef-primary); font-weight:700; text-decoration:underline; cursor:pointer;">${inv.name}</a></td>
+						<td class="ef-td"><a class="ef-inv-load-link" title="Clic: abrir aquí · Ctrl+clic: abrir en pestaña nueva" href="/app/facex?invoice=${encodeURIComponent(inv.name)}" data-name="${inv.name}" style="color:var(--ef-primary); font-weight:700; text-decoration:underline; cursor:pointer;">${inv.name}</a>${_peekBtn(inv.name)}</td>
 						<td class="ef-td">${inv.posting_date}</td>
 						<td class="ef-td">${inv.customer_name || inv.customer}</td>
 						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(inv.total, "GTQ")}</td>
@@ -9134,7 +10283,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 				$tbody.append(`
 					<tr>
-						<td class="ef-td"><a class="ef-inv-load-link" data-name="${row.name}" style="color:var(--ef-primary); font-weight:700; text-decoration:underline; cursor:pointer;">${row.name}</a></td>
+						<td class="ef-td"><a class="ef-inv-load-link" title="Clic: abrir aquí · Ctrl+clic: abrir en pestaña nueva" href="/app/facex?invoice=${encodeURIComponent(row.name)}" data-name="${row.name}" style="color:var(--ef-primary); font-weight:700; text-decoration:underline; cursor:pointer;">${row.name}</a>${_peekBtn(row.name)}</td>
 						<td class="ef-td" style="font-weight:600;">${row.serie_no || "—"}</td>
 						<td class="ef-td">${row.posting_date}</td>
 						<td class="ef-td">${row.due_date || "—"}</td>
@@ -9221,7 +10370,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 									<tbody>
 										${(row.invoices || []).map(inv => `
 											<tr style="border-bottom: 1px solid #f1f5f9;">
-												<td style="padding: 8px 12px; border: none;"><a class="ef-inv-load-link" data-name="${inv.name}" style="color:var(--ef-primary); font-weight:700; text-decoration:underline; cursor:pointer;">${inv.name}</a></td>
+												<td style="padding: 8px 12px; border: none;"><a class="ef-inv-load-link" title="Clic: abrir aquí · Ctrl+clic: abrir en pestaña nueva" href="/app/facex?invoice=${encodeURIComponent(inv.name)}" data-name="${inv.name}" style="color:var(--ef-primary); font-weight:700; text-decoration:underline; cursor:pointer;">${inv.name}</a>${_peekBtn(inv.name)}</td>
 												<td style="padding: 8px 12px; font-weight: 600; border: none;">${inv.serie_no || "—"}</td>
 												<td style="padding: 8px 12px; border: none;">${inv.posting_date}</td>
 												<td style="padding: 8px 12px; border: none;">${inv.due_date || "—"}</td>
@@ -9289,7 +10438,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			invoices.forEach(inv => {
 				$tbody.append(`
 					<tr>
-						<td class="ef-td"><a class="ef-inv-load-link" data-name="${inv.name}" style="color:var(--ef-primary); font-weight:700; text-decoration:underline; cursor:pointer;">${inv.name}</a></td>
+						<td class="ef-td"><a class="ef-inv-load-link" title="Clic: abrir aquí · Ctrl+clic: abrir en pestaña nueva" href="/app/facex?invoice=${encodeURIComponent(inv.name)}" data-name="${inv.name}" style="color:var(--ef-primary); font-weight:700; text-decoration:underline; cursor:pointer;">${inv.name}</a>${_peekBtn(inv.name)}</td>
 						<td class="ef-td">${inv.posting_date}</td>
 						<td class="ef-td">${inv.customer_name || inv.customer}</td>
 						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700;">${_fmtCurrency(inv.grand_total, "GTQ")}</td>
@@ -9356,7 +10505,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 				$tbody.append(`
 					<tr>
 						<td class="ef-td">${pay.payment_date}</td>
-						<td class="ef-td"><a class="ef-inv-load-link" data-name="${pay.invoice}" style="color:var(--ef-primary); font-weight:700; text-decoration:underline; cursor:pointer;">${pay.invoice}</a></td>
+						<td class="ef-td"><a class="ef-inv-load-link" title="Clic: abrir aquí · Ctrl+clic: abrir en pestaña nueva" href="/app/facex?invoice=${encodeURIComponent(pay.invoice)}" data-name="${pay.invoice}" style="color:var(--ef-primary); font-weight:700; text-decoration:underline; cursor:pointer;">${pay.invoice}</a>${_peekBtn(pay.invoice)}</td>
 						<td class="ef-td">${pay.customer_name || pay.customer}</td>
 						<td class="ef-td" style="font-weight:600;">${pay.payment_method}</td>
 						<td class="ef-td" style="font-family:monospace; font-size:11px;">${pay.reference || '—'}</td>
@@ -9411,7 +10560,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 				$tbody.append(`
 					<tr>
-						<td class="ef-td"><a class="ef-inv-load-link" data-name="${inv.name}" style="color:var(--ef-primary); font-weight:700; text-decoration:underline; cursor:pointer;">${inv.name}</a></td>
+						<td class="ef-td"><a class="ef-inv-load-link" title="Clic: abrir aquí · Ctrl+clic: abrir en pestaña nueva" href="/app/facex?invoice=${encodeURIComponent(inv.name)}" data-name="${inv.name}" style="color:var(--ef-primary); font-weight:700; text-decoration:underline; cursor:pointer;">${inv.name}</a>${_peekBtn(inv.name)}</td>
 						<td class="ef-td">${inv.posting_date}</td>
 						<td class="ef-td">${inv.customer_name || inv.customer}</td>
 						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700;">${_fmtCurrency(inv.grand_total, "GTQ")}</td>
@@ -9550,9 +10699,75 @@ body.facex-fullscreen-mode .ef-main-layout {
 					</tr>
 				`);
 			});
+
+		} else if (report_id === "system_audit") {
+			const rows = data.rows || [];
+			const sum = data.summary || {};
+
+			$kpis.append(`
+				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-primary); cursor: default;">
+					<div class="ef-stat-label">Usuarios con Operaciones</div>
+					<div class="ef-stat-value">${sum.user_count || 0}</div>
+				</div>
+				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-success); cursor: default;">
+					<div class="ef-stat-label">Total Operaciones</div>
+					<div class="ef-stat-value" style="color: var(--ef-success);">${sum.total_operaciones || 0}</div>
+				</div>
+				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-info); cursor: default;">
+					<div class="ef-stat-label">Monto Consolidado</div>
+					<div class="ef-stat-value" style="color: var(--ef-info); font-family:monospace;">${_fmtCurrency(sum.total_monto, "GTQ")}</div>
+				</div>
+			`);
+
+			if (rows.length === 0) {
+				$empty.show();
+				return;
+			}
+
+			this.$body.find("#ef-report-table").css("min-width", "1280px");
+
+			$thead.append(`
+				<tr>
+					<th class="ef-th">Usuario</th>
+					<th class="ef-th ef-td-num">Cotizaciones (cant.)</th>
+					<th class="ef-th ef-td-num">Cotizaciones (monto)</th>
+					<th class="ef-th ef-td-num">Facturas No Enviar (cant.)</th>
+					<th class="ef-th ef-td-num">Facturas No Enviar (monto)</th>
+					<th class="ef-th ef-td-num">Facturas Enviar (cant.)</th>
+					<th class="ef-th ef-td-num">Facturas Enviar (monto)</th>
+					<th class="ef-th ef-td-num">Pagos Aplicados (cant.)</th>
+					<th class="ef-th ef-td-num">Pagos Aplicados (monto)</th>
+					<th class="ef-th ef-td-num">Guías Pend. Liquidar (cant.)</th>
+					<th class="ef-th ef-td-num">Guías Pend. Liquidar (monto)</th>
+					<th class="ef-th ef-td-num">Total Operaciones</th>
+				</tr>
+			`);
+
+			rows.forEach(r => {
+				$tbody.append(`
+					<tr>
+						<td class="ef-td" style="font-weight:600;">${_esc(r.usuario_nombre || r.usuario)}</td>
+						<td class="ef-td ef-td-num">${r.cotizaciones_count || 0}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(r.cotizaciones_monto, "GTQ")}</td>
+						<td class="ef-td ef-td-num">${r.facturas_no_enviar_count || 0}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(r.facturas_no_enviar_monto, "GTQ")}</td>
+						<td class="ef-td ef-td-num">${r.facturas_enviar_count || 0}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(r.facturas_enviar_monto, "GTQ")}</td>
+						<td class="ef-td ef-td-num">${r.pagos_count || 0}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(r.pagos_monto, "GTQ")}</td>
+						<td class="ef-td ef-td-num">${r.guias_pendientes_count || 0}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(r.guias_pendientes_monto, "GTQ")}</td>
+						<td class="ef-td ef-td-num" style="font-weight:700;">${r.total_operaciones || 0}</td>
+					</tr>
+				`);
+			});
 		}
 
 		$tbody.off("click", ".ef-inv-load-link").on("click", ".ef-inv-load-link", (e) => {
+			// Son anclas reales: Ctrl/⌘+clic y clic central deben abrir la
+			// factura en otra pestaña, sin sacar al usuario de este reporte.
+			if (e.ctrlKey || e.metaKey || e.shiftKey || e.which === 2) return;
+			e.preventDefault();
 			const inv_name = $(e.currentTarget).data("name");
 			this._switch_view("billing");
 			this._load_invoice_with_dirty_check(inv_name);
@@ -10036,6 +11251,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 			(data.rows || []).forEach(r => {
 				csvContent += `"${r.item_code}","${(r.item_name || '').replace(/"/g, '""')}","${r.item_group}",${r.precio_neto},${r.precio_con_iva},${r.costo_estandar},${r.costo_ponderado},${r.costo_ultima_compra},${r.costo},${r.utilidad_q},${r.utilidad_pct.toFixed(2)},${r.margen_sobre_precio_pct.toFixed(2)}\n`;
 			});
+		} else if (report_id === "system_audit") {
+			csvContent += "Usuario,Cotizaciones (cant),Cotizaciones (monto),Facturas No Enviar (cant),Facturas No Enviar (monto),Facturas Enviar (cant),Facturas Enviar (monto),Pagos (cant),Pagos (monto),Guias Pendientes (cant),Guias Pendientes (monto),Total Operaciones\n";
+			(data.rows || []).forEach(r => {
+				csvContent += `"${(r.usuario_nombre || r.usuario || '').replace(/"/g, '""')}",${r.cotizaciones_count || 0},${r.cotizaciones_monto || 0},${r.facturas_no_enviar_count || 0},${r.facturas_no_enviar_monto || 0},${r.facturas_enviar_count || 0},${r.facturas_enviar_monto || 0},${r.pagos_count || 0},${r.pagos_monto || 0},${r.guias_pendientes_count || 0},${r.guias_pendientes_monto || 0},${r.total_operaciones || 0}\n`;
+			});
 		} else {
 			return;
 		}
@@ -10275,6 +11495,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 			});
 			this.maint_item_familia_ctrl.get_query = fam_query;
 			this.maint_item_familia_ctrl.refresh();
+			// Al elegir Familia en un ítem NUEVO, la UdM hereda la de la familia:
+			// los precios se reparten desde la familia con esa UdM y ERPNext
+			// exige que el ítem la maneje.
+			this.maint_item_familia_ctrl.df.change = () => this._sync_maint_item_uom_from_familia();
 		}
 		// El asterisco de obligatorio + visibilidad según política de la compañía.
 		{
@@ -10546,6 +11770,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 		});
 		this.$body.find("#ef-fam-btn-new").on("click", () => this._familia_dialog(null, true));
 
+		// ── Grupo de Ítems ──
+		this.$body.find("#ef-ig-btn-new").on("click", () => this._item_group_dialog(null, true));
+
 		this.$body.find("#ef-maint-prices-select-all").on("change", (e) => {
 			const checked = $(e.target).prop("checked");
 			this.$body.find(".ef-price-chk").prop("checked", checked);
@@ -10636,6 +11863,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this._load_price_lists_dropdown_then_load_prices();
 		} else if (tab === "familias") {
 			this._load_familias_maint();
+		} else if (tab === "grupo-items") {
+			this._load_item_groups_maint();
 		} else if (tab === "asignacion-precios") {
 			this._load_pricing_assignment();
 		} else if (tab === "proveedores") {
@@ -11668,7 +12897,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					this.$body.find("#ef-maint-item-code").val(it.item_code).prop("disabled", true);
 					this.$body.find("#ef-maint-item-name").val(it.item_name);
 					if (this.maint_item_uom_ctrl) {
-						this.maint_item_uom_ctrl.set_value(it.stock_uom || "Nos");
+						this.maint_item_uom_ctrl.set_value(it.stock_uom || this._default_stock_uom());
 					}
 					if (this.maint_item_group_ctrl) {
 						this.maint_item_group_ctrl.set_value(it.item_group || "");
@@ -11874,6 +13103,27 @@ body.facex-fullscreen-mode .ef-main-layout {
 		});
 	}
 
+	_default_stock_uom() {
+		return (this.defaults && this.defaults.default_stock_uom) || "Nos";
+	}
+
+	_sync_maint_item_uom_from_familia() {
+		if (this._current_maint_item_code) return; // solo ítems nuevos
+		const familia = this.maint_item_familia_ctrl ? (this.maint_item_familia_ctrl.get_value() || "") : "";
+		if (!familia || !this.maint_item_uom_ctrl) return;
+		frappe.call({
+			method: "facex_multi.api.familia.get_familia",
+			args: { name: familia, company: this.doc.company || this.defaults.company || "" },
+			callback: (r) => {
+				const uom = r.message && r.message.uom;
+				if (!uom || this._current_maint_item_code) return;
+				if (this.maint_item_uom_ctrl.get_value() === uom) return;
+				this.maint_item_uom_ctrl.set_value(uom);
+				frappe.show_alert({ message: `UdM ajustada a «${uom}» (UdM de la familia ${familia}).`, indicator: "blue" });
+			},
+		});
+	}
+
 	_clear_maint_item_form() {
 		this._current_maint_item_code = null;
 		this._maint_load_item_images(null);
@@ -11882,7 +13132,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-maint-item-code").val("").prop("disabled", true).attr("placeholder", "(Código Automático)");
 		this.$body.find("#ef-maint-item-name").val("");
 		if (this.maint_item_uom_ctrl) {
-			this.maint_item_uom_ctrl.set_value("Nos");
+			this.maint_item_uom_ctrl.set_value(this._default_stock_uom());
 		}
 		if (this.maint_item_group_ctrl) {
 			this.maint_item_group_ctrl.set_value("");
@@ -11924,7 +13174,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			item_code: is_new ? (auto_code ? "" : item_code) : this._current_maint_item_code,
 			item_name,
 			auto_code,
-			stock_uom: this.maint_item_uom_ctrl ? this.maint_item_uom_ctrl.get_value() : "Nos",
+			stock_uom: this.maint_item_uom_ctrl ? this.maint_item_uom_ctrl.get_value() : "",
 			item_group: this.maint_item_group_ctrl ? this.maint_item_group_ctrl.get_value() : "",
 			familia,
 			price_list: plist,
@@ -11946,6 +13196,20 @@ body.facex-fullscreen-mode .ef-main-layout {
 			callback: (r) => {
 				if (!r.exc) {
 					frappe.show_alert({ message: "Producto guardado exitosamente", indicator: "green" });
+					const fanout = (r.message && r.message.fanout) || null;
+					if (fanout && (fanout.errors || []).length) {
+						frappe.msgprint({
+							title: "Precios de la familia",
+							indicator: "orange",
+							message: "El producto se guardó, pero no se pudieron crear algunos precios de la familia:<br>" +
+								fanout.errors.map((e) => `• ${_esc(e.price_list)}: ${_esc(e.error)}`).join("<br>"),
+						});
+					} else if (fanout && fanout.price_uom) {
+						frappe.show_alert({
+							message: `Precios de la familia creados con UdM «${_esc(fanout.price_uom)}» (la familia usa «${_esc(fanout.uom)}»).`,
+							indicator: "orange",
+						}, 8);
+					}
 					// Recargar el producto recién guardado precargado, para que el
 					// usuario lo vea/confirme sin volver a buscarlo.
 					const code = (r.message && r.message.item_code) || this._current_maint_item_code;
@@ -12467,7 +13731,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 				if ((m.con_precio_existente || []).length)
 					warn += `<br><span style="color:#b45309;">${m.con_precio_existente.length} ítem(s) ya tienen precio en «${_esc(plist)}» y se sobrescribirán.</span>`;
 				if ((m.uom_mismatch || []).length)
-					warn += `<br><span style="color:#b45309;">${m.uom_mismatch.length} ítem(s) tienen otra UOM; el Item Price quedará con UOM «${_esc(m.uom || "")}».</span>`;
+					warn += `<br><span style="color:#b45309;">${m.uom_mismatch.length} ítem(s) no manejan la UOM «${_esc(m.uom || "")}» de la familia; su precio quedará en la UOM propia del ítem.</span>`;
 				if (m.disabled)
 					warn += `<br><span style="color:#c0392b;">${m.disabled} deshabilitado(s) también recibirán el precio.</span>`;
 				frappe.confirm(
@@ -12484,6 +13748,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 								frappe.show_alert({ message: `${(d.updated || []).length} ítem(s) actualizados.`, indicator: "green" });
 								if ((d.errors || []).length)
 									frappe.msgprint({ title: "Errores", indicator: "red", message: d.errors.map((e) => `${e.item_code}: ${e.error}`).join("<br>") });
+								if ((d.uom_fallback || []).length)
+									frappe.show_alert({
+										message: `${d.uom_fallback.length} ítem(s) quedaron con precio en su propia UOM (no manejan la de la familia).`,
+										indicator: "orange",
+									}, 8);
 								this._load_maint_prices();
 							},
 						});
@@ -12626,6 +13895,122 @@ body.facex-fullscreen-mode .ef-main-layout {
 				}
 			},
 		});
+	}
+
+	// ── Grupo de Ítems ──
+
+	_load_item_groups_maint() {
+		const $tbody = this.$body.find("#ef-ig-tbody");
+		const $status = this.$body.find("#ef-ig-status");
+		const company = this.doc.company || this.defaults.company || "";
+		const canEdit = !!(this.perms || {}).puede_mantener_grupo_items;
+		this.$body.find("#ef-ig-btn-new").toggle(canEdit);
+		$tbody.html('<tr><td colspan="6" style="text-align:center; padding:10px; color:#64748b;">Cargando...</td></tr>');
+		frappe.call({
+			method: "facex_multi.api.item_group.list_item_groups_maintenance",
+			args: { company },
+			callback: (r) => {
+				const rows = (r.message || {}).item_groups || [];
+				$status.text(rows.length ? `${rows.length} grupo(s).` : "Sin grupos.");
+				if (!rows.length) {
+					$tbody.html('<tr><td colspan="6" style="text-align:center; padding:10px; color:#64748b;">No hay grupos. Cree uno con «+ Nuevo Grupo».</td></tr>');
+					return;
+				}
+				$tbody.empty();
+				rows.forEach((g) => {
+					const $tr = $(`
+						<tr class="ef-tr">
+							<td class="ef-td font-weight-bold"></td>
+							<td class="ef-td ef-ig-parent"></td>
+							<td class="ef-td" style="text-align:center;">${g.is_group ? "✔️" : "—"}</td>
+							<td class="ef-td" style="text-align:right;">${g.item_count || 0}</td>
+							<td class="ef-td" style="text-align:center;">${g.disabled ? "✔️" : "—"}</td>
+							<td class="ef-td" style="text-align:center;">
+								<button class="ef-btn ef-btn-sm ef-btn-secondary ef-ig-edit" style="padding:3px 10px; font-size:11px;">${canEdit ? "Editar" : "Ver"}</button>
+							</td>
+						</tr>`);
+					$tr.children().eq(0).text(g.item_group_name || g.name);
+					$tr.find(".ef-ig-parent").text(g.parent_item_group || "");
+					$tr.find(".ef-ig-edit").on("click", () => this._item_group_dialog(g.name, canEdit));
+					$tbody.append($tr);
+				});
+			},
+		});
+	}
+
+	_item_group_dialog(name, canEdit) {
+		const company = this.doc.company || this.defaults.company || "";
+		const build = (data) => {
+			const d = new frappe.ui.Dialog({
+				title: name ? `Grupo de Ítems ${name}` : "Nuevo Grupo de Ítems",
+				fields: [
+					{ fieldtype: "Data", fieldname: "item_group_name", label: "Nombre del Grupo", reqd: 1, read_only: !!name || !canEdit },
+					{ fieldtype: "Link", fieldname: "parent_item_group", label: "Grupo Padre", options: "Item Group", read_only: !canEdit },
+					{ fieldtype: "Check", fieldname: "is_group", label: "Es Grupo (puede tener hijos)", read_only: !canEdit },
+					{ fieldtype: "Check", fieldname: "disabled", label: "Deshabilitado", read_only: !canEdit },
+				],
+				primary_action_label: canEdit ? "Guardar" : null,
+				primary_action: canEdit ? (v) => {
+					d.get_primary_btn().prop("disabled", true);
+					const method = name
+						? "facex_multi.api.item_group.update_item_group"
+						: "facex_multi.api.item_group.create_item_group";
+					const args = name
+						? { name, payload: JSON.stringify({ ...v, company }) }
+						: { payload: JSON.stringify({ ...v, company }) };
+					frappe.call({
+						method,
+						args,
+						callback: (res) => {
+							d.get_primary_btn().prop("disabled", false);
+							if (res.exc) return;
+							frappe.show_alert({ message: "Grupo de Ítems guardado.", indicator: "green" });
+							d.hide();
+							this._load_item_groups_maint();
+						},
+						error: () => d.get_primary_btn().prop("disabled", false),
+					});
+				} : null,
+			});
+			if (name && canEdit) {
+				d.set_secondary_action_label("Eliminar");
+				d.set_secondary_action(() => {
+					frappe.confirm(`¿Eliminar el grupo <b>${name}</b>? Solo se permite si no tiene ítems ni grupos hijos.`, () => {
+						frappe.call({
+							method: "facex_multi.api.item_group.delete_item_group",
+							args: { name, company },
+							callback: (res) => {
+								if (res.exc) return;
+								frappe.show_alert({ message: "Grupo de Ítems eliminado.", indicator: "orange" });
+								d.hide();
+								this._load_item_groups_maint();
+							},
+						});
+					});
+				});
+			}
+			d.show();
+			d.set_values({
+				item_group_name: data.item_group_name || "",
+				parent_item_group: data.parent_item_group || "",
+				is_group: data.is_group || 0,
+				disabled: data.disabled || 0,
+			});
+		};
+
+		if (name) {
+			frappe.call({
+				method: "facex_multi.api.item_group.list_item_groups_maintenance",
+				args: { company },
+				callback: (r) => {
+					const rows = (r.message || {}).item_groups || [];
+					const found = rows.find((g) => g.name === name) || {};
+					build(found);
+				},
+			});
+		} else {
+			build({});
+		}
 	}
 
 	_update_maint_prices_selected_count() {
@@ -13076,7 +14461,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		// Cargar almacenes de la compañía conectada para el grid de líneas
 		frappe.call({
 			method: "facex_multi.api.invoice.get_warehouses",
-			args:   { company: this.doc.company || this.defaults.company || "" },
+			args:   { company: this.doc.company || this.defaults.company || "", operacion: "compra" },
 			callback: (r) => {
 				if (!r.exc && r.message) {
 					this._purch_warehouses = r.message;
@@ -14145,6 +15530,11 @@ function _esc(str) {
 
 function _fmt(n) {
 	return parseFloat(n || 0).toFixed(2);
+}
+
+// Botón de vista rápida que acompaña a cada número de factura en los reportes.
+function _peekBtn(name) {
+	return `<button type="button" class="ef-peek-btn" data-peek="${_esc(name)}" title="Vista rápida (sin salir del reporte)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg></button>`;
 }
 
 function _fmtCurrency(n, currency) {
