@@ -144,6 +144,7 @@ class EFastSalePage {
 				this._setup_section_accordion();
 				this._setup_section_rail();
 				this._setup_invoice_peek();
+				this._setup_cmdk();
 
 				// Bind analytics button
 				this.$body.find("#ef-btn-show-analytics").on("click", () => {
@@ -2327,6 +2328,24 @@ class EFastSalePage {
     </div>
   </div>
 
+  <!-- Paleta de comandos (Ctrl+M). Vive en la raíz del layout, no dentro de
+       una vista, porque se abre desde cualquier pantalla. Su contenido lo
+       arma _cmdk_commands() con los mismos permisos que el menú. -->
+  <div class="ef-cmdk-backdrop" id="ef-cmdk-backdrop" style="display:none;"></div>
+  <div class="ef-cmdk" id="ef-cmdk" style="display:none;" role="dialog" aria-label="Buscar y navegar">
+    <div class="ef-cmdk-inputwrap">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+      <input type="text" id="ef-cmdk-input" class="ef-cmdk-input" autocomplete="off" spellcheck="false"
+        placeholder="Ir a una pantalla, un reporte o buscar una factura…" />
+      <kbd class="ef-cmdk-kbd">Esc</kbd>
+    </div>
+    <div class="ef-cmdk-results" id="ef-cmdk-results"></div>
+    <div class="ef-cmdk-foot">
+      <span><kbd class="ef-cmdk-kbd">↑</kbd><kbd class="ef-cmdk-kbd">↓</kbd> moverse</span>
+      <span><kbd class="ef-cmdk-kbd">Enter</kbd> abrir</span>
+    </div>
+  </div>
+
 </div><!-- ef-main-layout -->
 		`);
 
@@ -3158,6 +3177,168 @@ class EFastSalePage {
 				});
 			},
 		});
+	}
+
+	// -----------------------------------------------------------------------
+	// Paleta de comandos (Ctrl+M)
+	// -----------------------------------------------------------------------
+	// Llegar a cualquier pantalla, reporte o factura escribiendo, sin recorrer
+	// el menú. No inventa permisos: las pantallas pasan por _can_access_view()
+	// y los reportes por el mismo flag que ya los oculta del panel lateral,
+	// así que la paleta nunca ofrece algo que el menú esconde.
+
+	_cmdk_commands() {
+		const p = this.perms || {};
+		const cmds = [];
+
+		["home", "billing", "dashboard", "reports", "purchase", "transporte", "maintenance", "seguridad"]
+			.filter((v) => this._can_access_view(v))
+			.forEach((v) => cmds.push({
+				group: "Pantallas",
+				label: this._view_label(v, v),
+				run: () => this._switch_view(v),
+			}));
+
+		// Pantallas que son otra Page de Frappe: se navega de verdad.
+		if (p.puede_ver_pos) {
+			cmds.push({ group: "Pantallas", label: "POS", run: () => { window.location.href = "/app/facex-screen"; } });
+		}
+		if (p.puede_ver_menu_inventario) {
+			cmds.push({ group: "Pantallas", label: "Inventario", run: () => { window.location.href = "/app/facex-inventario"; } });
+		}
+		if (this._has_cierre_access()) {
+			cmds.push({ group: "Pantallas", label: "Cierre Diario", run: () => { window.location.href = "/app/facex-cierre"; } });
+		}
+
+		// Los botones del panel de Reportes ya fueron filtrados por _apply_perms,
+		// así que se leen de ahí y la paleta no duplica el criterio ni las etiquetas.
+		const REPORT_PERM = this._report_perm_map();
+		this.$body.find(".ef-report-nav-btn").each((_, el) => {
+			const $el = $(el);
+			const id = $el.data("report");
+			// Deny-by-default: un reporte que se agregue sin su flag en
+			// _report_perm_map() no aparece acá hasta que se le asigne uno.
+			const flag = REPORT_PERM[id];
+			if (!flag || !p[flag]) return;
+			cmds.push({
+				group: "Reportes",
+				label: ($el.text() || "").trim(),
+				run: () => { this._active_report = id; this._switch_view("reports"); },
+			});
+		});
+
+		if (this._can_access_view("billing")) {
+			cmds.push({ group: "Acciones", label: "Nueva factura", hint: "Ctrl+N", run: () => this._action_new() });
+		}
+
+		return cmds;
+	}
+
+	_setup_cmdk() {
+		this.$body.find("#ef-cmdk-backdrop").on("click", () => this._close_cmdk());
+
+		const $input = this.$body.find("#ef-cmdk-input");
+		$input.on("input", () => {
+			clearTimeout(this._cmdk_timer);
+			// Las facturas se buscan en el servidor; el resto filtra en memoria.
+			this._cmdk_timer = setTimeout(() => this._cmdk_search($input.val() || ""), 180);
+		});
+		$input.on("keydown", (e) => {
+			if (e.key === "ArrowDown") { e.preventDefault(); this._cmdk_move(1); }
+			else if (e.key === "ArrowUp") { e.preventDefault(); this._cmdk_move(-1); }
+			else if (e.key === "Enter") { e.preventDefault(); this._cmdk_run(this._cmdk_index); }
+			else if (e.key === "Escape") { e.preventDefault(); this._close_cmdk(); }
+		});
+
+		this.$body.find("#ef-cmdk-results").on("click", ".ef-cmdk-item", (e) => {
+			this._cmdk_run(Number($(e.currentTarget).data("idx")));
+		});
+	}
+
+	_open_cmdk() {
+		this._cmdk_open = true;
+		this.$body.find("#ef-cmdk, #ef-cmdk-backdrop").show();
+		const $input = this.$body.find("#ef-cmdk-input");
+		$input.val("");
+		this._cmdk_search("");
+		$input.trigger("focus");
+	}
+
+	_close_cmdk() {
+		this._cmdk_open = false;
+		clearTimeout(this._cmdk_timer);
+		this.$body.find("#ef-cmdk, #ef-cmdk-backdrop").hide();
+	}
+
+	_cmdk_search(txt) {
+		const q = (txt || "").trim().toLowerCase();
+		const matches = this._cmdk_commands().filter(
+			(c) => !q || c.label.toLowerCase().includes(q)
+		);
+		this._cmdk_render(matches);
+
+		// Con dos letras ya se puede estar tecleando un número de factura. La
+		// búsqueda usa el search_link de Frappe, que respeta las condiciones de
+		// permiso registradas para Sales Invoice: la paleta no ve más que el
+		// buscador de facturas que ya existía.
+		if (q.length < 2) return;
+		frappe.call({
+			method: "frappe.desk.search.search_link",
+			args: { txt: q, doctype: "Sales Invoice", ignore_user_permissions: 0, reference_doctype: "Sales Invoice" },
+			callback: (r) => {
+				if (!this._cmdk_open) return;
+				const current = (this.$body.find("#ef-cmdk-input").val() || "").trim().toLowerCase();
+				if (current !== q) return;  // el usuario siguió escribiendo
+				const found = (r.message || []).slice(0, 6).map((row) => ({
+					group: "Facturas",
+					label: row.value,
+					hint: row.description || "",
+					run: () => { this._switch_view("billing"); this._load_invoice_with_dirty_check(row.value); },
+				}));
+				this._cmdk_render(matches.concat(found));
+			},
+		});
+	}
+
+	_cmdk_render(items) {
+		this._cmdk_items = items;
+		this._cmdk_index = items.length ? 0 : -1;
+		const $results = this.$body.find("#ef-cmdk-results");
+		if (!items.length) {
+			$results.html('<div class="ef-cmdk-empty">Sin resultados.</div>');
+			return;
+		}
+		let html = "";
+		let group = null;
+		items.forEach((it, i) => {
+			if (it.group !== group) {
+				group = it.group;
+				html += `<div class="ef-cmdk-group">${_esc(group)}</div>`;
+			}
+			html += `
+				<div class="ef-cmdk-item${i === 0 ? " ef-cmdk-item-active" : ""}" data-idx="${i}">
+					<span class="ef-cmdk-item-label">${_esc(it.label)}</span>
+					${it.hint ? `<span class="ef-cmdk-item-hint">${_esc(it.hint)}</span>` : ""}
+				</div>`;
+		});
+		$results.html(html);
+	}
+
+	_cmdk_move(delta) {
+		if (!this._cmdk_items || !this._cmdk_items.length) return;
+		const total = this._cmdk_items.length;
+		this._cmdk_index = (this._cmdk_index + delta + total) % total;
+		const $items = this.$body.find("#ef-cmdk-results .ef-cmdk-item");
+		$items.removeClass("ef-cmdk-item-active");
+		const $active = $items.filter(`[data-idx="${this._cmdk_index}"]`).addClass("ef-cmdk-item-active");
+		if ($active.length) $active[0].scrollIntoView({ block: "nearest" });
+	}
+
+	_cmdk_run(idx) {
+		const item = (this._cmdk_items || [])[idx];
+		if (!item) return;
+		this._close_cmdk();
+		item.run();
 	}
 
 	// -----------------------------------------------------------------------
@@ -4251,6 +4432,57 @@ body.facex-fullscreen-mode .ef-main-layout {
 .ef-words { font-size: 11px; color: var(--ef-text-muted); font-style: italic; }
 
 /* ── Action Bar ─────────────────────────── */
+/* Paleta de comandos (Ctrl+M) */
+.ef-cmdk-backdrop {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(15, 23, 42, .34);
+}
+.ef-cmdk {
+  position: fixed; z-index: 1001;
+  top: 12vh; left: 50%; transform: translateX(-50%);
+  width: min(580px, 94vw);
+  display: flex; flex-direction: column;
+  max-height: 68vh;
+  background: var(--ef-card);
+  border: 1px solid var(--ef-border);
+  border-radius: 12px;
+  box-shadow: 0 18px 50px rgba(15, 23, 42, .28);
+  overflow: hidden;
+}
+.ef-cmdk-inputwrap {
+  display: flex; align-items: center; gap: 9px;
+  padding: 12px 14px; border-bottom: 1px solid var(--ef-border);
+  color: var(--ef-text-muted);
+}
+.ef-cmdk-input {
+  flex: 1; border: 0; outline: 0; background: transparent;
+  font-size: 14.5px; color: var(--ef-text); font-family: var(--ef-font);
+}
+.ef-cmdk-kbd {
+  font-size: 10px; font-weight: 700; padding: 2px 5px;
+  border: 1px solid var(--ef-border); border-radius: 4px;
+  background: var(--ef-bg); color: var(--ef-text-muted);
+}
+.ef-cmdk-results { flex: 1; overflow-y: auto; padding: 6px; }
+.ef-cmdk-group {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .4px; color: var(--ef-text-muted);
+  padding: 8px 10px 4px;
+}
+.ef-cmdk-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 13px;
+}
+.ef-cmdk-item-active { background: var(--ef-bg); }
+.ef-cmdk-item-active .ef-cmdk-item-label { color: var(--ef-primary); font-weight: 700; }
+.ef-cmdk-item-hint { font-size: 11px; color: var(--ef-text-muted); white-space: nowrap; }
+.ef-cmdk-empty { padding: 22px 12px; text-align: center; color: var(--ef-text-muted); font-size: 12.5px; }
+.ef-cmdk-foot {
+  display: flex; gap: 14px; padding: 8px 14px;
+  border-top: 1px solid var(--ef-border);
+  font-size: 11px; color: var(--ef-text-muted);
+}
+
 /* Vista rápida de factura (panel lateral de Reportes) */
 .ef-peek-backdrop {
   position: fixed; inset: 0; z-index: 998;
@@ -7945,8 +8177,15 @@ body.facex-fullscreen-mode .ef-main-layout {
 			if (!$(this.wrapper).is(":visible")) return;
 			// Bail if a modal or dialog is open
 			if ($(".modal.show, .modal.in").length) return;
+			// Con la paleta abierta las teclas son suyas: si no, escribir en ella
+			// dispararía los atajos de función de atrás (F2 agrega una línea, etc.).
+			if (this._cmdk_open && !((e.ctrlKey || e.metaKey) && e.key === "m")) return;
 
-			if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+			if ((e.ctrlKey || e.metaKey) && e.key === "m") {
+				e.preventDefault();
+				if (this._cmdk_open) this._close_cmdk();
+				else this._open_cmdk();
+			} else if ((e.ctrlKey || e.metaKey) && e.key === "s") {
 				e.preventDefault();
 				this._action_save();
 			} else if ((e.ctrlKey || e.metaKey) && e.key === "n") {
