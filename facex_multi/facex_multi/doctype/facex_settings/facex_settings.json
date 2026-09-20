@@ -6,6 +6,7 @@
  "field_order": [
   "user",
   "bfel_company",
+  "rol_clasificacion",
   "sb_facturador",
   "puede_ver_tablero",
   "puede_facturar",
@@ -15,6 +16,7 @@
   "puede_guardar",
   "puede_validar",
   "puede_certificar",
+  "bfel_status_por_defecto",
   "sb_mantenimiento",
   "crea_clientes",
   "modifica_clientes",
@@ -44,6 +46,7 @@
   "cb_rep4",
   "reporte_imprimir_recibo",
   "reporte_analisis_utilidad",
+  "reporte_auditoria_sistema",
   "sb_compras",
   "puede_compras",
   "puede_validar_compras",
@@ -118,6 +121,15 @@
   "mantiene_familias",
   "cb_familias",
   "exige_familia_item",
+  "sb_grupo_items",
+  "consulta_grupo_items",
+  "mantiene_grupo_items",
+  "sb_seguridad",
+  "puede_ver_facex_settings",
+  "cb_seguridad",
+  "puede_resetear_password",
+  "sb_cierre_diario",
+  "puede_crear_cierres",
   "sb_pagos",
   "exige_pago_completo",
   "cb_pagos",
@@ -130,7 +142,15 @@
   "cb_transporte",
   "puede_cargar_liquidaciones_transporte",
   "puede_ver_reportes_transporte",
-  "puede_ver_kpis_transporte"
+  "puede_ver_kpis_transporte",
+  "sb_flete",
+  "item_flete",
+  "sb_mayusculas",
+  "mayusculas_items",
+  "cb_mayusculas",
+  "mayusculas_clientes",
+  "sb_codigo_items",
+  "sin_sufijo_compania_items"
  ],
  "fields": [
   {
@@ -154,6 +174,15 @@
    "search_index": 1
   },
   {
+   "description": "Solo clasifica al usuario, no otorga permisos por sí mismo — salvo \"Gerencia\": ese rol habilita, únicamente en los Reportes de FacEx Clásico, seleccionar cualquier almacén y cualquier \"Usuario Creador\". Sin este rol, los reportes de FacEx Clásico se limitan siempre a las operaciones del propio usuario.",
+   "fieldname": "rol_clasificacion",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Rol (Clasificación)",
+   "options": "\nBodega\nVentas\nProducción\nGerencia"
+  },
+  {
    "fieldname": "sb_facturador",
    "fieldtype": "Section Break",
    "label": "Acceso General"
@@ -172,17 +201,17 @@
   },
   {
    "default": "0",
+   "description": "Muestra el botón \"POS\" en el menú superior de FacEx y lo dirige a FacEx Screen. Deshabilitado por defecto.",
    "fieldname": "puede_ver_pos",
    "fieldtype": "Check",
-   "label": "Ver botón POS (FacEx Screen)",
-   "description": "Muestra el botón \"POS\" en el menú superior de FacEx y lo dirige a FacEx Screen. Deshabilitado por defecto."
+   "label": "Ver botón POS (FacEx Screen)"
   },
   {
    "default": "0",
+   "description": "Muestra el botón \"Inventario\" en el menú superior de FacEx y lo dirige a FacEx Inventario. Deshabilitado por defecto. Distinto del acceso a operaciones de inventario (módulo Inventario más abajo).",
    "fieldname": "puede_ver_menu_inventario",
    "fieldtype": "Check",
-   "label": "Ver botón Inventario (menú FacEx)",
-   "description": "Muestra el botón \"Inventario\" en el menú superior de FacEx y lo dirige a FacEx Inventario. Deshabilitado por defecto. Distinto del acceso a operaciones de inventario (módulo Inventario más abajo)."
+   "label": "Ver botón Inventario (menú FacEx)"
   },
   {
    "fieldname": "cb_facturador",
@@ -205,6 +234,13 @@
    "fieldname": "puede_certificar",
    "fieldtype": "Check",
    "label": "Certificar FEL"
+  },
+  {
+   "description": "Estado con el que se precargan las facturas nuevas de este usuario en FacEx Clásico y FacEx Screen. Vacío = usa \"01 Enviar\" (comportamiento por defecto del sistema).",
+   "fieldname": "bfel_status_por_defecto",
+   "fieldtype": "Select",
+   "label": "Estado FEL por Defecto al Facturar",
+   "options": "\n01 Enviar\n00 No enviar"
   },
   {
    "fieldname": "sb_mantenimiento",
@@ -259,38 +295,38 @@
   },
   {
    "default": "0",
+   "description": "Por defecto NADIE puede editar el precio a mano: se factura siempre con el precio de la lista (la de la ficha del cliente o, si no tiene, la lista por defecto del usuario). Actívalo solo para usuarios autorizados a sobrescribir el precio unitario durante la venta.",
    "fieldname": "puede_editar_precio",
    "fieldtype": "Check",
-   "label": "Editar Precio Manualmente en Venta (FacEx Screen y Clásico)",
-   "description": "Por defecto NADIE puede editar el precio a mano: se factura siempre con el precio de la lista (la de la ficha del cliente o, si no tiene, la lista por defecto del usuario). Actívalo solo para usuarios autorizados a sobrescribir el precio unitario durante la venta."
+   "label": "Editar Precio Manualmente en Venta (FacEx Screen y Clásico)"
   },
   {
    "default": "1",
+   "description": "Permite crear y editar los paquetes/kits de venta (Listas de Materiales) y su configuración de manejo de stock, desde Mantenimiento (FacEx Clásico) y desde el módulo de Inventario.",
    "fieldname": "gestiona_listas_materiales",
    "fieldtype": "Check",
-   "label": "Crear/Editar Listas de Materiales",
-   "description": "Permite crear y editar los paquetes/kits de venta (Listas de Materiales) y su configuración de manejo de stock, desde Mantenimiento (FacEx Clásico) y desde el módulo de Inventario."
+   "label": "Crear/Editar Listas de Materiales"
   },
   {
    "default": "1",
+   "description": "Permite usar la pestaña \"Asignación de Precios\" de Mantenimiento: calcular precios de venta a partir del costo (estándar / promedio ponderado / última compra o manual) y un % de utilidad, y guardarlos en la lista de precios.",
    "fieldname": "asignacion_precios",
    "fieldtype": "Check",
-   "label": "Asignación de Precios por Utilidad",
-   "description": "Permite usar la pestaña \"Asignación de Precios\" de Mantenimiento: calcular precios de venta a partir del costo (estándar / promedio ponderado / última compra o manual) y un % de utilidad, y guardarlos en la lista de precios."
+   "label": "Asignación de Precios por Utilidad"
   },
   {
    "default": "0",
+   "description": "Permite eliminar definitivamente un documento del listado de Ventas en Espera en FacEx Screen. Deshabilitado por defecto — es una acción destructiva e irreversible.",
    "fieldname": "puede_eliminar_ventas_espera",
    "fieldtype": "Check",
-   "label": "Eliminar Docs en Espera (FacEx Screen)",
-   "description": "Permite eliminar definitivamente un documento del listado de Ventas en Espera en FacEx Screen. Deshabilitado por defecto — es una acción destructiva e irreversible."
+   "label": "Eliminar Docs en Espera (FacEx Screen)"
   },
   {
    "default": "0",
+   "description": "Permite anular una factura certificada en FEL (ante la SAT) o cancelar internamente una no certificada, desde FacEx Screen. Deshabilitado por defecto — es una acción destructiva e irreversible.",
    "fieldname": "puede_anular_facturas",
    "fieldtype": "Check",
-   "label": "Anular/Cancelar Documentos FacEx",
-   "description": "Permite anular una factura certificada en FEL (ante la SAT) o cancelar internamente una no certificada, desde FacEx Screen. Deshabilitado por defecto — es una acción destructiva e irreversible."
+   "label": "Anular/Cancelar Documentos FacEx"
   },
   {
    "fieldname": "sb_reportes",
@@ -369,10 +405,17 @@
   },
   {
    "default": "1",
+   "description": "Permite ver el informe \"Análisis de Utilidad\" (portal de Reportes → Rentabilidad): utilidad Q y % de cada producto contra el costo estándar, el promedio ponderado del sistema o el último precio de compra.",
    "fieldname": "reporte_analisis_utilidad",
    "fieldtype": "Check",
-   "label": "Análisis de Utilidad",
-   "description": "Permite ver el informe \"Análisis de Utilidad\" (portal de Reportes → Rentabilidad): utilidad Q y % de cada producto contra el costo estándar, el promedio ponderado del sistema o el último precio de compra."
+   "label": "Análisis de Utilidad"
+  },
+  {
+   "default": "1",
+   "description": "Permite ver el informe \"Auditoría de Sistema\": resumen por usuario de operaciones (cantidad y monto) — Cotizaciones, Facturas, Pagos Aplicados y Guías Pendientes de Liquidar.",
+   "fieldname": "reporte_auditoria_sistema",
+   "fieldtype": "Check",
+   "label": "Auditoría de Sistema"
   },
   {
    "fieldname": "sb_compras",
@@ -450,18 +493,18 @@
    "fieldtype": "Column Break"
   },
   {
+   "description": "Almacén usado para filtrar/colorear existencias en FacEx Screen y como bodega destino por defecto al recibir traslados. Vacío = ver todos los productos sin distinción de stock.",
    "fieldname": "bodega_por_defecto",
    "fieldtype": "Link",
    "label": "Bodega por Defecto (FacEx Screen)",
-   "options": "Warehouse",
-   "description": "Almacén usado para filtrar/colorear existencias en FacEx Screen y como bodega destino por defecto al recibir traslados. Vacío = ver todos los productos sin distinción de stock."
+   "options": "Warehouse"
   },
   {
+   "description": "Almacén de tránsito del usuario: los traslados de stock dirigidos a este almacén aparecen en «Recepción de Traslados» para que el usuario los ingrese a bodega o los devuelva.",
    "fieldname": "transito_por_defecto",
    "fieldtype": "Link",
    "label": "Almacén de Tránsito",
-   "options": "Warehouse",
-   "description": "Almacén de tránsito del usuario: los traslados de stock dirigidos a este almacén aparecen en «Recepción de Traslados» para que el usuario los ingrese a bodega o los devuelva."
+   "options": "Warehouse"
   },
   {
    "fieldname": "sb_bodegas_socio",
@@ -469,22 +512,22 @@
    "label": "Bodegas y Socio de Venta"
   },
   {
+   "description": "Socio de Ventas (vendedor) que se prellena automáticamente al iniciar una nueva venta en FacEx / FacEx Screen. Vacío = sin socio de venta por defecto.",
    "fieldname": "socio_venta_por_defecto",
    "fieldtype": "Link",
    "label": "Socio de Venta por Defecto",
-   "options": "Sales Partner",
-   "description": "Socio de Ventas (vendedor) que se prellena automáticamente al iniciar una nueva venta en FacEx / FacEx Screen. Vacío = sin socio de venta por defecto."
+   "options": "Sales Partner"
   },
   {
    "fieldname": "cb_bodegas_socio",
    "fieldtype": "Column Break"
   },
   {
+   "description": "Bodegas que este usuario puede ver y seleccionar en FacEx, FacEx Screen y FacEx Inventario (grid de items, selects, saldos por bodega e informes). Vacío = puede ver y usar todas las bodegas de la compañía.",
    "fieldname": "bodegas_habilitadas",
    "fieldtype": "Table",
    "label": "Bodegas Habilitadas",
-   "options": "FacEx Settings Bodega",
-   "description": "Bodegas que este usuario puede ver y seleccionar en FacEx, FacEx Screen y FacEx Inventario (grid de items, selects, saldos por bodega e informes). Vacío = puede ver y usar todas las bodegas de la compañía."
+   "options": "FacEx Settings Bodega"
   },
   {
    "fieldname": "sb_listas_precios",
@@ -492,22 +535,22 @@
    "label": "Listas de Precios (FacEx / FacEx Screen)"
   },
   {
+   "description": "Lista de precios precargada al iniciar una venta en FacEx / FacEx Screen cuando el cliente NO tiene una lista asignada en su ficha. La lista asignada al cliente siempre tiene prioridad sobre esta. Vacío = se usa la lista de Selling Settings.",
    "fieldname": "lista_precios_por_defecto",
    "fieldtype": "Link",
    "label": "Lista de Precios por Defecto",
-   "options": "Price List",
-   "description": "Lista de precios precargada al iniciar una venta en FacEx / FacEx Screen cuando el cliente NO tiene una lista asignada en su ficha. La lista asignada al cliente siempre tiene prioridad sobre esta. Vacío = se usa la lista de Selling Settings."
+   "options": "Price List"
   },
   {
    "fieldname": "cb_listas_precios",
    "fieldtype": "Column Break"
   },
   {
+   "description": "Listas de precios de venta que este usuario puede ver y elegir manualmente en el selector de FacEx / FacEx Screen. Vacío = puede ver y elegir todas las listas de venta de la compañía. No limita la lista asignada al cliente, que siempre se respeta.",
    "fieldname": "listas_precios_habilitadas",
    "fieldtype": "Table",
    "label": "Listas de Precios Habilitadas",
-   "options": "FacEx Settings Lista Precios",
-   "description": "Listas de precios de venta que este usuario puede ver y elegir manualmente en el selector de FacEx / FacEx Screen. Vacío = puede ver y elegir todas las listas de venta de la compañía. No limita la lista asignada al cliente, que siempre se respeta."
+   "options": "FacEx Settings Lista Precios"
   },
   {
    "fieldname": "sb_columnas",
@@ -577,10 +620,10 @@
   },
   {
    "default": "0",
+   "description": "Habilita la pantalla «Recepción de Traslados» para ingresar a bodega o devolver el stock que llega al Almacén de Tránsito del usuario. Requiere además tener configurado el Almacén de Tránsito.",
    "fieldname": "puede_recibir_traslados",
    "fieldtype": "Check",
-   "label": "Recibir Traslados (Recepción/Devolución)",
-   "description": "Habilita la pantalla «Recepción de Traslados» para ingresar a bodega o devolver el stock que llega al Almacén de Tránsito del usuario. Requiere además tener configurado el Almacén de Tránsito."
+   "label": "Recibir Traslados (Recepción/Devolución)"
   },
   {
    "fieldname": "cb_inv_movs2",
@@ -594,10 +637,10 @@
   },
   {
    "default": "0",
+   "description": "Permite convertir componentes en unidades del producto padre (Listas de Materiales con stock en el padre), generando la Entrada/Salida de inventario automáticamente.",
    "fieldname": "puede_hacer_transformaciones",
    "fieldtype": "Check",
-   "label": "Registrar Transformaciones",
-   "description": "Permite convertir componentes en unidades del producto padre (Listas de Materiales con stock en el padre), generando la Entrada/Salida de inventario automáticamente."
+   "label": "Registrar Transformaciones"
   },
   {
    "fieldname": "cb_inv_movs3",
@@ -605,31 +648,31 @@
   },
   {
    "default": "0",
+   "description": "Gobierna la visibilidad de costos y valores dentro del módulo de Inventario: columnas de costo/valor en reportes, grids de Entradas/Salidas, flotante de existencia y pantallas de maestros — en pantalla, al imprimir y al exportar. No afecta el Análisis de Utilidad ni la Asignación de Precios de FacEx Clásico.",
    "fieldname": "puede_ver_costos",
    "fieldtype": "Check",
-   "label": "Ver Costos y Valores de Inventario",
-   "description": "Gobierna la visibilidad de costos y valores dentro del módulo de Inventario: columnas de costo/valor en reportes, grids de Entradas/Salidas, flotante de existencia y pantallas de maestros — en pantalla, al imprimir y al exportar. No afecta el Análisis de Utilidad ni la Asignación de Precios de FacEx Clásico."
+   "label": "Ver Costos y Valores de Inventario"
   },
   {
    "default": "0",
+   "description": "Si está marcado, en la pestaña «Movimientos del Mes» (Entradas/Salidas/Transferencias/Transformaciones) este usuario solo ve los documentos que él mismo creó, no los de otros usuarios. No afecta el Kardex ni los demás reportes. Los System Manager siempre ven todos.",
    "fieldname": "ver_solo_mis_movimientos",
    "fieldtype": "Check",
-   "label": "Movimientos del Mes: ver únicamente los propios",
-   "description": "Si está marcado, en la pestaña «Movimientos del Mes» (Entradas/Salidas/Transferencias/Transformaciones) este usuario solo ve los documentos que él mismo creó, no los de otros usuarios. No afecta el Kardex ni los demás reportes. Los System Manager siempre ven todos."
+   "label": "Movimientos del Mes: ver únicamente los propios"
   },
   {
    "default": "estandar",
+   "description": "Base de costo con la que el sistema valora automáticamente las Entradas de mercadería de este usuario: estandar = Costo Estándar FacEx, ponderado = promedio ponderado del sistema, ultima_compra = último precio de compra.",
    "fieldname": "costo_entrada_por_defecto",
    "fieldtype": "Select",
-   "options": "estandar\nponderado\nultima_compra",
    "label": "Base de Costo por Defecto (Entradas)",
-   "description": "Base de costo con la que el sistema valora automáticamente las Entradas de mercadería de este usuario: estandar = Costo Estándar FacEx, ponderado = promedio ponderado del sistema, ultima_compra = último precio de compra."
+   "options": "estandar\nponderado\nultima_compra"
   },
   {
+   "description": "Control fino del botón Guardar en Entradas/Salidas/Transferencias. Ambas casillas → graba borrador y luego se valida. Solo «Validar y Confirmar» → somete directo (comportamiento clásico). Solo «Grabar Borrador» → queda en borrador sin poder validar desde FacEx. Ninguna → no puede operar. Los permisos «Registrar Entradas/Salidas/Transferencias» de arriba son legacy: por sí solos equivalen a «Validar y Confirmar».",
    "fieldname": "sb_inv_movs_estados",
    "fieldtype": "Section Break",
-   "label": "Grabar / Validar por Operación",
-   "description": "Control fino del botón Guardar en Entradas/Salidas/Transferencias. Ambas casillas → graba borrador y luego se valida. Solo «Validar y Confirmar» → somete directo (comportamiento clásico). Solo «Grabar Borrador» → queda en borrador sin poder validar desde FacEx. Ninguna → no puede operar. Los permisos «Registrar Entradas/Salidas/Transferencias» de arriba son legacy: por sí solos equivalen a «Validar y Confirmar»."
+   "label": "Grabar / Validar por Operación"
   },
   {
    "default": "0",
@@ -747,10 +790,10 @@
   },
   {
    "default": "0",
+   "description": "Habilita la pantalla «Costos a Ítems» del módulo de Inventario para fijar el Costo Estándar FacEx de forma masiva. Quien mantiene costos inherentemente ve los valores de costo en esa pantalla.",
    "fieldname": "mantiene_costos_items",
    "fieldtype": "Check",
-   "label": "Mantener Costos de Ítems (Costos a Ítems)",
-   "description": "Habilita la pantalla «Costos a Ítems» del módulo de Inventario para fijar el Costo Estándar FacEx de forma masiva. Quien mantiene costos inherentemente ve los valores de costo en esa pantalla."
+   "label": "Mantener Costos de Ítems (Costos a Ítems)"
   },
   {
    "fieldname": "cb_inv_maestros",
@@ -758,10 +801,22 @@
   },
   {
    "default": "0",
+   "description": "Habilita la pantalla «Almacenes» del módulo de Inventario (alta, edición y baja de almacenes). Requiere además que el usuario tenga acceso a todas las bodegas de la compañía (sin restricción en «Bodegas Habilitadas»).",
    "fieldname": "mantiene_almacenes",
    "fieldtype": "Check",
-   "label": "Mantener Almacenes",
-   "description": "Habilita la pantalla «Almacenes» del módulo de Inventario (alta, edición y baja de almacenes). Requiere además que el usuario tenga acceso a todas las bodegas de la compañía (sin restricción en «Bodegas Habilitadas»)."
+   "label": "Mantener Almacenes"
+  },
+  {
+   "fieldname": "sb_cierre_diario",
+   "fieldtype": "Section Break",
+   "label": "Cierre Diario de Ventas"
+  },
+  {
+   "default": "0",
+   "description": "Habilita el módulo «Cierre Diario» de FacEx: el usuario puede generar, cuadrar y cerrar el cierre de SUS ventas del día. Un cierre Cerrado congela facturas y pagos de esa fecha. Reabrir un cierre y ver los cierres de todos los usuarios corresponde al Rol (Clasificación) «Gerencia».",
+   "fieldname": "puede_crear_cierres",
+   "fieldtype": "Check",
+   "label": "Crear Cierres Diarios de Venta (solo los propios)"
   },
   {
    "fieldname": "sb_pagos",
@@ -770,10 +825,10 @@
   },
   {
    "default": "0",
+   "description": "Si está marcado, FacEx Screen no permite confirmar una venta con pago parcial (bloquea el cobro hasta completar el monto total).",
    "fieldname": "exige_pago_completo",
    "fieldtype": "Check",
-   "label": "Exigir Pago Completo",
-   "description": "Si está marcado, FacEx Screen no permite confirmar una venta con pago parcial (bloquea el cobro hasta completar el monto total)."
+   "label": "Exigir Pago Completo"
   },
   {
    "fieldname": "cb_pagos",
@@ -781,17 +836,17 @@
   },
   {
    "default": "0",
+   "description": "Si está marcado, se muestra el botón \"Crédito\" en la sección de Pago de FacEx Screen (venta sin cobro inmediato, factura queda pendiente).",
    "fieldname": "permite_pago_credito",
    "fieldtype": "Check",
-   "label": "Permitir Pago a Crédito",
-   "description": "Si está marcado, se muestra el botón \"Crédito\" en la sección de Pago de FacEx Screen (venta sin cobro inmediato, factura queda pendiente)."
+   "label": "Permitir Pago a Crédito"
   },
   {
    "default": "0",
+   "description": "Si está marcado, se muestra el botón \"Contra Entrega\" en la sección de Pago de FacEx Screen (no cobra ahora, el transportista cobra al entregar; habilita capturar Guías de Transporte).",
    "fieldname": "permite_pago_contra_entrega",
    "fieldtype": "Check",
-   "label": "Permitir Pago Contra Entrega",
-   "description": "Si está marcado, se muestra el botón \"Contra Entrega\" en la sección de Pago de FacEx Screen (no cobra ahora, el transportista cobra al entregar; habilita capturar Guías de Transporte)."
+   "label": "Permitir Pago Contra Entrega"
   },
   {
    "fieldname": "sb_transporte",
@@ -800,24 +855,24 @@
   },
   {
    "default": "0",
+   "description": "Llave maestra: muestra el menú \"Transporte\" en FacEx Screen. Sin este permiso, el resto de opciones de transporte (aunque estén marcadas) no se ven porque el menú que las contiene está oculto.",
    "fieldname": "puede_ver_menu_transporte",
    "fieldtype": "Check",
-   "label": "Ver Menú de Transporte",
-   "description": "Llave maestra: muestra el menú \"Transporte\" en FacEx Screen. Sin este permiso, el resto de opciones de transporte (aunque estén marcadas) no se ven porque el menú que las contiene está oculto."
+   "label": "Ver Menú de Transporte"
   },
   {
    "default": "0",
+   "description": "Permite crear/editar registros en FacEx Transportista (Cargo Expreso, Corre Caminos, etc.).",
    "fieldname": "puede_administrar_transportistas",
    "fieldtype": "Check",
-   "label": "Administrar Catálogo de Transportistas",
-   "description": "Permite crear/editar registros en FacEx Transportista (Cargo Expreso, Corre Caminos, etc.)."
+   "label": "Administrar Catálogo de Transportistas"
   },
   {
    "default": "0",
+   "description": "Permite crear/editar/eliminar filas de la tabla de Guías de Transporte dentro de Sales Invoice.",
    "fieldname": "puede_editar_guias_transporte",
    "fieldtype": "Check",
-   "label": "Editar Guías de Transporte en Facturas",
-   "description": "Permite crear/editar/eliminar filas de la tabla de Guías de Transporte dentro de Sales Invoice."
+   "label": "Editar Guías de Transporte en Facturas"
   },
   {
    "fieldname": "cb_transporte",
@@ -825,24 +880,24 @@
   },
   {
    "default": "0",
+   "description": "Permite crear/editar registros de FacEx Liquidación Transportista.",
    "fieldname": "puede_cargar_liquidaciones_transporte",
    "fieldtype": "Check",
-   "label": "Cargar Liquidaciones de Transportistas",
-   "description": "Permite crear/editar registros de FacEx Liquidación Transportista."
+   "label": "Cargar Liquidaciones de Transportistas"
   },
   {
    "default": "0",
+   "description": "Permite ver los reportes de Guías por Estado, Facturas por Número de Guía y Control de Liquidaciones.",
    "fieldname": "puede_ver_reportes_transporte",
    "fieldtype": "Check",
-   "label": "Ver Reportes de Transporte",
-   "description": "Permite ver los reportes de Guías por Estado, Facturas por Número de Guía y Control de Liquidaciones."
+   "label": "Ver Reportes de Transporte"
   },
   {
    "default": "0",
+   "description": "Muestra el panel de indicadores (guías por estado, envíos por día, COD pendiente de liquidar) dentro del menú Transporte de FacEx Screen.",
    "fieldname": "puede_ver_kpis_transporte",
    "fieldtype": "Check",
-   "label": "Ver KPIs de Transporte",
-   "description": "Muestra el panel de indicadores (guías por estado, envíos por día, COD pendiente de liquidar) dentro del menú Transporte de FacEx Screen."
+   "label": "Ver KPIs de Transporte"
   },
   {
    "fieldname": "sb_familias",
@@ -851,17 +906,17 @@
   },
   {
    "default": "0",
+   "description": "Permite abrir el «Mantenimiento de Familias» (solo lectura) en FacEx Clásico e Inventario.",
    "fieldname": "consulta_familias",
    "fieldtype": "Check",
-   "label": "Ver Familias de Precio",
-   "description": "Permite abrir el «Mantenimiento de Familias» (solo lectura) en FacEx Clásico e Inventario."
+   "label": "Ver Familias de Precio"
   },
   {
    "default": "0",
+   "description": "Permite crear, editar y eliminar Familias de Precio. Implica poder verlas.",
    "fieldname": "mantiene_familias",
    "fieldtype": "Check",
-   "label": "Mantener Familias de Precio",
-   "description": "Permite crear, editar y eliminar Familias de Precio. Implica poder verlas."
+   "label": "Mantener Familias de Precio"
   },
   {
    "fieldname": "cb_familias",
@@ -869,15 +924,104 @@
   },
   {
    "default": "0",
+   "description": "Si está marcado en el registro de la COMPAÑÍA (sin usuario), toda alta o edición de ítems de esta compañía desde FacEx obliga a asignar una Familia de Precio.",
    "fieldname": "exige_familia_item",
    "fieldtype": "Check",
-   "label": "Exigir Familia en los ítems (política de la compañía)",
-   "description": "Si está marcado en el registro de la COMPAÑÍA (sin usuario), toda alta o edición de ítems de esta compañía desde FacEx obliga a asignar una Familia de Precio."
+   "label": "Exigir Familia en los ítems (política de la compañía)"
+  },
+  {
+   "fieldname": "sb_grupo_items",
+   "fieldtype": "Section Break",
+   "label": "Grupo de Ítems"
+  },
+  {
+   "default": "0",
+   "description": "Permite abrir el «Mantenimiento de Grupo de Ítems» (solo lectura) desde FacEx Clásico. Mantener grupos implica poder verlos.",
+   "fieldname": "consulta_grupo_items",
+   "fieldtype": "Check",
+   "label": "Ver Grupo de Ítems"
+  },
+  {
+   "default": "0",
+   "description": "Permite crear, editar y eliminar Grupos de Ítems (Item Group) desde el Mantenimiento de FacEx.",
+   "fieldname": "mantiene_grupo_items",
+   "fieldtype": "Check",
+   "label": "Mantener Grupo de Ítems"
+  },
+  {
+   "fieldname": "sb_seguridad",
+   "fieldtype": "Section Break",
+   "label": "Seguridad"
+  },
+  {
+   "default": "0",
+   "description": "Habilita el módulo «Seguridad» en FacEx: permite editar la configuración de FacEx Settings de otros usuarios. Deshabilitado por defecto — una mala configuración aquí puede tener consecuencias graves para la operación (accesos, precios, inventario, facturación).",
+   "fieldname": "puede_ver_facex_settings",
+   "fieldtype": "Check",
+   "label": "Ver Módulo de Seguridad (FacEx Settings)"
+  },
+  {
+   "fieldname": "cb_seguridad",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Permite reiniciar la contraseña de otros usuarios desde el módulo Seguridad, EXCEPTO la de usuarios con rol System Manager. Deshabilitado por defecto.",
+   "fieldname": "puede_resetear_password",
+   "fieldtype": "Check",
+   "label": "Reiniciar Contraseña de Usuarios"
+  },
+  {
+   "fieldname": "sb_flete",
+   "fieldtype": "Section Break",
+   "label": "Flete"
+  },
+  {
+   "description": "Se lee siempre del registro de la COMPAÑÍA (sin usuario), sin importar en qué registro de usuario lo estés viendo. Es el producto que se agrega automáticamente a la factura cuando el cajero marca \"Incluir Flete\" en FacEx Clásico o FacEx Screen. Vacío = esa casilla no se muestra.",
+   "fieldname": "item_flete",
+   "fieldtype": "Link",
+   "label": "Ítem de Flete (GLOBAL)",
+   "options": "Item"
+  },
+  {
+   "fieldname": "sb_mayusculas",
+   "fieldtype": "Section Break",
+   "label": "Políticas de Mayúsculas"
+  },
+  {
+   "default": "0",
+   "description": "Si está marcado en el registro de la COMPAÑÍA (sin usuario), cada alta o edición de un producto desde FacEx convierte su Nombre a MAYÚSCULAS automáticamente. El Código solo se fuerza a mayúsculas al CREAR el ítem — un código ya existente en minúscula no se toca al editarlo.",
+   "fieldname": "mayusculas_items",
+   "fieldtype": "Check",
+   "label": "Forzar Nombre y Código de Ítems en Mayúsculas (GLOBAL)"
+  },
+  {
+   "fieldname": "cb_mayusculas",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Si está marcado en el registro de la COMPAÑÍA (sin usuario), cada alta o edición de un cliente desde FacEx convierte su Nombre a MAYÚSCULAS automáticamente. No afecta al cliente \"Consumidor Final\".",
+   "fieldname": "mayusculas_clientes",
+   "fieldtype": "Check",
+   "label": "Forzar Nombre de Clientes en Mayúsculas (GLOBAL)"
+  },
+  {
+   "fieldname": "sb_codigo_items",
+   "fieldtype": "Section Break",
+   "label": "Políticas de Código de Ítems"
+  },
+  {
+   "default": "0",
+   "description": "Si está marcado en el registro de la COMPAÑÍA (sin usuario), al crear un producto desde FacEx el Código se guarda tal cual se escribe (o A001, A002… si es automático), SIN concatenar el sufijo \"-ABREVIATURA\" de la compañía. Desmarcado = comportamiento actual (A001-NEKO, MICODIGO-NEKO).",
+   "fieldname": "sin_sufijo_compania_items",
+   "fieldtype": "Check",
+   "label": "No concatenar el sufijo de la compañía al Código de Ítems (GLOBAL)"
   }
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-09-02 12:00:00.000000",
+ "modified": "2026-09-11 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Settings",

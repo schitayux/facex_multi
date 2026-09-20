@@ -44,12 +44,30 @@ class FacExSettings(Document):
                     f"y no puede habilitarse en la configuración de '{self.bfel_company}'."
                 )
 
-        habilitadas = [row.warehouse for row in (self.get("bodegas_habilitadas") or [])]
-        if self.bodega_por_defecto and habilitadas and self.bodega_por_defecto not in habilitadas:
-            frappe.throw(
-                f"La Bodega por Defecto '{self.bodega_por_defecto}' debe ser una de las "
-                "Bodegas Habilitadas, o deja el grid vacío para no restringir bodegas."
-            )
+        filas = {row.warehouse: row for row in (self.get("bodegas_habilitadas") or [])}
+        if not filas:
+            return
+
+        if self.bodega_por_defecto:
+            fila = filas.get(self.bodega_por_defecto)
+            if not fila:
+                frappe.throw(
+                    f"La Bodega por Defecto '{self.bodega_por_defecto}' debe ser una de las "
+                    "Bodegas Habilitadas, o deja el grid vacío para no restringir bodegas."
+                )
+            if not fila.permite_venta:
+                frappe.throw(
+                    f"La Bodega por Defecto '{self.bodega_por_defecto}' se usa para facturar, "
+                    "así que debe tener marcada la operación «Venta» en Bodegas Habilitadas."
+                )
+
+        if self.transito_por_defecto:
+            fila = filas.get(self.transito_por_defecto)
+            if fila and not fila.permite_transferencia:
+                frappe.throw(
+                    f"El Almacén de Tránsito '{self.transito_por_defecto}' recibe traslados, "
+                    "así que debe tener marcada la operación «Transferencia» en Bodegas Habilitadas."
+                )
 
     def _validate_socio_venta_por_defecto(self):
         if not self.socio_venta_por_defecto:

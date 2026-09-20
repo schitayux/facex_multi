@@ -21,6 +21,7 @@ _ALL_PERM_FIELDS = [
     "reporte_antiguedad_saldos", "reporte_cotizaciones",
     "reporte_recibos_pagos", "reporte_crecimiento_ventas",
     "reporte_imprimir_recibo", "reporte_analisis_utilidad",
+    "reporte_auditoria_sistema",
 ]
 
 def _full_access() -> dict:
@@ -80,9 +81,11 @@ _COMPANY_CONFIG_FIELDS = [
     "mostrar_almacen", "mostrar_desc_pct", "mostrar_adenda", "mostrar_tipo",
     "exige_pago_completo", "permite_pago_credito", "permite_pago_contra_entrega",
     "exige_familia_item",
+    "item_flete", "mayusculas_items", "mayusculas_clientes",
+    "sin_sufijo_compania_items",
 ]
-# Campos texto (Select/Data) — no convertir a int
-_CONFIG_TEXT_FIELDS = {"tipo_x_defecto"}
+# Campos texto (Select/Data/Link) — no convertir a int
+_CONFIG_TEXT_FIELDS = {"tipo_x_defecto", "item_flete"}
 # Check fields que están ON por defecto cuando no hay config
 _CONFIG_DEFAULT_ON = {"mostrar_almacen", "mostrar_desc_pct", "mostrar_adenda", "mostrar_tipo"}
 
@@ -116,7 +119,20 @@ def get_facex_default_warehouse(company: str) -> str:
     ) or ""
 
 
-def get_facex_allowed_warehouses(company: str):
+# Cada fila del grid bodegas_habilitadas declara qué operaciones admite esa
+# bodega. `operacion=None` = capa de visibilidad (¿ve la bodega?), que es lo que
+# usan reportes y consultas; una operación concreta = capa de transacción
+# (¿puede emitir ESTE documento contra esa bodega?).
+BODEGA_OPERACIONES = {
+    "venta": "permite_venta",
+    "compra": "permite_compra",
+    "entrada": "permite_entrada",
+    "salida": "permite_salida",
+    "transferencia": "permite_transferencia",
+}
+
+
+def get_facex_allowed_warehouses(company: str, operacion: str = None):
     """
     Lista de bodegas habilitadas para frappe.session.user + company (grid
     bodegas_habilitadas de FacEx Settings). Retorna None cuando NO hay
@@ -125,7 +141,18 @@ def get_facex_allowed_warehouses(company: str):
     bodegas de la compañía" (retrocompatible, igual criterio que el resto
     de permisos de este archivo). Retorna una lista (posiblemente vacía solo
     si la compañía no aplica) cuando sí hay restricción configurada.
+
+    Con `operacion` (clave de BODEGA_OPERACIONES) la lista se acota además a
+    las bodegas cuyo check de esa operación esté marcado. Ahí la lista vacía SÍ
+    es significativa — "ninguna bodega admite esta operación" — y nunca degrada
+    a None: un grid configurado no puede terminar abriendo todas las bodegas.
     """
+    # `operacion` puede venir de un endpoint whitelisted (get_warehouses) — una
+    # clave desconocida debe fallar, nunca degradar a "sin filtro".
+    field = BODEGA_OPERACIONES.get(operacion) if operacion else None
+    if operacion and not field:
+        frappe.throw(f"Operación de bodega desconocida: '{operacion}'.")
+
     if "System Manager" in frappe.get_roles():
         return None
     if not company:
@@ -137,12 +164,25 @@ def get_facex_allowed_warehouses(company: str):
     if not settings_name:
         return None
 
-    warehouses = frappe.get_all(
+    rows = frappe.get_all(
         "FacEx Settings Bodega",
         filters={"parent": settings_name, "parenttype": "FacEx Settings"},
-        pluck="warehouse",
+        fields=["warehouse"] + list(BODEGA_OPERACIONES.values()),
     )
-    return warehouses or None
+    if not rows:
+        return None
+    if not field:
+        return [r.warehouse for r in rows]
+    return [r.warehouse for r in rows if int(r.get(field) or 0)]
+
+
+def warehouse_allows(warehouse: str, company: str, operacion: str) -> bool:
+    """¿`warehouse` admite `operacion` para el usuario actual? Bodega vacía o
+    usuario sin restricción configurada → True."""
+    if not warehouse:
+        return True
+    allowed = get_facex_allowed_warehouses(company, operacion)
+    return allowed is None or warehouse in allowed
 
 
 def get_facex_default_sales_partner(company: str) -> str:
@@ -157,6 +197,27 @@ def get_facex_default_sales_partner(company: str) -> str:
         {"user": frappe.session.user, "bfel_company": company},
         "socio_venta_por_defecto",
     ) or ""
+
+
+# ---------------------------------------------------------------------------
+# Estado FEL por defecto al facturar (FacEx Screen y Clásico)
+# ---------------------------------------------------------------------------
+# No es un permiso (nada que restringir), es una preferencia de precarga: con
+# qué bfel_status arranca una factura nueva. Sin fila de FacEx Settings o con
+# el Select vacío -> "01 Enviar" (comportamiento histórico del sistema).
+
+_BFEL_STATUS_OPTIONS = ("01 Enviar", "00 No enviar")
+
+
+def get_facex_default_bfel_status(company: str) -> str:
+    if not company:
+        return "01 Enviar"
+    value = frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "bfel_status_por_defecto",
+    )
+    return value if value in _BFEL_STATUS_OPTIONS else "01 Enviar"
 
 
 # ---------------------------------------------------------------------------
@@ -571,6 +632,39 @@ def get_facex_requires_item_familia(company: str) -> bool:
     return bool(int(get_facex_company_config(company).get("exige_familia_item") or 0))
 
 
+def get_facex_flete_item(company: str) -> str:
+    """Ítem de Flete configurado a nivel de COMPAÑÍA (registro user='').
+    Vacío = no hay flete configurado (la casilla "Incluir Flete" no se muestra)."""
+    if not company:
+        return ""
+    return str(get_facex_company_config(company).get("item_flete") or "")
+
+
+def get_facex_item_code_without_suffix(company: str) -> bool:
+    """Política de la compañía: ¿guardar el Código de Ítems SIN concatenar el
+    sufijo "-ABREVIATURA" al crearlos desde FacEx? Se lee del registro de
+    compañía (user='')."""
+    if not company:
+        return False
+    return bool(int(get_facex_company_config(company).get("sin_sufijo_compania_items") or 0))
+
+
+def get_facex_uppercase_items(company: str) -> bool:
+    """Política de la compañía: ¿forzar Nombre/Código de Ítems a MAYÚSCULAS
+    al crear/editar? Se lee del registro de compañía (user='')."""
+    if not company:
+        return False
+    return bool(int(get_facex_company_config(company).get("mayusculas_items") or 0))
+
+
+def get_facex_uppercase_customers(company: str) -> bool:
+    """Política de la compañía: ¿forzar Nombre de Clientes a MAYÚSCULAS al
+    crear/editar? Se lee del registro de compañía (user='')."""
+    if not company:
+        return False
+    return bool(int(get_facex_company_config(company).get("mayusculas_clientes") or 0))
+
+
 def get_facex_can_receive_traslados(company: str) -> bool:
     """Pantalla «Recepción de Traslados». Deny-by-default."""
     if "System Manager" in frappe.get_roles():
@@ -937,5 +1031,131 @@ def get_facex_can_view_transporte_kpis(company: str) -> bool:
         "FacEx Settings",
         {"user": frappe.session.user, "bfel_company": company},
         "puede_ver_kpis_transporte",
+    )
+    return bool(int(value or 0))
+
+
+# ---------------------------------------------------------------------------
+# Grupo de Ítems (Item Group nativo) — Mantenimiento
+# ---------------------------------------------------------------------------
+# Deny-by-default, mismo criterio que Familias de Precio: mantener implica ver.
+
+def get_facex_can_view_item_groups(company: str) -> bool:
+    """«Mantenimiento de Grupo de Ítems» en modo lectura. Deny-by-default."""
+    if "System Manager" in frappe.get_roles():
+        return True
+    if not company:
+        return False
+    if not frappe.get_meta("FacEx Settings").has_field("consulta_grupo_items"):
+        return False
+    row = frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        ["consulta_grupo_items", "mantiene_grupo_items"],
+        as_dict=True,
+    )
+    if not row:
+        return False
+    return bool(int(row.get("consulta_grupo_items") or 0) or int(row.get("mantiene_grupo_items") or 0))
+
+
+def get_facex_can_maintain_item_groups(company: str) -> bool:
+    """Crear / editar / eliminar Grupos de Ítems. Deny-by-default."""
+    if "System Manager" in frappe.get_roles():
+        return True
+    if not company:
+        return False
+    if not frappe.get_meta("FacEx Settings").has_field("mantiene_grupo_items"):
+        return False
+    value = frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "mantiene_grupo_items",
+    )
+    return bool(int(value or 0))
+
+
+# ---------------------------------------------------------------------------
+# Módulo de Seguridad (editar FacEx Settings de otros usuarios) y Reinicio de
+# Contraseña
+# ---------------------------------------------------------------------------
+# Deny-by-default: son acciones administrativas sensibles (permisos de otros
+# usuarios, contraseñas). System Manager siempre tiene acceso.
+
+def get_facex_can_view_seguridad(company: str) -> bool:
+    """Habilita el módulo «Seguridad»: editar FacEx Settings de otros usuarios."""
+    if "System Manager" in frappe.get_roles():
+        return True
+    if not company:
+        return False
+    value = frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "puede_ver_facex_settings",
+    )
+    return bool(int(value or 0))
+
+
+# ---------------------------------------------------------------------------
+# Rol de Clasificación (Bodega / Ventas / Producción / Gerencia)
+# ---------------------------------------------------------------------------
+# Campo `rol_clasificacion`: puramente informativo/clasificatorio salvo el
+# valor "Gerencia", que habilita — SOLO en los reportes de FacEx Clásico —
+# selección libre de almacén y de "Usuario Creador" (ver reports.py
+# _resolve_owner_filter / _resolve_warehouse_filter). Cualquier otro valor
+# (incluido vacío) NO es Gerencia: el reporte queda forzado a las propias
+# operaciones del usuario.
+
+def get_facex_is_gerencia(company: str) -> bool:
+    if "System Manager" in frappe.get_roles():
+        return True
+    if not company:
+        return False
+    value = frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "rol_clasificacion",
+    )
+    return value == "Gerencia"
+
+
+def get_facex_can_reset_password(company: str) -> bool:
+    """Reiniciar contraseña de otros usuarios (nunca de System Manager). Deny-by-default.
+
+    Independiente de get_facex_can_view_seguridad: un usuario puede tener SOLO
+    este privilegio (sin ver el resto del módulo de Seguridad)."""
+    if "System Manager" in frappe.get_roles():
+        return True
+    if not company:
+        return False
+    value = frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "puede_resetear_password",
+    )
+    return bool(int(value or 0))
+
+
+# ---------------------------------------------------------------------------
+# Cierre Diario de Ventas
+# ---------------------------------------------------------------------------
+# Deny-by-default. `puede_crear_cierres` habilita el módulo «Cierre Diario»
+# para las ventas PROPIAS del usuario (caja). Ver todos los cierres, crear /
+# cerrar los de cualquier usuario y REABRIR un cierre Cerrado corresponde al
+# Rol (Clasificación) «Gerencia» (get_facex_is_gerencia). System Manager
+# siempre tiene acceso total. Toda la lógica está en facex_multi.api.cierre.
+
+def get_facex_can_create_cierres(company: str) -> bool:
+    # Sitio sin migrar (bench compartido): el módulo no existe todavía.
+    if not frappe.db.table_exists("FacEx Cierre Diario") or not frappe.get_meta("FacEx Settings").has_field("puede_crear_cierres"):
+        return False
+    if "System Manager" in frappe.get_roles():
+        return True
+    if not company:
+        return False
+    value = frappe.db.get_value(
+        "FacEx Settings",
+        {"user": frappe.session.user, "bfel_company": company},
+        "puede_crear_cierres",
     )
     return bool(int(value or 0))

@@ -15,7 +15,14 @@ override_doctype_class = {
 # Guardia de botón "Atrás" del navegador para las Pages FacEx / FacEx Screen /
 # FacEx Inventario (ver public/js/history_guard.js) — solo define
 # facex_multi.setup_back_guard, sin efecto hasta que cada Page lo invoca.
-app_include_js = "/assets/facex_multi/js/history_guard.js"
+#
+# link_guard.js: quita la flechita "Abrir" de los campos Link (que navega a
+# ERPNext nativo) mientras el body tenga la clase facex-fullscreen-mode; no
+# afecta al Desk normal (ver public/js/link_guard.js).
+app_include_js = [
+    "/assets/facex_multi/js/history_guard.js",
+    "/assets/facex_multi/js/link_guard.js",
+]
 
 doctype_js = {
     "Item": "public/js/item.js"
@@ -35,20 +42,25 @@ doctype_js = {
 permission_query_conditions = {
     "Customer": "facex_multi.api.permissions.customer_query_conditions",
     "Sales Invoice": "facex_multi.api.permissions.sales_invoice_query_conditions",
+    "FacEx Cierre Diario": "facex_multi.api.cierre.cierre_query_conditions",
 }
 
 has_permission = {
     "Customer": "facex_multi.api.permissions.customer_has_permission",
     "Sales Invoice": "facex_multi.api.permissions.sales_invoice_has_permission",
+    "FacEx Cierre Diario": "facex_multi.api.cierre.cierre_has_permission",
 }
 
 doc_events = {
     "Customer": {
+        "before_insert": "facex_multi.api.customer.normalize_customer_casing",
         "validate": "facex_multi.api.customer.validate_customer_on_save"
     },
     "Item": {
+        "before_insert": "facex_multi.api.item.normalize_item_casing",
         "before_save": "facex_multi.api.item.sync_description_from_item_name",
         "validate": [
+            "facex_multi.api.item.normalize_item_casing",
             "facex_multi.api.item.validate_lista_materiales",
             "facex_multi.api.familia.validate_item_familia"
         ],
@@ -56,7 +68,14 @@ doc_events = {
     },
     "Sales Invoice": {
         "before_insert": "facex_multi.api.invoice.fix_abbr_in_naming_series",
-        "validate": "facex_multi.api.invoice.guard_guias_transporte_permission"
+        "validate": "facex_multi.api.invoice.guard_guias_transporte_permission",
+        # Cierre Diario: una factura / sus pagos quedan congelados una vez que
+        # el día del usuario está Cerrado (ver facex_multi.api.cierre).
+        "before_cancel": "facex_multi.api.cierre.guard_sales_invoice_cancel",
+        "before_update_after_submit": "facex_multi.api.cierre.guard_sales_invoice_update_after_submit"
+    },
+    "Payment Entry": {
+        "before_cancel": "facex_multi.api.cierre.guard_payment_entry_cancel"
     }
 }
 

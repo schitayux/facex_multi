@@ -24,8 +24,15 @@ facex_multi.patches.v1_0.add_inventario_costos_maestros
 facex_multi.patches.v1_0.add_recepcion_traslados
 facex_multi.patches.v1_0.add_inventario_estados_movimiento
 facex_multi.patches.v1_0.add_ver_solo_mis_movimientos
+facex_multi.patches.v1_0.add_facex_auditoria_de_sistema_report
 
 [post_model_sync]
 facex_multi.patches.v1_0.add_familia_permissions
 facex_multi.patches.v1_0.add_item_familia_field
 facex_multi.patches.v1_0.backfill_neko_familias
+facex_multi.patches.v1_0.add_grupo_items_seguridad_auditoria_settings
+facex_multi.patches.v1_0.add_bfel_status_por_defecto
+facex_multi.patches.v1_0.add_rol_clasificacion
+facex_multi.patches.v1_0.add_cierre_diario
+facex_multi.patches.v1_0.rename_cierre_page
+facex_multi.patches.v1_0.add_bodega_operaciones_permitidas
