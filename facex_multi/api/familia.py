@@ -419,12 +419,18 @@ def apply_familia_price(familia: str, price_list: str, rate, company: str = None
     vf = getdate(valid_from) if valid_from else getdate(today())
     members = _familia_members(familia, company)
 
-    updated, errors = [], []
+    updated, errors, uom_fallback = [], [], []
     for m in members:
+        n_msgs = len(frappe.local.message_log)
         try:
-            _upsert_item_price(m["item_code"], price_list, rate, fam.uom, vf)
+            used_uom = _upsert_item_price(m["item_code"], price_list, rate, fam.uom, vf)
             updated.append(m["item_code"])
+            if fam.uom and used_uom != fam.uom:
+                uom_fallback.append({"item_code": m["item_code"], "uom": used_uom})
         except Exception as e:  # noqa: BLE001
+            # frappe.throw ya dejó el mensaje en message_log; se retira para que
+            # el front no muestre un diálogo de error por algo ya capturado.
+            del frappe.local.message_log[n_msgs:]
             errors.append({"item_code": m["item_code"], "error": str(e)})
 
     # sincroniza el registro de la familia
@@ -439,10 +445,26 @@ def apply_familia_price(familia: str, price_list: str, rate, company: str = None
 
     frappe.db.commit()
     return {"familia": familia, "price_list": price_list, "rate": rate,
-            "updated": updated, "errors": errors}
+            "updated": updated, "errors": errors, "uom_fallback": uom_fallback}
 
 
-def _upsert_item_price(item_code: str, price_list: str, rate: float, uom: str, valid_from):
+def _resolve_price_uom(item_code: str, uom: str) -> tuple[str, bool]:
+    """UdM con la que se puede guardar el Item Price del ítem.
+
+    ERPNext (Item Price.validate_item) exige que la UdM exista en la tabla de
+    conversión del ítem; si la UdM de la familia no está ahí, se usa la UdM de
+    stock del ítem en lugar de fallar. Devuelve (uom, fallback_aplicado)."""
+    if not uom:
+        return "", False
+    if frappe.db.exists("UOM Conversion Detail",
+                        {"parenttype": "Item", "parent": item_code, "uom": uom}):
+        return uom, False
+    return (frappe.db.get_value("Item", item_code, "stock_uom") or ""), True
+
+
+def _upsert_item_price(item_code: str, price_list: str, rate: float, uom: str, valid_from) -> str:
+    """Crea/actualiza el Item Price y devuelve la UdM con la que quedó."""
+    uom, _ = _resolve_price_uom(item_code, uom)
     name = frappe.db.get_value(
         "Item Price", {"item_code": item_code, "price_list": price_list}, "name"
     )
@@ -462,6 +484,7 @@ def _upsert_item_price(item_code: str, price_list: str, rate: float, uom: str, v
             doc.uom = uom
         doc.valid_from = valid_from
         doc.insert(ignore_permissions=True)
+    return doc.uom or ""
 
 
 # ---------------------------------------------------------------------------
@@ -474,24 +497,30 @@ def fanout_new_item_from_familia(item_code: str, familia: str, company: str,
     y (opcional) copia el costo estándar sugerido. Silencioso ante errores por
     lista para no bloquear el alta."""
     if not familia:
-        return {"prices": [], "cost": None}
+        return {"prices": [], "cost": None, "errors": []}
     fam = frappe.db.get_value(
         "FacEx Familia de Precio", familia,
         ["bfel_company", "uom", "costo_estandar"], as_dict=True,
     )
     if not fam or (fam.bfel_company and fam.bfel_company != company):
-        return {"prices": [], "cost": None}
+        return {"prices": [], "cost": None, "errors": []}
 
     vf = getdate(valid_from) if valid_from else getdate(today())
-    created = []
+    created, errors = [], []
+    price_uom, uom_fallback = _resolve_price_uom(item_code, fam.uom)
     for p in frappe.get_all(
         "FacEx Familia de Precio Lista",
         filters={"parent": familia}, fields=["price_list", "price_list_rate"],
     ):
+        n_msgs = len(frappe.local.message_log)
         try:
-            _upsert_item_price(item_code, p.price_list, flt(p.price_list_rate), fam.uom, vf)
+            _upsert_item_price(item_code, p.price_list, flt(p.price_list_rate), price_uom, vf)
             created.append(p.price_list)
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
+            # Retirar el mensaje que frappe.throw dejó en message_log: el alta
+            # del ítem sí se completó y el error se devuelve al front en `errors`.
+            del frappe.local.message_log[n_msgs:]
+            errors.append({"price_list": p.price_list, "error": str(e)})
             frappe.log_error(frappe.get_traceback(), f"fanout familia {familia} -> {item_code}")
 
     cost = None
@@ -500,4 +529,8 @@ def fanout_new_item_from_familia(item_code: str, familia: str, company: str,
             frappe.db.set_value("Item", item_code, "custom_costo_estandar",
                                 flt(fam.costo_estandar), update_modified=False)
             cost = flt(fam.costo_estandar)
-    return {"prices": created, "cost": cost}
+    return {
+        "prices": created, "cost": cost, "errors": errors,
+        # UdM de la familia vs. UdM con la que quedaron los precios (si difieren)
+        "uom": fam.uom or "", "price_uom": price_uom if uom_fallback else "",
+    }

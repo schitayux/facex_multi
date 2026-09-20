@@ -293,7 +293,7 @@ def set_active_company(company: str):
 
 
 @frappe.whitelist()
-def get_warehouses(company: str = None):
+def get_warehouses(company: str = None, operacion: str = None):
     """
     Retorna los almacenes activos de la compañía actual, acotados a las
     bodegas habilitadas del usuario en FacEx Settings (grid
@@ -301,12 +301,17 @@ def get_warehouses(company: str = None):
     de la compañía (retrocompatible). Fuente central: la usan directo
     facex.js/facex_screen.js y, vía get_inventory_defaults(), FacEx
     Inventario — filtrar aquí propaga la restricción a todos esos selectores.
+
+    `operacion` ("venta", "compra", "entrada", "salida", "transferencia")
+    acota además a las bodegas que tienen marcada esa operación en el grid.
+    Sin `operacion` se devuelve la capa de visibilidad completa, que es la que
+    necesitan los reportes.
     """
     company = get_effective_company(company)
     filters = {"company": company, "is_group": 0, "disabled": 0}
 
     from facex_multi.api.permissions import get_facex_allowed_warehouses
-    allowed = get_facex_allowed_warehouses(company)
+    allowed = get_facex_allowed_warehouses(company, operacion)
     if allowed is not None:
         filters["name"] = ["in", allowed]
 
@@ -375,9 +380,9 @@ def get_defaults(company: str = None):
     naming_series = filter_naming_series_for_company(naming_series, company, default_est)
 
     from facex_multi.api.permissions import get_facex_allowed_warehouses
-    allowed_warehouses = get_facex_allowed_warehouses(company)
+    allowed_warehouses = get_facex_allowed_warehouses(company, "venta")
 
-    # Almacén por defecto — acotado a las bodegas habilitadas del usuario, si aplica
+    # Almacén por defecto — acotado a las bodegas del usuario habilitadas para venta
     default_warehouse = frappe.defaults.get_user_default("Warehouse") or ""
     if default_warehouse and allowed_warehouses is not None and default_warehouse not in allowed_warehouses:
         default_warehouse = ""
@@ -425,10 +430,21 @@ def get_defaults(company: str = None):
         get_facex_can_edit_price, get_facex_default_price_list,
         get_facex_allowed_price_lists, get_facex_can_view_costs,
         get_facex_can_view_familias, get_facex_can_maintain_familias,
+        get_facex_can_view_item_groups, get_facex_can_maintain_item_groups,
+        get_facex_can_view_seguridad, get_facex_can_reset_password,
+        get_facex_default_bfel_status, get_facex_is_gerencia,
+        get_facex_can_create_cierres,
     )
     permissions = get_facex_permissions_for_company(company)
+    permissions["puede_crear_cierres"] = int(get_facex_can_create_cierres(company))
+    # Sitio sin migrar (bench compartido) → el módulo Cierre Diario no aparece
+    permissions["cierre_diario_instalado"] = int(frappe.db.table_exists("FacEx Cierre Diario"))
     permissions["puede_consultar_familias"] = int(get_facex_can_view_familias(company))
     permissions["puede_mantener_familias"] = int(get_facex_can_maintain_familias(company))
+    permissions["puede_consultar_grupo_items"] = int(get_facex_can_view_item_groups(company))
+    permissions["puede_mantener_grupo_items"] = int(get_facex_can_maintain_item_groups(company))
+    permissions["puede_ver_facex_settings"] = int(get_facex_can_view_seguridad(company))
+    permissions["puede_resetear_password"] = int(get_facex_can_reset_password(company))
     permissions["puede_ver_costos"] = int(get_facex_can_view_costs(company))
     permissions["puede_editar_precio"] = int(get_facex_can_edit_price(company))
     permissions["puede_eliminar_ventas_espera"] = int(get_facex_can_delete_held_sales(company))
@@ -441,6 +457,10 @@ def get_defaults(company: str = None):
     permissions["puede_cargar_liquidaciones_transporte"] = int(get_facex_can_upload_liquidaciones_transporte(company))
     permissions["puede_ver_menu_transporte"] = int(get_facex_can_view_transporte_menu(company))
     permissions["puede_ver_kpis_transporte"] = int(get_facex_can_view_transporte_kpis(company))
+    # Rol de Clasificación "Gerencia": únicamente habilita, en los reportes de
+    # FacEx Clásico, seleccionar cualquier almacén/usuario creador (ver
+    # reports.py _resolve_owner_filter / _resolve_warehouse_filter).
+    permissions["es_gerencia"] = int(get_facex_is_gerencia(company))
     company_config = get_facex_company_config(company)
     default_pos_warehouse = get_facex_default_warehouse(company)
     default_sales_partner = get_facex_default_sales_partner(company)
@@ -466,7 +486,7 @@ def get_defaults(company: str = None):
         "posting_date": today(),
         "due_date": today(),
         "bfel_status_options": ["01 Enviar", "00 No enviar"],
-        "bfel_status_default": "01 Enviar",
+        "bfel_status_default": get_facex_default_bfel_status(company),
         "permissions": permissions,
         "company_config": company_config,
         "default_pos_warehouse": default_pos_warehouse,
@@ -474,6 +494,8 @@ def get_defaults(company: str = None):
         "default_sales_partner_locked": bool(fixed_sales_partner),
         "default_price_list": default_price_list,
         "allowed_price_lists": allowed_price_lists,
+        # UdM por defecto para ítems nuevos en Mantenimiento (Stock Settings)
+        "default_stock_uom": frappe.db.get_single_value("Stock Settings", "stock_uom") or "Nos",
     }
 
 
@@ -962,10 +984,10 @@ def get_item_details(item_code: str, company: str = "", customer: str = "",
         rate = float(item_price)
 
     from facex_multi.api.permissions import get_facex_allowed_warehouses
-    allowed_warehouses = get_facex_allowed_warehouses(company)
+    allowed_warehouses = get_facex_allowed_warehouses(company, "venta")
 
     # Almacén: parámetro > item_defaults filtrado por empresa > fallback empresa,
-    # acotado a las bodegas habilitadas del usuario, si aplica.
+    # acotado a las bodegas del usuario habilitadas para venta.
     item_warehouse = warehouse or ""
     if not item_warehouse and item.item_defaults:
         _row = next((d for d in item.item_defaults if d.company == company),
@@ -1152,16 +1174,32 @@ def save_draft(doc_json: str):
            and (cust_row.default_sales_partner or "") != user_sp:
             frappe.throw(f"El cliente '{customer}' está asignado a otro socio de ventas y no puede facturarse desde su usuario.")
 
-    # La lista de precios de la ficha del cliente SIEMPRE gana (fix "no jala el precio").
-    # Si el cliente no tiene lista y no se envió ninguna, usar la lista por
-    # defecto del usuario en FacEx Settings antes de caer a Selling Settings.
-    if cust_price_list:
-        data["selling_price_list"] = cust_price_list
-    elif not data.get("selling_price_list"):
+    # Prioridad de la lista de precios al facturar:
+    #   1. la que el page envía — es la que el usuario vio en el selector y con
+    #      la que se cotizó el carrito, sea heredada del cliente o cambiada a
+    #      mano. Cambiarla aquí facturaría a un precio distinto del mostrado.
+    #   2. la ficha del cliente
+    #   3. la lista por defecto del usuario en FacEx Settings
+    # El valor llega del cliente, así que se valida contra las listas que el
+    # usuario tiene habilitadas (el selector ya las filtra, pero el payload no).
+    elegida = (data.get("selling_price_list") or "").strip()
+    if elegida:
+        from facex_multi.api.item import validate_price_list_company
+        from facex_multi.api.permissions import get_facex_allowed_price_lists
+        validate_price_list_company(elegida, company)
+        allowed_pl = get_facex_allowed_price_lists(company)
+        # La lista de la ficha del cliente se hereda aunque no esté entre las
+        # habilitadas del usuario — el page la muestra como "(del cliente)" y no
+        # es una elección suya. La restricción aplica a lo que elige a mano.
+        if allowed_pl is not None and elegida != cust_price_list and elegida not in allowed_pl:
+            frappe.throw(
+                f"La Lista de Precios '{elegida}' no está habilitada para su usuario."
+            )
+    else:
         from facex_multi.api.permissions import get_facex_default_price_list
-        _udef = get_facex_default_price_list(company)
-        if _udef:
-            data["selling_price_list"] = _udef
+        heredada = cust_price_list or get_facex_default_price_list(company)
+        if heredada:
+            data["selling_price_list"] = heredada
 
     # Validar Socio de Ventas y mapear a campo vendedor si bfel_enlace_vendedor=1
     from facex_multi.api.permissions import get_facex_user_sales_partner
@@ -1180,7 +1218,7 @@ def save_draft(doc_json: str):
     # Validar productos
     if "items" in data:
         from facex_multi.api.permissions import get_facex_allowed_warehouses
-        allowed_warehouses = get_facex_allowed_warehouses(company)
+        allowed_warehouses = get_facex_allowed_warehouses(company, "venta")
         for item_row in data["items"]:
             ic = item_row.get("item_code")
             if ic:
@@ -1189,7 +1227,7 @@ def save_draft(doc_json: str):
                     frappe.throw(f"El producto '{ic}' pertenece a otra compañía y no puede utilizarse en esta factura.")
             wh = item_row.get("warehouse")
             if wh and allowed_warehouses is not None and wh not in allowed_warehouses:
-                frappe.throw(f"No tiene permiso para utilizar la bodega '{wh}' en esta factura.")
+                frappe.throw(f"La bodega '{wh}' no está habilitada para venta en su configuración.")
 
 
     # Pre-procesar items.
@@ -1536,14 +1574,7 @@ def get_invoice(name: str):
     name = (name or "").strip()
     doc = frappe.get_doc("Sales Invoice", name)
     d = _safe_doc_dict(doc)
-    all_pes   = _get_linked_payment_entries(name) if doc.docstatus == 1 else []
-    submitted = [pe for pe in all_pes if pe.get("docstatus") == 1]
-    draft     = [pe for pe in all_pes if pe.get("docstatus") == 0]
-    d["_payment_entries"] = {
-        "submitted":     submitted,
-        "draft":         draft,
-        "has_submitted": bool(submitted),
-    }
+    d["_payment_entries"] = _payment_entries_summary(name, doc.docstatus)
     return d
 
 
@@ -1936,6 +1967,20 @@ def _get_linked_payment_entries(invoice_name):
     return result
 
 
+def _payment_entries_summary(invoice_name, docstatus=1):
+    """Resumen de los Payment Entry ligados a la factura, en el formato que
+    consume el page (get_invoice y save_payments devuelven lo mismo para que
+    el cliente pueda refrescar la pestaña Pagos sin esperar una recarga)."""
+    all_pes   = _get_linked_payment_entries(invoice_name) if docstatus == 1 else []
+    submitted = [pe for pe in all_pes if pe.get("docstatus") == 1]
+    draft     = [pe for pe in all_pes if pe.get("docstatus") == 0]
+    return {
+        "submitted":     submitted,
+        "draft":         draft,
+        "has_submitted": bool(submitted),
+    }
+
+
 def _delete_draft_payment_entries(invoice_name):
     for pe in _get_linked_payment_entries(invoice_name):
         if pe.get("docstatus") == 0:
@@ -2070,11 +2115,22 @@ def save_payments(invoice_name: str, payments_json: str, pagado: str = "0"):
     frappe.db.commit()
 
     total_paid = sum(float(r.get("amount") or 0) for r in payments)
+    # Estado ya persistido, tal como lo devolvería get_invoice: el page lo
+    # aplica de inmediato a la pestaña Pagos / footer y luego recarga la
+    # factura completa. Así las líneas se ven en el instante aunque la
+    # recarga tarde o llegue fuera de orden.
+    doc.reload()
     return {
-        "success":         True,
-        "total_paid":      total_paid,
-        "pagado":          pagado_val,
-        "payment_entries": created_pes,
+        "success":               True,
+        "total_paid":            total_paid,
+        "pagado":                pagado_val,
+        "payment_entries":       created_pes,
+        "custom_pagado":         int(doc.custom_pagado or 0),
+        "custom_efast_payments": [
+            r.as_dict() for r in (doc.get("custom_efast_payments") or [])
+        ],
+        "outstanding_amount":    float(doc.outstanding_amount or 0),
+        "_payment_entries":      _payment_entries_summary(name, doc.docstatus),
     }
 
 
