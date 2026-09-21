@@ -468,6 +468,24 @@ currency=si.currency
 
 </table>
 
+{# Leyenda de exención de IVA: frases distintas de los ítems (ficha Item.custom_facex_frase_exencion) #}
+{% set legend_ns = namespace(frases=[]) %}
+{% if frappe.get_meta("Item").has_field("custom_facex_frase_exencion") %}
+{% for item in si.items %}
+{% set _frase = frappe.db.get_value("Item", item.item_code, "custom_facex_frase_exencion") %}
+{% if _frase and _frase not in legend_ns.frases %}
+{% set legend_ns.frases = legend_ns.frases + [_frase] %}
+{% endif %}
+{% endfor %}
+{% endif %}
+{% if legend_ns.frases %}
+<div class="exencion-legend" style="font-size:10px; font-style:italic; margin:6px 0 4px 0; padding:4px 6px; border-top:1px solid #ddd;">
+{% for _frase in legend_ns.frases %}
+<div>{{ _frase }}</div>
+{% endfor %}
+</div>
+{% endif %}
+
 <div class="total-wrapper">
 
 <div class="total-box">

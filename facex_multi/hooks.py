@@ -85,7 +85,8 @@ after_migrate = [
     "facex_multi.api.permissions.ensure_warehouse_establecimiento_field",
     "facex_multi.api.permissions.ensure_warehouse_tipo_almacen_field",
     "facex_multi.api.invoice.ensure_efast_payment_custom_fields",
-    "facex_multi.api.familia.ensure_item_familia_field"
+    "facex_multi.api.familia.ensure_item_familia_field",
+    "facex_multi.api.exencion.ensure_item_familia_tipo_fields",
 ]
 
 fixtures = [

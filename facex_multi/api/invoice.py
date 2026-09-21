@@ -1017,6 +1017,12 @@ def get_item_details(item_code: str, company: str = "", customer: str = "",
             or ""
         )
 
+    # Exento de IVA según la ficha (familia GENERICO / indicador EXE / plantilla
+    # al 0%): el page no debe estimar impuesto sobre la fila. ERPNext ya aplica
+    # el Item Tax Template al guardar; esto solo evita que el pie local mienta.
+    from facex_multi.api.exencion import is_item_tax_exempt
+    tax_exempt = int(is_item_tax_exempt(item.name, company))
+
     return {
         "item_code": item.name,
         "item_name": item.item_name,
@@ -1032,6 +1038,8 @@ def get_item_details(item_code: str, company: str = "", customer: str = "",
         "item_group": item.item_group or "",
         "is_lista_materiales": int(getattr(item, "bfel_es_lista_materiales", 0) or 0),
         "modo_stock_lista": getattr(item, "bfel_modo_stock_lista", "") or "",
+        "tax_exempt": tax_exempt,
+        "tipo_familia": getattr(item, "custom_facex_tipo_familia", "") or "",
     }
 
 

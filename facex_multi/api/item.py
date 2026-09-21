@@ -9,6 +9,7 @@ import frappe
 import json
 from frappe.utils import flt, cint
 from facex_multi.api.costs import get_item_costs as _get_item_costs
+from facex_multi.api.exencion import is_item_tax_exempt as _is_item_tax_exempt
 from facex_multi.api.invoice import has_efast_permission, get_effective_company
 from facex_multi.api.permissions import (
     get_facex_allowed_warehouses,
@@ -313,6 +314,8 @@ def get_item(name: str, price_list: str = None, company: str = None):
         "costo_estandar": (float(doc.get("custom_costo_estandar") or 0)
                            if get_facex_can_view_costs(company) else None),
         "palabras_busqueda": doc.get("custom_facex_palabras_busqueda") or "",
+        "tipo_familia": doc.get("custom_facex_tipo_familia") or "",
+        "tax_exempt": int(_is_item_tax_exempt(doc.name, company)),
         "familia": doc.get("custom_facex_familia") or "",
     }
 
@@ -734,6 +737,9 @@ def get_pos_items(company: str = None, item_group: str = None, txt: str = None, 
         ) bn ON bn.item_code = i.name
         """
 
+    from facex_multi.api.exencion import tax_exempt_sql_expr
+    tax_exempt_expr = tax_exempt_sql_expr("i")
+
     rows = frappe.db.sql(
         f"""
         SELECT
@@ -747,6 +753,7 @@ def get_pos_items(company: str = None, item_group: str = None, txt: str = None, 
             IFNULL(i.custom_tiene_adenda, 0) AS custom_tiene_adenda,
             IFNULL(i.bfel_es_lista_materiales, 0) AS is_lista_materiales,
             IFNULL(i.bfel_modo_stock_lista, '') AS modo_stock_lista,
+            {tax_exempt_expr} AS tax_exempt,
             ip.price_list_rate AS rate,
             IFNULL(bn.stock_qty, 0) AS stock_qty,
             IFNULL(bc.barcodes, '') AS barcodes
@@ -783,6 +790,7 @@ def get_pos_items(company: str = None, item_group: str = None, txt: str = None, 
         r["custom_tiene_adenda"] = int(r.get("custom_tiene_adenda") or 0)
         r["stock_qty"] = float(r.get("stock_qty") or 0)
         r["is_lista_materiales"] = int(r.get("is_lista_materiales") or 0)
+        r["tax_exempt"] = int(r.get("tax_exempt") or 0)
 
     return rows
 

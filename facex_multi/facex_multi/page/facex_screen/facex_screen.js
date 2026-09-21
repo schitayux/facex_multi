@@ -1746,6 +1746,7 @@ class EFastPOSScreen {
 									is_stock_item: d.is_stock_item,
 									has_serial_no: d.has_serial_no,
 									custom_tiene_adenda: d.custom_tiene_adenda,
+									tax_exempt: d.tax_exempt,
 								});
 							},
 						});
@@ -1807,6 +1808,7 @@ class EFastPOSScreen {
 								is_stock_item: d.is_stock_item || 0,
 								_has_serial_no: d.has_serial_no || 0,
 								_custom_tiene_adenda: d.custom_tiene_adenda || 0,
+								_tax_exempt: d.tax_exempt ? 1 : 0,
 							});
 							this._render_cart();
 						},
@@ -1903,6 +1905,9 @@ class EFastPOSScreen {
 			_has_serial_no: item.has_serial_no || 0,
 			_custom_tiene_adenda: item.custom_tiene_adenda || 0,
 			_item_group: item.item_group || "",
+			// Exento de IVA según la ficha (familia GENERICO / EXE); ERPNext lo
+			// aplica al guardar con el Item Tax Template al 0%. Aquí solo se muestra.
+			_tax_exempt: item.tax_exempt ? 1 : 0,
 			serial_no: "",
 			tiene_adenda: 0,
 		};
@@ -2005,6 +2010,7 @@ class EFastPOSScreen {
 						is_stock_item: d.is_stock_item,
 						has_serial_no: d.has_serial_no,
 						custom_tiene_adenda: d.custom_tiene_adenda,
+						tax_exempt: d.tax_exempt,
 					});
 					this.doc.items[newIdx]._is_flete_auto = 1;
 					this._render_cart();
@@ -2043,9 +2049,12 @@ class EFastPOSScreen {
 
 	_cart_row_html(idx, row) {
 		const cfg = this.company_config || {};
-		const adendaBadge = row._has_serial_no || row._custom_tiene_adenda
+		const adendaBadge = (row._has_serial_no || row._custom_tiene_adenda
 			? `<span class="efs-line-tag ${row.tiene_adenda || row.serial_no ? "efs-line-tag-ok" : "efs-line-tag-pending"}">${row.tiene_adenda || row.serial_no ? "Adenda ✓" : "Adenda pendiente"}</span>`
-			: "";
+			: "")
+			+ (row._tax_exempt
+				? `<span class="efs-line-tag efs-line-tag-ok" title="Exento de IVA según la ficha del producto (familia GENERICO)">EXE</span>`
+				: "");
 		const details = [];
 		if ((cfg.mostrar_almacen || row._has_serial_no || row._custom_tiene_adenda) && row.warehouse) {
 			details.push(`Almacén: ${_efs_esc(row.warehouse)}`);

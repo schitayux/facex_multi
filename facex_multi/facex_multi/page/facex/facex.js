@@ -4258,6 +4258,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 .ef-tr.ef-tr-no-stock { border-left: 3px solid #f59e0b; background: rgba(251,191,36,0.07) !important; }
 .ef-tr.ef-tr-no-stock.ef-tr-active { background: rgba(251,191,36,0.15) !important; }
 .ef-no-stock-badge { display: inline-block; font-size: 10px; font-weight: 700; color: #92400e; background: #fef3c7; border: 1px solid #f59e0b; border-radius: 3px; padding: 0 4px; margin-left: 4px; vertical-align: middle; white-space: nowrap; }
+.ef-exe-badge { display: inline-block; font-size: 10px; font-weight: 700; color: #166534; background: #dcfce7; border: 1px solid #22c55e; border-radius: 3px; padding: 0 4px; margin-left: 4px; vertical-align: middle; white-space: nowrap; }
 
 .ef-td {
   padding: 4px 6px;
@@ -5752,6 +5753,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const _no_stock_badge = _no_stock
 			? `<span class="ef-no-stock-badge">${!item.warehouse ? "Sin bodega" : "Sin stock"}</span>`
 			: "";
+		const _exe_badge = this._row_is_tax_exempt(item)
+			? `<span class="ef-exe-badge" title="Exento de IVA según la ficha del producto (familia GENERICO): no se calcula impuesto en esta fila">EXE</span>`
+			: "";
 
 		// Botón adenda DIGECAM — solo para ARMAS y MUNICIÓN
 		const _grupo = item._item_group || item.item_group || "";
@@ -5795,6 +5799,7 @@ body.facex-fullscreen-mode .ef-main-layout {
       <button class="ef-btn-image" data-idx="${idx}" tabindex="-1" title="Ver imágenes del producto">▦</button>
       <button class="ef-btn-stock" data-idx="${idx}" tabindex="-1" title="Ver saldos por bodega">≡</button>
       ${_lm_btn}
+      ${_exe_badge}
     </div>
   </td>
   <td class="ef-td">
@@ -6047,6 +6052,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 						row._custom_tiene_adenda = d.custom_tiene_adenda || 0;
 						row._item_group = d.item_group || "";
 						row.is_stock_item = d.is_stock_item || 0;
+						// Exento de IVA según la ficha (familia GENERICO / EXE): el pie
+						// local no estima impuesto sobre esta fila (ver _row_is_tax_exempt).
+						row._tax_exempt = !!d.tax_exempt;
 						// Pre-llenar tipo FEL con default de configuración si no tiene valor
 						if (!row.bfel_multi_tipo) {
 							row.bfel_multi_tipo = (this.company_config || {}).tipo_x_defecto || "";
@@ -7122,17 +7130,42 @@ body.facex-fullscreen-mode .ef-main-layout {
 	// Footer Totals
 	// -----------------------------------------------------------------------
 
+	// Fila exenta de IVA según la ficha del ítem (familia GENERICO / indicador
+	// EXE): flag que trae get_item_details al agregar, o, en filas cargadas
+	// desde ERPNext, un item_tax_rate cuyas tasas son todas 0 (Item Tax
+	// Template exento). ERPNext ya calcula así al guardar; esto solo alinea la
+	// estimación local del pie y el badge de la fila.
+	_row_is_tax_exempt(row) {
+		if (!row) return false;
+		if (row._tax_exempt === true || row._tax_exempt === 1) return true;
+		if (row._tax_exempt === false || row._tax_exempt === 0) return false;
+		if (row.item_tax_rate) {
+			try {
+				const map = typeof row.item_tax_rate === "string" ? JSON.parse(row.item_tax_rate) : row.item_tax_rate;
+				const rates = Object.values(map || {});
+				if (rates.length && rates.every((v) => !(parseFloat(v) || 0))) return true;
+			} catch (e) { /* item_tax_rate no es JSON: se ignora */ }
+		}
+		return false;
+	}
+
 	_update_local_footer() {
-		// Calcular desde items: separar base bruta de los amounts netos
+		// Calcular desde items: separar base bruta de los amounts netos.
+		// Las filas exentas (GENERICO / EXE) suman al bruto pero NO a la base
+		// gravable: sobre ellas no se estima IVA, igual que hace ERPNext con
+		// su Item Tax Template al 0%.
 		let grossBeforeDisc = 0;
 		let gross = 0;
+		let taxableGross = 0;
 		(this.doc.items || []).forEach((r) => {
 			const qty  = parseFloat(r.qty) || 0;
 			const base_rate = r.price_list_rate !== undefined && r.price_list_rate !== null && parseFloat(r.price_list_rate) > 0 ? parseFloat(r.price_list_rate) : (parseFloat(r.rate) || 0);
 			const disc = parseFloat(r.discount_percentage) || 0;
 			const base = qty * base_rate;
 			grossBeforeDisc += base;
-			gross += (base - base * disc / 100);
+			const net = base - base * disc / 100;
+			gross += net;
+			if (!this._row_is_tax_exempt(r)) taxableGross += net;
 		});
 		const itemDiscounts = grossBeforeDisc - gross;
 
@@ -7143,11 +7176,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 			const rate = parseFloat(tx.rate || 0);
 			if (tx.charge_type === "On Net Total") {
 				if (tx.included_in_print_rate) {
-					// IVA embebido: extraer del gross
+					// IVA embebido: extraer solo de la parte gravable
 					anyIncluded = true;
-					taxes += gross * rate / (100 + rate);
+					taxes += taxableGross * rate / (100 + rate);
 				} else {
-					taxes += gross * rate / 100;
+					taxes += taxableGross * rate / 100;
 				}
 			} else if (tx.charge_type === "Actual") {
 				taxes += parseFloat(tx.tax_amount || 0);
