@@ -186,13 +186,13 @@ NIT:
 
 <div class="fel-title">
 
-{{ bdm.fel_document_type|upper }}
+{{ 'RECIBO' if bfel_code == '00' else bdm.fel_document_type|upper }}
 
 </div>
 
 <div class="fel-subtitle">
 
-DOCUMENTO TRIBUTARIO ELECTRÓNICO
+{{ 'DOCUMENTO INTERNO' if bfel_code == '00' else 'DOCUMENTO TRIBUTARIO ELECTRÓNICO' }}
 
 </div>
 
@@ -293,6 +293,22 @@ Dirección
 <div class="value">
 
 {{ si.bfel_direccion or "" }}
+
+</div>
+
+</div>
+
+<div class="info-box full">
+
+<div class="label">
+
+Condición de Pago
+
+</div>
+
+<div class="value">
+
+{{ si.payment_terms_template or "" }}
 
 </div>
 
