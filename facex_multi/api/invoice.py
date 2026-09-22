@@ -1524,6 +1524,42 @@ def save_draft(doc_json: str):
 # 4. Validar (submit)
 # ---------------------------------------------------------------------------
 
+def _guard_stock_before_submit(doc):
+    """Bloquea la validación (submit) si algún ítem de inventario no tiene stock
+    suficiente en su bodega. La "Cotización" (borrador) sí se puede grabar e
+    imprimir sin stock — este chequeo solo aplica al validar. Corre siempre,
+    sin importar update_stock/maneja_inventario: ese flag decide si la
+    contabilidad/kardex se actualiza, no si se puede vender algo que no existe.
+    """
+    needed = {}
+    for row in doc.items:
+        if not row.warehouse or not row.item_code:
+            continue
+        if not frappe.get_cached_value("Item", row.item_code, "is_stock_item"):
+            continue
+        key = (row.item_code, row.warehouse)
+        needed[key] = needed.get(key, 0) + flt(row.qty)
+
+    if not needed:
+        return
+
+    faltantes = []
+    for (item_code, warehouse), qty in needed.items():
+        actual = flt(frappe.db.get_value("Bin", {"item_code": item_code, "warehouse": warehouse}, "actual_qty"))
+        if actual < qty:
+            item_name = frappe.get_cached_value("Item", item_code, "item_name") or item_code
+            faltantes.append(
+                f"<b>{frappe.utils.escape_html(item_code)}</b> ({frappe.utils.escape_html(item_name)}) en "
+                f"<b>{frappe.utils.escape_html(warehouse)}</b>: solicitado {qty}, disponible {actual}"
+            )
+
+    if faltantes:
+        frappe.throw(
+            "No se puede validar: no hay stock suficiente para —<br>" + "<br>".join(faltantes),
+            title="Stock insuficiente",
+        )
+
+
 @frappe.whitelist()
 def submit_invoice(name: str):
     """
@@ -1540,6 +1576,8 @@ def submit_invoice(name: str):
 
     if doc.docstatus != 0:
         frappe.throw("Solo se puede validar una factura en estado Borrador.")
+
+    _guard_stock_before_submit(doc)
 
     # Documento retroactivo: conservar la fecha de emisión contable del borrador al
     # validar (de lo contrario ERPNext la mueve a hoy y rompe la fecha de
