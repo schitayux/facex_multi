@@ -5302,8 +5302,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this._mark_dirty();
 			this._reprice_all_items();
 			this._load_recargo_context();
+			this._cod_sync_from_list(this.doc.selling_price_list);
 		});
 		this._load_price_list_selector();
+		this._load_cod_links();
 
 		// Link fields vía Frappe ControlLink
 		this._make_link_ctrl("customer", "Customer", true);
@@ -5555,6 +5557,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					// usuario puede cambiarla a mano y esa elección es la que
 					// se factura (ver save_invoice).
 					const _prevList = this.doc.selling_price_list || "";
+					this._customer_price_list = r.message.default_price_list || "";
 					this.doc.selling_price_list =
 						r.message.default_price_list
 						|| this.defaults.default_price_list
@@ -5564,6 +5567,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					if ((this.doc.selling_price_list || "") !== _prevList) {
 						this._reprice_all_items();
 						this._load_recargo_context();
+						this._cod_sync_from_list(this.doc.selling_price_list);
 					}
 
 					this.doc.bfel_identificacion = r.message.bfel_identificacion || "";
@@ -5627,6 +5631,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 	_on_payment_terms_change(tpl_name) {
 		this.doc.payment_terms_template = tpl_name;
+		this._cod_sync_from_terms(tpl_name);
 		if (!tpl_name) {
 			this.doc.due_date = this.doc.posting_date || frappe.datetime.get_today();
 			this.$body.find("#ef-due-date").val(this.doc.due_date);
@@ -5646,6 +5651,111 @@ body.facex-fullscreen-mode .ef-main-layout {
 				}
 			},
 		});
+	}
+
+
+	// ── Contra Entrega: Condición de Pago ⇄ Lista de Precios ───────────────
+	// Elegir la condición marcada "Es Condición de Pago Contra Entrega" cambia
+	// la lista a la marcada "Es Lista de Contra Entrega" (vínculo explícito en
+	// Payment Terms Template.custom_lista_precios_contra_entrega) y al revés.
+	// Al salir de una de las dos se restaura el valor anterior no-COD para no
+	// dejar estados mezclados (condición COD con lista normal o viceversa).
+	_load_cod_links() {
+		frappe.call({
+			method: "facex_multi.api.invoice.get_contra_entrega_links",
+			args: { company: this.doc.company || this.defaults.company || "" },
+			callback: (r) => { this._cod_links = r.message || { terms: [], lists: [], map: {} }; },
+		});
+	}
+
+	_cod_is_terms(t) { return !!t && !!this._cod_links && (this._cod_links.terms || []).indexOf(t) !== -1; }
+	_cod_is_list(l) { return !!l && !!this._cod_links && (this._cod_links.lists || []).indexOf(l) !== -1; }
+
+	_cod_list_for_terms(t) {
+		const L = this._cod_links || {};
+		if (L.map && L.map[t]) return L.map[t];
+		const lists = L.lists || [];
+		if (lists.length === 1) return lists[0];
+		if (lists.length > 1) {
+			frappe.show_alert({
+				message: __("Hay varias listas Contra Entrega: configure \"Lista de Precios Contra Entrega\" en la condición de pago {0}.", [t]),
+				indicator: "orange",
+			}, 7);
+		}
+		return "";
+	}
+
+	_cod_terms_for_list(l) {
+		const L = this._cod_links || {};
+		const explicit = Object.keys(L.map || {}).find((t) => L.map[t] === l);
+		return explicit || (L.terms || [])[0] || "";
+	}
+
+	_cod_sync_from_terms(tpl) {
+		tpl = tpl || "";
+		if (this._cod_syncing || !this._cod_links || tpl === (this._cod_last_terms || "")) return;
+		this._cod_last_terms = tpl;
+		const cur = this.doc.selling_price_list || "";
+		if (this._cod_is_terms(tpl)) {
+			if (this._cod_is_list(cur)) return;
+			const target = this._cod_list_for_terms(tpl);
+			if (!target) return;
+			this._cod_prev_list = cur;
+			this._cod_set_price_list(target, __("Lista de precios cambiada a {0} (condición Contra Entrega).", [target]));
+		} else if (this._cod_is_list(cur)) {
+			const back = this._cod_prev_list || this._customer_price_list || this.defaults.default_price_list || "";
+			if (back && back !== cur && !this._cod_is_list(back)) {
+				this._cod_set_price_list(back, __("Lista de precios restaurada a {0}.", [back]));
+			}
+		}
+	}
+
+	_cod_sync_from_list(list) {
+		list = list || "";
+		if (this._cod_syncing || !this._cod_links || list === (this._cod_last_list || "")) return;
+		this._cod_last_list = list;
+		const cur = this.doc.payment_terms_template || "";
+		if (this._cod_is_list(list)) {
+			if (this._cod_is_terms(cur)) return;
+			const target = this._cod_terms_for_list(list);
+			if (!target) return;
+			this._cod_prev_terms = cur;
+			this._cod_set_terms(target, __("Condición de pago cambiada a {0} (lista Contra Entrega).", [target]));
+		} else if (this._cod_is_terms(cur)) {
+			const back = this._cod_prev_terms !== undefined ? this._cod_prev_terms : (this.defaults.default_payment_terms_template || "");
+			if (back !== cur && !this._cod_is_terms(back)) {
+				this._cod_set_terms(back, back ? __("Condición de pago restaurada a {0}.", [back]) : __("Condición de pago Contra Entrega quitada."));
+			}
+		}
+	}
+
+	_cod_set_price_list(name, msg) {
+		this._cod_syncing = true;
+		try {
+			this.doc.selling_price_list = name;
+			this._cod_last_list = name;
+			this._sync_price_list_selector();
+			this._reprice_all_items();
+			this._load_recargo_context();
+			this._mark_dirty();
+			if (msg) frappe.show_alert({ message: msg, indicator: "blue" }, 5);
+		} finally {
+			this._cod_syncing = false;
+		}
+	}
+
+	_cod_set_terms(name, msg) {
+		this._cod_syncing = true;
+		try {
+			this.doc.payment_terms_template = name;
+			this._cod_last_terms = name;
+			if (this.controls.payment_terms_template) this.controls.payment_terms_template.set_value(name);
+			this._on_payment_terms_change(name);
+			this._mark_dirty();
+			if (msg) frappe.show_alert({ message: msg, indicator: "blue" }, 5);
+		} finally {
+			this._cod_syncing = false;
+		}
 	}
 
 	_on_taxes_change(tpl_name) {
@@ -7391,6 +7501,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this._flete_manual = !!(parseFloat(this.doc.facex_flete_amount_original) > 0);
 		this._sync_flete_ui();
 		this._load_recargo_context();
+		// Contra Entrega: estado base (no sincronizar al cargar un doc existente)
+		this._cod_last_terms = d.payment_terms_template || "";
+		this._cod_last_list = d.selling_price_list || "";
+		this._cod_prev_list = undefined;
+		this._cod_prev_terms = undefined;
+		this._customer_price_list = "";
 
 		this._render_items();
 		this._update_footer();

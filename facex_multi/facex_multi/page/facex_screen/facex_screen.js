@@ -140,6 +140,7 @@ class EFastPOSScreen {
 				this._load_warehouses();
 				this._load_price_lists();
 				this._load_payment_terms_templates();
+				this._load_cod_links();
 				this._load_sales_partners();
 				this._load_pos_data();
 				this._render_step_encabezado();
@@ -224,11 +225,13 @@ class EFastPOSScreen {
 		// Solo al cambiar de cliente: se hereda su lista. Si luego el cajero la
 		// cambia a mano, esa elección manda y es la que se factura.
 		const next = plist || this.defaults.default_price_list || this.doc.selling_price_list || "";
+		this._customer_price_list = plist || "";
 		if ((this.doc.selling_price_list || "") === next) return;
 		this.doc.selling_price_list = next;
 		this._reprice_cart();
 		this._reload_catalog_prices(false);
 		this._render_documento_card();
+		this._cod_sync_from_list(next);
 	}
 
 	_load_payment_terms_templates() {
@@ -1432,6 +1435,7 @@ class EFastPOSScreen {
 			this.doc.selling_price_list = e.target.value;
 			this._reprice_cart();
 			this._reload_catalog_prices(false);
+			this._cod_sync_from_list(this.doc.selling_price_list);
 		});
 		// Vendedor bloqueado: usuario limitado a un Socio de Ventas.
 		if (this.defaults.default_sales_partner_locked) {
@@ -1475,11 +1479,115 @@ class EFastPOSScreen {
 		$body.find("#efs-fld-payment-terms").on("change", (e) => this._on_payment_terms_change(e.target.value));
 	}
 
+
+	// ── Contra Entrega: Condición de Pago ⇄ Lista de Precios ───────────────
+	// Elegir la condición marcada "Es Condición de Pago Contra Entrega" cambia
+	// la lista a la marcada "Es Lista de Contra Entrega" (vínculo explícito en
+	// Payment Terms Template.custom_lista_precios_contra_entrega) y al revés.
+	// Al salir de una de las dos se restaura el valor anterior no-COD para no
+	// dejar estados mezclados (condición COD con lista normal o viceversa).
+	_load_cod_links() {
+		frappe.call({
+			method: "facex_multi.api.invoice.get_contra_entrega_links",
+			args: { company: this.doc.company || this.defaults.company || "" },
+			callback: (r) => { this._cod_links = r.message || { terms: [], lists: [], map: {} }; },
+		});
+	}
+
+	_cod_is_terms(t) { return !!t && !!this._cod_links && (this._cod_links.terms || []).indexOf(t) !== -1; }
+	_cod_is_list(l) { return !!l && !!this._cod_links && (this._cod_links.lists || []).indexOf(l) !== -1; }
+
+	_cod_list_for_terms(t) {
+		const L = this._cod_links || {};
+		if (L.map && L.map[t]) return L.map[t];
+		const lists = L.lists || [];
+		if (lists.length === 1) return lists[0];
+		if (lists.length > 1) {
+			frappe.show_alert({
+				message: __("Hay varias listas Contra Entrega: configure \"Lista de Precios Contra Entrega\" en la condición de pago {0}.", [t]),
+				indicator: "orange",
+			}, 7);
+		}
+		return "";
+	}
+
+	_cod_terms_for_list(l) {
+		const L = this._cod_links || {};
+		const explicit = Object.keys(L.map || {}).find((t) => L.map[t] === l);
+		return explicit || (L.terms || [])[0] || "";
+	}
+
+	_cod_sync_from_terms(tpl) {
+		tpl = tpl || "";
+		if (this._cod_syncing || !this._cod_links || tpl === (this._cod_last_terms || "")) return;
+		this._cod_last_terms = tpl;
+		const cur = this.doc.selling_price_list || "";
+		if (this._cod_is_terms(tpl)) {
+			if (this._cod_is_list(cur)) return;
+			const target = this._cod_list_for_terms(tpl);
+			if (!target) return;
+			this._cod_prev_list = cur;
+			this._cod_set_price_list(target, __("Lista de precios cambiada a {0} (condición Contra Entrega).", [target]));
+		} else if (this._cod_is_list(cur)) {
+			const back = this._cod_prev_list || this._customer_price_list || this.defaults.default_price_list || "";
+			if (back && back !== cur && !this._cod_is_list(back)) {
+				this._cod_set_price_list(back, __("Lista de precios restaurada a {0}.", [back]));
+			}
+		}
+	}
+
+	_cod_sync_from_list(list) {
+		list = list || "";
+		if (this._cod_syncing || !this._cod_links || list === (this._cod_last_list || "")) return;
+		this._cod_last_list = list;
+		const cur = this.doc.payment_terms_template || "";
+		if (this._cod_is_list(list)) {
+			if (this._cod_is_terms(cur)) return;
+			const target = this._cod_terms_for_list(list);
+			if (!target) return;
+			this._cod_prev_terms = cur;
+			this._cod_set_terms(target, __("Condición de pago cambiada a {0} (lista Contra Entrega).", [target]));
+		} else if (this._cod_is_terms(cur)) {
+			const back = this._cod_prev_terms !== undefined ? this._cod_prev_terms : (this.defaults.default_payment_terms_template || "");
+			if (back !== cur && !this._cod_is_terms(back)) {
+				this._cod_set_terms(back, back ? __("Condición de pago restaurada a {0}.", [back]) : __("Condición de pago Contra Entrega quitada."));
+			}
+		}
+	}
+
+	_cod_set_price_list(name, msg) {
+		this._cod_syncing = true;
+		try {
+			this.doc.selling_price_list = name;
+			this._cod_last_list = name;
+			this._reprice_cart();
+			this._reload_catalog_prices(false);
+			this._render_documento_card();
+			if (msg) frappe.show_alert({ message: msg, indicator: "blue" }, 5);
+		} finally {
+			this._cod_syncing = false;
+		}
+	}
+
+	_cod_set_terms(name, msg) {
+		this._cod_syncing = true;
+		try {
+			this.doc.payment_terms_template = name;
+			this._cod_last_terms = name;
+			this.$body.find("#efs-fld-payment-terms").val(name);
+			this._on_payment_terms_change(name);
+			if (msg) frappe.show_alert({ message: msg, indicator: "blue" }, 5);
+		} finally {
+			this._cod_syncing = false;
+		}
+	}
+
 	// Reutiliza la misma regla que facex.js (FacEx clásico): due_date = último
 	// término de la plantilla (credit_days) sumado a la fecha de emisión
 	// actual. Sin plantilla, due_date cae de vuelta a la fecha de emisión.
 	_on_payment_terms_change(tpl_name) {
 		this.doc.payment_terms_template = tpl_name;
+		this._cod_sync_from_terms(tpl_name);
 		if (!tpl_name) {
 			this.doc.due_date = this.doc.posting_date || frappe.datetime.get_today();
 			this.$body.find("#efs-fld-due-date").val(this.doc.due_date);
@@ -4115,6 +4223,11 @@ class EFastPOSScreen {
 					// Flete: la casilla y el monto viven en el doc (cargo del documento)
 					this._flete_manual = !!(parseFloat(this.doc.facex_flete_amount_original) > 0);
 					this._sync_flete_ui();
+					// Contra Entrega: estado base (no sincronizar al retomar)
+					this._cod_last_terms = this.doc.payment_terms_template || "";
+					this._cod_last_list = this.doc.selling_price_list || "";
+					this._cod_prev_list = undefined;
+					this._cod_prev_terms = undefined;
 
 					// ERPNext fuerza posting_date a la fecha de hoy en cada guardado
 					// (esta app no marca "set_posting_time"), así que una venta en
@@ -4428,6 +4541,11 @@ class EFastPOSScreen {
 		}
 		this._flete_manual = false;
 		this._sync_flete_ui();
+		this._cod_last_terms = this.doc.payment_terms_template || "";
+		this._cod_last_list = this.doc.selling_price_list || "";
+		this._cod_prev_list = undefined;
+		this._cod_prev_terms = undefined;
+		this._customer_price_list = "";
 		this._render_customer_bar();
 		this._render_cart();
 		this._render_grid();

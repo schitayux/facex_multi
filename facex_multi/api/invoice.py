@@ -255,6 +255,10 @@ _PAYMENT_TERMS_FIELDS = [
     {"fieldname": "custom_es_contra_entrega", "label": "Es Condición de Pago Contra Entrega", "fieldtype": "Check",
      "default": "0", "insert_after": "template_name",
      "description": "Las facturas emitidas con esta condición de pago (ej. \"Contra entrega (COD) (CP-COD)\") se marcan automáticamente como Pago Contra Entrega (Cierre Diario, Historial)."},
+    {"fieldname": "custom_lista_precios_contra_entrega", "label": "Lista de Precios Contra Entrega (FacEx)", "fieldtype": "Link",
+     "options": "Price List", "insert_after": "custom_es_contra_entrega",
+     "depends_on": "eval:doc.custom_es_contra_entrega",
+     "description": "Al elegir esta condición de pago en FacEx Clásico / FacEx Screen se cambia automáticamente a esta lista de precios (y al elegir la lista, a esta condición). Vacío = se usa la única lista marcada \"Es Lista de Contra Entrega\" habilitada para el usuario."},
 ]
 
 
@@ -325,6 +329,42 @@ def sync_contra_entrega_from_price_list(doc, method=None):
         frappe.db.get_value("Payment Terms Template", doc.payment_terms_template, "custom_es_contra_entrega")
     ):
         doc.bfel_pago_contra_entrega = 1
+
+
+@frappe.whitelist()
+def get_contra_entrega_links(company: str = None) -> dict:
+    """Vínculo Condición de Pago ⇄ Lista de Precios Contra Entrega para que los
+    pages sincronicen una al elegir la otra (ver facex.js / facex_screen.js
+    `_cod_sync_*`). Todo sale de los checks `custom_es_contra_entrega`:
+      terms  → condiciones de pago marcadas.
+      lists  → listas marcadas, habilitadas, de venta y de la compañía (o sin
+               compañía), acotadas a las listas seleccionables del usuario
+               cuando tiene restricción.
+      map    → {condición: lista} explícito (Payment Terms
+               Template.custom_lista_precios_contra_entrega).
+    El cliente resuelve: lista para T = map[T] o la única de `lists`;
+    condición para L = la T con map[T] == L o la única de `terms`."""
+    company = get_effective_company(company)
+    out = {"terms": [], "lists": [], "map": {}}
+    pt_meta = frappe.get_meta("Payment Terms Template")
+    if pt_meta.has_field("custom_es_contra_entrega"):
+        fields = ["name"] + (["custom_lista_precios_contra_entrega"] if pt_meta.has_field("custom_lista_precios_contra_entrega") else [])
+        for t in frappe.get_all("Payment Terms Template", filters={"custom_es_contra_entrega": 1}, fields=fields, order_by="name"):
+            out["terms"].append(t.name)
+            if t.get("custom_lista_precios_contra_entrega"):
+                out["map"][t.name] = t.custom_lista_precios_contra_entrega
+    if frappe.get_meta("Price List").has_field("custom_es_contra_entrega"):
+        from facex_multi.api.permissions import get_facex_allowed_price_lists
+        allowed = get_facex_allowed_price_lists(company)
+        filters = {"custom_es_contra_entrega": 1, "enabled": 1, "selling": 1}
+        rows = frappe.get_all("Price List", filters=filters, fields=["name", "bfel_company"], order_by="name")
+        for r in rows:
+            if r.get("bfel_company") and company and r.bfel_company != company:
+                continue
+            if allowed is not None and r.name not in allowed:
+                continue
+            out["lists"].append(r.name)
+    return out
 
 
 # ---------------------------------------------------------------------------
