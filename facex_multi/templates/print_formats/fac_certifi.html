@@ -346,11 +346,11 @@ Precio
 
 </th>
 
-<th>
+{% if bfel_code != "00" %}<th>
 
 IVA
 
-</th>
+</th>{% endif %}
 
 <th>
 
@@ -440,7 +440,7 @@ currency=si.currency
 
 </td>
 
-<td>
+{% if bfel_code != "00" %}<td>
 
 {{ frappe.utils.fmt_money(
 iva_linea,
@@ -448,7 +448,7 @@ currency=si.currency
 )
 }}
 
-</td>
+</td>{% endif %}
 
 <td>
 
@@ -490,7 +490,7 @@ currency=si.currency
 
 <div class="total-box">
 
-<div class="total-line">
+{% if bfel_code != "00" %}<div class="total-line">
 
 <span>
 
@@ -508,7 +508,7 @@ currency=si.currency
 
 </span>
 
-</div>
+</div>{% endif %}
 
 <div class="total-label">
 
@@ -592,7 +592,7 @@ Fecha:
 
 <div class="footer">
 
-<div>
+{% if is_certified %}<div>
 
 Documento certificado por:
 
@@ -602,7 +602,7 @@ Documento certificado por:
 
 </b>
 NIT: 107902281
-</div>
+</div>{% endif %}
 
 <div>
 
