@@ -280,6 +280,35 @@ def get_invoice_freeze_status(invoice_name: str) -> dict:
 # Cálculo del snapshot
 # ---------------------------------------------------------------------------
 
+def _clasificar_por_pagos(gt: float, payments: list, fecha, bfel_pago_contra_entrega, due_date) -> tuple:
+    """Misma clasificación (Contra Entrega / Al Crédito / Contado) que usa el
+    detalle de «Facturas incluidas», aplicada a una lista de pagos ya filtrada
+    para UNA factura. La usan tanto las Devoluciones (facturas ANULADAS) como
+    podría reutilizarla el loop principal. Devuelve (clasificacion, ce, credito)."""
+    paid_non_ce = 0.0
+    ce_rows = 0.0
+    for p in payments:
+        if p.payment_date and getdate(p.payment_date) > fecha:
+            continue
+        amt = flt(p.amount)
+        if p.payment_method == CONTRA_ENTREGA:
+            ce_rows += amt
+        else:
+            paid_non_ce += amt
+
+    if cint(bfel_pago_contra_entrega):
+        ce = max(gt - paid_non_ce, 0.0) if gt >= 0 else min(gt - paid_non_ce, 0.0)
+    else:
+        ce = ce_rows
+    credito = gt - paid_non_ce - ce
+
+    es_contra_entrega = bool(cint(bfel_pago_contra_entrega)) or ce_rows > 0.004
+    dias_credito = max((getdate(due_date) - fecha).days, 0) if due_date else 0
+    es_credito = (not es_contra_entrega) and credito > 0.004 and dias_credito > 0
+    clasificacion = "contra_entrega" if es_contra_entrega else ("credito" if es_credito else "contado")
+    return clasificacion, ce, credito
+
+
 def _si_fields() -> list:
     meta = frappe.get_meta("Sales Invoice")
     fields = ["name", "customer", "customer_name", "posting_date", "due_date", "grand_total", "total",
@@ -368,7 +397,10 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
     for it in items:
         amount = flt(it.amount)
         is_flete = bool(flete_item) and it.item_code == flete_item
-        has_disc = flt(it.discount_percentage) > 0 or flt(it.discount_amount) > 0
+        has_disc = (
+            flt(it.discount_percentage) > 0 or flt(it.discount_amount) > 0
+            or "OFERTA" in (it.item_code or "").upper()
+        )
         if is_flete:
             flete_fact += amount
             inv_flete[it.parent] += amount
@@ -415,6 +447,7 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
 
     cobros = {k: 0.0 for k in _METHOD_LABEL}
     cobro_otros = 0.0
+    contado_pendiente = 0.0
     facturas = []
     total_venta = 0.0
     sum_lineas = venta_sin_desc + venta_con_desc + flete_fact + recargo_fact
@@ -447,7 +480,6 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
             ce = ce_rows
         credito = gt - paid_non_ce - ce
         cobros["cobro_contra_entrega"] += ce
-        cobros["al_credito"] += credito
 
         # Clasificación para los cuadros de "Facturas incluidas": Contra Entrega
         # (bandera de la factura o pago con esa forma), Al Crédito (saldo
@@ -459,6 +491,13 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
         es_credito = (not es_contra_entrega) and credito > 0.004 and dias_credito > 0
         alerta_contado = (not es_contra_entrega) and (not es_credito) and credito > 0.004
         clasificacion = "contra_entrega" if es_contra_entrega else ("credito" if es_credito else "contado")
+
+        # El saldo pendiente de una venta de Contado NO es Crédito (nunca tuvo
+        # días de crédito): se cuadra aparte para no inflar "Al Crédito".
+        if clasificacion == "credito":
+            cobros["al_credito"] += credito
+        elif clasificacion == "contado":
+            contado_pendiente += credito
 
         formas = ", ".join(f"{m} {flt(a):,.2f}" for m, a in by_method.items())
         if ce:
@@ -489,7 +528,7 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
         })
 
     ajuste = total_venta - sum_lineas
-    total_cobros = sum(cobros.values()) + cobro_otros
+    total_cobros = sum(cobros.values()) + cobro_otros + contado_pendiente
 
     # ---- Abonos de hoy a facturas de días anteriores (informativo) ------------
     abonos = []
@@ -513,6 +552,65 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
         abonos_por_metodo[a.payment_method or "Efectivo"] += flt(a.amount)
         a["posting_date"] = str(a.posting_date)
 
+    # ---- Devoluciones (facturas ANULADAS de este usuario) ---------------------
+    # Dos casos según la fecha ORIGINAL de la factura (posting_date), ambos
+    # detectados por "se anuló hoy" (proxy: `modified` cae en `fecha`, ya que
+    # Sales Invoice no tiene un campo nativo de fecha de anulación):
+    #   * posting_date != fecha → una venta de OTRO día que se anuló hoy: sí
+    #     tuvo impacto real en la caja de hoy (reembolso), así que se resta del
+    #     Total Venta del Día y se clasifica en el KPI "Devoluciones".
+    #   * posting_date == fecha → se facturó y se anuló el mismo día: nunca
+    #     llegó a contar en el total (solo se leen docstatus=1), se lista aparte
+    #     únicamente para trazabilidad ("Devoluciones - Detalle").
+    devoluciones = []
+    devoluciones_hoy = []
+    total_devoluciones = 0.0
+    dev_clasif = {"contado": 0.0, "contra_entrega": 0.0, "credito": 0.0}
+
+    cancel_fields = ["name", "customer", "customer_name", "posting_date", "due_date", "grand_total"]
+    if frappe.get_meta("Sales Invoice").has_field("bfel_pago_contra_entrega"):
+        cancel_fields.append("bfel_pago_contra_entrega")
+
+    cancelados = frappe.get_all(
+        "Sales Invoice",
+        filters=[
+            ["company", "=", company], ["owner", "=", usuario], ["docstatus", "=", 2],
+            ["modified", ">=", fecha], ["modified", "<", add_days(fecha, 1)],
+        ],
+        fields=cancel_fields,
+        order_by="name asc",
+    )
+    if cancelados:
+        cnames = [c.name for c in cancelados]
+        cpay_by_inv = {}
+        if frappe.db.table_exists("eFast Invoice Payment"):
+            for p in frappe.get_all(
+                "eFast Invoice Payment",
+                filters={"parent": ["in", cnames], "parenttype": "Sales Invoice"},
+                fields=["parent", "payment_method", "payment_date", "reference", "amount"],
+                order_by="parent asc, idx asc",
+            ):
+                cpay_by_inv.setdefault(p.parent, []).append(p)
+
+        for c in cancelados:
+            gt = flt(c.grand_total)
+            clasificacion, ce, credito = _clasificar_por_pagos(
+                gt, cpay_by_inv.get(c.name, []), fecha, c.get("bfel_pago_contra_entrega"), c.get("due_date"),
+            )
+            row = {
+                "sales_invoice": c.name,
+                "customer_name": c.customer_name or c.customer,
+                "grand_total": gt,
+                "posting_date": str(c.posting_date),
+                "clasificacion": clasificacion,
+            }
+            if getdate(c.posting_date) == fecha:
+                devoluciones_hoy.append(row)
+            else:
+                devoluciones.append(row)
+                total_devoluciones += gt
+                dev_clasif[clasificacion] = dev_clasif.get(clasificacion, 0.0) + gt
+
     return {
         "company": company,
         "fecha": str(fecha),
@@ -530,12 +628,19 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
         "cobro_cheque": round(cobros["cobro_cheque"], 2),
         "cobro_tarjeta": round(cobros["cobro_tarjeta"], 2),
         "cobro_contra_entrega": round(cobros["cobro_contra_entrega"], 2),
+        "contado_pendiente": round(contado_pendiente, 2),
         "al_credito": round(cobros["al_credito"], 2),
         "cobro_otros": round(cobro_otros, 2),
         "total_cobros": round(total_cobros, 2),
         "abonos_anteriores": round(sum(abonos_por_metodo.values()), 2),
         "abonos_detalle": abonos,
         "abonos_por_metodo": dict(abonos_por_metodo),
+        "total_devoluciones": round(total_devoluciones, 2),
+        "devoluciones_contado": round(dev_clasif["contado"], 2),
+        "devoluciones_contra_entrega": round(dev_clasif["contra_entrega"], 2),
+        "devoluciones_credito": round(dev_clasif["credito"], 2),
+        "devoluciones": devoluciones,
+        "devoluciones_hoy": devoluciones_hoy,
         "detalle_familias": familias,
         "facturas": facturas,
     }
@@ -744,7 +849,7 @@ def get_cierre(name: str) -> dict:
 def _apply_snapshot(doc, snap: dict) -> None:
     for k in ("venta_sin_descuento", "venta_con_descuento", "flete_facturado", "recargo_facturado", "ajuste_impuestos",
               "total_venta", "cobro_efectivo", "cobro_transferencia", "cobro_cheque", "cobro_tarjeta",
-              "cobro_contra_entrega", "al_credito", "total_cobros", "abonos_anteriores", "num_facturas"):
+              "cobro_contra_entrega", "contado_pendiente", "al_credito", "total_cobros", "abonos_anteriores", "num_facturas"):
         doc.set(k, snap.get(k) or 0)
     doc.set("detalle_familias", [])
     for r in snap["detalle_familias"]:

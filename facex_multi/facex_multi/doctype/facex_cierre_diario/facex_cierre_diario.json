@@ -35,6 +35,7 @@
   "cobro_tarjeta",
   "cb_cobros",
   "cobro_contra_entrega",
+  "contado_pendiente",
   "al_credito",
   "total_cobros",
   "abonos_anteriores",
@@ -246,6 +247,13 @@
    "fieldname": "cobro_contra_entrega",
    "fieldtype": "Currency",
    "label": "Contra Entrega",
+   "read_only": 1
+  },
+  {
+   "description": "Saldo pendiente de facturas vendidas de Contado (sin días de crédito) que aún no registran el pago real. No es Al Crédito.",
+   "fieldname": "contado_pendiente",
+   "fieldtype": "Currency",
+   "label": "Contado",
    "read_only": 1
   },
   {
