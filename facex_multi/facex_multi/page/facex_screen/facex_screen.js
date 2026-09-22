@@ -103,6 +103,8 @@ class EFastPOSScreen {
 			taxes_and_charges: "",
 			sales_partner: "",
 			items: [],
+			facex_incluir_flete: 0,
+			facex_flete_amount: 0,
 		};
 	}
 
@@ -274,6 +276,7 @@ class EFastPOSScreen {
 	// `withFreeze`: solo en la carga inicial se bloquea la pantalla; en
 	// recargas por cambio de cliente/lista es silenciosa.
 	_reload_catalog_prices(withFreeze) {
+		this._load_recargo_context();
 		frappe.call({
 			method: "facex_multi.api.item.get_pos_items",
 			args: {
@@ -376,13 +379,28 @@ class EFastPOSScreen {
 							<div class="efs-ticket-empty" id="efs-ticket-empty">Toque un producto para agregarlo.</div>
 						</div>
 						<div class="efs-ticket-footer">
-							<label id="efs-flete-toggle" class="efs-flete-toggle" style="display:none; align-items:center; gap:8px; font-size:13px; font-weight:700; color:#153375; background:#eef2ff; border:1px solid #c7d2fe; border-radius:8px; padding:8px 12px; margin-bottom:8px; cursor:pointer; user-select:none;">
+							<label id="efs-flete-toggle" class="efs-flete-toggle" style="display:none; align-items:center; gap:8px; font-size:13px; font-weight:700; color:#153375; background:#eef2ff; border:1px solid #c7d2fe; border-radius:8px; padding:8px 12px; margin-bottom:8px; cursor:pointer; user-select:none;"
+								title="El flete se registra como cargo del documento (no como línea de producto) con el precio del Ítem de Flete en la lista de precios de la venta.">
 								<input id="efs-flete-check" type="checkbox" style="width:18px; height:18px; cursor:pointer;" />
 								Incluir Flete
+								<input id="efs-flete-amount" type="number" min="0" step="any" readonly
+									style="display:none; width:96px; margin-left:auto; padding:4px 6px; font-size:13px; text-align:right; border:1px solid #c7d2fe; border-radius:6px;" />
 							</label>
-							<div class="efs-total-row efs-total-row-grand">
+							<div class="efs-total-row">
 								<span>Subtotal</span>
 								<span id="efs-subtotal">Q 0.00</span>
+							</div>
+							<div class="efs-total-row" id="efs-recargo-row" style="display:none;" title="Recargo por entrega (listas Contra Entrega): cantidad × piezas físicas × Q por pieza. Se paga al repartidor; no es ingreso.">
+								<span>Recargo por entrega</span>
+								<span id="efs-recargo-total">Q 0.00</span>
+							</div>
+							<div class="efs-total-row" id="efs-flete-row" style="display:none;">
+								<span>Flete</span>
+								<span id="efs-flete-total">Q 0.00</span>
+							</div>
+							<div class="efs-total-row efs-total-row-grand" id="efs-total-est-row" style="display:none;">
+								<span>Total</span>
+								<span id="efs-total-est">Q 0.00</span>
 							</div>
 							<button class="efs-btn-secondary" id="efs-btn-suspend" title="Guardar esta venta en espera (F6)" disabled>
 								Suspender venta <span class="efs-kbd">F6</span>
@@ -436,6 +454,14 @@ class EFastPOSScreen {
 		});
 		this.$body.find("#efs-btn-suspend").on("click", () => this._suspend_sale());
 		this.$body.find("#efs-flete-check").on("change", (e) => this._toggle_flete(e.target.checked));
+		this.$body.find("#efs-flete-amount").on("change input", (e) => {
+			if (!this._recargo_ctx || !this._recargo_ctx.puede_editar_flete) return;
+			this.doc.facex_flete_amount = parseFloat(e.target.value) || 0;
+			this._flete_manual = Math.abs(this.doc.facex_flete_amount - (parseFloat(this._recargo_ctx.flete_rate) || 0)) > 0.005;
+			this._update_totals();
+		});
+		// El label envuelve al input: evitar que un click en el monto alterne la casilla
+		this.$body.find("#efs-flete-amount").on("click", (e) => e.preventDefault());
 		// Icono de compañía (header): un click lleva siempre al menú principal.
 		this.$body.find("#efs-company-badge").on("click", () => this._show_home());
 		this._bind_user_menu();
@@ -1979,47 +2005,75 @@ class EFastPOSScreen {
 	}
 
 	_remove_line(idx) {
-		if (this.doc.items[idx] && this.doc.items[idx]._is_flete_auto) {
-			this.$body.find("#efs-flete-check").prop("checked", false);
-		}
 		this.doc.items.splice(idx, 1);
 		this._render_cart();
 		this._render_grid();
 	}
 
-	// ── Flete automático (Ítem de Flete configurado en FacEx Settings) ─────
+	// ── Flete como cargo del documento (Ítem de Flete en FacEx Settings) ───
+	// Ya no agrega una línea de producto: marca facex_incluir_flete y el monto
+	// (precio del ítem de flete en la lista de la venta). El servidor lo
+	// convierte en una fila "Flete" de cargos (facex_multi.api.recargo).
 	_toggle_flete(checked) {
 		const fleteCode = (this.company_config || {}).item_flete;
 		if (!fleteCode) return;
-		const idx = this.doc.items.findIndex((r) => r.item_code === fleteCode && r._is_flete_auto);
+		this.doc.facex_incluir_flete = checked ? 1 : 0;
 		if (checked) {
-			if (idx !== -1) return;
-			frappe.call({
-				method: "facex_multi.api.invoice.get_item_details",
-				args: {
-					item_code: fleteCode,
-					company: this.doc.company || this.defaults.company || "",
-				},
-				callback: (r) => {
-					const d = r.message || {};
-					const newIdx = this._push_cart_row({
-						item_code: fleteCode,
-						item_name: d.item_name || fleteCode,
-						rate: d.rate || 0,
-						stock_uom: d.uom,
-						is_stock_item: d.is_stock_item,
-						has_serial_no: d.has_serial_no,
-						custom_tiene_adenda: d.custom_tiene_adenda,
-						tax_exempt: d.tax_exempt,
-					});
-					this.doc.items[newIdx]._is_flete_auto = 1;
-					this._render_cart();
-					this._render_grid();
-				},
-			});
-		} else if (idx !== -1) {
-			this._remove_line(idx);
+			const ctx = this._recargo_ctx || {};
+			this.doc.facex_flete_amount = parseFloat(ctx.flete_rate) || 0;
+			if (!this.doc.facex_flete_amount && !ctx.puede_editar_flete) {
+				frappe.show_alert({
+					message: __("El Ítem de Flete no tiene precio en la lista '{0}'.", [this.doc.selling_price_list || "-"]),
+					indicator: "orange",
+				}, 6);
+			}
+		} else {
+			this.doc.facex_flete_amount = 0;
 		}
+		this._sync_flete_ui();
+		this._update_totals();
+	}
+
+	_sync_flete_ui() {
+		const on = !!(this.doc && this.doc.facex_incluir_flete);
+		const ctx = this._recargo_ctx || {};
+		this.$body.find("#efs-flete-check").prop("checked", on);
+		this.$body.find("#efs-flete-amount")
+			.css("display", on ? "" : "none")
+			.val(on ? (parseFloat(this.doc.facex_flete_amount) || 0).toFixed(2) : "")
+			.prop("readonly", !ctx.puede_editar_flete)
+			.attr("title", ctx.puede_editar_flete
+				? "Monto del flete (editable: queda registrado en el historial de la factura)"
+				: "Monto del flete según la lista de precios. No tiene permiso para editarlo.");
+	}
+
+	// Contexto Recargo Contra Entrega para la lista de precios actual:
+	// Q/pieza de la lista, piezas físicas por UdM, precio del flete y permiso.
+	_load_recargo_context() {
+		const pl = this.doc.selling_price_list || "";
+		frappe.call({
+			method: "facex_multi.api.recargo.get_recargo_context",
+			args: { company: this.doc.company || this.defaults.company || "", price_list: pl },
+			callback: (r) => {
+				if (r.exc || !r.message) return;
+				if ((this.doc.selling_price_list || "") !== pl) return; // respuesta vieja
+				this._recargo_ctx = r.message;
+				if (this.doc.facex_incluir_flete && !this._flete_manual) {
+					this.doc.facex_flete_amount = parseFloat(r.message.flete_rate) || 0;
+				}
+				this._sync_flete_ui();
+				this._render_cart();
+			},
+		});
+	}
+
+	_row_recargo(row) {
+		const ctx = this._recargo_ctx;
+		if (!ctx || !(parseFloat(ctx.recargo_por_pieza) > 0)) return 0;
+		if (ctx.flete_item && row.item_code === ctx.flete_item) return 0;
+		const uom = row.uom || row.stock_uom || "";
+		const piezas = (ctx.piezas || {})[uom] || 0;
+		return (parseFloat(row.qty) || 0) * piezas * parseFloat(ctx.recargo_por_pieza);
 	}
 
 	_calc_line_amount(row) {
@@ -2062,6 +2116,8 @@ class EFastPOSScreen {
 		if (cfg.mostrar_desc_pct && parseFloat(row.discount_percentage) > 0) details.push(`Desc: ${_efs_fmt(row.discount_percentage)}%`);
 		if (cfg.mostrar_tipo && row.bfel_multi_tipo) details.push(`Tipo: ${_efs_esc(row.bfel_multi_tipo)}`);
 		if (row.bfel_comentario) details.push(`💬 ${_efs_esc(row.bfel_comentario)}`);
+		const _recargo = this._row_recargo(row);
+		if (_recargo) details.push(`Recargo entrega: Q ${_efs_fmt(_recargo)} · Total c/rec.: Q ${_efs_fmt(this._calc_line_amount(row) + _recargo)}`);
 		const detailsRow = details.length ? `<div class="efs-line-details">${details.join(" · ")}</div>` : "";
 		const needsSerialOrAdenda = row._has_serial_no || row._custom_tiene_adenda;
 		// El botón "..." siempre tiene sentido ahora: el Comentario está
@@ -2100,6 +2156,16 @@ class EFastPOSScreen {
 	_update_totals() {
 		const subtotal = (this.doc.items || []).reduce((sum, r) => sum + this._calc_line_amount(r), 0);
 		this.$body.find("#efs-subtotal").text(`Q ${_efs_fmt(subtotal)}`);
+		// Recargo Contra Entrega + Flete: cargos del documento (los agrega el
+		// servidor en before_validate). Estimación local para el ticket.
+		const recargo = (this.doc.items || []).reduce((sum, r) => sum + this._row_recargo(r), 0);
+		const flete = this.doc.facex_incluir_flete ? (parseFloat(this.doc.facex_flete_amount) || 0) : 0;
+		this.$body.find("#efs-recargo-row").css("display", recargo ? "" : "none");
+		this.$body.find("#efs-recargo-total").text(`Q ${_efs_fmt(recargo)}`);
+		this.$body.find("#efs-flete-row").css("display", flete ? "" : "none");
+		this.$body.find("#efs-flete-total").text(`Q ${_efs_fmt(flete)}`);
+		this.$body.find("#efs-total-est-row").css("display", (recargo || flete) ? "" : "none");
+		this.$body.find("#efs-total-est").text(`Q ${_efs_fmt(subtotal + recargo + flete)}`);
 		this._render_stepbar();
 	}
 
@@ -2606,6 +2672,9 @@ class EFastPOSScreen {
 			bfel_establecimiento: String(d.bfel_establecimiento || ""),
 			bfel_status: this.defaults.bfel_status_default || "01 Enviar",
 			bfel_venta_suspendida: suspend === null ? (d.bfel_venta_suspendida ? 1 : 0) : (suspend ? 1 : 0),
+			// Flete como cargo del documento (ver facex_multi.api.recargo)
+			facex_incluir_flete: d.facex_incluir_flete ? 1 : 0,
+			facex_flete_amount: d.facex_incluir_flete ? (parseFloat(d.facex_flete_amount) || 0) : 0,
 			items: (d.items || []).map((r) => ({
 				item_code: r.item_code,
 				item_name: r.item_name || "",
@@ -2690,12 +2759,15 @@ class EFastPOSScreen {
 			guias: [], guiasResolved: false, guiasSkipped: false,
 		};
 
+		// "Contra Entrega" ya no se elige como forma de pago: se detecta
+		// automáticamente por la lista de precios de la factura (ver
+		// facex_multi.api.invoice.sync_contra_entrega_from_price_list). Una
+		// venta contra entrega sin cobro inmediato se registra como "Crédito"
+		// aquí; la guía de transporte se puede agregar después desde el hub
+		// de Transporte / Envíos Pendientes.
 		const methods = ["Efectivo"];
 		if ((this.company_config || {}).permite_pago_credito) methods.push("Crédito");
 		methods.push("Tarjeta de Crédito", "Transferencia", "Cheque");
-		if ((this.company_config || {}).permite_pago_contra_entrega && (this.perms || {}).puede_editar_guias_transporte) {
-			methods.push("Contra Entrega");
-		}
 
 		const $view = this.$body.find("#efs-payment-view");
 		$view.html(`
@@ -2759,7 +2831,7 @@ class EFastPOSScreen {
 
 		if (typeof EFGuide !== "undefined") {
 			EFGuide.attachHints($view, [
-				{ selector: "#efs-pay-methods", text: "Elige la forma de pago. 'Crédito' deja la factura pendiente de cobro; 'Contra Entrega' la cobra el transportista al entregar." },
+				{ selector: "#efs-pay-methods", text: "Elige la forma de pago. 'Crédito' deja la factura pendiente de cobro (úsalo también para ventas contra entrega, sin cobro inmediato)." },
 				{ selector: ".efs-pay-quick-cash", text: "Ingresa el monto que el cliente entrega en efectivo, o usa los montos rápidos (Q50, Q100...) o 'Monto exacto'." },
 				{ selector: "#efs-pay-amount-row label", text: "Monto que se aplicará con este método de pago." },
 				{ selector: "#efs-pay-reference-row label", text: "Número de autorización o referencia del pago (tarjeta, transferencia, cheque)." },
@@ -4034,19 +4106,15 @@ class EFastPOSScreen {
 					// catálogo ya cargado en memoria por item_code. Los datos reales de
 					// serie/adenda (serial_no, tiene_adenda, color, etc.) ya vienen
 					// completos desde la BD, no hay que tocarlos.
-					const fleteCode = (this.company_config || {}).item_flete;
-					let fleteFound = false;
 					(this.doc.items || []).forEach((row) => {
 						const match = this.allItems.find((it) => it.item_code === row.item_code);
 						row._has_serial_no = match ? match.has_serial_no : 0;
 						row._custom_tiene_adenda = match ? match.custom_tiene_adenda : 0;
 						row._item_group = match ? match.item_group : "";
-						if (fleteCode && row.item_code === fleteCode) {
-							row._is_flete_auto = 1;
-							fleteFound = true;
-						}
 					});
-					this.$body.find("#efs-flete-check").prop("checked", fleteFound);
+					// Flete: la casilla y el monto viven en el doc (cargo del documento)
+					this._flete_manual = !!(parseFloat(this.doc.facex_flete_amount_original) > 0);
+					this._sync_flete_ui();
 
 					// ERPNext fuerza posting_date a la fecha de hoy en cada guardado
 					// (esta app no marca "set_posting_time"), así que una venta en
@@ -4358,7 +4426,8 @@ class EFastPOSScreen {
 				this.doc.sales_partner = this.walkinCustomer.default_sales_partner;
 			}
 		}
-		this.$body.find("#efs-flete-check").prop("checked", false);
+		this._flete_manual = false;
+		this._sync_flete_ui();
 		this._render_customer_bar();
 		this._render_cart();
 		this._render_grid();

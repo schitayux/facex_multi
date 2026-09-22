@@ -49,6 +49,7 @@ DOCTYPE = "FacEx Cierre Diario"
 _METHOD_FIELD = {
     "Efectivo": "cobro_efectivo",
     "Transferencia": "cobro_transferencia",
+    "Depósito": "cobro_transferencia",  # un depósito bancario se cuadra igual que una transferencia
     "Cheque": "cobro_cheque",
     "Tarjeta de Crédito": "cobro_tarjeta",
 }
@@ -281,7 +282,7 @@ def get_invoice_freeze_status(invoice_name: str) -> dict:
 
 def _si_fields() -> list:
     meta = frappe.get_meta("Sales Invoice")
-    fields = ["name", "customer", "customer_name", "posting_date", "grand_total", "total",
+    fields = ["name", "customer", "customer_name", "posting_date", "due_date", "grand_total", "total",
               "net_total", "discount_amount", "is_return", "outstanding_amount", "owner"]
     for f in ("bfel_status", "bfel_pago_contra_entrega", "custom_pagado", "set_warehouse"):
         if meta.has_field(f):
@@ -339,8 +340,20 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
             )
 
     # ---- Ventas + detalle por familia -------------------------------------
-    venta_sin_desc = venta_con_desc = flete_fact = 0.0
+    venta_sin_desc = venta_con_desc = flete_fact = recargo_fact = 0.0
     inv_flete = Counter()
+    inv_recargo = Counter()
+    # Flete y Recargo Contra Entrega como filas de cargos del documento (ver
+    # facex_multi.api.recargo). Las facturas viejas siguen trayendo el flete
+    # como línea del Ítem de Flete: ambas fuentes se suman.
+    from facex_multi.api.recargo import cargos_facex_por_factura
+    for inv_name, c in cargos_facex_por_factura(names).items():
+        if c.get("flete"):
+            flete_fact += flt(c["flete"])
+            inv_flete[inv_name] += flt(c["flete"])
+        if c.get("recargo"):
+            recargo_fact += flt(c["recargo"])
+            inv_recargo[inv_name] += flt(c["recargo"])
     inv_has_desc = set()
     groups = OrderedDict()
 
@@ -404,7 +417,7 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
     cobro_otros = 0.0
     facturas = []
     total_venta = 0.0
-    sum_lineas = venta_sin_desc + venta_con_desc + flete_fact
+    sum_lineas = venta_sin_desc + venta_con_desc + flete_fact + recargo_fact
 
     for inv in invoices:
         gt = flt(inv.grand_total)
@@ -436,11 +449,26 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
         cobros["cobro_contra_entrega"] += ce
         cobros["al_credito"] += credito
 
+        # Clasificación para los cuadros de "Facturas incluidas": Contra Entrega
+        # (bandera de la factura o pago con esa forma), Al Crédito (saldo
+        # pendiente Y la factura tiene días de crédito según su plazo de pago),
+        # o Contado (todo lo demás). Una "Contado" con saldo pendiente es una
+        # anomalía: se marca con alerta para que se ingrese el pago real.
+        es_contra_entrega = bool(cint(inv.get("bfel_pago_contra_entrega"))) or ce_rows > 0.004
+        dias_credito = max((getdate(inv.due_date) - fecha).days, 0) if inv.get("due_date") else 0
+        es_credito = (not es_contra_entrega) and credito > 0.004 and dias_credito > 0
+        alerta_contado = (not es_contra_entrega) and (not es_credito) and credito > 0.004
+        clasificacion = "contra_entrega" if es_contra_entrega else ("credito" if es_credito else "contado")
+
         formas = ", ".join(f"{m} {flt(a):,.2f}" for m, a in by_method.items())
         if ce:
             formas = (formas + ", " if formas else "") + f"{CONTRA_ENTREGA} {ce:,.2f}"
         if abs(credito) > 0.004:
-            formas = (formas + ", " if formas else "") + f"Crédito {credito:,.2f}"
+            # El texto debe reflejar la misma clasificación que los cuadros:
+            # solo se llama "Crédito" cuando la factura de verdad tiene días de
+            # crédito; si no, es un saldo pendiente de una venta de contado.
+            saldo_label = "Crédito" if es_credito else "Pendiente"
+            formas = (formas + ", " if formas else "") + f"{saldo_label} {credito:,.2f}"
 
         facturas.append({
             "sales_invoice": inv.name,
@@ -450,10 +478,14 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
             "contra_entrega": ce,
             "credito": credito,
             "flete": inv_flete.get(inv.name, 0.0),
+            "recargo": inv_recargo.get(inv.name, 0.0),
             "formas_pago": formas,
             "tiene_descuento": 1 if inv.name in inv_has_desc else 0,
             "es_devolucion": cint(inv.get("is_return")),
             "bfel_status": inv.get("bfel_status") or "",
+            "clasificacion": clasificacion,
+            "dias_credito": dias_credito,
+            "alerta_contado": 1 if alerta_contado else 0,
         })
 
     ajuste = total_venta - sum_lineas
@@ -490,6 +522,7 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
         "venta_sin_descuento": round(venta_sin_desc, 2),
         "venta_con_descuento": round(venta_con_desc, 2),
         "flete_facturado": round(flete_fact, 2),
+        "recargo_facturado": round(recargo_fact, 2),
         "ajuste_impuestos": round(ajuste, 2),
         "total_venta": round(total_venta, 2),
         "cobro_efectivo": round(cobros["cobro_efectivo"], 2),
@@ -709,7 +742,7 @@ def get_cierre(name: str) -> dict:
 
 
 def _apply_snapshot(doc, snap: dict) -> None:
-    for k in ("venta_sin_descuento", "venta_con_descuento", "flete_facturado", "ajuste_impuestos",
+    for k in ("venta_sin_descuento", "venta_con_descuento", "flete_facturado", "recargo_facturado", "ajuste_impuestos",
               "total_venta", "cobro_efectivo", "cobro_transferencia", "cobro_cheque", "cobro_tarjeta",
               "cobro_contra_entrega", "al_credito", "total_cobros", "abonos_anteriores", "num_facturas"):
         doc.set(k, snap.get(k) or 0)
@@ -796,6 +829,24 @@ def save_cierre(payload) -> dict:
     return _doc_to_dict(doc)
 
 
+def _assert_contado_pagado(snap: dict) -> None:
+    """No se puede cerrar el día mientras haya facturas clasificadas como
+    Contado con saldo pendiente (alerta_contado): se vendieron de contado
+    pero les falta registrar el pago real. Es el mismo criterio que pinta la
+    alerta en el cuadro "Facturas incluidas" del page — aquí se hace valer
+    también server-side, no solo deshabilitando el botón en el front."""
+    pendientes = [f for f in snap["facturas"] if f.get("alerta_contado")]
+    if not pendientes:
+        return
+    nombres = ", ".join(f["sales_invoice"] for f in pendientes)
+    frappe.throw(
+        _(
+            "No se puede cerrar el día: {0} factura(s) de Contado sin el pago real registrado (100% pendiente): {1}. "
+            "Ingrese el pago en el facturador clásico antes de cerrar."
+        ).format(len(pendientes), nombres)
+    )
+
+
 @frappe.whitelist()
 def cerrar_cierre(payload) -> dict:
     """Guarda y CIERRA el día: a partir de aquí las facturas y pagos de esa
@@ -803,7 +854,9 @@ def cerrar_cierre(payload) -> dict:
     payload = _parse(payload)
     doc = _load_or_new(payload)
     _apply_payload(doc, payload)
-    _apply_snapshot(doc, compute_snapshot(doc.company, doc.fecha, doc.usuario))
+    snap = compute_snapshot(doc.company, doc.fecha, doc.usuario)
+    _assert_contado_pagado(snap)
+    _apply_snapshot(doc, snap)
     doc.estado = "Cerrado"
     doc.cerrado_por = frappe.session.user
     doc.cerrado_en = now_datetime()

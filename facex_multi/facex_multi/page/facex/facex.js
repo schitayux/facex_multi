@@ -199,6 +199,9 @@ class EFastSalePage {
 			currency: "GTQ",
 			items: [],
 			taxes: [],
+			facex_incluir_flete: 0,
+			facex_flete_amount: 0,
+			facex_recargo_total: 0,
 			total: 0,
 			total_taxes_and_charges: 0,
 			discount_amount: 0,
@@ -809,9 +812,12 @@ class EFastSalePage {
         <div class="ef-items-header">
           <span class="ef-section-title">Detalle de Productos / Servicios</span>
           <div style="display:flex; gap:8px; align-items:center;">
-            <label id="ef-flete-toggle" class="ef-flete-toggle" style="display:none; align-items:center; gap:6px; font-size:12px; font-weight:700; color:#153375; background:#eef2ff; border:1px solid #c7d2fe; border-radius:8px; padding:6px 10px; cursor:pointer; user-select:none;">
+            <label id="ef-flete-toggle" class="ef-flete-toggle" style="display:none; align-items:center; gap:6px; font-size:12px; font-weight:700; color:#153375; background:#eef2ff; border:1px solid #c7d2fe; border-radius:8px; padding:6px 10px; cursor:pointer; user-select:none;"
+              title="El flete se registra como cargo del documento (no como línea de producto) con el precio del Ítem de Flete en la lista de precios de la factura.">
               <input id="ef-flete-check" type="checkbox" style="width:15px; height:15px; cursor:pointer;" />
               Incluir Flete
+              <input id="ef-flete-amount" type="number" min="0" step="any" class="ef-input" readonly
+                style="display:none; width:90px; padding:2px 6px; font-size:12px; text-align:right;" title="Monto del flete (precio de lista)" />
             </label>
             <input type="text" id="ef-barcode-scan" class="ef-input" style="width:220px;"
               placeholder="Escanear código de barras / QR..." autocomplete="off" title="Escanee un código de barras o QR para agregar el producto (o sumar cantidad si ya está en la lista)." />
@@ -833,6 +839,8 @@ class EFastSalePage {
                 <th class="ef-th ef-th-rate">Precio Unit.</th>
                 <th class="ef-th ef-th-disc ef-col-disc">Desc %</th>
                 <th class="ef-th ef-th-amount">Importe</th>
+                <th class="ef-th ef-th-recargo ef-col-recargo" title="Recargo Contra Entrega: cantidad × piezas físicas de la UdM × Q por pieza de la lista de precios. Se paga al repartidor; va como cargo del documento, no como ingreso.">Recargo</th>
+                <th class="ef-th ef-th-recargo ef-col-recargo" title="Importe + recargo (informativo)">Total c/rec.</th>
                 <th class="ef-th ef-th-adenda ef-col-adenda">Adenda</th>
                 <th class="ef-th ef-th-tipo ef-col-tipo">Tipo</th>
                 <th class="ef-th ef-th-del"></th>
@@ -879,6 +887,14 @@ class EFastSalePage {
             <div class="ef-total-row">
               <span class="ef-total-label">Impuestos</span>
               <span id="ef-taxes" class="ef-total-value">Q 0.00</span>
+            </div>
+            <div class="ef-total-row" id="ef-recargo-row" style="display:none;" title="Recargo por entrega (listas Contra Entrega): se cobra al cliente y se paga al repartidor. No es ingreso.">
+              <span class="ef-total-label">Recargo por entrega</span>
+              <span id="ef-recargo-total" class="ef-total-value">Q 0.00</span>
+            </div>
+            <div class="ef-total-row" id="ef-flete-row" style="display:none;">
+              <span class="ef-total-label">Flete</span>
+              <span id="ef-flete-total" class="ef-total-value">Q 0.00</span>
             </div>
             <div class="ef-total-row ef-total-row--grand">
               <span class="ef-total-label">TOTAL</span>
@@ -3715,6 +3731,8 @@ class EFastSalePage {
 							const status = inv.bfel_status || "";
 							if (inv.docstatus === 2 || inv.bfel_documento_anulado === 1) {
 								bfel_badge = `<span class="ef-badge ef-badge-cancelled" style="background:#fee2e2; color:#991b1b; font-weight: bold;">Anulado Fel</span>`;
+							} else if (inv.docstatus === 1 && status === "00 No enviar") {
+								bfel_badge = `<span class="ef-badge ef-badge-draft" style="background:#e2e8f0; color:#64748b; font-weight: bold;">Recibo</span>`;
 							} else if (inv.docstatus === 1 && !inv.bfel_uuid) {
 								bfel_badge = `<span class="ef-badge ef-badge-warning" style="background:#ffeaa7; color:#d63031; font-weight: bold;">X CERTIFICAR</span>`;
 							} else if (status.includes("Procesada")) {
@@ -5283,6 +5301,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this.doc.selling_price_list = e.target.value || "";
 			this._mark_dirty();
 			this._reprice_all_items();
+			this._load_recargo_context();
 		});
 		this._load_price_list_selector();
 
@@ -5544,6 +5563,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					this._sync_price_list_selector();
 					if ((this.doc.selling_price_list || "") !== _prevList) {
 						this._reprice_all_items();
+						this._load_recargo_context();
 					}
 
 					this.doc.bfel_identificacion = r.message.bfel_identificacion || "";
@@ -5681,6 +5701,14 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-add-row").on("click", () => this._add_item_row());
 
 		this.$body.find("#ef-flete-check").on("change", (e) => this._toggle_flete(e.target.checked));
+		this.$body.find("#ef-flete-amount").on("change input", (e) => {
+			if (!this._recargo_ctx || !this._recargo_ctx.puede_editar_flete) return;
+			this.doc.facex_flete_amount = parseFloat(e.target.value) || 0;
+			// Editado a mano: no re-cotizar al cambiar de lista (el servidor lo audita)
+			this._flete_manual = Math.abs(this.doc.facex_flete_amount - (parseFloat(this._recargo_ctx.flete_rate) || 0)) > 0.005;
+			this._mark_dirty();
+			this._update_local_footer();
+		});
 
 		// Escaneo de código de barras / QR: agrega la línea automáticamente,
 		// o suma 1 a la cantidad si el producto ya está en la lista.
@@ -5748,6 +5776,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 	_item_row_html(idx, item) {
 		const base_rate = item.price_list_rate !== undefined && item.price_list_rate !== null && parseFloat(item.price_list_rate) > 0 ? parseFloat(item.price_list_rate) : (parseFloat(item.rate) || 0);
 		const amount = this._calc_amount(item.qty, base_rate, item.discount_percentage);
+		const _recargo = this._row_recargo(item);
 		const _no_stock = item.is_stock_item && (item._no_stock || !item.warehouse);
 		const _no_stock_cls = _no_stock ? " ef-tr-no-stock" : "";
 		const _no_stock_badge = _no_stock
@@ -5783,7 +5812,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			: "";
 		const _lm_row = item._is_lista_materiales
 			? `<tr class="ef-tr-lm-detail" id="ef-row-lm-${idx}" style="display:${item._lm_expanded ? "" : "none"};">
-  <td class="ef-td-lm-detail" colspan="11">${this._lm_detail_html(item)}</td>
+  <td class="ef-td-lm-detail" colspan="13">${this._lm_detail_html(item)}</td>
 </tr>`
 			: "";
 
@@ -5836,6 +5865,12 @@ body.facex-fullscreen-mode .ef-main-layout {
     <input type="text" class="ef-cell-input ef-input-num ef-amount"
       data-field="amount" data-idx="${idx}"
       value="${_fmt(amount)}" readonly />
+  </td>
+  <td class="ef-td ef-td-num ef-col-recargo">
+    <input type="text" class="ef-cell-input ef-input-num ef-recargo" value="${_fmt(_recargo)}" readonly tabindex="-1" />
+  </td>
+  <td class="ef-td ef-td-num ef-col-recargo">
+    <input type="text" class="ef-cell-input ef-input-num ef-recargo" value="${_fmt(_recargo ? amount + _recargo : 0)}" readonly tabindex="-1" />
   </td>
   ${_adenda_td}
   ${_tipo_td}
@@ -6000,29 +6035,82 @@ body.facex-fullscreen-mode .ef-main-layout {
 	}
 
 	_remove_item_row(idx) {
-		if (this.doc.items[idx] && this.doc.items[idx]._is_flete_auto) {
-			this.$body.find("#ef-flete-check").prop("checked", false);
-		}
 		this.doc.items.splice(idx, 1);
 		this._render_items();
 		this._update_local_footer();
 		this._mark_dirty();
 	}
 
-	// ── Flete automático (Ítem de Flete configurado en FacEx Settings) ─────
+	// ── Flete como cargo del documento (Ítem de Flete en FacEx Settings) ───
+	// Ya no agrega una línea de producto: marca facex_incluir_flete y el monto
+	// (precio del ítem de flete en la lista de la factura). El servidor lo
+	// convierte en una fila "Flete" de cargos (facex_multi.api.recargo).
 	_toggle_flete(checked) {
 		const fleteCode = (this.company_config || {}).item_flete;
 		if (!fleteCode) return;
-		const idx = this.doc.items.findIndex((r) => r.item_code === fleteCode && r._is_flete_auto);
+		this.doc.facex_incluir_flete = checked ? 1 : 0;
 		if (checked) {
-			if (idx !== -1) return;
-			this._add_item_row({ item_code: fleteCode });
-			const newIdx = this.doc.items.length - 1;
-			this.doc.items[newIdx]._is_flete_auto = 1;
-			this._fetch_item_details(newIdx, fleteCode);
-		} else if (idx !== -1) {
-			this._remove_item_row(idx);
+			const ctx = this._recargo_ctx || {};
+			this.doc.facex_flete_amount = parseFloat(ctx.flete_rate) || 0;
+			if (!this.doc.facex_flete_amount && !ctx.puede_editar_flete) {
+				frappe.show_alert({
+					message: __("El Ítem de Flete no tiene precio en la lista '{0}'.", [this.doc.selling_price_list || "-"]),
+					indicator: "orange",
+				}, 6);
+			}
+		} else {
+			this.doc.facex_flete_amount = 0;
 		}
+		this._sync_flete_ui();
+		this._mark_dirty();
+		this._update_local_footer();
+	}
+
+	_sync_flete_ui() {
+		const on = !!(this.doc && this.doc.facex_incluir_flete);
+		const ctx = this._recargo_ctx || {};
+		this.$body.find("#ef-flete-check").prop("checked", on);
+		const $amt = this.$body.find("#ef-flete-amount");
+		$amt.css("display", on ? "" : "none")
+			.val(on ? (parseFloat(this.doc.facex_flete_amount) || 0).toFixed(2) : "")
+			.prop("readonly", !ctx.puede_editar_flete)
+			.attr("title", ctx.puede_editar_flete
+				? "Monto del flete (editable: queda registrado en el historial de la factura)"
+				: "Monto del flete según la lista de precios. No tiene permiso para editarlo.");
+	}
+
+	// Contexto Recargo Contra Entrega para la lista de precios actual:
+	// Q/pieza de la lista, piezas físicas por UdM, precio del flete y permiso.
+	_load_recargo_context() {
+		const pl = this.doc.selling_price_list || "";
+		frappe.call({
+			method: "facex_multi.api.recargo.get_recargo_context",
+			args: { company: this.doc.company || this.defaults.company || "", price_list: pl },
+			callback: (r) => {
+				if (r.exc || !r.message) return;
+				if ((this.doc.selling_price_list || "") !== pl) return; // respuesta vieja
+				this._recargo_ctx = r.message;
+				// Flete ya marcado y no editado a mano → re-cotizar con la lista nueva
+				if (this.doc.facex_incluir_flete && !this._flete_manual) {
+					this.doc.facex_flete_amount = parseFloat(r.message.flete_rate) || 0;
+				}
+				this._sync_flete_ui();
+				this._render_items();
+				this._update_local_footer();
+			},
+		});
+	}
+
+	_row_recargo(item) {
+		const ctx = this._recargo_ctx;
+		if (!ctx || !(parseFloat(ctx.recargo_por_pieza) > 0)) return 0;
+		if (ctx.flete_item && item.item_code === ctx.flete_item) return 0;
+		const piezas = (ctx.piezas || {})[item.uom] || item._piezas_fisicas || 0;
+		return (parseFloat(item.qty) || 0) * piezas * parseFloat(ctx.recargo_por_pieza);
+	}
+
+	_recargo_total_local() {
+		return (this.doc.items || []).reduce((sum, r) => sum + this._row_recargo(r), 0);
 	}
 
 	_fetch_item_details(idx, item_code) {
@@ -6055,6 +6143,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 						// Exento de IVA según la ficha (familia GENERICO / EXE): el pie
 						// local no estima impuesto sobre esta fila (ver _row_is_tax_exempt).
 						row._tax_exempt = !!d.tax_exempt;
+						row._piezas_fisicas = d.piezas_fisicas || 0;
 						// Pre-llenar tipo FEL con default de configuración si no tiene valor
 						if (!row.bfel_multi_tipo) {
 							row.bfel_multi_tipo = (this.company_config || {}).tipo_x_defecto || "";
@@ -7190,7 +7279,16 @@ body.facex-fullscreen-mode .ef-main-layout {
 		// Si el impuesto está embebido: subtotal = gross - tax; grand = gross
 		// Si no está embebido: subtotal = gross; grand = gross + taxes
 		const subtotal = anyIncluded ? (gross - taxes) : gross;
-		const grand    = anyIncluded ? gross : (gross + taxes);
+		// Recargo Contra Entrega + Flete van como cargos del documento (filas
+		// "Actual" que el servidor agrega en before_validate): se suman al
+		// total sin tocar subtotal ni el IVA estimado.
+		const recargo = this._recargo_total_local();
+		const flete = this.doc.facex_incluir_flete ? (parseFloat(this.doc.facex_flete_amount) || 0) : 0;
+		const grand    = (anyIncluded ? gross : (gross + taxes)) + recargo + flete;
+		this.$body.find("#ef-recargo-row").css("display", recargo ? "" : "none");
+		this.$body.find("#ef-recargo-total").text(_fmtCurrency(recargo, this.doc.currency));
+		this.$body.find("#ef-flete-row").css("display", flete ? "" : "none");
+		this.$body.find("#ef-flete-total").text(_fmtCurrency(flete, this.doc.currency));
 
 		this.$body.find("#ef-subtotal").text(_fmtCurrency(subtotal, this.doc.currency));
 		this.$body.find("#ef-discounts").text("- " + _fmtCurrency(itemDiscounts, this.doc.currency));
@@ -7204,7 +7302,15 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const d = this.doc;
 		this.$body.find("#ef-subtotal").text(_fmtCurrency(d.total, d.currency));
 		this.$body.find("#ef-discounts").text("- " + _fmtCurrency(d.discount_amount, d.currency));
-		this.$body.find("#ef-taxes").text(_fmtCurrency(d.total_taxes_and_charges, d.currency));
+		// Impuestos = filas de la plantilla; recargo/flete se muestran aparte.
+		const _cargos = (d.taxes || []).filter((t) => t.facex_tipo_cargo);
+		const _recargo = _cargos.filter((t) => t.facex_tipo_cargo.indexOf("Recargo") !== -1).reduce((a, t) => a + (parseFloat(t.tax_amount) || 0), 0);
+		const _flete = _cargos.filter((t) => t.facex_tipo_cargo.indexOf("Flete") !== -1).reduce((a, t) => a + (parseFloat(t.tax_amount) || 0), 0);
+		this.$body.find("#ef-taxes").text(_fmtCurrency((parseFloat(d.total_taxes_and_charges) || 0) - _recargo - _flete, d.currency));
+		this.$body.find("#ef-recargo-row").css("display", _recargo ? "" : "none");
+		this.$body.find("#ef-recargo-total").text(_fmtCurrency(_recargo, d.currency));
+		this.$body.find("#ef-flete-row").css("display", _flete ? "" : "none");
+		this.$body.find("#ef-flete-total").text(_fmtCurrency(_flete, d.currency));
 		this.$body.find("#ef-grand-total").text(_fmtCurrency(d.grand_total, d.currency));
 		this.$body.find("#ef-header-grand-total").text(_fmtCurrency(d.grand_total, d.currency));
 		this.$body.find("#ef-words").text(d.in_words || "");
@@ -7227,6 +7333,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		// Pagos) tienen su propio bloqueo (PEs validados) y deben seguir
 		// editables en una factura validada.
 		$b.find("#ef-tab-factura .ef-cell-input:not([readonly])").prop("disabled", true);
+		$b.find("#ef-flete-check, #ef-flete-amount").prop("disabled", true);
 		$b.find("#ef-add-row").prop("disabled", true);
 		$b.find("#ef-tab-factura .ef-btn-del").prop("disabled", true).css("visibility", "hidden");
 	}
@@ -7243,6 +7350,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			if (ctrl && ctrl.$input) ctrl.$input.prop("disabled", false);
 		});
 		$b.find("#ef-tab-factura .ef-cell-input:not([readonly])").prop("disabled", false);
+		$b.find("#ef-flete-check, #ef-flete-amount").prop("disabled", false);
 		$b.find("#ef-add-row").prop("disabled", false);
 		$b.find("#ef-tab-factura .ef-btn-del").prop("disabled", false).css("visibility", "visible");
 	}
@@ -7276,18 +7384,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this._toggle_escenario_exento(d.taxes_and_charges);
 		this.$body.find("#ef-bfel-escenario-exento").val(d.bfel_escenario_exento || "");
 
-		// Flete: sincronizar la casilla con la fila del ítem de flete (si
-		// existe en el documento, cargado o nuevo) — cubre tanto _new_invoice
-		// como load_invoice, que llaman a este método.
-		const fleteCode = (this.company_config || {}).item_flete;
-		let fleteFound = false;
-		(this.doc.items || []).forEach((row) => {
-			if (fleteCode && row.item_code === fleteCode) {
-				row._is_flete_auto = 1;
-				fleteFound = true;
-			}
-		});
-		this.$body.find("#ef-flete-check").prop("checked", fleteFound);
+		// Flete / Recargo: la casilla y el monto viven en el doc
+		// (facex_incluir_flete / facex_flete_amount); el contexto de recargo
+		// depende de la lista de precios del doc — cubre _new_invoice y
+		// load_invoice, que llaman a este método.
+		this._flete_manual = !!(parseFloat(this.doc.facex_flete_amount_original) > 0);
+		this._sync_flete_ui();
+		this._load_recargo_context();
 
 		this._render_items();
 		this._update_footer();
@@ -7429,10 +7532,6 @@ body.facex-fullscreen-mode .ef-main-layout {
     <span class="ef-btn-label">Cliente</span>
     <kbd class="ef-kbd">F10</kbd>
   </button>
-  <button id="ef-btn-open-erp" class="ef-btn ef-btn-light" title="Abrir en ERPNext">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-    <span class="ef-btn-label">Abrir ERP</span>
-  </button>
 </div>`);
 		$(this.wrapper).append($bar);
 		$bar.hide();
@@ -7449,7 +7548,6 @@ body.facex-fullscreen-mode .ef-main-layout {
 		$bar.find("#ef-btn-pdf").on("click", () => this._action_pdf());
 		$bar.find("#ef-btn-new").on("click", () => this._action_new());
 		$bar.find("#ef-btn-customer").on("click", () => this._action_customer());
-		$bar.find("#ef-btn-open-erp").on("click", () => this._action_open_erp());
 
 		this.$bar = $bar;
 		this._update_action_bar_state();
@@ -7472,7 +7570,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		// Ocultar todo primero, luego mostrar solo lo necesario
 		["#ef-btn-save", "#ef-btn-cancel-changes", "#ef-btn-submit",
-		 "#ef-btn-certify", "#ef-btn-cancel-doc", "#ef-btn-cancel-fel", "#ef-btn-print", "#ef-btn-open-erp", "#ef-btn-customer", "#ef-btn-pdf",
+		 "#ef-btn-certify", "#ef-btn-cancel-doc", "#ef-btn-cancel-fel", "#ef-btn-print", "#ef-btn-customer", "#ef-btn-pdf",
 		 "#ef-btn-duplicate", "#ef-btn-guia-transporte"].forEach(hide);
 		btn("#ef-btn-save").removeClass("ef-btn-save-dirty");
 
@@ -7491,15 +7589,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 				btn("#ef-btn-save").addClass("ef-btn-save-dirty");
 				show("#ef-btn-cancel-changes"); enable("#ef-btn-cancel-changes");
 			} else {
-				// caso 2: borrador limpio → Validar + Imprimir + Abrir ERP
+				// caso 2: borrador limpio → Validar + Imprimir
 				show("#ef-btn-submit"); btn("#ef-btn-submit").prop("disabled", !hasItems);
 				show("#ef-btn-print"); enable("#ef-btn-print");
-				show("#ef-btn-open-erp"); enable("#ef-btn-open-erp");
 			}
 
 		} else if (isSubmitted) {
 			show("#ef-btn-print"); enable("#ef-btn-print");
-			show("#ef-btn-open-erp"); enable("#ef-btn-open-erp");
 			show("#ef-btn-duplicate"); enable("#ef-btn-duplicate");
 			// caso 3: pendiente de certificar FEL
 			// puede_anular_facturas gatea Anular/Cancelar (acción destructiva e
@@ -7525,7 +7621,6 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		} else if (isCancelled) {
 			show("#ef-btn-print"); enable("#ef-btn-print");
-			show("#ef-btn-open-erp"); enable("#ef-btn-open-erp");
 			show("#ef-btn-duplicate"); enable("#ef-btn-duplicate");
 		}
 
@@ -7533,7 +7628,6 @@ body.facex-fullscreen-mode .ef-main-layout {
 		if (!isNew && d.es_fiscal === 0) {
 			["#ef-btn-save", "#ef-btn-cancel-changes", "#ef-btn-submit", "#ef-btn-certify", "#ef-btn-duplicate"].forEach(hide);
 			show("#ef-btn-print"); enable("#ef-btn-print");
-			show("#ef-btn-open-erp"); enable("#ef-btn-open-erp");
 		}
 
 		// Botón PDF: si tiene bfel_uuid, chequear url_pdf con cache
@@ -7941,12 +8035,6 @@ body.facex-fullscreen-mode .ef-main-layout {
 				});
 			}
 		);
-	}
-
-	_action_open_erp() {
-		if (!this.doc.name || this.doc.name === "new") return;
-		const url = `/app/sales-invoice/${encodeURIComponent(this.doc.name)}`;
-		window.open(url, "_blank");
 	}
 
 	_refresh_guia_transporte_label() {
@@ -8548,6 +8636,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 			[".ef-col-disc",   cfg.mostrar_desc_pct !== undefined ? cfg.mostrar_desc_pct : 1],
 			[".ef-col-adenda", cfg.mostrar_adenda   !== undefined ? cfg.mostrar_adenda   : 1],
 			[".ef-col-tipo",   cfg.mostrar_tipo     !== undefined ? cfg.mostrar_tipo     : 1],
+			// Recargo Contra Entrega: solo si la lista de precios del doc lleva Q/pieza
+			[".ef-col-recargo", (this._recargo_ctx && parseFloat(this._recargo_ctx.recargo_por_pieza) > 0) ? 1 : 0],
 		];
 		map.forEach(([sel, show]) => {
 			this.$body.find(sel).css("display", show ? "" : "none");
@@ -8585,6 +8675,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 			bfel_escenario_exento: d.bfel_escenario_exento || "",
 			selling_price_list: d.selling_price_list || "",
 			bfel_establecimiento: d.bfel_establecimiento || "",
+			// Flete como cargo del documento (ver facex_multi.api.recargo)
+			facex_incluir_flete: d.facex_incluir_flete ? 1 : 0,
+			facex_flete_amount: d.facex_incluir_flete ? (parseFloat(d.facex_flete_amount) || 0) : 0,
 			items: (d.items || []).map((r) => ({
 				item_code: r.item_code,
 				item_name: r.item_name || "",
@@ -9478,8 +9571,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 	}
 
 	_payment_row_html(idx, p) {
-		const METHODS = ["Efectivo", "Tarjeta de Crédito", "Transferencia", "Cheque"];
-		if (this._can_offer_contra_entrega()) METHODS.push("Contra Entrega");
+		const METHODS = ["Efectivo", "Tarjeta de Crédito", "Transferencia", "Depósito", "Cheque"];
+		// "Contra Entrega" ya no es una forma de pago seleccionable aquí: ahora
+		// se detecta únicamente por la lista de precios de la factura (ver
+		// facex_multi.api.invoice.sync_contra_entrega_from_price_list). Se
+		// conserva como opción de solo lectura en filas históricas que ya la
+		// tengan, para no desfigurar datos existentes.
+		if (p.payment_method === "Contra Entrega") METHODS.push("Contra Entrega");
 		const opts = METHODS.map((m) =>
 			`<option value="${m}"${p.payment_method === m ? " selected" : ""}>${m}</option>`
 		).join("");
@@ -10591,7 +10689,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 				$tbody.append(`
 					<tr>
-						<td class="ef-td" style="font-weight:700; color:var(--ef-text-muted);">${inv.name}</td>
+						<td class="ef-td"><a class="ef-inv-load-link" title="Clic: abrir aquí · Ctrl+clic: abrir en pestaña nueva" href="/app/facex?invoice=${encodeURIComponent(inv.name)}" data-name="${inv.name}" style="color:var(--ef-primary); font-weight:700; text-decoration:underline; cursor:pointer;">${inv.name}</a>${_peekBtn(inv.name)}</td>
 						<td class="ef-td">${inv.posting_date}</td>
 						<td class="ef-td">${inv.customer_name || inv.customer}</td>
 						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700; color:var(--ef-danger);">${_fmtCurrency(inv.grand_total, "GTQ")}</td>

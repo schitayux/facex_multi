@@ -10,7 +10,7 @@ from __future__ import annotations
 import frappe
 import json
 from collections import Counter
-from frappe.utils import today, add_days, getdate
+from frappe.utils import today, add_days, getdate, cint, flt
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +243,88 @@ def ensure_efast_payment_custom_fields():
     if created:
         frappe.db.commit()
         frappe.clear_cache(doctype="Sales Invoice")
+
+
+_PRICE_LIST_FIELDS = [
+    {"fieldname": "custom_es_contra_entrega", "label": "Es Lista de Contra Entrega", "fieldtype": "Check",
+     "default": "0", "insert_after": "selling",
+     "description": "Las facturas emitidas con esta lista de precios se marcan automáticamente como Pago Contra Entrega (Cierre Diario, Historial)."},
+]
+
+_PAYMENT_TERMS_FIELDS = [
+    {"fieldname": "custom_es_contra_entrega", "label": "Es Condición de Pago Contra Entrega", "fieldtype": "Check",
+     "default": "0", "insert_after": "template_name",
+     "description": "Las facturas emitidas con esta condición de pago (ej. \"Contra entrega (COD) (CP-COD)\") se marcan automáticamente como Pago Contra Entrega (Cierre Diario, Historial)."},
+]
+
+
+def ensure_price_list_contra_entrega_field():
+    """Idempotente: crea el check 'Es Lista de Contra Entrega' en Price List si falta."""
+    created = False
+    for spec in _PRICE_LIST_FIELDS:
+        fname = spec["fieldname"]
+        if frappe.db.exists("Custom Field", {"dt": "Price List", "fieldname": fname}):
+            continue
+        doc = frappe.new_doc("Custom Field")
+        doc.dt = "Price List"
+        for k, v in spec.items():
+            setattr(doc, k, v)
+        doc.module = "FacEx Multi"
+        doc.insert(ignore_permissions=True)
+        created = True
+    if created:
+        frappe.db.commit()
+        frappe.clear_cache(doctype="Price List")
+
+
+def ensure_payment_terms_contra_entrega_field():
+    """Idempotente: crea el check 'Es Condición de Pago Contra Entrega' en
+    Payment Terms Template si falta."""
+    created = False
+    for spec in _PAYMENT_TERMS_FIELDS:
+        fname = spec["fieldname"]
+        if frappe.db.exists("Custom Field", {"dt": "Payment Terms Template", "fieldname": fname}):
+            continue
+        doc = frappe.new_doc("Custom Field")
+        doc.dt = "Payment Terms Template"
+        for k, v in spec.items():
+            setattr(doc, k, v)
+        doc.module = "FacEx Multi"
+        doc.insert(ignore_permissions=True)
+        created = True
+    if created:
+        frappe.db.commit()
+        frappe.clear_cache(doctype="Payment Terms Template")
+
+
+def sync_contra_entrega_from_price_list(doc, method=None):
+    """Hook Sales Invoice.validate — única fuente de bfel_pago_contra_entrega,
+    detectado automáticamente por cualquiera de estas 3 señales (ya no se
+    elige a mano como forma de pago, ver facex.js _payment_row_html y
+    facex_screen.js _render_payment_view):
+      1. Tiene al menos una Guía de Transporte asociada (bfel_guias_transportista) —
+         si hay guía, es porque el transportista cobra al entregar.
+      2. La lista de precios de la factura está marcada como "Es Lista de
+         Contra Entrega" (Price List.custom_es_contra_entrega).
+      3. La condición de pago de la factura está marcada como "Es Condición
+         de Pago Contra Entrega" (Payment Terms Template.custom_es_contra_entrega,
+         ej. "Contra entrega (COD) (CP-COD)").
+    Solo se ACTIVA, nunca se desactiva — mismo criterio que save_payments más
+    abajo — para no pisar un valor ya puesto por otro origen."""
+    if not doc.meta.has_field("bfel_pago_contra_entrega") or doc.get("bfel_pago_contra_entrega"):
+        return
+    if doc.get("bfel_guias_transportista"):
+        doc.bfel_pago_contra_entrega = 1
+        return
+    if doc.selling_price_list and cint(
+        frappe.db.get_value("Price List", doc.selling_price_list, "custom_es_contra_entrega")
+    ):
+        doc.bfel_pago_contra_entrega = 1
+        return
+    if doc.get("payment_terms_template") and cint(
+        frappe.db.get_value("Payment Terms Template", doc.payment_terms_template, "custom_es_contra_entrega")
+    ):
+        doc.bfel_pago_contra_entrega = 1
 
 
 # ---------------------------------------------------------------------------
@@ -1039,6 +1121,9 @@ def get_item_details(item_code: str, company: str = "", customer: str = "",
         "is_lista_materiales": int(getattr(item, "bfel_es_lista_materiales", 0) or 0),
         "modo_stock_lista": getattr(item, "bfel_modo_stock_lista", "") or "",
         "tax_exempt": tax_exempt,
+        # Recargo Contra Entrega: piezas físicas de la UdM de venta (UOM.custom_piezas_fisicas)
+        "piezas_fisicas": cint(frappe.db.get_value("UOM", item.stock_uom, "custom_piezas_fisicas"))
+        if frappe.get_meta("UOM").has_field("custom_piezas_fisicas") else 0,
         "tipo_familia": getattr(item, "custom_facex_tipo_familia", "") or "",
     }
 
@@ -1269,6 +1354,22 @@ def save_draft(doc_json: str):
                 item_row["price_list_rate"] = original_rate
                 item_row["rate"] = original_rate
 
+    # Flete como cargo del documento (ver facex_multi.api.recargo): la casilla
+    # "Incluir Flete" ya no agrega una línea de producto. El monto se resuelve
+    # aquí desde la lista de precios de la factura; un monto manual solo se
+    # respeta con puede_editar_precio y deja rastro en el timeline.
+    flete_comment = ""
+    if frappe.get_meta("Sales Invoice").has_field("facex_incluir_flete"):
+        from facex_multi.api.permissions import get_facex_can_edit_price
+        from facex_multi.api.recargo import resolve_flete_for_payload
+        flete_comment = resolve_flete_for_payload(
+            data, company, data.get("selling_price_list") or cust_price_list or "",
+            get_facex_can_edit_price(company),
+        )
+    else:
+        for _k in ("facex_incluir_flete", "facex_flete_amount", "facex_flete_amount_original"):
+            data.pop(_k, None)
+
     # Documento con fecha de emisión distinta a hoy (retroactivo o postfechado):
     # ERPNext sobreescribe posting_date con la fecha actual salvo que
     # set_posting_time = 1 (ver erpnext/utilities/transaction_base.validate_posting_time).
@@ -1324,6 +1425,7 @@ def save_draft(doc_json: str):
             "es_fiscal", "update_stock", "company", "bfel_facex_multi", "bfel_venta_suspendida",
             "selling_price_list", "sales_partner", "bfel_establecimiento", "vendedor",
             "bfel_pago_contra_entrega",
+            "facex_incluir_flete", "facex_flete_amount", "facex_flete_amount_original",
         ):
             # No pisar selling_price_list con vacío si el doc ya tiene uno
             if field == "selling_price_list" and not data.get(field) and doc.selling_price_list:
@@ -1368,7 +1470,11 @@ def save_draft(doc_json: str):
     doc.payment_schedule = []
 
     doc.flags.ignore_permissions = False
+    prev_flete = None if is_new else frappe.db.get_value("Sales Invoice", doc.name, "facex_flete_amount")
     doc.save()
+    if flete_comment and (is_new or abs(flt(prev_flete) - flt(doc.get("facex_flete_amount"))) > 0.005):
+        # Rastro de auditoría: el flete es sensible a margen.
+        doc.add_comment("Comment", flete_comment)
     frappe.db.commit()
 
     return _safe_doc_dict(doc)

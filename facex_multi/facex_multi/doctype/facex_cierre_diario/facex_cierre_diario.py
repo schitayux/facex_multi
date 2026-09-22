@@ -56,8 +56,10 @@ class FacExCierreDiario(Document):
 			flt(self.cobro_efectivo) + flt(self.cobro_transferencia) + flt(self.cobro_cheque)
 			+ flt(self.cobro_tarjeta) + flt(self.cobro_contra_entrega) + flt(self.al_credito)
 		)
-		# Fórmula del cuadre (según hoja CIERRE VENTA.xlsx): Venta total − Egresos.
-		self.total_a_depositar = flt(self.total_venta) - flt(self.total_egresos)
+		# Fórmula del cuadre: solo el efectivo cobrado en el día es lo que se
+		# entrega físicamente para depósito (transferencias, depósitos bancarios,
+		# tarjeta, cheque, contra entrega y crédito no pasan por la caja).
+		self.total_a_depositar = flt(self.cobro_efectivo) - flt(self.total_egresos)
 		self.num_facturas = len(self.facturas or [])
 
 	def on_trash(self):

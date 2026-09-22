@@ -25,6 +25,7 @@
   "ajuste_impuestos",
   "cb_ventas",
   "flete_facturado",
+  "recargo_facturado",
   "total_venta",
   "flete_pagado_transportista",
   "sb_cobros",
@@ -182,10 +183,17 @@
    "fieldtype": "Column Break"
   },
   {
-   "description": "Suma de las líneas del Ítem de Flete (FacEx Settings) en las facturas del día.",
+   "description": "Fletes del día: filas \"Flete\" en cargos de las facturas (FacEx) más, en facturas antiguas, las líneas del Ítem de Flete.",
    "fieldname": "flete_facturado",
    "fieldtype": "Currency",
    "label": "Fletes facturados",
+   "read_only": 1
+  },
+  {
+   "description": "Suma de las filas \"Recargo por entrega\" (cargos) de las facturas del día: recargo por pieza de las listas Contra Entrega, se paga al repartidor.",
+   "fieldname": "recargo_facturado",
+   "fieldtype": "Currency",
+   "label": "Recargo por entrega facturado",
    "read_only": 1
   },
   {

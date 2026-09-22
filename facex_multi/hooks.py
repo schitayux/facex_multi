@@ -68,7 +68,14 @@ doc_events = {
     },
     "Sales Invoice": {
         "before_insert": "facex_multi.api.invoice.fix_abbr_in_naming_series",
-        "validate": "facex_multi.api.invoice.guard_guias_transporte_permission",
+        # Recargo Contra Entrega / Flete como filas de cargos: tiene que ir en
+        # before_validate porque ERPNext calcula totales dentro de validate.
+        "before_validate": "facex_multi.api.recargo.apply_recargo_y_flete",
+        "validate": [
+            "facex_multi.api.invoice.guard_guias_transporte_permission",
+            "facex_multi.api.invoice.sync_contra_entrega_from_price_list",
+            "facex_multi.api.recargo.set_totales_con_recargo",
+        ],
         # Cierre Diario: una factura / sus pagos quedan congelados una vez que
         # el día del usuario está Cerrado (ver facex_multi.api.cierre).
         "before_cancel": "facex_multi.api.cierre.guard_sales_invoice_cancel",
@@ -85,8 +92,11 @@ after_migrate = [
     "facex_multi.api.permissions.ensure_warehouse_establecimiento_field",
     "facex_multi.api.permissions.ensure_warehouse_tipo_almacen_field",
     "facex_multi.api.invoice.ensure_efast_payment_custom_fields",
+    "facex_multi.api.invoice.ensure_price_list_contra_entrega_field",
+    "facex_multi.api.invoice.ensure_payment_terms_contra_entrega_field",
     "facex_multi.api.familia.ensure_item_familia_field",
     "facex_multi.api.exencion.ensure_item_familia_tipo_fields",
+    "facex_multi.api.recargo.ensure_recargo_flete_fields",
 ]
 
 fixtures = [

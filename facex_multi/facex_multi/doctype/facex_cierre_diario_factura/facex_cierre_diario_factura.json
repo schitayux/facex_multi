@@ -12,6 +12,7 @@
   "contra_entrega",
   "credito",
   "flete",
+  "recargo",
   "formas_pago",
   "tiene_descuento",
   "es_devolucion",
@@ -58,6 +59,12 @@
    "fieldname": "flete",
    "fieldtype": "Currency",
    "label": "Flete"
+  },
+  {
+   "fieldname": "recargo",
+   "fieldtype": "Currency",
+   "label": "Recargo entrega",
+   "read_only": 1
   },
   {
    "fieldname": "formas_pago",

@@ -16,7 +16,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Forma de Pago",
-   "options": "Efectivo\nTarjeta de Crédito\nTransferencia\nCheque\nContra Entrega\nRetención",
+   "options": "Efectivo\nTarjeta de Crédito\nTransferencia\nDepósito\nCheque\nContra Entrega\nRetención",
    "reqd": 1,
    "columns": 3
   },

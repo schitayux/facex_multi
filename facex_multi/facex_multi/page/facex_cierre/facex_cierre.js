@@ -60,6 +60,7 @@ class FacexCierreDiario {
 		this.form = { fecha: "", usuario: "", almacen: "", flete_pagado_transportista: 0, egresos: [], observaciones: "" };
 		this._dirty = false;
 		this._view = "list";
+		this._facturasFilter = null; // "contado" | "contra_entrega" | "credito" | null (sin filtro)
 		this.page.add_menu_item(__("FacEx - Clásico"), () => { window.location.href = "/app/facex"; });
 		this._render_topbar();
 		this.$body = this.$root.find("#cd-content-root");
@@ -323,6 +324,7 @@ class FacexCierreDiario {
 					observaciones: "",
 				};
 				this._dirty = false;
+				this._facturasFilter = null;
 				this._render_detail();
 			},
 		});
@@ -344,6 +346,7 @@ class FacexCierreDiario {
 					observaciones: this.doc.observaciones || "",
 				};
 				this._dirty = false;
+				this._facturasFilter = null;
 				if (this.doc.estado === "Cerrado") {
 					// Congelado: se muestra el snapshot guardado al momento del cierre.
 					this.snap = this.doc.snapshot || null;
@@ -373,7 +376,30 @@ class FacexCierreDiario {
 		const s = this.snap || {};
 		const egresos = this.form.egresos.reduce((a, e) => a + _cd_flt(e.monto), 0);
 		const total_venta = _cd_flt(s.total_venta);
-		return { egresos, total_venta, a_depositar: total_venta - egresos };
+		const cobro_efectivo = _cd_flt(s.cobro_efectivo);
+		// Solo el efectivo cobrado se entrega para depósito: transferencias,
+		// depósitos bancarios, tarjeta, cheque, contra entrega y crédito no
+		// pasan por la caja.
+		return { egresos, total_venta, cobro_efectivo, a_depositar: cobro_efectivo - egresos };
+	}
+
+	_clasificacion_facturas(facts) {
+		const grupos = {
+			contado: { count: 0, total: 0, alertas: 0 },
+			contra_entrega: { count: 0, total: 0, alertas: 0 },
+			credito: { count: 0, total: 0, alertas: 0 },
+		};
+		const alertas = [];
+		facts.forEach((f) => {
+			const g = grupos[f.clasificacion] || grupos.contado;
+			g.count += 1;
+			g.total += _cd_flt(f.grand_total);
+			if (f.alerta_contado) {
+				g.alertas += 1;
+				alertas.push(f);
+			}
+		});
+		return { grupos, alertas };
 	}
 
 	_render_detail() {
@@ -389,6 +415,13 @@ class FacexCierreDiario {
 		const fams = s.detalle_familias || [];
 		const facts = s.facturas || [];
 		const cuadra = Math.abs(_cd_flt(s.total_cobros) - _cd_flt(s.total_venta)) < 0.01;
+		const { grupos: clas, alertas: alertasContado } = this._clasificacion_facturas(facts);
+		const filtro = this._facturasFilter;
+		const factsView = filtro ? facts.filter((f) => f.clasificacion === filtro) : facts;
+		const CD_CLASE_LABEL = { contado: "Contado", contra_entrega: "C. Entrega", credito: "Crédito" };
+		// No se puede cerrar el día mientras haya facturas de Contado sin el
+		// pago real registrado (backend lo vuelve a validar en cerrar_cierre).
+		const bloqueaCierre = alertasContado.length > 0;
 
 		this.$body.html(`
 <div class="cd-wrap">
@@ -402,7 +435,7 @@ class FacexCierreDiario {
 			${!cerrado ? `<button type="button" class="cd-btn cd-btn-secondary" id="cd-btn-recalc" title="Vuelve a leer facturas y pagos del día">↻ Recalcular</button>` : ""}
 			<button type="button" class="cd-btn cd-btn-secondary" id="cd-btn-print">🖨 Imprimir</button>
 			${editable ? `<button type="button" class="cd-btn cd-btn-secondary" id="cd-btn-save">Guardar borrador</button>` : ""}
-			${editable ? `<button type="button" class="cd-btn cd-btn-success" id="cd-btn-close">🔒 Cerrar día</button>` : ""}
+			${editable ? `<button type="button" class="cd-btn cd-btn-success" id="cd-btn-close" ${bloqueaCierre ? "disabled" : ""} title="${bloqueaCierre ? "Hay facturas de Contado sin pago completo registrado — ingrese el pago real antes de cerrar" : ""}">🔒 Cerrar día</button>` : ""}
 			${cerrado && doc && doc.puede_reabrir ? `<button type="button" class="cd-btn cd-btn-danger" id="cd-btn-reopen">Reabrir cierre</button>` : ""}
 			${doc && !cerrado && canManage ? `<button type="button" class="cd-btn cd-btn-ghost" id="cd-btn-delete" title="Eliminar borrador">Eliminar</button>` : ""}
 		</div>
@@ -456,12 +489,14 @@ class FacexCierreDiario {
 				<div class="cd-line"><span>Ventas sin descuento</span><b>${this.fmt(s.venta_sin_descuento)}</b></div>
 				<div class="cd-line"><span>Piezas en oferta (con descuento)</span><b>${this.fmt(s.venta_con_descuento)}</b></div>
 				<div class="cd-line"><span>Fletes facturados</span><b>${this.fmt(s.flete_facturado)}</b></div>
+				${_cd_flt(s.recargo_facturado) ? `<div class="cd-line"><span>Recargo por entrega facturado</span><b>${this.fmt(s.recargo_facturado)}</b></div>` : ""}
 				${Math.abs(_cd_flt(s.ajuste_impuestos)) >= 0.01 ? `<div class="cd-line"><span>Ajustes (descuento global / redondeo)</span><b>${this.fmt(s.ajuste_impuestos)}</b></div>` : ""}
 				<div class="cd-line cd-line-total"><span>TOTAL VENTA</span><b>${this.fmt(s.total_venta)}</b></div>
 			</div>
 			<div class="cd-block">
 				<div class="cd-block-title">FLETES</div>
 				<div class="cd-line"><span>Fletes facturados${s.flete_item ? ` <span class="cd-muted">(${_cd_esc(s.flete_item)})</span>` : ""}</span><b>${this.fmt(s.flete_facturado)}</b></div>
+				<div class="cd-line"><span>Recargo por entrega facturado <span class="cd-muted">(listas Contra Entrega)</span></span><b>${this.fmt(s.recargo_facturado)}</b></div>
 				<div class="cd-line"><span>Flete pagado al transportista</span>
 					<input type="number" step="0.01" min="0" id="cd-flete-pagado" class="cd-input cd-input-money" value="${_cd_flt(this.form.flete_pagado_transportista).toFixed(2)}" ${editable ? "" : "disabled"}></div>
 				<div class="cd-hint">Anotación manual, informativa (no descuenta del total a depositar).</div>
@@ -503,7 +538,7 @@ class FacexCierreDiario {
 		<div class="cd-card cd-card-deposit">
 			<div class="cd-deposit-label">TOTAL A DEPOSITAR</div>
 			<div class="cd-deposit-value" id="cd-total-depositar">${this.fmt(t.a_depositar)}</div>
-			<div class="cd-deposit-formula">Total Venta ${this.fmt(t.total_venta)} − Egresos <span id="cd-dep-egresos">${this.fmt(t.egresos)}</span></div>
+			<div class="cd-deposit-formula">Efectivo cobrado ${this.fmt(t.cobro_efectivo)} − Egresos <span id="cd-dep-egresos">${this.fmt(t.egresos)}</span></div>
 			<div class="cd-field" style="margin-top:14px;"><label>Observaciones</label>
 				<textarea id="cd-observaciones" class="cd-input" rows="3" ${editable ? "" : "disabled"}>${_cd_esc(this.form.observaciones)}</textarea></div>
 		</div>
@@ -511,15 +546,42 @@ class FacexCierreDiario {
 
 	<!-- FACTURAS -->
 	<div class="cd-card">
-		<details class="cd-details" ${facts.length && facts.length <= 15 ? "open" : ""}>
-			<summary><b>Facturas incluidas (${facts.length})</b></summary>
+		<div class="cd-card-title">CLASIFICACIÓN DE FACTURAS</div>
+		<div class="cd-class-grid">
+			<button type="button" class="cd-class-box cd-class-contado ${filtro === "contado" ? "cd-class-active" : ""}" data-filter="contado">
+				<div class="cd-class-label">Facturas de Contado</div>
+				<div class="cd-class-count">${clas.contado.count}</div>
+				<div class="cd-class-total">${this.fmt(clas.contado.total)}</div>
+				${clas.contado.alertas ? `<div class="cd-class-warn">⚠ ${Math.round((clas.contado.alertas / clas.contado.count) * 100)}% falta de pago por registrar (${clas.contado.alertas}/${clas.contado.count})</div>` : ""}
+			</button>
+			<button type="button" class="cd-class-box cd-class-ce ${filtro === "contra_entrega" ? "cd-class-active" : ""}" data-filter="contra_entrega">
+				<div class="cd-class-label">Contra Entrega</div>
+				<div class="cd-class-count">${clas.contra_entrega.count}</div>
+				<div class="cd-class-total">${this.fmt(clas.contra_entrega.total)}</div>
+			</button>
+			<button type="button" class="cd-class-box cd-class-credito ${filtro === "credito" ? "cd-class-active" : ""}" data-filter="credito">
+				<div class="cd-class-label">Al Crédito</div>
+				<div class="cd-class-count">${clas.credito.count}</div>
+				<div class="cd-class-total">${this.fmt(clas.credito.total)}</div>
+			</button>
+		</div>
+		${alertasContado.length ? `
+		<div class="cd-alert cd-alert-warn" style="margin-top:12px;">
+			<div class="cd-alert-title">⚠ ${alertasContado.length} factura(s) de contado sin pago completo</div>
+			<div>Se vendieron de contado pero quedaron con saldo pendiente. Abra la factura en el facturador clásico para ingresar el pago real. <b>No se puede cerrar el día hasta que todas queden pagadas al 100%.</b></div>
+			<ul class="cd-alert-list">${alertasContado.map((f) => `<li><a href="/app/facex?invoice=${encodeURIComponent(f.sales_invoice)}" target="_blank">${_cd_esc(f.sales_invoice)}</a> — ${_cd_esc(f.customer_name)} — pendiente <b>${this.fmt(f.credito)}</b></li>`).join("")}</ul>
+		</div>` : ""}
+
+		<details class="cd-details" style="margin-top:10px;" ${facts.length && facts.length <= 15 ? "open" : ""}>
+			<summary><b>Facturas incluidas (${factsView.length}${filtro ? ` de ${facts.length}` : ""})</b>${filtro ? ` <span class="cd-muted">— filtro: ${CD_CLASE_LABEL[filtro]} (<a href="#" id="cd-clear-filter">quitar</a>)</span>` : ""}</summary>
 			<div class="cd-table-wrap">
 			<table class="cd-table cd-table-sm">
-				<thead><tr><th>Factura</th><th>Cliente</th><th class="r">Total</th><th class="r">Cobrado</th><th class="r">C. Entrega</th><th class="r">Crédito</th><th class="r">Flete</th><th>Formas de pago</th><th>FEL</th></tr></thead>
-				<tbody>${facts.map((f) => `
-					<tr>
-						<td><a href="/app/sales-invoice/${encodeURIComponent(f.sales_invoice)}" target="_blank">${_cd_esc(f.sales_invoice)}</a>${f.es_devolucion ? ` <span class="cd-tag">DEV</span>` : ""}${f.tiene_descuento ? ` <span class="cd-tag cd-tag-oferta">OFERTA</span>` : ""}</td>
+				<thead><tr><th>Factura</th><th>Cliente</th><th>Clasificación</th><th class="r">Total</th><th class="r">Cobrado</th><th class="r">C. Entrega</th><th class="r">Crédito</th><th class="r">Flete</th><th>Formas de pago</th><th>FEL</th></tr></thead>
+				<tbody>${factsView.map((f) => `
+					<tr class="${f.alerta_contado ? "cd-row-alert" : ""}">
+						<td><a href="/app/facex?invoice=${encodeURIComponent(f.sales_invoice)}" target="_blank">${_cd_esc(f.sales_invoice)}</a>${f.es_devolucion ? ` <span class="cd-tag">DEV</span>` : ""}${f.tiene_descuento ? ` <span class="cd-tag cd-tag-oferta">OFERTA</span>` : ""}</td>
 						<td>${_cd_esc(f.customer_name)}</td>
+						<td><span class="cd-tag cd-tag-clase-${f.clasificacion}">${CD_CLASE_LABEL[f.clasificacion] || ""}</span>${f.alerta_contado ? ` <span class="cd-tag cd-tag-alerta" title="Contado sin pagar">⚠</span>` : ""}</td>
 						<td class="r">${this.fmt(f.grand_total)}</td>
 						<td class="r">${this.fmt(f.pagado)}</td>
 						<td class="r">${this.fmt(f.contra_entrega)}</td>
@@ -527,7 +589,7 @@ class FacexCierreDiario {
 						<td class="r">${this.fmt(f.flete)}</td>
 						<td class="cd-muted">${_cd_esc(f.formas_pago)}</td>
 						<td class="cd-muted">${_cd_esc(f.bfel_status)}</td>
-					</tr>`).join("") || `<tr><td colspan="9" class="cd-empty">Sin facturas.</td></tr>`}
+					</tr>`).join("") || `<tr><td colspan="10" class="cd-empty">Sin facturas.</td></tr>`}
 				</tbody>
 			</table>
 			</div>
@@ -572,6 +634,17 @@ class FacexCierreDiario {
 		this.$body.find("#cd-btn-back").on("click", () => this._go_list());
 		this.$body.find("#cd-btn-recalc").on("click", () => this._recompute(() => { this._render_detail(); frappe.show_alert({ message: __("Recalculado."), indicator: "blue" }); }));
 		this.$body.find("#cd-btn-print").on("click", () => this._print());
+
+		this.$body.find(".cd-class-box").on("click", (e) => {
+			const f = $(e.currentTarget).data("filter");
+			this._facturasFilter = this._facturasFilter === f ? null : f;
+			this._render_detail();
+		});
+		this.$body.find("#cd-clear-filter").on("click", (e) => {
+			e.preventDefault();
+			this._facturasFilter = null;
+			this._render_detail();
+		});
 
 		if (!this.doc) {
 			// Nuevo: cambiar fecha/usuario recalcula (y si ya existe, lo abre).
@@ -633,6 +706,17 @@ class FacexCierreDiario {
 	}
 
 	_save(close) {
+		if (close) {
+			const { alertas } = this._clasificacion_facturas((this.snap || {}).facturas || []);
+			if (alertas.length) {
+				frappe.msgprint({
+					title: __("No se puede cerrar el día"),
+					indicator: "red",
+					message: __("Hay {0} factura(s) de Contado sin el pago real registrado (100% pendiente). Ingréselo en el facturador clásico antes de cerrar.", [alertas.length]),
+				});
+				return;
+			}
+		}
 		const t = this._totals();
 		const doit = () => {
 			frappe.call({
@@ -653,7 +737,7 @@ class FacexCierreDiario {
 		frappe.confirm(
 			`<div style="font-size:14px;">
 				<p><b>¿Cerrar el día ${this.short_date(this.form.fecha)} de ${_cd_esc(this.user_label(this.form.usuario))}?</b></p>
-				<p>Total venta: <b>${this.fmt(t.total_venta)}</b> · Egresos: <b>${this.fmt(t.egresos)}</b> · A depositar: <b>${this.fmt(t.a_depositar)}</b></p>
+				<p>Efectivo cobrado: <b>${this.fmt(t.cobro_efectivo)}</b> · Egresos: <b>${this.fmt(t.egresos)}</b> · A depositar: <b>${this.fmt(t.a_depositar)}</b></p>
 				<p class="text-muted">A partir de este momento no se podrán anular facturas ni modificar pagos de esta fecha. Solo un usuario de Gerencia podrá reabrir el cierre.</p>
 			</div>`,
 			doit
@@ -743,10 +827,12 @@ class FacexCierreDiario {
 <tr><td>Ventas sin descuento (sin flete)</td><td class="r">${money(s.venta_sin_descuento)}</td></tr>
 <tr><td>Piezas en oferta (líneas con descuento)</td><td class="r">${money(s.venta_con_descuento)}</td></tr>
 <tr><td>Fletes facturados</td><td class="r">${money(s.flete_facturado)}</td></tr>
+${_cd_flt(s.recargo_facturado) ? `<tr><td>Recargo por entrega facturado</td><td class="r">${money(s.recargo_facturado)}</td></tr>` : ""}
 ${Math.abs(_cd_flt(s.ajuste_impuestos)) >= 0.01 ? `<tr><td>Ajustes (descuento global / redondeo)</td><td class="r">${money(s.ajuste_impuestos)}</td></tr>` : ""}
 <tr class="tot"><td>TOTAL VENTA</td><td class="r">${money(s.total_venta)}</td></tr>
 <tr><td colspan="2" class="sec" style="background:#3b82c4;">FLETES</td></tr>
 <tr><td>Fletes facturados</td><td class="r">${money(s.flete_facturado)}</td></tr>
+<tr><td>Recargo por entrega facturado</td><td class="r">${money(s.recargo_facturado)}</td></tr>
 <tr><td>Flete pagado al transportista</td><td class="r">${money(this.form.flete_pagado_transportista)}</td></tr>
 <tr><td colspan="2" class="sec" style="background:#3b82c4;">COBROS Y CRÉDITOS</td></tr>
 <tr><td>Transferencia</td><td class="r">${money(s.cobro_transferencia)}</td></tr>
@@ -821,6 +907,10 @@ body.facex-fullscreen-mode .layout-container, body.facex-fullscreen-mode #space-
 .cd-badge { display:inline-block;font-size:11px;font-weight:700;padding:2px 10px;border-radius:12px;border:1px solid;letter-spacing:.3px; }
 .cd-tag { display:inline-block;font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;background:#e2e8f0;color:#334155;margin-left:4px; }
 .cd-tag-oferta { background:#fff7e6;color:#b45309; }
+.cd-tag-alerta { background:#fde8e8;color:#b91c1c; }
+.cd-tag-clase-contado { background:#eef2ff;color:#3730a3; }
+.cd-tag-clase-contra_entrega { background:#fff7e6;color:#b45309; }
+.cd-tag-clase-credito { background:#fde8e8;color:#b91c1c; }
 .cd-ok { color:#15803d;font-size:11px;margin-left:6px; }
 .cd-bad { color:#b91c1c;font-size:11px;margin-left:6px; }
 
@@ -830,9 +920,21 @@ body.facex-fullscreen-mode .layout-container, body.facex-fullscreen-mode #space-
 .cd-alert-danger { background:#fde8e8;border-color:#fca5a5;color:#7f1d1d; }
 .cd-alert-title { font-weight:700;margin-bottom:6px; }
 .cd-alert-chips { display:flex;gap:8px;flex-wrap:wrap; }
+.cd-alert-list { margin:8px 0 0;padding-left:18px; }
+.cd-alert-list a { font-weight:700; }
 .cd-chip { background:#fff;border:1px solid #fbd38d;border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;text-align:left;color:#0f172a; }
 .cd-chip:hover { border-color:#b45309;box-shadow:0 2px 6px rgba(0,0,0,.08); }
 .cd-chip-meta { display:block;color:#6c757d;font-size:11px; }
+
+.cd-class-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px; }
+.cd-class-box { display:block;text-align:left;background:#fafbfc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;cursor:pointer;font-family:inherit; }
+.cd-class-box:hover { border-color:#94a3b8;box-shadow:0 2px 6px rgba(0,0,0,.06); }
+.cd-class-active { border-color:#5e64ff;box-shadow:0 0 0 2px rgba(94,100,255,.18);background:#f5f6ff; }
+.cd-class-label { font-size:11px;font-weight:700;color:#6c757d;text-transform:uppercase;letter-spacing:.4px; }
+.cd-class-count { font-size:22px;font-weight:800;color:#0f172a;line-height:1.3; }
+.cd-class-total { font-size:13px;font-weight:700;color:#334155; }
+.cd-class-warn { font-size:11px;font-weight:700;color:#b91c1c;margin-top:4px; }
+.cd-row-alert td { background:#fff7e6; }
 
 .cd-filters { display:flex;gap:12px;flex-wrap:wrap;align-items:end;margin-bottom:12px; }
 .cd-field { display:flex;flex-direction:column;gap:4px;min-width:150px; }

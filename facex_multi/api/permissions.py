@@ -83,9 +83,10 @@ _COMPANY_CONFIG_FIELDS = [
     "exige_familia_item",
     "item_flete", "mayusculas_items", "mayusculas_clientes",
     "sin_sufijo_compania_items",
+    "cuenta_recargo_entrega", "cuenta_flete", "recargo_flete_con_iva",
 ]
 # Campos texto (Select/Data/Link) — no convertir a int
-_CONFIG_TEXT_FIELDS = {"tipo_x_defecto", "item_flete"}
+_CONFIG_TEXT_FIELDS = {"tipo_x_defecto", "item_flete", "cuenta_recargo_entrega", "cuenta_flete"}
 # Check fields que están ON por defecto cuando no hay config
 _CONFIG_DEFAULT_ON = {"mostrar_almacen", "mostrar_desc_pct", "mostrar_adenda", "mostrar_tipo"}
 

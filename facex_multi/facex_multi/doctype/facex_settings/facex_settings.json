@@ -145,6 +145,10 @@
   "puede_ver_kpis_transporte",
   "sb_flete",
   "item_flete",
+  "cb_flete",
+  "cuenta_recargo_entrega",
+  "cuenta_flete",
+  "recargo_flete_con_iva",
   "sb_mayusculas",
   "mayusculas_items",
   "cb_mayusculas",
@@ -977,11 +981,36 @@
    "label": "Flete"
   },
   {
-   "description": "Se lee siempre del registro de la COMPAÑÍA (sin usuario), sin importar en qué registro de usuario lo estés viendo. Es el producto que se agrega automáticamente a la factura cuando el cajero marca \"Incluir Flete\" en FacEx Clásico o FacEx Screen. Vacío = esa casilla no se muestra.",
+   "description": "Se lee siempre del registro de la COMPAÑÍA (sin usuario). Al marcar \"Incluir Flete\" en FacEx Clásico o FacEx Screen se toma el precio de este ítem en la lista de precios de la factura y se registra como fila \"Flete\" en cargos (cuenta configurada abajo), no como línea de producto. Vacío = esa casilla no se muestra.",
    "fieldname": "item_flete",
    "fieldtype": "Link",
    "label": "Ítem de Flete (GLOBAL)",
    "options": "Item"
+  },
+  {
+   "fieldname": "cb_flete",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "cuenta_recargo_entrega",
+   "fieldtype": "Link",
+   "label": "Cuenta Recargo por Entrega (GLOBAL)",
+   "options": "Account",
+   "description": "Se lee del registro de la COMPAÑÍA. Cuenta de pasivo (p. ej. \"Recargos por Pagar a Transportista\") a la que va la fila \"Recargo por entrega\" cuando la lista de precios de la factura tiene Recargo por pieza > 0. No es ingreso: ese dinero se le paga al repartidor."
+  },
+  {
+   "fieldname": "cuenta_flete",
+   "fieldtype": "Link",
+   "label": "Cuenta de Flete (GLOBAL)",
+   "options": "Account",
+   "description": "Se lee del registro de la COMPAÑÍA. Cuenta de pasivo a la que va la fila \"Flete\" cuando el cajero marca \"Incluir Flete\". El monto se toma del precio del Ítem de Flete en la lista de precios de la factura; ya no se agrega como línea de producto."
+  },
+  {
+   "fieldname": "recargo_flete_con_iva",
+   "fieldtype": "Check",
+   "label": "Recargo y Flete llevan IVA (GLOBAL)",
+   "default": "0",
+   "description": "Apagado: la fila de recargo/flete se suma después del IVA (no grava). Encendido: cada cargo se parte en neto (cuenta de pasivo) + IVA (cuenta de IVA de la plantilla). Definir con el contador."
   },
   {
    "fieldname": "sb_mayusculas",
