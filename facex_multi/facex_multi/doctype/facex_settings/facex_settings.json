@@ -10,6 +10,12 @@
   "perfil",
   "sec_excepciones",
   "excepciones",
+  "sec_alcance",
+  "alcance_ventas",
+  "alcance_inventario",
+  "col_alcance",
+  "alcance_compras",
+  "reportes_todas_bodegas",
   "sb_facturador",
   "puede_ver_tablero",
   "puede_facturar",
@@ -119,20 +125,10 @@
   "mantiene_costos_items",
   "cb_inv_maestros",
   "mantiene_almacenes",
-  "sb_familias",
-  "consulta_familias",
-  "mantiene_familias",
-  "cb_familias",
-  "exige_familia_item",
-  "sb_grupo_items",
-  "consulta_grupo_items",
-  "mantiene_grupo_items",
-  "sb_seguridad",
-  "puede_ver_facex_settings",
-  "cb_seguridad",
-  "puede_resetear_password",
   "sb_cierre_diario",
   "puede_crear_cierres",
+  "cierre_supervisar",
+  "cierre_reabrir",
   "sb_pagos",
   "exige_pago_completo",
   "cb_pagos",
@@ -146,6 +142,18 @@
   "puede_cargar_liquidaciones_transporte",
   "puede_ver_reportes_transporte",
   "puede_ver_kpis_transporte",
+  "sb_familias",
+  "consulta_familias",
+  "mantiene_familias",
+  "cb_familias",
+  "exige_familia_item",
+  "sb_grupo_items",
+  "consulta_grupo_items",
+  "mantiene_grupo_items",
+  "sb_seguridad",
+  "puede_ver_facex_settings",
+  "cb_seguridad",
+  "puede_resetear_password",
   "sb_flete",
   "item_flete",
   "cb_flete",
@@ -210,6 +218,43 @@
    "label": "Excepciones al Perfil",
    "read_only": 1,
    "description": "Se calcula sola: permisos de este usuario que difieren de su perfil."
+  },
+  {
+   "fieldname": "sec_alcance",
+   "fieldtype": "Section Break",
+   "label": "Alcance de Datos"
+  },
+  {
+   "fieldname": "alcance_ventas",
+   "fieldtype": "Select",
+   "options": "Solo lo creado por mí\nClientes donde soy vendedor\nToda la compañía",
+   "label": "Alcance en Ventas",
+   "description": "Qué ventas ve en los reportes de ventas, la vista rápida de factura y los KPIs de Inicio. «Clientes donde soy vendedor»: clientes cuyo Vendedor en la ficha es el Socio de Venta del usuario."
+  },
+  {
+   "fieldname": "alcance_inventario",
+   "fieldtype": "Select",
+   "options": "Solo lo creado por mí\nToda la compañía",
+   "label": "Alcance en Inventario",
+   "description": "Kardex, Trazabilidad, Kardex Valorizado y Rotación: movimientos propios o de todos."
+  },
+  {
+   "fieldname": "col_alcance",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "alcance_compras",
+   "fieldtype": "Select",
+   "options": "Solo lo creado por mí\nToda la compañía",
+   "label": "Alcance en Compras",
+   "description": "Lista de Compras y reporte Entradas por Proveedor: compras propias o de todos."
+  },
+  {
+   "fieldname": "reportes_todas_bodegas",
+   "fieldtype": "Check",
+   "default": "0",
+   "label": "Ver todas las bodegas en reportes",
+   "description": "Sin marcar: los reportes se limitan a sus Bodegas Habilitadas."
   },
   {
    "fieldname": "sb_facturador",
@@ -868,6 +913,20 @@
    "label": "Crear Cierres Diarios de Venta (solo los propios)"
   },
   {
+   "fieldname": "cierre_supervisar",
+   "fieldtype": "Check",
+   "default": "0",
+   "label": "Supervisar cierres de todos los usuarios",
+   "description": "Ver los cierres de todos y crear/cerrar cierres por otro usuario."
+  },
+  {
+   "fieldname": "cierre_reabrir",
+   "fieldtype": "Check",
+   "default": "0",
+   "label": "Reabrir cierres",
+   "description": "Reabrir un cierre ya Cerrado (descongela sus facturas)."
+  },
+  {
    "fieldname": "sb_pagos",
    "fieldtype": "Section Break",
    "label": "Configuración de Pagos (FacEx Screen)",
@@ -1110,7 +1169,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-09-23 13:00:00.000000",
+ "modified": "2026-09-23 15:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Settings",

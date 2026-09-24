@@ -9,6 +9,12 @@
   "descripcion",
   "col_usuarios",
   "usuarios_asignados",
+  "sec_alcance",
+  "alcance_ventas",
+  "alcance_inventario",
+  "col_alcance",
+  "alcance_compras",
+  "reportes_todas_bodegas",
   "sec_0",
   "puede_ver_tablero",
   "puede_facturar",
@@ -83,6 +89,8 @@
   "mantiene_almacenes",
   "sec_8",
   "puede_crear_cierres",
+  "cierre_supervisar",
+  "cierre_reabrir",
   "sec_9",
   "puede_ver_menu_transporte",
   "puede_administrar_transportistas",
@@ -126,6 +134,46 @@
    "label": "Usuarios asignados",
    "read_only": 1,
    "description": "Se actualiza al guardar."
+  },
+  {
+   "fieldname": "sec_alcance",
+   "fieldtype": "Section Break",
+   "label": "Alcance de Datos"
+  },
+  {
+   "fieldname": "alcance_ventas",
+   "fieldtype": "Select",
+   "options": "Solo lo creado por mí\nClientes donde soy vendedor\nToda la compañía",
+   "label": "Alcance en Ventas",
+   "description": "Qué ventas ve en los reportes de ventas, la vista rápida de factura y los KPIs de Inicio. «Clientes donde soy vendedor»: clientes cuyo Vendedor en la ficha es el Socio de Venta del usuario.",
+   "default": "Solo lo creado por mí"
+  },
+  {
+   "fieldname": "alcance_inventario",
+   "fieldtype": "Select",
+   "options": "Solo lo creado por mí\nToda la compañía",
+   "label": "Alcance en Inventario",
+   "description": "Kardex, Trazabilidad, Kardex Valorizado y Rotación: movimientos propios o de todos.",
+   "default": "Solo lo creado por mí"
+  },
+  {
+   "fieldname": "col_alcance",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "alcance_compras",
+   "fieldtype": "Select",
+   "options": "Solo lo creado por mí\nToda la compañía",
+   "label": "Alcance en Compras",
+   "description": "Lista de Compras y reporte Entradas por Proveedor: compras propias o de todos.",
+   "default": "Solo lo creado por mí"
+  },
+  {
+   "fieldname": "reportes_todas_bodegas",
+   "fieldtype": "Check",
+   "default": "0",
+   "label": "Ver todas las bodegas en reportes",
+   "description": "Sin marcar: los reportes se limitan a sus Bodegas Habilitadas."
   },
   {
    "fieldname": "sec_0",
@@ -576,6 +624,20 @@
    "label": "Crear Cierres Diarios de Venta (solo los propios)"
   },
   {
+   "fieldname": "cierre_supervisar",
+   "fieldtype": "Check",
+   "default": "0",
+   "label": "Supervisar cierres de todos los usuarios",
+   "description": "Ver los cierres de todos y crear/cerrar cierres por otro usuario."
+  },
+  {
+   "fieldname": "cierre_reabrir",
+   "fieldtype": "Check",
+   "default": "0",
+   "label": "Reabrir cierres",
+   "description": "Reabrir un cierre ya Cerrado (descongela sus facturas)."
+  },
+  {
    "fieldname": "sec_9",
    "fieldtype": "Section Break",
    "label": "Transporte (Guías / Liquidaciones)",
@@ -689,7 +751,7 @@
   }
  ],
  "links": [],
- "modified": "2026-09-23 13:00:00.000000",
+ "modified": "2026-09-23 15:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Perfil de Permisos",

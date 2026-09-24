@@ -30,7 +30,7 @@ def _scope(company: str, alias: str = None) -> tuple:
         company_cond, company_vals = _build_company_condition_alias(company, alias)
     else:
         company_cond, company_vals = _build_company_condition(company)
-    sp_cond, sp_vals = _sales_partner_condition(alias)
+    sp_cond, sp_vals = _sales_partner_condition(alias, company=company)
     owner_cond, owner_vals = _resolve_owner_filter(company, None, alias)
     return (
         [company_cond, sp_cond, owner_cond],
@@ -148,7 +148,7 @@ def _kpi_pagos_hoy(company: str) -> dict:
     # El filtro de usuario creador va sobre la línea de pago (ip), no sobre la
     # factura: mismo criterio que el reporte de Recibos y Pagos.
     company_cond, company_vals = _build_company_condition_alias(company, "p")
-    sp_cond, sp_vals = _sales_partner_condition("p")
+    sp_cond, sp_vals = _sales_partner_condition("p", company=company)
     owner_cond, owner_vals = _resolve_owner_filter(company, None, "ip")
     values = {"today": today(), **company_vals, **sp_vals, **owner_vals}
     row = frappe.db.sql(

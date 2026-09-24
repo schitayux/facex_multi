@@ -40,7 +40,9 @@ from facex_multi.api.invoice import get_effective_company
 from facex_multi.api.permissions import (
     get_facex_can_create_cierres,
     get_facex_company_config,
-    get_facex_is_gerencia,
+    get_facex_can_reopen_cierres,
+    get_facex_can_supervise_cierres,
+    get_user_can_supervise_cierres,
 )
 
 DOCTYPE = "FacEx Cierre Diario"
@@ -86,7 +88,15 @@ def _installed() -> bool:
 
 
 def _is_gerencia(company: str) -> bool:
-    return _installed() and (_is_sysman() or get_facex_is_gerencia(company))
+    """Supervisa el Cierre Diario: ve los cierres de todos y crea/cierra por
+    otro usuario (FacEx Settings / Perfil > cierre_supervisar; antes, el Rol
+    (Clasificación) «Gerencia»)."""
+    return _installed() and (_is_sysman() or get_facex_can_supervise_cierres(company))
+
+
+def _can_reopen(company: str) -> bool:
+    """Reabrir un cierre Cerrado (cierre_reabrir)."""
+    return _installed() and (_is_sysman() or get_facex_can_reopen_cierres(company))
 
 
 def _can_create(company: str) -> bool:
@@ -122,9 +132,7 @@ def cierre_query_conditions(user: str = None) -> str:
     if "System Manager" in frappe.get_roles(user):
         return ""
     company = get_effective_company()
-    if company and frappe.db.get_value(
-        "FacEx Settings", {"user": user, "bfel_company": company}, "rol_clasificacion"
-    ) == "Gerencia":
+    if company and get_user_can_supervise_cierres(user, company):
         return ""
     return f"`tab{DOCTYPE}`.usuario = {frappe.db.escape(user)}"
 
@@ -135,9 +143,7 @@ def cierre_has_permission(doc, ptype: str = "read", user: str = None) -> bool:
         return True
     if doc.usuario == user:
         return True
-    return frappe.db.get_value(
-        "FacEx Settings", {"user": user, "bfel_company": doc.company}, "rol_clasificacion"
-    ) == "Gerencia"
+    return get_user_can_supervise_cierres(user, doc.company)
 
 
 # ---------------------------------------------------------------------------
@@ -826,7 +832,7 @@ def list_cierres(company: str = None, from_date: str = None, to_date: str = None
 def _doc_to_dict(doc) -> dict:
     d = doc.as_dict()
     d["snapshot"] = json.loads(doc.snapshot_json) if doc.snapshot_json else None
-    d["puede_reabrir"] = int(_is_gerencia(doc.company))
+    d["puede_reabrir"] = int(_can_reopen(doc.company))
     d["puede_gestionar"] = int(
         _is_gerencia(doc.company) or (_can_create(doc.company) and doc.usuario == frappe.session.user)
     )
@@ -974,8 +980,8 @@ def cerrar_cierre(payload) -> dict:
 @frappe.whitelist()
 def reabrir_cierre(name: str, motivo: str = None) -> dict:
     doc = frappe.get_doc(DOCTYPE, name)
-    if not _is_gerencia(doc.company):
-        frappe.throw(_("Solo un usuario con Rol (Clasificación) «Gerencia» puede reabrir un cierre."), frappe.PermissionError)
+    if not _can_reopen(doc.company):
+        frappe.throw(_("No tiene el permiso «Reabrir cierres» (FacEx Settings)."), frappe.PermissionError)
     if doc.estado != "Cerrado":
         frappe.throw(_("El cierre {0} no está Cerrado.").format(doc.name))
     motivo = (motivo or "").strip()

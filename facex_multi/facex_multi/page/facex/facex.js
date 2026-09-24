@@ -10425,9 +10425,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 					fieldname: "rep_warehouse",
 					get_data: (txt) => {
 						const filters = { company: get_company() };
-						// Gerencia (rol_clasificacion en FacEx Settings): sin restricción,
-						// puede elegir cualquier almacén de la compañía en los reportes.
-						if (!(this.perms || {}).es_gerencia && (this.warehouses || []).length) {
+						// «Ver todas las bodegas en reportes»: cualquier almacén de la
+						// compañía; sin él, solo sus Bodegas Habilitadas.
+						if (!(this.perms || {}).reportes_todas_bodegas && (this.warehouses || []).length) {
 							filters.name = ["in", this.warehouses];
 						}
 						return frappe.db.get_link_options("Warehouse", txt, filters);
@@ -10639,8 +10639,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 		// Solo Gerencia (rol_clasificacion) puede elegir a QUIÉN filtrar — el
 		// resto siempre ve únicamente sus propias operaciones (forzado en el
 		// backend), así que mostrarles el control sería engañoso.
-		const _esGerencia = !!(this.perms || {}).es_gerencia;
-		if (report_id && report_id !== "print_receipt" && report_id !== "utility_analysis" && _esGerencia) {
+		// El filtro «Usuario Creador» solo tiene sentido con Alcance en Ventas
+		// «Toda la compañía»: en los otros alcances el backend ya fija qué ve.
+		const _veTodo = (this.perms || {}).alcance_ventas === "Toda la compañía";
+		if (report_id && report_id !== "print_receipt" && report_id !== "utility_analysis" && _veTodo) {
 			this.$body.find(".ef-filter-owners").show();
 		} else {
 			this.$body.find(".ef-filter-owners").hide();

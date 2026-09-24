@@ -487,6 +487,9 @@ def get_purchase_list(
         filters.append(["supplier", "=", supplier])
     if docstatus is not None and docstatus != "":
         filters.append(["docstatus", "=", int(docstatus)])
+    from facex_multi.api.permissions import SCOPE_OWN, get_facex_purchase_scope
+    if get_facex_purchase_scope(company) == SCOPE_OWN:
+        filters.append(["owner", "=", frappe.session.user])
 
     return frappe.get_all(
         "Purchase Invoice",
@@ -505,6 +508,9 @@ def get_purchase_invoice(name: str, company: str = None) -> dict:
     doc = frappe.get_doc("Purchase Invoice", name.strip())
     if doc.company != company and frappe.session.user != "Administrator":
         frappe.throw("No tiene permisos para ver esta factura de compra.")
+    from facex_multi.api.permissions import SCOPE_OWN, get_facex_purchase_scope
+    if get_facex_purchase_scope(company) == SCOPE_OWN and doc.owner != frappe.session.user:
+        frappe.throw("Solo puede ver las compras que usted registró.", frappe.PermissionError)
     d = doc.as_dict()
     for item in d.get("items", []):
         meta = frappe.db.get_value(

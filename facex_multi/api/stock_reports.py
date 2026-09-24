@@ -133,6 +133,18 @@ def _owner_condition(owners, alias: str = None):
     return f"{col} IN %(owner_list)s", {"owner_list": tuple(owner_list)}
 
 
+def _scoped_owner_condition(company: str, owners, alias: str, dominio: str = "inventario"):
+    """_owner_condition según el alcance del usuario (FacEx Settings / Perfil):
+    «Solo lo creado por mí» fuerza sus propios documentos sin importar el
+    filtro del frontend; «Toda la compañía» deja mandar al filtro (vacío =
+    todos). `dominio`: inventario (movimientos) o compras (Entradas por
+    Proveedor, que sale de Facturas de Compra)."""
+    from facex_multi.api.permissions import SCOPE_OWN, get_facex_scope
+    if get_facex_scope(company, dominio) == SCOPE_OWN:
+        return _owner_condition([frappe.session.user], alias)
+    return _owner_condition(owners, alias)
+
+
 class _NoWarehousesForEstablecimiento(Exception):
     """Señal interna: la sucursal filtrada no tiene almacenes asignados."""
 
@@ -204,7 +216,7 @@ def get_kardex(
         conditions.append(wh_cond)
         params.update(wh_params)
 
-    owner_cond, owner_params = _owner_condition(owners, "sle")
+    owner_cond, owner_params = _scoped_owner_condition(company, owners, "sle")
     if owner_cond:
         conditions.append(owner_cond)
         params.update(owner_params)
@@ -552,7 +564,7 @@ def get_serial_traceability(company: str = None, item_code: str = None, serial_n
     if wh_cond:
         conditions.append(wh_cond)
         params.update(wh_params)
-    owner_cond, owner_params = _owner_condition(owners, "s")
+    owner_cond, owner_params = _scoped_owner_condition(company, owners, "s")
     if owner_cond:
         conditions.append(owner_cond)
         params.update(owner_params)
@@ -620,7 +632,7 @@ def get_batch_traceability(company: str = None, item_code: str = None, batch_no:
     if wh_cond:
         conditions.append(wh_cond)
         params.update(wh_params)
-    owner_cond, owner_params = _owner_condition(owners, "sle")
+    owner_cond, owner_params = _scoped_owner_condition(company, owners, "sle")
     if owner_cond:
         conditions.append(owner_cond)
         params.update(owner_params)
@@ -742,7 +754,7 @@ def get_kardex_producto(company: str = None, item_code: str = None, from_date: s
         conditions.append(wh_cond)
         params.update(wh_params)
 
-    owner_cond, owner_params = _owner_condition(owners, "sle")
+    owner_cond, owner_params = _scoped_owner_condition(company, owners, "sle")
     if owner_cond:
         conditions.append(owner_cond)
         params.update(owner_params)
@@ -1091,7 +1103,7 @@ def get_stock_turnover_abc(company: str = None, warehouse: str = None, item_grou
     if wh_cond:
         mv_conditions.append(wh_cond)
         params.update(wh_params)
-    owner_cond, owner_params = _owner_condition(owners, "sle")
+    owner_cond, owner_params = _scoped_owner_condition(company, owners, "sle")
     if owner_cond:
         mv_conditions.append(owner_cond)
         params.update(owner_params)
@@ -1240,7 +1252,7 @@ def get_receipts_by_supplier(company: str = None, from_date: str = None, to_date
     conditions = ["pi.docstatus = 1", "pi.company = %(company)s",
                   "pi.posting_date BETWEEN %(from_date)s AND %(to_date)s"]
     params = {"company": company, "from_date": from_date, "to_date": to_date}
-    owner_cond, owner_params = _owner_condition(owners, "pi")
+    owner_cond, owner_params = _scoped_owner_condition(company, owners, "pi", "compras")
     if owner_cond:
         conditions.append(owner_cond)
         params.update(owner_params)

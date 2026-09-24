@@ -55,16 +55,32 @@ def _build_company_condition_alias(company: str, alias: str = "p") -> tuple:
     return cond, vals
 
 
-def _sales_partner_condition(alias: str = None) -> tuple:
-    """Retorna (condicion_sql, valores_dict) para acotar un informe de Sales
-    Invoice al Socio de Ventas del usuario. ("1=1", {}) si el usuario no está
-    limitado (ve todo lo que su compañía/rol le permita)."""
-    from facex_multi.api.permissions import get_facex_user_sales_partner
-    sp = get_facex_user_sales_partner()
-    if not sp:
+def _sales_partner_condition(alias: str = None, company: str = None) -> tuple:
+    """Condición por cliente según el Alcance en Ventas del usuario.
+
+    Con «Clientes donde soy vendedor»: facturas de los clientes cuyo Vendedor
+    (Customer.default_sales_partner) es el Socio de Venta del usuario, más lo
+    que él mismo facturó (p. ej. a Consumidor Final). Sin Socio configurado,
+    solo lo propio. Los otros alcances no filtran por cliente ("1=1") — el
+    Socio de Venta por Defecto ya no recorta los reportes; eso lo decide el
+    alcance.
+    """
+    from facex_multi.api.permissions import (
+        SCOPE_CUSTOMERS, get_facex_sales_scope, get_facex_user_sales_partner,
+    )
+    eff_company = get_effective_company(company)
+    if get_facex_sales_scope(eff_company) != SCOPE_CUSTOMERS:
         return "1=1", {}
-    col = f"{alias}.sales_partner" if alias else "sales_partner"
-    return f"{col} = %(facex_sp)s", {"facex_sp": sp}
+    prefix = f"{alias}." if alias else ""
+    me_cond = f"{prefix}owner = %(facex_me)s"
+    sp = get_facex_user_sales_partner(eff_company)
+    if not sp:
+        return me_cond, {"facex_me": frappe.session.user}
+    return (
+        f"({me_cond} OR {prefix}customer IN "
+        f"(SELECT c.name FROM `tabCustomer` c WHERE c.default_sales_partner = %(facex_sp)s))",
+        {"facex_me": frappe.session.user, "facex_sp": sp},
+    )
 
 
 def _owner_condition(owners, alias: str = None) -> tuple:
@@ -79,20 +95,33 @@ def _owner_condition(owners, alias: str = None) -> tuple:
     return f"{col} IN %(owners)s", {"owners": tuple(owners)}
 
 
-def _resolve_owner_filter(company: str, owners, alias: str = None) -> tuple:
-    """Igual patrón que _resolve_warehouse_filter, aplicado al filtro
-    "Usuario Creador" de los reportes de FacEx Clásico:
-    - Rol de Clasificación "Gerencia" (FacEx Settings > rol_clasificacion) o
-      System Manager: puede elegir cualquier usuario creador (o ninguno =
-      todos).
-    - Cualquier otro caso (rol distinto, vacío, o sin fila de FacEx
-      Settings): SIEMPRE forzado a ver solo sus propias operaciones, sin
-      importar qué haya seleccionado en el filtro del frontend.
+def _resolve_owner_filter(company: str, owners, alias: str = None,
+                          customer_level: bool = False, audit: bool = False) -> tuple:
+    """Filtro "Usuario Creador" según el Alcance en Ventas del usuario
+    (FacEx Settings / Perfil > alcance_ventas):
+    - Toda la compañía: el filtro del frontend manda (vacío = todos).
+    - Clientes donde soy vendedor: aquí no filtra (lo hace
+      _sales_partner_condition por cliente); en Auditoría (`audit`) = propio.
+    - Solo lo creado por mí: forzado a sus propias operaciones. Con
+      `customer_level` (Estados de Cuenta, Antigüedad de Saldos) significa
+      "clientes a los que yo facturé", con el saldo COMPLETO de esos clientes
+      — filtrar sus facturas por creador daría saldos incompletos.
     """
-    from facex_multi.api.permissions import get_facex_is_gerencia
-    eff_company = get_effective_company(company)
-    if "System Manager" in frappe.get_roles() or get_facex_is_gerencia(eff_company):
+    from facex_multi.api.permissions import (
+        SCOPE_ALL, SCOPE_CUSTOMERS, get_facex_sales_scope,
+    )
+    scope = get_facex_sales_scope(get_effective_company(company))
+    if scope == SCOPE_ALL:
         return _owner_condition(owners, alias)
+    if scope == SCOPE_CUSTOMERS and not audit:
+        return "1=1", {}
+    if customer_level:
+        col = f"{alias}.customer" if alias else "customer"
+        return (
+            f"{col} IN (SELECT DISTINCT si_own.customer FROM `tabSales Invoice` si_own "
+            f"WHERE si_own.owner = %(facex_owner_me)s AND si_own.docstatus = 1)",
+            {"facex_owner_me": frappe.session.user},
+        )
     return _owner_condition([frappe.session.user], alias)
 
 
@@ -199,9 +228,11 @@ def _resolve_warehouse_filter(company: str, warehouse):
     if not company:
         return None, None
 
-    from facex_multi.api.permissions import get_facex_allowed_warehouses, get_facex_is_gerencia
-    if "System Manager" in frappe.get_roles() or get_facex_is_gerencia(company):
-        # Gerencia (o System Manager): sin restricción, puede ver cualquier
+    from facex_multi.api.permissions import (
+        get_facex_allowed_warehouses, get_facex_can_see_all_report_warehouses,
+    )
+    if get_facex_can_see_all_report_warehouses(company):
+        # «Ver todas las bodegas en reportes» (o System Manager): cualquier
         # almacén de la compañía en los reportes de FacEx Clásico.
         allowed = None
     else:
@@ -233,7 +264,7 @@ def get_sales_by_date(start_date: str, end_date: str, customer: str = None, ware
     _require_report(company, "reporte_ventas_fecha")
 
     company_cond, company_vals = _build_company_condition(company)
-    sp_cond, sp_vals = _sales_partner_condition()
+    sp_cond, sp_vals = _sales_partner_condition(company=company)
     owner_cond, owner_vals = _resolve_owner_filter(company, owners)
     conditions = ["docstatus = 1", "COALESCE(bfel_documento_anulado, 0) != 1", company_cond, sp_cond, owner_cond]
     values = {"start": start_date, "end": end_date, **company_vals, **sp_vals, **owner_vals}
@@ -298,7 +329,7 @@ def get_sales_by_product(start_date: str, end_date: str, item_code: str = None,
     _require_report(company, "reporte_ventas_producto")
 
     company_cond, company_vals = _build_company_condition_alias(company, "p")
-    sp_cond, sp_vals = _sales_partner_condition("p")
+    sp_cond, sp_vals = _sales_partner_condition("p", company=company)
     owner_cond, owner_vals = _resolve_owner_filter(company, owners, "p")
     conditions = ["p.docstatus = 1", "COALESCE(p.bfel_documento_anulado, 0) != 1", "p.posting_date BETWEEN %(start)s AND %(end)s", company_cond, sp_cond, owner_cond]
     values = {"start": start_date, "end": end_date, **company_vals, **sp_vals, **owner_vals}
@@ -358,7 +389,7 @@ def get_cancelled_invoices(start_date: str, end_date: str, customer: str = None,
     _require_report(company, "reporte_facturas_canceladas")
 
     company_cond, company_vals = _build_company_condition(company)
-    sp_cond, sp_vals = _sales_partner_condition()
+    sp_cond, sp_vals = _sales_partner_condition(company=company)
     owner_cond, owner_vals = _resolve_owner_filter(company, owners)
     conditions = ["(docstatus = 2 OR COALESCE(bfel_documento_anulado, 0) = 1)", "posting_date BETWEEN %(start)s AND %(end)s", company_cond, sp_cond, owner_cond]
     values = {"start": start_date, "end": end_date, **company_vals, **sp_vals, **owner_vals}
@@ -402,8 +433,8 @@ def get_customer_statement(customer: str, start_date: str = None, end_date: str 
         return {"ledger": [], "summary": {}}
 
     company_cond, company_vals = _build_company_condition(company)
-    sp_cond, sp_vals = _sales_partner_condition()
-    owner_cond, owner_vals = _resolve_owner_filter(company, owners)
+    sp_cond, sp_vals = _sales_partner_condition(company=company)
+    owner_cond, owner_vals = _resolve_owner_filter(company, owners, customer_level=True)
     values = {"customer": customer, **company_vals, **sp_vals, **owner_vals}
     conditions = ["customer = %(customer)s", "docstatus = 1", "COALESCE(bfel_documento_anulado, 0) != 1", company_cond, sp_cond, owner_cond]
     
@@ -508,8 +539,8 @@ def get_aging_receivables(customer: str = None, owners=None, company: str = None
     _require_report(company, "reporte_antiguedad_saldos")
 
     company_cond, company_vals = _build_company_condition(company)
-    sp_cond, sp_vals = _sales_partner_condition()
-    owner_cond, owner_vals = _resolve_owner_filter(company, owners)
+    sp_cond, sp_vals = _sales_partner_condition(company=company)
+    owner_cond, owner_vals = _resolve_owner_filter(company, owners, customer_level=True)
     conditions = ["docstatus = 1", "is_return = 0", "COALESCE(bfel_documento_anulado, 0) != 1", company_cond, sp_cond, owner_cond]
     values = {**company_vals, **sp_vals, **owner_vals}
     
@@ -631,7 +662,7 @@ def get_quotations_report(start_date: str = None, end_date: str = None, customer
     _require_report(company, "reporte_cotizaciones")
 
     company_cond, company_vals = _build_company_condition(company)
-    sp_cond, sp_vals = _sales_partner_condition()
+    sp_cond, sp_vals = _sales_partner_condition(company=company)
     owner_cond, owner_vals = _resolve_owner_filter(company, owners)
     conditions = ["docstatus = 0", "is_return = 0", "is_debit_note = 0", "COALESCE(bfel_documento_anulado, 0) != 1", company_cond, sp_cond, owner_cond]
     values = {**company_vals, **sp_vals, **owner_vals}
@@ -677,7 +708,7 @@ def get_payments_report(start_date: str, end_date: str, payment_method: str = No
     _require_report(company, "reporte_recibos_pagos")
 
     company_cond, company_vals = _build_company_condition_alias(company, "p")
-    sp_cond, sp_vals = _sales_partner_condition("p")
+    sp_cond, sp_vals = _sales_partner_condition("p", company=company)
     owner_cond, owner_vals = _resolve_owner_filter(company, owners, "ip")
     conditions = ["p.docstatus = 1", "COALESCE(p.bfel_documento_anulado, 0) != 1", "ip.payment_date BETWEEN %(start)s AND %(end)s", company_cond, sp_cond, owner_cond]
     values = {"start": start_date, "end": end_date, **company_vals, **sp_vals, **owner_vals}
@@ -731,7 +762,7 @@ def get_uncertified_invoices(owners=None, company: str = None, establecimiento: 
     _require_report(company, "reporte_facturas_canceladas")
 
     company_cond, company_vals = _build_company_condition(company)
-    sp_cond, sp_vals = _sales_partner_condition()
+    sp_cond, sp_vals = _sales_partner_condition(company=company)
     owner_cond, owner_vals = _resolve_owner_filter(company, owners)
     conditions = [
         "docstatus = 1",
@@ -776,7 +807,7 @@ def get_sales_growth_analysis(year: str = None, month: str = None, owners=None,
     _require_report(company, "reporte_crecimiento_ventas")
 
     company_cond, company_vals = _build_company_condition(company)
-    sp_cond, sp_vals = _sales_partner_condition()
+    sp_cond, sp_vals = _sales_partner_condition(company=company)
     owner_cond, owner_vals = _resolve_owner_filter(company, owners)
     current_year = int(year) if year else datetime.datetime.now().year
     current_month = int(month) if month else datetime.datetime.now().month
@@ -928,7 +959,7 @@ def get_invoice_peek(name: str, company: str = None) -> dict:
     check_permission(company)
 
     company_cond, company_vals = _build_company_condition(company)
-    sp_cond, sp_vals = _sales_partner_condition()
+    sp_cond, sp_vals = _sales_partner_condition(company=company)
     owner_cond, owner_vals = _resolve_owner_filter(company, None)
     values = {"name": name, **company_vals, **sp_vals, **owner_vals}
 

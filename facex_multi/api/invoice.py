@@ -604,10 +604,18 @@ def get_defaults(company: str = None):
     permissions["puede_cargar_liquidaciones_transporte"] = int(get_facex_can_upload_liquidaciones_transporte(company))
     permissions["puede_ver_menu_transporte"] = int(get_facex_can_view_transporte_menu(company))
     permissions["puede_ver_kpis_transporte"] = int(get_facex_can_view_transporte_kpis(company))
-    # Rol de Clasificación "Gerencia": únicamente habilita, en los reportes de
-    # FacEx Clásico, seleccionar cualquier almacén/usuario creador (ver
-    # reports.py _resolve_owner_filter / _resolve_warehouse_filter).
-    permissions["es_gerencia"] = int(get_facex_is_gerencia(company))
+    # Alcance de datos y permisos que antes dependían del Rol (Clasificación)
+    # «Gerencia» (hoy informativo). es_gerencia se conserva como nombre para
+    # Cierre Diario: significa «supervisa los cierres de todos».
+    from facex_multi.api.permissions import (
+        get_facex_can_see_all_report_warehouses, get_facex_can_supervise_cierres,
+        get_facex_inventory_scope, get_facex_purchase_scope, get_facex_sales_scope,
+    )
+    permissions["es_gerencia"] = int(get_facex_can_supervise_cierres(company))
+    permissions["alcance_ventas"] = get_facex_sales_scope(company)
+    permissions["alcance_inventario"] = get_facex_inventory_scope(company)
+    permissions["alcance_compras"] = get_facex_purchase_scope(company)
+    permissions["reportes_todas_bodegas"] = int(get_facex_can_see_all_report_warehouses(company))
     company_config = get_facex_company_config(company)
     default_pos_warehouse = get_facex_default_warehouse(company)
     default_sales_partner = get_facex_default_sales_partner(company)

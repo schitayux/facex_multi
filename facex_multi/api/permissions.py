@@ -203,6 +203,8 @@ PROFILE_PERM_FIELDS = [
     "mantiene_costos_items",
     "mantiene_almacenes",
     "puede_crear_cierres",
+    "cierre_supervisar",
+    "cierre_reabrir",
     "puede_ver_menu_transporte",
     "puede_administrar_transportistas",
     "puede_editar_guias_transporte",
@@ -215,7 +217,19 @@ PROFILE_PERM_FIELDS = [
     "mantiene_grupo_items",
     "puede_ver_facex_settings",
     "puede_resetear_password",
+    "reportes_todas_bodegas",
 ]
+
+# Selects de alcance de datos que el perfil define (mismo modelo perfil +
+# excepción que los checks). Valor vacío en la fila → criterio heredado.
+SCOPE_OWN = "Solo lo creado por mí"
+SCOPE_CUSTOMERS = "Clientes donde soy vendedor"
+SCOPE_ALL = "Toda la compañía"
+PROFILE_SCOPE_FIELDS = {
+    "alcance_ventas": (SCOPE_OWN, SCOPE_CUSTOMERS, SCOPE_ALL),
+    "alcance_inventario": (SCOPE_OWN, SCOPE_ALL),
+    "alcance_compras": (SCOPE_OWN, SCOPE_ALL),
+}
 
 
 _COMPANY_CONFIG_FIELDS = [
@@ -970,12 +984,10 @@ def get_facex_can_view_seguridad(company: str) -> bool:
 # ---------------------------------------------------------------------------
 # Rol de Clasificación (Bodega / Ventas / Producción / Gerencia)
 # ---------------------------------------------------------------------------
-# Campo `rol_clasificacion`: puramente informativo/clasificatorio salvo el
-# valor "Gerencia", que habilita — SOLO en los reportes de FacEx Clásico —
-# selección libre de almacén y de "Usuario Creador" (ver reports.py
-# _resolve_owner_filter / _resolve_warehouse_filter). Cualquier otro valor
-# (incluido vacío) NO es Gerencia: el reporte queda forzado a las propias
-# operaciones del usuario.
+# INFORMATIVO desde 2026-09: lo que antes habilitaba «Gerencia» ahora son
+# campos propios (alcance_ventas, reportes_todas_bodegas, cierre_supervisar,
+# cierre_reabrir — ver «Alcance de datos» al final de este archivo). Solo se
+# sigue leyendo como criterio heredado para filas sin esos campos.
 
 def get_facex_is_gerencia(company: str) -> bool:
     if _is_sm():
@@ -1005,3 +1017,80 @@ def get_facex_can_create_cierres(company: str) -> bool:
     if not frappe.db.table_exists("FacEx Cierre Diario") or not frappe.get_meta("FacEx Settings").has_field("puede_crear_cierres"):
         return False
     return _flag(company, "puede_crear_cierres")
+
+
+# ---------------------------------------------------------------------------
+# Alcance de datos (reportes de Ventas / Inventario / Compras) y los permisos
+# que antes dependían del Rol (Clasificación) «Gerencia»
+# ---------------------------------------------------------------------------
+# Rol (Clasificación) queda informativo. Mientras una fila no tenga guardado
+# el campo nuevo (sitio sin migrar, o fila creada sin perfil), se aplica el
+# criterio heredado: Gerencia = todo; resto = solo lo propio en Ventas y
+# todo en Inventario/Compras (lo que esos reportes hacían antes).
+
+def _legacy_gerencia(company: str) -> bool:
+    return (_row(company) or {}).get("rol_clasificacion") == "Gerencia"
+
+
+def get_facex_scope(company: str, dominio: str) -> str:
+    """Alcance de datos del usuario en `dominio` (ventas | inventario | compras)."""
+    field = f"alcance_{dominio}"
+    if field not in PROFILE_SCOPE_FIELDS:
+        frappe.throw(f"Dominio de alcance desconocido: '{dominio}'.")
+    if _is_sm():
+        return SCOPE_ALL
+    value = (_row(company) or {}).get(field)
+    if value in PROFILE_SCOPE_FIELDS[field]:
+        return value
+    if dominio == "ventas":
+        return SCOPE_ALL if _legacy_gerencia(company) else SCOPE_OWN
+    return SCOPE_ALL
+
+
+def get_facex_sales_scope(company: str) -> str:
+    return get_facex_scope(company, "ventas")
+
+
+def get_facex_inventory_scope(company: str) -> str:
+    return get_facex_scope(company, "inventario")
+
+
+def get_facex_purchase_scope(company: str) -> str:
+    return get_facex_scope(company, "compras")
+
+
+def _flag_or_legacy_gerencia(company: str, field: str) -> bool:
+    if _is_sm():
+        return True
+    row = _row(company) or {}
+    if field in row:
+        return bool(int(row.get(field) or 0))
+    return _legacy_gerencia(company)
+
+
+def get_facex_can_see_all_report_warehouses(company: str) -> bool:
+    """Reportes: elegir cualquier bodega de la compañía (sin marcar → solo sus
+    Bodegas Habilitadas)."""
+    return _flag_or_legacy_gerencia(company, "reportes_todas_bodegas")
+
+
+def get_facex_can_supervise_cierres(company: str) -> bool:
+    """Cierre Diario: ver los cierres de todos y crear/cerrar por otro usuario."""
+    return _flag_or_legacy_gerencia(company, "cierre_supervisar")
+
+
+def get_facex_can_reopen_cierres(company: str) -> bool:
+    """Cierre Diario: reabrir un cierre Cerrado."""
+    return _flag_or_legacy_gerencia(company, "cierre_reabrir")
+
+
+def get_user_can_supervise_cierres(user: str, company: str) -> bool:
+    """Igual que get_facex_can_supervise_cierres para un `user` explícito
+    (hooks de permiso del escritorio)."""
+    if _is_sm(user):
+        return True
+    row = _row(company, user) or {}
+    if "cierre_supervisar" in row:
+        return bool(int(row.get("cierre_supervisar") or 0))
+    return row.get("rol_clasificacion") == "Gerencia"
+

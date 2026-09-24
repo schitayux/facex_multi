@@ -19,21 +19,41 @@ from __future__ import annotations
 
 import frappe
 
-from facex_multi.api.permissions import PROFILE_PERM_FIELDS, clear_permissions_cache
+from facex_multi.api.permissions import PROFILE_PERM_FIELDS, PROFILE_SCOPE_FIELDS, clear_permissions_cache
 
 PROFILE_DOCTYPE = "FacEx Perfil de Permisos"
 
 
+PROFILE_FIELDS = PROFILE_PERM_FIELDS + list(PROFILE_SCOPE_FIELDS)
+
+
+def _norm(field: str, value):
+    """Valor comparable: int para checks, texto para los selects de alcance."""
+    if field in PROFILE_SCOPE_FIELDS:
+        return value or ""
+    return int(value or 0)
+
+
+def _profile_dict(doc_or_row) -> dict:
+    return {f: _norm(f, doc_or_row.get(f)) for f in PROFILE_FIELDS}
+
+
 def perfil_values(perfil: str) -> dict:
-    row = frappe.db.get_value(PROFILE_DOCTYPE, perfil, PROFILE_PERM_FIELDS, as_dict=True)
+    meta = frappe.get_meta(PROFILE_DOCTYPE)
+    fields = [f for f in PROFILE_FIELDS if meta.has_field(f)]
+    row = frappe.db.get_value(PROFILE_DOCTYPE, perfil, fields, as_dict=True)
     if not row:
         frappe.throw(f"El Perfil de Permisos '{perfil}' no existe.")
-    return {f: int(row.get(f) or 0) for f in PROFILE_PERM_FIELDS}
+    return _profile_dict(row)
 
 
 def _labels() -> dict:
     meta = frappe.get_meta("FacEx Settings")
-    return {f: (meta.get_label(f) or f) for f in PROFILE_PERM_FIELDS}
+    return {f: (meta.get_label(f) or f) for f in PROFILE_FIELDS}
+
+
+def _exception_value(e, field: str):
+    return _norm(field, e.valor_texto if field in PROFILE_SCOPE_FIELDS else e.valor)
 
 
 def sync_settings_with_profile(doc) -> None:
@@ -44,27 +64,33 @@ def sync_settings_with_profile(doc) -> None:
         return
     prof = perfil_values(doc.perfil)
     if doc.has_value_changed("perfil") and not doc.flags.keep_checks:
-        for f in PROFILE_PERM_FIELDS:
+        for f in PROFILE_FIELDS:
             doc.set(f, prof[f])
     labels = _labels()
     doc.set("excepciones", [])
-    for f in PROFILE_PERM_FIELDS:
-        value = int(doc.get(f) or 0)
+    for f in PROFILE_FIELDS:
+        value = _norm(f, doc.get(f))
         if value != prof[f]:
-            doc.append("excepciones", {
-                "permiso": f, "etiqueta": labels[f], "valor": value, "valor_perfil": prof[f],
-            })
+            row = {"permiso": f, "etiqueta": labels[f]}
+            if f in PROFILE_SCOPE_FIELDS:
+                row.update(valor_texto=value, valor_perfil_texto=prof[f])
+            else:
+                row.update(valor=value, valor_perfil=prof[f])
+            doc.append("excepciones", row)
 
 
 def propagate_profile(profile_doc) -> int:
     """FacEx Perfil de Permisos.on_update: lleva el perfil a sus filas
     conservando las excepciones de cada una. Devuelve cuántas filas tocó."""
-    prof = {f: int(profile_doc.get(f) or 0) for f in PROFILE_PERM_FIELDS}
+    prof = _profile_dict(profile_doc)
     names = frappe.get_all("FacEx Settings", filters={"perfil": profile_doc.name}, pluck="name")
     for name in names:
         row = frappe.get_doc("FacEx Settings", name)
-        overrides = {e.permiso: int(e.valor or 0) for e in row.get("excepciones") or []}
-        for f in PROFILE_PERM_FIELDS:
+        overrides = {
+            e.permiso: _exception_value(e, e.permiso)
+            for e in row.get("excepciones") or [] if e.permiso in prof
+        }
+        for f in PROFILE_FIELDS:
             row.set(f, overrides.get(f, prof[f]))
         row.flags.keep_checks = True
         row.save(ignore_permissions=True)
@@ -102,7 +128,7 @@ def migrar_a_perfiles(grupos: dict, descripciones: dict = None, dry_run: int = 1
         rows = frappe.get_all(
             "FacEx Settings",
             filters={"user": ["in", users]},
-            fields=["name", "user"] + PROFILE_PERM_FIELDS,
+            fields=["name", "user"] + PROFILE_FIELDS,
         )
         missing = set(users) - {r.user for r in rows}
         if missing:
@@ -111,8 +137,13 @@ def migrar_a_perfiles(grupos: dict, descripciones: dict = None, dry_run: int = 1
             f: int(sum(int(r.get(f) or 0) for r in rows) * 2 > len(rows))
             for f in PROFILE_PERM_FIELDS
         }
+        for f in PROFILE_SCOPE_FIELDS:
+            # el valor más frecuente del grupo (empate → el más restrictivo, el primero de la lista)
+            counts = [(sum(1 for r in rows if (r.get(f) or "") == opt), -i, opt)
+                      for i, opt in enumerate(PROFILE_SCOPE_FIELDS[f])]
+            values[f] = max(counts)[2]
         excepciones = sum(
-            1 for r in rows for f in PROFILE_PERM_FIELDS if int(r.get(f) or 0) != values[f]
+            1 for r in rows for f in PROFILE_FIELDS if _norm(f, r.get(f)) != values[f]
         )
         out.append(f"{nombre}: {len(rows)} fila(s), {sum(values.values())} permisos, {excepciones} excepción(es)")
         if int(dry_run):

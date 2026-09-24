@@ -17,11 +17,11 @@ def execute(filters=None):
 
 
 def _owners_condition(filters, alias: str = ""):
-	"""Igual criterio que reports._resolve_owner_filter (Gerencia/System
-	Manager: libre; cualquier otro caso: forzado a las propias operaciones) —
+	"""Igual criterio que reports._resolve_owner_filter con audit=True (Alcance
+	en Ventas «Toda la compañía»: libre; cualquier otro: propias operaciones) —
 	compartido entre esta pantalla (Script Report) y el panel de Reportes de
 	FacEx Clásico (reports.get_system_audit), que reutiliza get_data()."""
-	cond, vals = _resolve_owner_filter(filters.get("company"), filters.get("owners"), alias or None)
+	cond, vals = _resolve_owner_filter(filters.get("company"), filters.get("owners"), alias or None, audit=True)
 	if cond == "1=1":
 		return "", {}
 	return cond, vals

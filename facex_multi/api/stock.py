@@ -1065,6 +1065,9 @@ def get_inventory_defaults(company: str = None):
         report_users = []
 
     permissions["ver_solo_mis_movimientos"] = int(get_facex_see_only_own_movements(company))
+    from facex_multi.api.permissions import get_facex_inventory_scope, get_facex_purchase_scope
+    permissions["alcance_inventario"] = get_facex_inventory_scope(company)
+    permissions["alcance_compras"] = get_facex_purchase_scope(company)
 
     return {
         "company": company,

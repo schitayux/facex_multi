@@ -1676,8 +1676,11 @@ class FacexInventario {
 
 	// Filtro "Usuario Creador" (selección múltiple) — misma fuente
 	// (this.defaults.report_users) reutilizada en todos los reportes de
-	// inventario que la soportan.
-	_owner_filter_html(selectId) {
+	// inventario que la soportan. Con alcance «Solo lo creado por mí» no se
+	// dibuja: el backend fija sus propios documentos (_scoped_owner_condition).
+	_owner_filter_html(selectId, dominio = "inventario") {
+		const p = this.defaults.permissions || {};
+		if (p[`alcance_${dominio}`] === "Solo lo creado por mí") return "";
 		const users = this.defaults.report_users || [];
 		return `
 <div>
@@ -2781,7 +2784,7 @@ ${rows.map(r => `<tr>
       <div><label class="inv-label">Proveedor</label><input type="text" id="inv-ep-supplier" class="inv-select" placeholder="Nombre exacto del proveedor..."></div>
       ${this._report_item_filter("inv-ep-item", "inv-ep-item-code")}
       ${this._sucursal_filter_html("inv-ep-establecimiento")}
-      ${this._owner_filter_html("inv-ep-owner")}`;
+      ${this._owner_filter_html("inv-ep-owner", "compras")}`;
 		const actions = `<button type="button" id="inv-ep-refresh" class="inv-btn inv-btn-primary">Filtrar</button>
       <button type="button" id="inv-ep-export" class="inv-btn inv-btn-secondary">Exportar a Excel</button>`;
 		const body = `

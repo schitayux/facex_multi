@@ -37,3 +37,4 @@ facex_multi.patches.v1_0.add_cierre_diario
 facex_multi.patches.v1_0.rename_cierre_page
 facex_multi.patches.v1_0.add_bodega_operaciones_permitidas
 facex_multi.patches.v1_0.split_facex_configuracion_compania
+facex_multi.patches.v1_0.add_alcance_datos

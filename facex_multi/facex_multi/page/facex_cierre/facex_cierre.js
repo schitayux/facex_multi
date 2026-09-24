@@ -217,7 +217,7 @@ class FacexCierreDiario {
 	<div class="cd-head">
 		<div>
 			<div class="cd-title">Cierre Diario de Ventas</div>
-			<div class="cd-subtitle">${_cd_esc(ctx.company)} · ${ctx.es_gerencia ? "Gerencia: ve los cierres de todos los usuarios" : "Solo sus propios cierres"}</div>
+			<div class="cd-subtitle">${_cd_esc(ctx.company)} · ${ctx.es_gerencia ? "Supervisión: ve los cierres de todos los usuarios" : "Solo sus propios cierres"}</div>
 		</div>
 		<div class="cd-head-actions">
 			${canCreate ? `<button type="button" class="cd-btn cd-btn-primary" id="cd-btn-new">+ Nuevo cierre</button>` : ""}
