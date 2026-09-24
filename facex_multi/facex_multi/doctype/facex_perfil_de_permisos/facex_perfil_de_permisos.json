@@ -1,229 +1,146 @@
 {
- "autoname": "format:FS-{bfel_company}-{user}",
- "creation": "2026-06-24 00:00:00.000000",
+ "actions": [],
+ "autoname": "field:nombre_perfil",
+ "creation": "2026-09-23 13:00:00.000000",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "user",
-  "bfel_company",
-  "rol_clasificacion",
-  "perfil",
-  "sec_excepciones",
-  "excepciones",
-  "sb_facturador",
+  "nombre_perfil",
+  "descripcion",
+  "col_usuarios",
+  "usuarios_asignados",
+  "sec_0",
   "puede_ver_tablero",
   "puede_facturar",
   "puede_ver_pos",
   "puede_ver_menu_inventario",
-  "cb_facturador",
+  "col_0",
   "puede_guardar",
   "puede_validar",
   "puede_certificar",
-  "bfel_status_por_defecto",
-  "sb_mantenimiento",
+  "sec_1",
   "crea_clientes",
   "modifica_clientes",
   "crea_proveedores",
   "modifica_proveedores",
-  "cb_maint",
   "crea_items",
   "modifica_items",
+  "col_1",
   "actualiza_precios",
   "puede_editar_precio",
   "gestiona_listas_materiales",
   "asignacion_precios",
   "puede_eliminar_ventas_espera",
   "puede_anular_facturas",
-  "sb_reportes",
+  "sec_2",
   "reporte_ventas_fecha",
   "reporte_ventas_producto",
-  "cb_rep1",
   "reporte_facturas_canceladas",
   "reporte_estados_cuenta",
-  "cb_rep2",
   "reporte_antiguedad_saldos",
   "reporte_cotizaciones",
-  "cb_rep3",
+  "col_2",
   "reporte_recibos_pagos",
   "reporte_crecimiento_ventas",
-  "cb_rep4",
   "reporte_imprimir_recibo",
   "reporte_analisis_utilidad",
   "reporte_auditoria_sistema",
-  "sb_compras",
+  "sec_3",
   "puede_compras",
   "puede_validar_compras",
-  "cb_compras",
   "puede_cancelar_compras",
-  "sb_digecam",
-  "maneja_series",
-  "maneja_adendas",
-  "cb_digecam",
-  "concatena_descripcion2",
-  "sb_inventario",
-  "maneja_inventario",
-  "tipo_x_defecto",
-  "cb_inventario",
-  "bodega_por_defecto",
-  "transito_por_defecto",
-  "sb_bodegas_socio",
-  "socio_venta_por_defecto",
-  "cb_bodegas_socio",
-  "bodegas_habilitadas",
-  "sb_listas_precios",
-  "lista_precios_por_defecto",
-  "cb_listas_precios",
-  "listas_precios_habilitadas",
-  "sb_columnas",
-  "mostrar_almacen",
-  "mostrar_desc_pct",
-  "cb_columnas",
-  "mostrar_adenda",
-  "mostrar_tipo",
-  "sb_inventario_movs",
+  "sec_4",
   "puede_ver_inventario",
   "puede_hacer_entradas",
-  "cb_inv_movs1",
   "puede_hacer_salidas",
   "puede_hacer_transferencias",
   "puede_recibir_traslados",
-  "cb_inv_movs2",
+  "col_4",
   "puede_cancelar_movimientos",
   "puede_hacer_transformaciones",
-  "cb_inv_movs3",
   "puede_ver_costos",
   "ver_solo_mis_movimientos",
-  "costo_entrada_por_defecto",
-  "sb_inv_movs_estados",
+  "sec_5",
   "entrada_grabar_borrador",
   "entrada_validar_confirmar",
-  "cb_inv_estados_1",
   "salida_grabar_borrador",
+  "col_5",
   "salida_validar_confirmar",
-  "cb_inv_estados_2",
   "transferencia_grabar_borrador",
   "transferencia_validar_confirmar",
-  "sb_inventario_reportes",
+  "sec_6",
   "reporte_inv_kardex",
   "reporte_inv_existencias",
-  "cb_inv_rep",
   "reporte_inv_trazabilidad",
   "reporte_inv_kardex_producto",
-  "cb_inv_rep2",
+  "col_6",
   "reporte_inv_valuacion",
   "reporte_inv_vencimientos",
-  "cb_inv_rep3",
   "reporte_inv_rotacion",
   "reporte_inv_entradas_proveedor",
-  "sb_inventario_maestros",
+  "sec_7",
   "mantiene_costos_items",
-  "cb_inv_maestros",
   "mantiene_almacenes",
-  "sb_familias",
-  "consulta_familias",
-  "mantiene_familias",
-  "cb_familias",
-  "exige_familia_item",
-  "sb_grupo_items",
-  "consulta_grupo_items",
-  "mantiene_grupo_items",
-  "sb_seguridad",
-  "puede_ver_facex_settings",
-  "cb_seguridad",
-  "puede_resetear_password",
-  "sb_cierre_diario",
+  "sec_8",
   "puede_crear_cierres",
-  "sb_pagos",
-  "exige_pago_completo",
-  "cb_pagos",
-  "permite_pago_credito",
-  "permite_pago_contra_entrega",
-  "sb_transporte",
+  "sec_9",
   "puede_ver_menu_transporte",
   "puede_administrar_transportistas",
   "puede_editar_guias_transporte",
-  "cb_transporte",
+  "col_9",
   "puede_cargar_liquidaciones_transporte",
   "puede_ver_reportes_transporte",
   "puede_ver_kpis_transporte",
-  "sb_flete",
-  "item_flete",
-  "cb_flete",
-  "cuenta_recargo_entrega",
-  "cuenta_flete",
-  "recargo_flete_con_iva",
-  "sb_mayusculas",
-  "mayusculas_items",
-  "cb_mayusculas",
-  "mayusculas_clientes",
-  "sb_codigo_items",
-  "sin_sufijo_compania_items"
+  "sec_10",
+  "consulta_familias",
+  "mantiene_familias",
+  "sec_11",
+  "consulta_grupo_items",
+  "mantiene_grupo_items",
+  "sec_12",
+  "puede_ver_facex_settings",
+  "puede_resetear_password"
  ],
  "fields": [
   {
-   "fieldname": "user",
-   "fieldtype": "Link",
-   "in_list_view": 1,
-   "in_standard_filter": 1,
-   "label": "Usuario",
-   "options": "User",
-   "reqd": 0,
-   "search_index": 1
-  },
-  {
-   "fieldname": "bfel_company",
-   "fieldtype": "Link",
-   "in_list_view": 1,
-   "in_standard_filter": 1,
-   "label": "Compañía",
-   "options": "Company",
+   "fieldname": "nombre_perfil",
+   "fieldtype": "Data",
+   "label": "Nombre del Perfil",
    "reqd": 1,
-   "search_index": 1
+   "unique": 1,
+   "in_list_view": 1
   },
   {
-   "description": "Solo clasifica al usuario, no otorga permisos por sí mismo — salvo \"Gerencia\": ese rol habilita, únicamente en los Reportes de FacEx Clásico, seleccionar cualquier almacén y cualquier \"Usuario Creador\". Sin este rol, los reportes de FacEx Clásico se limitan siempre a las operaciones del propio usuario.",
-   "fieldname": "rol_clasificacion",
-   "fieldtype": "Select",
-   "in_list_view": 1,
-   "in_standard_filter": 1,
-   "label": "Rol (Clasificación)",
-   "options": "\nBodega\nVentas\nProducción\nGerencia"
+   "fieldname": "descripcion",
+   "fieldtype": "Small Text",
+   "label": "Descripción",
+   "in_list_view": 1
   },
   {
-   "fieldname": "perfil",
-   "fieldtype": "Link",
-   "options": "FacEx Perfil de Permisos",
-   "label": "Perfil de Permisos",
-   "description": "Al asignar o cambiar el perfil, los permisos del usuario toman los valores del perfil. Lo que se marque distinto al perfil queda como excepción."
+   "fieldname": "col_usuarios",
+   "fieldtype": "Column Break"
   },
   {
-   "fieldname": "sec_excepciones",
-   "fieldtype": "Section Break",
-   "label": "Excepciones al Perfil",
-   "collapsible": 1,
-   "depends_on": "eval:doc.perfil"
-  },
-  {
-   "fieldname": "excepciones",
-   "fieldtype": "Table",
-   "options": "FacEx Settings Excepcion",
-   "label": "Excepciones al Perfil",
+   "fieldname": "usuarios_asignados",
+   "fieldtype": "Int",
+   "label": "Usuarios asignados",
    "read_only": 1,
-   "description": "Se calcula sola: permisos de este usuario que difieren de su perfil."
+   "description": "Se actualiza al guardar."
   },
   {
-   "fieldname": "sb_facturador",
+   "fieldname": "sec_0",
    "fieldtype": "Section Break",
-   "label": "Acceso General"
+   "label": "Acceso General",
+   "collapsible": 0
   },
   {
-   "default": "1",
+   "default": "0",
    "fieldname": "puede_ver_tablero",
    "fieldtype": "Check",
    "label": "Ver Tablero"
   },
   {
-   "default": "1",
+   "default": "0",
    "fieldname": "puede_facturar",
    "fieldtype": "Check",
    "label": "Acceder a Facturador"
@@ -243,81 +160,75 @@
    "label": "Ver botón Inventario (menú FacEx)"
   },
   {
-   "fieldname": "cb_facturador",
+   "fieldname": "col_0",
    "fieldtype": "Column Break"
   },
   {
-   "default": "1",
+   "default": "0",
    "fieldname": "puede_guardar",
    "fieldtype": "Check",
    "label": "Guardar Borrador"
   },
   {
-   "default": "1",
+   "default": "0",
    "fieldname": "puede_validar",
    "fieldtype": "Check",
    "label": "Validar Factura"
   },
   {
-   "default": "1",
+   "default": "0",
    "fieldname": "puede_certificar",
    "fieldtype": "Check",
    "label": "Certificar FEL"
   },
   {
-   "description": "Estado con el que se precargan las facturas nuevas de este usuario en FacEx Clásico y FacEx Screen. Vacío = usa \"01 Enviar\" (comportamiento por defecto del sistema).",
-   "fieldname": "bfel_status_por_defecto",
-   "fieldtype": "Select",
-   "label": "Estado FEL por Defecto al Facturar",
-   "options": "\n01 Enviar\n00 No enviar"
-  },
-  {
-   "fieldname": "sb_mantenimiento",
+   "fieldname": "sec_1",
    "fieldtype": "Section Break",
-   "label": "Mantenimiento"
+   "label": "Mantenimiento",
+   "collapsible": 0
   },
   {
-   "default": "1",
+   "default": "0",
    "fieldname": "crea_clientes",
    "fieldtype": "Check",
    "label": "Crear Clientes"
   },
   {
-   "default": "1",
+   "default": "0",
    "fieldname": "modifica_clientes",
    "fieldtype": "Check",
    "label": "Modificar / Eliminar Clientes"
   },
   {
-   "default": "1",
+   "default": "0",
    "fieldname": "crea_proveedores",
    "fieldtype": "Check",
    "label": "Crear Proveedores"
   },
   {
-   "default": "1",
+   "default": "0",
    "fieldname": "modifica_proveedores",
    "fieldtype": "Check",
    "label": "Modificar / Eliminar Proveedores"
   },
   {
-   "fieldname": "cb_maint",
-   "fieldtype": "Column Break"
-  },
-  {
-   "default": "1",
+   "default": "0",
    "fieldname": "crea_items",
    "fieldtype": "Check",
    "label": "Crear Productos"
   },
   {
-   "default": "1",
+   "default": "0",
    "fieldname": "modifica_items",
    "fieldtype": "Check",
    "label": "Modificar / Eliminar Productos"
   },
   {
-   "default": "1",
+   "fieldname": "col_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
    "fieldname": "actualiza_precios",
    "fieldtype": "Check",
    "label": "Actualizar Precios"
@@ -330,14 +241,14 @@
    "label": "Editar Precio Manualmente en Venta (FacEx Screen y Clásico)"
   },
   {
-   "default": "1",
+   "default": "0",
    "description": "Permite crear y editar los paquetes/kits de venta (Listas de Materiales) y su configuración de manejo de stock, desde Mantenimiento (FacEx Clásico) y desde el módulo de Inventario.",
    "fieldname": "gestiona_listas_materiales",
    "fieldtype": "Check",
    "label": "Crear/Editar Listas de Materiales"
   },
   {
-   "default": "1",
+   "default": "0",
    "description": "Permite usar la pestaña \"Asignación de Precios\" de Mantenimiento: calcular precios de venta a partir del costo (estándar / promedio ponderado / última compra o manual) y un % de utilidad, y guardarlos en la lista de precios.",
    "fieldname": "asignacion_precios",
    "fieldtype": "Check",
@@ -358,286 +269,112 @@
    "label": "Anular/Cancelar Documentos FacEx"
   },
   {
-   "fieldname": "sb_reportes",
+   "fieldname": "sec_2",
    "fieldtype": "Section Break",
-   "label": "Reportes"
+   "label": "Reportes",
+   "collapsible": 0
   },
   {
-   "default": "1",
+   "default": "0",
    "fieldname": "reporte_ventas_fecha",
    "fieldtype": "Check",
    "label": "Ventas por Fecha"
   },
   {
-   "default": "1",
+   "default": "0",
    "fieldname": "reporte_ventas_producto",
    "fieldtype": "Check",
    "label": "Ventas por Producto"
   },
   {
-   "fieldname": "cb_rep1",
-   "fieldtype": "Column Break"
-  },
-  {
-   "default": "1",
+   "default": "0",
    "fieldname": "reporte_facturas_canceladas",
    "fieldtype": "Check",
    "label": "Facturas Canceladas"
   },
   {
-   "default": "1",
+   "default": "0",
    "fieldname": "reporte_estados_cuenta",
    "fieldtype": "Check",
    "label": "Estados de Cuenta"
   },
   {
-   "fieldname": "cb_rep2",
-   "fieldtype": "Column Break"
-  },
-  {
-   "default": "1",
+   "default": "0",
    "fieldname": "reporte_antiguedad_saldos",
    "fieldtype": "Check",
    "label": "Antigüedad de Saldos"
   },
   {
-   "default": "1",
+   "default": "0",
    "fieldname": "reporte_cotizaciones",
    "fieldtype": "Check",
    "label": "Cotizaciones"
   },
   {
-   "fieldname": "cb_rep3",
+   "fieldname": "col_2",
    "fieldtype": "Column Break"
   },
   {
-   "default": "1",
+   "default": "0",
    "fieldname": "reporte_recibos_pagos",
    "fieldtype": "Check",
    "label": "Recibos y Pagos"
   },
   {
-   "default": "1",
+   "default": "0",
    "fieldname": "reporte_crecimiento_ventas",
    "fieldtype": "Check",
    "label": "Crecimiento de Ventas"
   },
   {
-   "fieldname": "cb_rep4",
-   "fieldtype": "Column Break"
-  },
-  {
-   "default": "1",
+   "default": "0",
    "fieldname": "reporte_imprimir_recibo",
    "fieldtype": "Check",
    "label": "Imprimir Recibo"
   },
   {
-   "default": "1",
+   "default": "0",
    "description": "Permite ver el informe \"Análisis de Utilidad\" (portal de Reportes → Rentabilidad): utilidad Q y % de cada producto contra el costo estándar, el promedio ponderado del sistema o el último precio de compra.",
    "fieldname": "reporte_analisis_utilidad",
    "fieldtype": "Check",
    "label": "Análisis de Utilidad"
   },
   {
-   "default": "1",
+   "default": "0",
    "description": "Permite ver el informe \"Auditoría de Sistema\": resumen por usuario de operaciones (cantidad y monto) — Cotizaciones, Facturas, Pagos Aplicados y Guías Pendientes de Liquidar.",
    "fieldname": "reporte_auditoria_sistema",
    "fieldtype": "Check",
    "label": "Auditoría de Sistema"
   },
   {
-   "fieldname": "sb_compras",
+   "fieldname": "sec_3",
    "fieldtype": "Section Break",
-   "label": "Módulo de Compras"
+   "label": "Módulo de Compras",
+   "collapsible": 0
   },
   {
-   "default": "1",
+   "default": "0",
    "fieldname": "puede_compras",
    "fieldtype": "Check",
    "label": "Acceder al Módulo de Compras"
   },
   {
-   "default": "1",
+   "default": "0",
    "fieldname": "puede_validar_compras",
    "fieldtype": "Check",
    "label": "Validar Facturas de Compra"
   },
   {
-   "fieldname": "cb_compras",
-   "fieldtype": "Column Break"
-  },
-  {
-   "default": "1",
+   "default": "0",
    "fieldname": "puede_cancelar_compras",
    "fieldtype": "Check",
    "label": "Cancelar Facturas de Compra"
   },
   {
-   "fieldname": "sb_digecam",
+   "fieldname": "sec_4",
    "fieldtype": "Section Break",
-   "label": "Configuración DIGECAM / Series y Adendas",
-   "hidden": 1
-  },
-  {
-   "default": "0",
-   "fieldname": "maneja_series",
-   "fieldtype": "Check",
-   "label": "Maneja Series de Items",
-   "hidden": 1,
-   "description": "Movido a FacEx Configuracion Compania — este campo ya no se usa aquí."
-  },
-  {
-   "default": "0",
-   "fieldname": "maneja_adendas",
-   "fieldtype": "Check",
-   "label": "Maneja Adendas por Línea",
-   "hidden": 1,
-   "description": "Movido a FacEx Configuracion Compania — este campo ya no se usa aquí."
-  },
-  {
-   "fieldname": "cb_digecam",
-   "fieldtype": "Column Break"
-  },
-  {
-   "default": "0",
-   "fieldname": "concatena_descripcion2",
-   "fieldtype": "Check",
-   "label": "Concatenar Descripción 2 automáticamente",
-   "hidden": 1,
-   "description": "Movido a FacEx Configuracion Compania — este campo ya no se usa aquí."
-  },
-  {
-   "fieldname": "sb_inventario",
-   "fieldtype": "Section Break",
-   "label": "Inventario y Tipo FEL"
-  },
-  {
-   "default": "0",
-   "fieldname": "maneja_inventario",
-   "fieldtype": "Check",
-   "label": "Manejar Inventario (update_stock)",
-   "hidden": 1,
-   "description": "Movido a FacEx Configuracion Compania — este campo ya no se usa aquí."
-  },
-  {
-   "fieldname": "tipo_x_defecto",
-   "fieldtype": "Select",
-   "label": "Tipo por Defecto (FEL)",
-   "options": "\nB\nS",
-   "hidden": 1,
-   "description": "Movido a FacEx Configuracion Compania — este campo ya no se usa aquí."
-  },
-  {
-   "fieldname": "cb_inventario",
-   "fieldtype": "Column Break"
-  },
-  {
-   "description": "Almacén usado para filtrar/colorear existencias en FacEx Screen y como bodega destino por defecto al recibir traslados. Vacío = ver todos los productos sin distinción de stock.",
-   "fieldname": "bodega_por_defecto",
-   "fieldtype": "Link",
-   "label": "Bodega por Defecto (FacEx Screen)",
-   "options": "Warehouse"
-  },
-  {
-   "description": "Almacén de tránsito del usuario: los traslados de stock dirigidos a este almacén aparecen en «Recepción de Traslados» para que el usuario los ingrese a bodega o los devuelva.",
-   "fieldname": "transito_por_defecto",
-   "fieldtype": "Link",
-   "label": "Almacén de Tránsito",
-   "options": "Warehouse"
-  },
-  {
-   "fieldname": "sb_bodegas_socio",
-   "fieldtype": "Section Break",
-   "label": "Bodegas y Socio de Venta"
-  },
-  {
-   "description": "Socio de Ventas (vendedor) que se prellena automáticamente al iniciar una nueva venta en FacEx / FacEx Screen. Vacío = sin socio de venta por defecto.",
-   "fieldname": "socio_venta_por_defecto",
-   "fieldtype": "Link",
-   "label": "Socio de Venta por Defecto",
-   "options": "Sales Partner"
-  },
-  {
-   "fieldname": "cb_bodegas_socio",
-   "fieldtype": "Column Break"
-  },
-  {
-   "description": "Bodegas que este usuario puede ver y seleccionar en FacEx, FacEx Screen y FacEx Inventario (grid de items, selects, saldos por bodega e informes). Vacío = puede ver y usar todas las bodegas de la compañía.",
-   "fieldname": "bodegas_habilitadas",
-   "fieldtype": "Table",
-   "label": "Bodegas Habilitadas",
-   "options": "FacEx Settings Bodega"
-  },
-  {
-   "fieldname": "sb_listas_precios",
-   "fieldtype": "Section Break",
-   "label": "Listas de Precios (FacEx / FacEx Screen)"
-  },
-  {
-   "description": "Lista de precios precargada al iniciar una venta en FacEx / FacEx Screen cuando el cliente NO tiene una lista asignada en su ficha. La lista asignada al cliente siempre tiene prioridad sobre esta. Vacío = se usa la lista de Selling Settings.",
-   "fieldname": "lista_precios_por_defecto",
-   "fieldtype": "Link",
-   "label": "Lista de Precios por Defecto",
-   "options": "Price List"
-  },
-  {
-   "fieldname": "cb_listas_precios",
-   "fieldtype": "Column Break"
-  },
-  {
-   "description": "Listas de precios de venta que este usuario puede ver y elegir manualmente en el selector de FacEx / FacEx Screen. Vacío = puede ver y elegir todas las listas de venta de la compañía. No limita la lista asignada al cliente, que siempre se respeta.",
-   "fieldname": "listas_precios_habilitadas",
-   "fieldtype": "Table",
-   "label": "Listas de Precios Habilitadas",
-   "options": "FacEx Settings Lista Precios"
-  },
-  {
-   "fieldname": "sb_columnas",
-   "fieldtype": "Section Break",
-   "label": "Columnas Visibles en Facturador",
-   "hidden": 1
-  },
-  {
-   "default": "1",
-   "fieldname": "mostrar_almacen",
-   "fieldtype": "Check",
-   "label": "Mostrar Almacén",
-   "hidden": 1,
-   "description": "Movido a FacEx Configuracion Compania — este campo ya no se usa aquí."
-  },
-  {
-   "default": "1",
-   "fieldname": "mostrar_desc_pct",
-   "fieldtype": "Check",
-   "label": "Mostrar Desc %",
-   "hidden": 1,
-   "description": "Movido a FacEx Configuracion Compania — este campo ya no se usa aquí."
-  },
-  {
-   "fieldname": "cb_columnas",
-   "fieldtype": "Column Break"
-  },
-  {
-   "default": "1",
-   "fieldname": "mostrar_adenda",
-   "fieldtype": "Check",
-   "label": "Mostrar Adenda",
-   "hidden": 1,
-   "description": "Movido a FacEx Configuracion Compania — este campo ya no se usa aquí."
-  },
-  {
-   "default": "1",
-   "fieldname": "mostrar_tipo",
-   "fieldtype": "Check",
-   "label": "Mostrar Tipo FEL",
-   "hidden": 1,
-   "description": "Movido a FacEx Configuracion Compania — este campo ya no se usa aquí."
-  },
-  {
-   "fieldname": "sb_inventario_movs",
-   "fieldtype": "Section Break",
-   "label": "Movimientos de Inventario"
+   "label": "Movimientos de Inventario",
+   "collapsible": 0
   },
   {
    "default": "0",
@@ -650,10 +387,6 @@
    "fieldname": "puede_hacer_entradas",
    "fieldtype": "Check",
    "label": "Registrar Entradas"
-  },
-  {
-   "fieldname": "cb_inv_movs1",
-   "fieldtype": "Column Break"
   },
   {
    "default": "0",
@@ -675,7 +408,7 @@
    "label": "Recibir Traslados (Recepción/Devolución)"
   },
   {
-   "fieldname": "cb_inv_movs2",
+   "fieldname": "col_4",
    "fieldtype": "Column Break"
   },
   {
@@ -692,10 +425,6 @@
    "label": "Registrar Transformaciones"
   },
   {
-   "fieldname": "cb_inv_movs3",
-   "fieldtype": "Column Break"
-  },
-  {
    "default": "0",
    "description": "Gobierna la visibilidad de costos y valores dentro del módulo de Inventario: columnas de costo/valor en reportes, grids de Entradas/Salidas, flotante de existencia y pantallas de maestros — en pantalla, al imprimir y al exportar. No afecta el Análisis de Utilidad ni la Asignación de Precios de FacEx Clásico.",
    "fieldname": "puede_ver_costos",
@@ -710,18 +439,10 @@
    "label": "Movimientos del Mes: ver únicamente los propios"
   },
   {
-   "default": "estandar",
-   "description": "Base de costo con la que el sistema valora automáticamente las Entradas de mercadería de este usuario: estandar = Costo Estándar FacEx, ponderado = promedio ponderado del sistema, ultima_compra = último precio de compra.",
-   "fieldname": "costo_entrada_por_defecto",
-   "fieldtype": "Select",
-   "label": "Base de Costo por Defecto (Entradas)",
-   "options": "estandar\nponderado\nultima_compra"
-  },
-  {
-   "description": "Control fino del botón Guardar en Entradas/Salidas/Transferencias. Ambas casillas → graba borrador y luego se valida. Solo «Validar y Confirmar» → somete directo (comportamiento clásico). Solo «Grabar Borrador» → queda en borrador sin poder validar desde FacEx. Ninguna → no puede operar. Los permisos «Registrar Entradas/Salidas/Transferencias» de arriba son legacy: por sí solos equivalen a «Validar y Confirmar».",
-   "fieldname": "sb_inv_movs_estados",
+   "fieldname": "sec_5",
    "fieldtype": "Section Break",
-   "label": "Grabar / Validar por Operación"
+   "label": "Grabar / Validar por Operación",
+   "collapsible": 0
   },
   {
    "default": "0",
@@ -736,24 +457,20 @@
    "label": "Entrada — Validar y Confirmar"
   },
   {
-   "fieldname": "cb_inv_estados_1",
-   "fieldtype": "Column Break"
-  },
-  {
    "default": "0",
    "fieldname": "salida_grabar_borrador",
    "fieldtype": "Check",
    "label": "Salida — Grabar Borrador"
   },
   {
+   "fieldname": "col_5",
+   "fieldtype": "Column Break"
+  },
+  {
    "default": "0",
    "fieldname": "salida_validar_confirmar",
    "fieldtype": "Check",
    "label": "Salida — Validar y Confirmar"
-  },
-  {
-   "fieldname": "cb_inv_estados_2",
-   "fieldtype": "Column Break"
   },
   {
    "default": "0",
@@ -768,9 +485,10 @@
    "label": "Transferencia — Validar y Confirmar"
   },
   {
-   "fieldname": "sb_inventario_reportes",
+   "fieldname": "sec_6",
    "fieldtype": "Section Break",
-   "label": "Reportes de Inventario"
+   "label": "Reportes de Inventario",
+   "collapsible": 0
   },
   {
    "default": "0",
@@ -785,10 +503,6 @@
    "label": "Existencias (Status / Antigüedad / Sin Rotación)"
   },
   {
-   "fieldname": "cb_inv_rep",
-   "fieldtype": "Column Break"
-  },
-  {
    "default": "0",
    "fieldname": "reporte_inv_trazabilidad",
    "fieldtype": "Check",
@@ -801,7 +515,7 @@
    "label": "Kardex Valorizado por Producto"
   },
   {
-   "fieldname": "cb_inv_rep2",
+   "fieldname": "col_6",
    "fieldtype": "Column Break"
   },
   {
@@ -817,10 +531,6 @@
    "label": "Productos por Vencer / Lotes Caducados"
   },
   {
-   "fieldname": "cb_inv_rep3",
-   "fieldtype": "Column Break"
-  },
-  {
    "default": "0",
    "fieldname": "reporte_inv_rotacion",
    "fieldtype": "Check",
@@ -833,9 +543,10 @@
    "label": "Entradas por Proveedor"
   },
   {
-   "fieldname": "sb_inventario_maestros",
+   "fieldname": "sec_7",
    "fieldtype": "Section Break",
-   "label": "Maestros de Inventario"
+   "label": "Maestros de Inventario",
+   "collapsible": 0
   },
   {
    "default": "0",
@@ -845,10 +556,6 @@
    "label": "Mantener Costos de Ítems (Costos a Ítems)"
   },
   {
-   "fieldname": "cb_inv_maestros",
-   "fieldtype": "Column Break"
-  },
-  {
    "default": "0",
    "description": "Habilita la pantalla «Almacenes» del módulo de Inventario (alta, edición y baja de almacenes). Requiere además que el usuario tenga acceso a todas las bodegas de la compañía (sin restricción en «Bodegas Habilitadas»).",
    "fieldname": "mantiene_almacenes",
@@ -856,9 +563,10 @@
    "label": "Mantener Almacenes"
   },
   {
-   "fieldname": "sb_cierre_diario",
+   "fieldname": "sec_8",
    "fieldtype": "Section Break",
-   "label": "Cierre Diario de Ventas"
+   "label": "Cierre Diario de Ventas",
+   "collapsible": 0
   },
   {
    "default": "0",
@@ -868,43 +576,10 @@
    "label": "Crear Cierres Diarios de Venta (solo los propios)"
   },
   {
-   "fieldname": "sb_pagos",
+   "fieldname": "sec_9",
    "fieldtype": "Section Break",
-   "label": "Configuración de Pagos (FacEx Screen)",
-   "hidden": 1
-  },
-  {
-   "default": "0",
-   "description": "Movido a FacEx Configuracion Compania — este campo ya no se usa aquí.",
-   "fieldname": "exige_pago_completo",
-   "fieldtype": "Check",
-   "label": "Exigir Pago Completo",
-   "hidden": 1
-  },
-  {
-   "fieldname": "cb_pagos",
-   "fieldtype": "Column Break"
-  },
-  {
-   "default": "0",
-   "description": "Movido a FacEx Configuracion Compania — este campo ya no se usa aquí.",
-   "fieldname": "permite_pago_credito",
-   "fieldtype": "Check",
-   "label": "Permitir Pago a Crédito",
-   "hidden": 1
-  },
-  {
-   "default": "0",
-   "description": "Movido a FacEx Configuracion Compania — este campo ya no se usa aquí.",
-   "fieldname": "permite_pago_contra_entrega",
-   "fieldtype": "Check",
-   "label": "Permitir Pago Contra Entrega",
-   "hidden": 1
-  },
-  {
-   "fieldname": "sb_transporte",
-   "fieldtype": "Section Break",
-   "label": "Transporte (Guías / Liquidaciones)"
+   "label": "Transporte (Guías / Liquidaciones)",
+   "collapsible": 0
   },
   {
    "default": "0",
@@ -928,7 +603,7 @@
    "label": "Editar Guías de Transporte en Facturas"
   },
   {
-   "fieldname": "cb_transporte",
+   "fieldname": "col_9",
    "fieldtype": "Column Break"
   },
   {
@@ -953,9 +628,10 @@
    "label": "Ver KPIs de Transporte"
   },
   {
-   "fieldname": "sb_familias",
+   "fieldname": "sec_10",
    "fieldtype": "Section Break",
-   "label": "Familias de Precio"
+   "label": "Familias de Precio",
+   "collapsible": 0
   },
   {
    "default": "0",
@@ -972,21 +648,10 @@
    "label": "Mantener Familias de Precio"
   },
   {
-   "fieldname": "cb_familias",
-   "fieldtype": "Column Break"
-  },
-  {
-   "default": "0",
-   "description": "Movido a FacEx Configuracion Compania — este campo ya no se usa aquí.",
-   "fieldname": "exige_familia_item",
-   "fieldtype": "Check",
-   "label": "Exigir Familia en los ítems (política de la compañía)",
-   "hidden": 1
-  },
-  {
-   "fieldname": "sb_grupo_items",
+   "fieldname": "sec_11",
    "fieldtype": "Section Break",
-   "label": "Grupo de Ítems"
+   "label": "Grupo de Ítems",
+   "collapsible": 0
   },
   {
    "default": "0",
@@ -1003,9 +668,10 @@
    "label": "Mantener Grupo de Ítems"
   },
   {
-   "fieldname": "sb_seguridad",
+   "fieldname": "sec_12",
    "fieldtype": "Section Break",
-   "label": "Seguridad"
+   "label": "Seguridad",
+   "collapsible": 0
   },
   {
    "default": "0",
@@ -1015,105 +681,19 @@
    "label": "Ver Módulo de Seguridad (FacEx Settings)"
   },
   {
-   "fieldname": "cb_seguridad",
-   "fieldtype": "Column Break"
-  },
-  {
    "default": "0",
    "description": "Permite reiniciar la contraseña de otros usuarios desde el módulo Seguridad, EXCEPTO la de usuarios con rol System Manager. Deshabilitado por defecto.",
    "fieldname": "puede_resetear_password",
    "fieldtype": "Check",
    "label": "Reiniciar Contraseña de Usuarios"
-  },
-  {
-   "fieldname": "sb_flete",
-   "fieldtype": "Section Break",
-   "label": "Flete",
-   "hidden": 1
-  },
-  {
-   "description": "Movido a FacEx Configuracion Compania — este campo ya no se usa aquí.",
-   "fieldname": "item_flete",
-   "fieldtype": "Link",
-   "label": "Ítem de Flete (GLOBAL)",
-   "options": "Item",
-   "hidden": 1
-  },
-  {
-   "fieldname": "cb_flete",
-   "fieldtype": "Column Break"
-  },
-  {
-   "fieldname": "cuenta_recargo_entrega",
-   "fieldtype": "Link",
-   "label": "Cuenta Recargo por Entrega (GLOBAL)",
-   "options": "Account",
-   "description": "Movido a FacEx Configuracion Compania — este campo ya no se usa aquí.",
-   "hidden": 1
-  },
-  {
-   "fieldname": "cuenta_flete",
-   "fieldtype": "Link",
-   "label": "Cuenta de Flete (GLOBAL)",
-   "options": "Account",
-   "description": "Movido a FacEx Configuracion Compania — este campo ya no se usa aquí.",
-   "hidden": 1
-  },
-  {
-   "fieldname": "recargo_flete_con_iva",
-   "fieldtype": "Check",
-   "label": "Recargo y Flete llevan IVA (GLOBAL)",
-   "default": "0",
-   "description": "Movido a FacEx Configuracion Compania — este campo ya no se usa aquí.",
-   "hidden": 1
-  },
-  {
-   "fieldname": "sb_mayusculas",
-   "fieldtype": "Section Break",
-   "label": "Políticas de Mayúsculas",
-   "hidden": 1
-  },
-  {
-   "default": "0",
-   "description": "Movido a FacEx Configuracion Compania — este campo ya no se usa aquí.",
-   "fieldname": "mayusculas_items",
-   "fieldtype": "Check",
-   "label": "Forzar Nombre y Código de Ítems en Mayúsculas (GLOBAL)",
-   "hidden": 1
-  },
-  {
-   "fieldname": "cb_mayusculas",
-   "fieldtype": "Column Break"
-  },
-  {
-   "default": "0",
-   "description": "Movido a FacEx Configuracion Compania — este campo ya no se usa aquí.",
-   "fieldname": "mayusculas_clientes",
-   "fieldtype": "Check",
-   "label": "Forzar Nombre de Clientes en Mayúsculas (GLOBAL)",
-   "hidden": 1
-  },
-  {
-   "fieldname": "sb_codigo_items",
-   "fieldtype": "Section Break",
-   "label": "Políticas de Código de Ítems",
-   "hidden": 1
-  },
-  {
-   "default": "0",
-   "description": "Movido a FacEx Configuracion Compania — este campo ya no se usa aquí.",
-   "fieldname": "sin_sufijo_compania_items",
-   "fieldtype": "Check",
-   "label": "No concatenar el sufijo de la compañía al Código de Ítems (GLOBAL)",
-   "hidden": 1
   }
  ],
- "index_web_pages_for_search": 0,
  "links": [],
  "modified": "2026-09-23 13:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
- "name": "FacEx Settings",
+ "name": "FacEx Perfil de Permisos",
+ "naming_rule": "By fieldname",
  "owner": "Administrator",
  "permissions": [
   {
@@ -1127,9 +707,57 @@
    "role": "System Manager",
    "share": 0,
    "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Sales User",
+   "report": 0,
+   "export": 0,
+   "print": 0,
+   "email": 0,
+   "share": 0
+  },
+  {
+   "read": 1,
+   "role": "Accounts User",
+   "report": 0,
+   "export": 0,
+   "print": 0,
+   "email": 0,
+   "share": 0
+  },
+  {
+   "read": 1,
+   "role": "Sales Manager",
+   "report": 0,
+   "export": 0,
+   "print": 0,
+   "email": 0,
+   "share": 0
+  },
+  {
+   "read": 1,
+   "role": "Accounts Manager",
+   "report": 0,
+   "export": 0,
+   "print": 0,
+   "email": 0,
+   "share": 0
+  },
+  {
+   "read": 1,
+   "role": "facex_multi",
+   "report": 0,
+   "export": 0,
+   "print": 0,
+   "email": 0,
+   "share": 0
   }
  ],
  "sort_field": "modified",
  "sort_order": "DESC",
- "states": []
+ "states": [],
+ "track_changes": 1,
+ "title_field": "nombre_perfil",
+ "description": "Conjunto de permisos FacEx por puesto, compartido por todas las compañías del sitio. Cada fila de FacEx Settings apunta a un perfil y guarda sus excepciones."
 }

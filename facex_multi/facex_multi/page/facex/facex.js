@@ -2883,7 +2883,32 @@ class EFastSalePage {
 					}
 
 					d.show();
-					d.set_values(data);
+					Promise.resolve(d.set_values(data)).then(() => {
+						// Perfil de Permisos: elegir otro precarga sus permisos; lo que
+						// luego se marque distinto queda como excepción (ver api/perfiles.py).
+						if (!d.fields_dict.perfil) return;
+						const excepciones = data.excepciones || [];
+						if (data.perfil) {
+							d.set_df_property("perfil", "description", excepciones.length
+								? `Excepciones a este perfil: ${excepciones.map((e) => frappe.utils.escape_html(e.etiqueta || e.permiso)).join(", ")}.`
+								: "Sin excepciones: tiene exactamente los permisos del perfil.");
+						}
+						let loadedPerfil = data.perfil || "";
+						d.fields_dict.perfil.df.onchange = () => {
+							const perfil = d.get_value("perfil");
+							if (!perfil || perfil === loadedPerfil) return;
+							loadedPerfil = perfil;
+							frappe.call({
+								method: "facex_multi.api.perfiles.get_profile_values",
+								args: { perfil },
+								callback: (r) => {
+									if (!r.message) return;
+									d.set_values(r.message);
+									d.set_df_property("perfil", "description", "Permisos cargados desde el perfil. Lo que marque distinto quedará como excepción.");
+								},
+							});
+						};
+					});
 				});
 			},
 		});

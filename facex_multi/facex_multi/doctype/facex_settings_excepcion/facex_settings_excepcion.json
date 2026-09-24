@@ -1,0 +1,58 @@
+{
+ "actions": [],
+ "creation": "2026-09-23 13:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "istable": 1,
+ "editable_grid": 0,
+ "field_order": [
+  "permiso",
+  "etiqueta",
+  "valor",
+  "valor_perfil"
+ ],
+ "fields": [
+  {
+   "fieldname": "permiso",
+   "fieldtype": "Data",
+   "label": "Permiso",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 3
+  },
+  {
+   "fieldname": "etiqueta",
+   "fieldtype": "Data",
+   "label": "Descripción",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 4
+  },
+  {
+   "fieldname": "valor",
+   "fieldtype": "Check",
+   "label": "Este usuario",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "valor_perfil",
+   "fieldtype": "Check",
+   "label": "Según el perfil",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-23 13:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FacEx Multi",
+ "name": "FacEx Settings Excepcion",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

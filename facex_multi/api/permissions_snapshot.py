@@ -131,7 +131,13 @@ def compare(before: str, after: str) -> str:
             diffs.append(f"{key}: solo en {'antes' if key in a else 'después'}")
             continue
         for perm in sorted(set(a[key]) | set(b[key])):
-            if a[key].get(perm) != b[key].get(perm):
+            va, vb = a[key].get(perm), b[key].get(perm)
+            # Bodegas/listas habilitadas: se compara el contenido; su orden
+            # sigue el grid (idx) y cambia legítimamente al reordenarlo.
+            if perm.startswith(("get_facex_allowed_warehouses", "get_facex_allowed_price_lists")) \
+                    and isinstance(va, list) and isinstance(vb, list):
+                va, vb = sorted(va), sorted(vb)
+            if va != vb:
                 diffs.append(f"{key} :: {perm}: {a[key].get(perm)!r} → {b[key].get(perm)!r}")
     if not diffs:
         return f"IDÉNTICO ({len(a)} usuarios/compañías)"
