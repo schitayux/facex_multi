@@ -120,6 +120,17 @@ class EFastPOSScreen {
 				this.defaults = d;
 				this.company_config = d.company_config || {};
 				this.perms = d.permissions || {};
+				// puede_ver_pos no solo oculta el botón en el menú de FacEx: sin
+				// este corte, escribir /app/facex-screen en la barra abría el POS.
+				if (!this.perms.puede_ver_pos) {
+					this.$body.html(`
+						<div style="max-width:420px;margin:80px auto;padding:32px 24px;text-align:center;background:#fff;border:1px solid #e2e8f0;border-radius:12px;">
+							<h3 style="margin:0 0 10px;font-size:18px;font-weight:800;color:#153375;">${__("Acceso Restringido")}</h3>
+							<p style="margin:0 0 18px;font-size:13px;color:#64748b;">${__("No tiene permiso para el POS (FacEx Screen). Solicite el permiso «Ver botón POS» en FacEx Settings.")}</p>
+							<a class="btn btn-default btn-sm" href="/app/facex">${__("Ir a FacEx")}</a>
+						</div>`);
+					return;
+				}
 				this.$body.find("#efs-flete-toggle").css("display", this.company_config.item_flete ? "flex" : "none");
 				this.posWarehouse = d.default_pos_warehouse || "";
 				this.doc.company = d.company || "";

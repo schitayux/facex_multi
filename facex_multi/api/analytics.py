@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import frappe
 from frappe.utils import today, add_months
-from facex_multi.api.invoice import get_effective_company
+from facex_multi.api.invoice import get_effective_company, has_efast_permission
 
 
 @frappe.whitelist()
@@ -20,6 +20,8 @@ def get_customer_analytics(customer: str, company: str = None):
     - Facturas con saldo pendiente
     Todos los datos filtrados y validados estrictamente por compañía activa.
     """
+    if not has_efast_permission():
+        frappe.throw("No tiene permisos para ver el Análisis de Ventas.", frappe.PermissionError)
     if not customer:
         return {}
 

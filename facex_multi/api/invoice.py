@@ -103,8 +103,10 @@ def get_effective_company(company: str = None) -> str:
     4. Default global de compañía.
     """
     if company:
-        return company.strip()
-        
+        company = company.strip()
+        _assert_company_allowed(company)
+        return company
+
     user_company = frappe.db.get_value(
         "User Permission", 
         {"user": frappe.session.user, "allow": "Company", "is_default": 1}, 
@@ -118,6 +120,29 @@ def get_effective_company(company: str = None) -> str:
         or frappe.db.get_single_value("Global Defaults", "default_company")
         or ""
     )
+
+
+def _assert_company_allowed(company: str) -> None:
+    """La compañía llega del navegador: sin esta comprobación un usuario
+    limitado a su compañía podía mandar otra, donde no tiene fila de FacEx
+    Settings, y get_facex_permissions_for_company le devolvía acceso total.
+    Solo aplica a usuarios con User Permission de Company (los demás siguen
+    como antes); System Manager queda exento."""
+    user = frappe.session.user
+    if user == "Administrator" or "System Manager" in frappe.get_roles():
+        return
+    cache = getattr(frappe.local, "facex_allowed_companies", None)
+    if cache is None:
+        cache = frappe.local.facex_allowed_companies = {}
+    if user not in cache:
+        cache[user] = set(frappe.get_all(
+            "User Permission",
+            filters={"user": user, "allow": "Company"},
+            pluck="for_value",
+        ))
+    allowed = cache[user]
+    if allowed and company not in allowed:
+        frappe.throw(f"No tiene acceso a la compañía '{company}'.", frappe.PermissionError)
 
 
 def get_company_abbr(company: str) -> str:
@@ -1799,6 +1824,9 @@ def get_invoice(name: str):
     """
     name = (name or "").strip()
     doc = frappe.get_doc("Sales Invoice", name)
+    # El nombre llega del navegador: respeta compañía (User Permission) y
+    # socio de ventas (sales_invoice_has_permission), igual que el escritorio.
+    doc.check_permission("read")
     d = _safe_doc_dict(doc)
     d["_payment_entries"] = _payment_entries_summary(name, doc.docstatus)
     return d
@@ -1860,6 +1888,7 @@ def duplicate_invoice(name: str):
     """
     name = (name or "").strip()
     src = frappe.get_doc("Sales Invoice", name)
+    src.check_permission("read")
 
     if src.docstatus == 0:
         frappe.throw(
@@ -2012,6 +2041,7 @@ def send_invoice_email(name: str, recipients: str = "", print_format: str = ""):
     """
     name = (name or "").strip()
     doc = frappe.get_doc("Sales Invoice", name)
+    doc.check_permission("read")
 
     if not recipients:
         # Intentar obtener email del cliente
@@ -2124,6 +2154,7 @@ def get_fel_verification_url(invoice_name: str):
     """
     invoice_name = (invoice_name or "").strip()
     doc = frappe.get_doc("Sales Invoice", invoice_name)
+    doc.check_permission("read")
     if not doc.bfel_uuid:
         frappe.throw("La factura no ha sido certificada en FEL.")
 
@@ -2388,6 +2419,8 @@ def get_dashboard_stats(start_date=None, end_date=None, customer=None, item_code
         frappe.throw("No tiene permisos para ver este tablero.", frappe.PermissionError)
 
     company = get_effective_company(company)
+    from facex_multi.api.permissions import require_facex_permission
+    require_facex_permission(company, "puede_ver_tablero", msg="No tiene permiso para ver el Tablero.")
 
     # 1. Construir filtros base para Sales Invoice (incluyendo canceladas 2)
     filters = {"docstatus": ["in", [0, 1, 2]], "company": company}
@@ -2520,6 +2553,8 @@ def get_dashboard_stats(start_date=None, end_date=None, customer=None, item_code
 
 @frappe.whitelist()
 def run_permissions_setup():
+    # Crea roles y DocPerms: solo un administrador del sistema.
+    frappe.only_for("System Manager")
     role = "facex_multi"
     
     # 1. Asegurar que el rol 'facex_multi' exista en la base de datos
@@ -2609,6 +2644,7 @@ def preview_fel_pdf(invoice_name: str):
     import requests
 
     doc = frappe.get_doc("Sales Invoice", invoice_name)
+    doc.check_permission("read")
     if not doc.bfel_uuid:
         frappe.throw("La factura no ha sido certificada en FEL.")
 

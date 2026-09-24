@@ -243,7 +243,7 @@ class EFastSalePage {
 			this._update_local_footer();
 		}
 		this._focus_first_field();
-		this._switch_view("billing");
+		this._switch_view("billing", { silent: true });
 	}
 
 	// -----------------------------------------------------------------------
@@ -2432,6 +2432,16 @@ class EFastSalePage {
 	}
 
 	_switch_view(view, opts = {}) {
+		// Único punto de paso de toda navegación interna (menú, tarjetas de
+		// Inicio, paleta, botones como «Volver al Tablero», pila de Atrás…):
+		// el permiso se revalida aquí para que ningún botón suelto lo salte.
+		if (!this._can_access_view(view)) {
+			if (!opts.silent) {
+				frappe.show_alert({ message: `No tiene permiso para acceder a ${this._view_label(view, "esta pantalla")}.`, indicator: "red" });
+			}
+			if (view !== "home" && this._current_view !== "home") this._switch_view("home", { silent: true });
+			return;
+		}
 		// Antes de cambiar: recordar de dónde venimos, para que el botón Atrás
 		// del navegador (y el chip "Volver") regresen a la pantalla anterior
 		// en vez de abandonar FacEx. opts.from_history evita que al restaurar
@@ -3476,6 +3486,7 @@ class EFastSalePage {
 		this.$body.find("#ef-peek-sub").text("Cargando…");
 		this.$body.find("#ef-peek-body").html('<div class="ef-peek-muted">Cargando…</div>');
 		this.$body.find("#ef-peek, #ef-peek-backdrop").show();
+		this.$body.find("#ef-peek-open").toggle(this._can_access_view("billing"));
 
 		frappe.call({
 			method: "facex_multi.api.reports.get_invoice_peek",
@@ -8370,6 +8381,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 	// -----------------------------------------------------------------------
 
 	load_invoice(name) {
+		// Abrir una factura es entrar al Facturador (puede_facturar): se corta
+		// antes de pedirla para no pisar this.doc con una vista que no se mostrará.
+		if (!this._can_access_view("billing")) {
+			frappe.show_alert({ message: "No tiene permiso para acceder al Facturador.", indicator: "red" });
+			return;
+		}
 		// Guardia de secuencia: si mientras esta carga estaba en vuelo se
 		// disparó otra (o se guardaron pagos y se aplicó su estado), una
 		// respuesta vieja no debe pisar this.doc.
@@ -10111,9 +10128,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 					this.$body.find("#ef-report-data-card").hide();
 					this.$body.find("#ef-report-unauthorized").show();
 					
-					this.$body.find("#ef-rep-btn-go-back").off("click").on("click", () => {
-						this._switch_view("dashboard");
-					});
+					const backView = this._can_access_view("dashboard") ? "dashboard" : "home";
+					this.$body.find("#ef-rep-btn-go-back")
+						.text(backView === "dashboard" ? "Volver al Tablero" : "Volver al Inicio")
+						.off("click").on("click", () => this._switch_view(backView));
 					return;
 				}
 
