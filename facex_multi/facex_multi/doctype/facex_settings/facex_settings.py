@@ -40,6 +40,15 @@ class FacExSettings(Document):
                 f"en la compañía '{self.bfel_company}' ({existing})."
             )
 
+    def on_update(self):
+        # Caché de permisos por petición (permissions._row/_children).
+        from facex_multi.api.permissions import clear_permissions_cache
+        clear_permissions_cache()
+
+    def on_trash(self):
+        from facex_multi.api.permissions import clear_permissions_cache
+        clear_permissions_cache()
+
     def _validate_bodegas_habilitadas(self):
         import frappe
 
