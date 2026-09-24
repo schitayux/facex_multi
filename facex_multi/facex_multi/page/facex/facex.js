@@ -1293,7 +1293,7 @@ class EFastSalePage {
             </div>
             <h3 style="margin: 0; font-size: 18px; font-weight: 800; color: #153375;">Acceso Restringido</h3>
             <p style="margin: 0; font-size: 13px; color: var(--ef-text-muted); line-height: 1.5;">
-              No cuenta con los roles correspondientes (Administrador, Gerente de Finanzas o Ventas) para ver estos datos financieros. Por favor, solicite accesos a su administrador.
+              No tiene habilitado ningún reporte en FacEx Settings. Solicite a su administrador que marque los reportes que necesita.
             </p>
             <button id="ef-rep-btn-go-back" class="ef-btn ef-btn-secondary" style="margin-top: 10px; width: 100%;">
               Volver al Tablero
@@ -10120,6 +10120,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 	_load_reports_view() {
 		frappe.call({
 			method: "facex_multi.api.reports.has_reports_permission",
+			args: { company: this.defaults.company || "" },
 			callback: (r) => {
 				const has_perm = r.message;
 				if (!has_perm) {

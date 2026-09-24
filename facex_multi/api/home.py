@@ -191,7 +191,7 @@ _KPI_BUILDERS = (
 def get_home_kpis(company: str = None) -> dict:
     """Devuelve sólo los KPIs que este usuario puede ver. Lista vacía si no
     tiene acceso a reportes: Inicio simplemente no muestra tarjetas."""
-    if not has_reports_permission():
+    if not has_reports_permission(company):
         return {"kpis": []}
 
     from facex_multi.api.permissions import get_facex_permissions_for_company

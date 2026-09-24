@@ -124,32 +124,54 @@ def user_query_for_reports(doctype=None, txt="", searchfield=None, start=0, page
     )
 
 
+_REPORT_FLAGS = (
+    "reporte_ventas_fecha", "reporte_ventas_producto", "reporte_facturas_canceladas",
+    "reporte_estados_cuenta", "reporte_antiguedad_saldos", "reporte_cotizaciones",
+    "reporte_recibos_pagos", "reporte_crecimiento_ventas", "reporte_imprimir_recibo",
+    "reporte_analisis_utilidad", "reporte_auditoria_sistema",
+)
+
+
+def _has_facex_settings_row(company: str) -> bool:
+    return bool(frappe.db.exists(
+        "FacEx Settings", {"user": frappe.session.user, "bfel_company": company}
+    ))
+
+
 @frappe.whitelist()
-def has_reports_permission() -> bool:
+def has_reports_permission(company: str = None) -> bool:
+    """Puerta general de Reportes FacEx.
+
+    Si el usuario tiene fila en FacEx Settings para la compañía, mandan sus
+    checks reporte_*: basta con uno marcado (antes además se exigía un rol de
+    ERPNext y un usuario con «Estados de Cuenta» marcado seguía bloqueado).
+    Sin fila (usuarios anteriores a FacEx Settings) se conserva el criterio por
+    rol. System Manager siempre entra.
     """
-    Verifica si el usuario tiene permisos para ver los reportes avanzados de FacEx.
-    A futuro se pueden mapear permisos granulares para los usuarios finales.
-    """
-    roles = frappe.get_roles()
-    allowed = {"Accounts Manager", "Sales Manager", "System Manager", "facex_multi"}
-    return bool(allowed & set(roles))
+    roles = set(frappe.get_roles())
+    if "System Manager" in roles:
+        return True
+    company = get_effective_company(company)
+    if company and _has_facex_settings_row(company):
+        from facex_multi.api.permissions import get_facex_permissions_for_company
+        perms = get_facex_permissions_for_company(company)
+        return any(perms.get(f) for f in _REPORT_FLAGS)
+    allowed = {"Accounts Manager", "Sales Manager", "facex_multi"}
+    return bool(allowed & roles)
 
 
-def check_permission():
+def check_permission(company: str = None):
     """Valida que el usuario tenga permisos, de lo contrario lanza excepción de permisos."""
-    if not has_reports_permission():
+    if not has_reports_permission(company):
         frappe.throw("No tiene permisos suficientes para acceder a este reporte.", frappe.PermissionError)
 
 
 def _require_report(company: str, flag: str) -> None:
-    """Gate por rol (check_permission) + flag granular de FacEx Settings.
-
-    Antes sólo se validaba el rol (Accounts/Sales Manager…): los ~12 checkboxes
-    reporte_* de FacEx Settings no se aplicaban. Retrocompatible: sin fila de
-    FacEx Settings o System Manager → get_facex_permissions_for_company devuelve
-    acceso total y sólo manda el rol.
+    """Puerta general (has_reports_permission) + el check del informe concreto
+    en FacEx Settings. Sin fila de FacEx Settings o System Manager,
+    get_facex_permissions_for_company devuelve acceso total y sólo manda el rol.
     """
-    check_permission()
+    check_permission(company)
     from facex_multi.api.permissions import get_facex_permissions_for_company
     perms = get_facex_permissions_for_company(get_effective_company(company))
     if not perms.get(flag):
@@ -903,7 +925,7 @@ def get_invoice_peek(name: str, company: str = None) -> dict:
     Las líneas de pago sólo se incluyen con `reporte_recibos_pagos`, el mismo
     permiso que exige el informe de Recibos y Pagos.
     """
-    check_permission()
+    check_permission(company)
 
     company_cond, company_vals = _build_company_condition(company)
     sp_cond, sp_vals = _sales_partner_condition()
