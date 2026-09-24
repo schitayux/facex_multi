@@ -753,6 +753,40 @@ def delete_held_sale(name: str):
     return {"success": True}
 
 
+@frappe.whitelist()
+def delete_draft_invoice(name: str):
+    """Elimina definitivamente una factura en Borrador desde FacEx Clásico.
+    Reutiliza el permiso puede_eliminar_ventas_espera (deny-by-default, ver
+    permissions.get_facex_can_delete_held_sales), evaluado contra la compañía
+    de la factura. Solo docstatus=0: una factura validada se anula, no se borra."""
+    from facex_multi.api.permissions import get_facex_can_delete_held_sales
+
+    name = (name or "").strip()
+    doc = frappe.get_doc("Sales Invoice", name)
+
+    if not get_facex_can_delete_held_sales(doc.company):
+        frappe.throw("No tiene permisos para eliminar facturas en borrador.", frappe.PermissionError)
+
+    if doc.docstatus != 0:
+        frappe.throw("Solo se pueden eliminar facturas en estado Borrador.")
+
+    # Payment Entries que referencian el borrador: los borradores se eliminan
+    # junto con la factura; uno ya validado bloquea (hay que cancelarlo antes).
+    for pe_name in set(frappe.get_all(
+        "Payment Entry Reference",
+        filters={"reference_doctype": "Sales Invoice", "reference_name": name},
+        pluck="parent",
+    )):
+        if frappe.db.get_value("Payment Entry", pe_name, "docstatus") == 0:
+            frappe.delete_doc("Payment Entry", pe_name, ignore_permissions=True)
+        else:
+            frappe.throw(f"La factura tiene el pago {pe_name} validado; cancélelo antes de eliminarla.")
+
+    frappe.delete_doc("Sales Invoice", name, ignore_permissions=True)
+    frappe.db.commit()
+    return {"success": True}
+
+
 # ---------------------------------------------------------------------------
 # Envíos Pendientes de Guía (Pago Contra Entrega sin guía capturada)
 # ---------------------------------------------------------------------------

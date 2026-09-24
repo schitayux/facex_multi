@@ -7608,6 +7608,10 @@ body.facex-fullscreen-mode .ef-main-layout {
     <span class="ef-btn-label">Validar</span>
     <kbd class="ef-kbd">F3</kbd>
   </button>
+  <button id="ef-btn-delete-draft" class="ef-btn ef-btn-danger" title="Eliminar borrador definitivamente" style="display:none">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+    <span class="ef-btn-label">Eliminar</span>
+  </button>
   <button id="ef-btn-certify" class="ef-btn ef-btn-warning" title="Certificar FEL (F3)">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
     <span class="ef-btn-label">Certificar</span>
@@ -7655,6 +7659,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		$bar.find("#ef-btn-save").on("click", () => this._action_save());
 		$bar.find("#ef-btn-cancel-changes").on("click", () => this._action_cancel_changes());
 		$bar.find("#ef-btn-submit").on("click", () => this._action_submit());
+		$bar.find("#ef-btn-delete-draft").on("click", () => this._action_delete_draft());
 		$bar.find("#ef-btn-certify").on("click", () => this._action_certify());
 		$bar.find("#ef-btn-cancel-doc").on("click", () => this._action_cancel_doc());
 		$bar.find("#ef-btn-cancel-fel").on("click", () => this._action_cancel_fel());
@@ -7685,7 +7690,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const enable = (id) => btn(id).prop("disabled", false);
 
 		// Ocultar todo primero, luego mostrar solo lo necesario
-		["#ef-btn-save", "#ef-btn-cancel-changes", "#ef-btn-submit",
+		["#ef-btn-save", "#ef-btn-cancel-changes", "#ef-btn-submit", "#ef-btn-delete-draft",
 		 "#ef-btn-certify", "#ef-btn-cancel-doc", "#ef-btn-cancel-fel", "#ef-btn-print", "#ef-btn-customer", "#ef-btn-pdf",
 		 "#ef-btn-duplicate", "#ef-btn-guia-transporte"].forEach(hide);
 		btn("#ef-btn-save").removeClass("ef-btn-save-dirty");
@@ -7708,6 +7713,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 				// caso 2: borrador limpio → Validar + Imprimir
 				show("#ef-btn-submit"); btn("#ef-btn-submit").prop("disabled", !hasItems);
 				show("#ef-btn-print"); enable("#ef-btn-print");
+			}
+			// Eliminar borrador: mismo permiso que borrar Ventas en Espera en
+			// FacEx Screen; el backend (delete_draft_invoice) lo vuelve a exigir.
+			if (this.perms && this.perms.puede_eliminar_ventas_espera) {
+				show("#ef-btn-delete-draft"); enable("#ef-btn-delete-draft");
 			}
 
 		} else if (isSubmitted) {
@@ -8023,6 +8033,37 @@ body.facex-fullscreen-mode .ef-main-layout {
 							this.load_invoice(this.doc.name);
 						}
 					},
+				});
+			}
+		);
+	}
+
+	_action_delete_draft() {
+		if (this._request_pending) return;
+		if (!this.doc.name || this.doc.name === "new" || this.doc.docstatus !== 0) {
+			frappe.show_alert({ message: "Solo se puede eliminar una factura en Borrador.", indicator: "orange" });
+			return;
+		}
+		const name = this.doc.name;
+		frappe.confirm(
+			`¿Eliminar definitivamente la factura en borrador <strong>${frappe.utils.escape_html(name)}</strong>?<br><br>
+			 <span style="color:red; font-weight:bold;">Esta acción no se puede deshacer.</span>`,
+			() => {
+				this._request_pending = true;
+				frappe.call({
+					method: "facex_multi.api.invoice.delete_draft_invoice",
+					args: { name },
+					freeze: true,
+					freeze_message: "Eliminando borrador...",
+					callback: (r) => {
+						this._request_pending = false;
+						if (!r.exc && r.message && r.message.success) {
+							frappe.show_alert({ message: `Borrador <strong>${frappe.utils.escape_html(name)}</strong> eliminado.`, indicator: "blue" });
+							this._dirty = false;
+							this._new_invoice();
+						}
+					},
+					error: () => { this._request_pending = false; },
 				});
 			}
 		);
