@@ -1,0 +1,238 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:company",
+ "creation": "2026-09-23 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "company",
+  "sec_digecam",
+  "maneja_series",
+  "maneja_adendas",
+  "concatena_descripcion2",
+  "sec_inventario",
+  "maneja_inventario",
+  "tipo_x_defecto",
+  "sec_columnas",
+  "mostrar_almacen",
+  "mostrar_desc_pct",
+  "mostrar_adenda",
+  "mostrar_tipo",
+  "sec_pagos",
+  "exige_pago_completo",
+  "permite_pago_credito",
+  "permite_pago_contra_entrega",
+  "sec_flete",
+  "item_flete",
+  "cuenta_recargo_entrega",
+  "cuenta_flete",
+  "recargo_flete_con_iva",
+  "sec_politicas",
+  "mayusculas_items",
+  "mayusculas_clientes",
+  "sin_sufijo_compania_items",
+  "exige_familia_item"
+ ],
+ "fields": [
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "options": "Company",
+   "label": "Compañía",
+   "reqd": 1,
+   "unique": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "sec_digecam",
+   "fieldtype": "Section Break",
+   "label": "DIGECAM / Series y Adendas"
+  },
+  {
+   "default": "0",
+   "fieldname": "maneja_series",
+   "fieldtype": "Check",
+   "label": "Maneja Series de Items"
+  },
+  {
+   "default": "0",
+   "fieldname": "maneja_adendas",
+   "fieldtype": "Check",
+   "label": "Maneja Adendas por Línea"
+  },
+  {
+   "default": "0",
+   "fieldname": "concatena_descripcion2",
+   "fieldtype": "Check",
+   "label": "Concatenar Descripción 2 automáticamente"
+  },
+  {
+   "fieldname": "sec_inventario",
+   "fieldtype": "Section Break",
+   "label": "Inventario y Tipo FEL"
+  },
+  {
+   "default": "0",
+   "fieldname": "maneja_inventario",
+   "fieldtype": "Check",
+   "label": "Manejar Inventario (update_stock)"
+  },
+  {
+   "fieldname": "tipo_x_defecto",
+   "fieldtype": "Select",
+   "label": "Tipo por Defecto (FEL)",
+   "options": "\nB\nS"
+  },
+  {
+   "fieldname": "sec_columnas",
+   "fieldtype": "Section Break",
+   "label": "Columnas Visibles en Facturador"
+  },
+  {
+   "default": "1",
+   "fieldname": "mostrar_almacen",
+   "fieldtype": "Check",
+   "label": "Mostrar Almacén"
+  },
+  {
+   "default": "1",
+   "fieldname": "mostrar_desc_pct",
+   "fieldtype": "Check",
+   "label": "Mostrar Desc %"
+  },
+  {
+   "default": "1",
+   "fieldname": "mostrar_adenda",
+   "fieldtype": "Check",
+   "label": "Mostrar Adenda"
+  },
+  {
+   "default": "1",
+   "fieldname": "mostrar_tipo",
+   "fieldtype": "Check",
+   "label": "Mostrar Tipo FEL"
+  },
+  {
+   "fieldname": "sec_pagos",
+   "fieldtype": "Section Break",
+   "label": "Condiciones de Pago"
+  },
+  {
+   "default": "0",
+   "description": "Si está marcado, FacEx Screen no permite confirmar una venta con pago parcial (bloquea el cobro hasta completar el monto total).",
+   "fieldname": "exige_pago_completo",
+   "fieldtype": "Check",
+   "label": "Exigir Pago Completo"
+  },
+  {
+   "default": "0",
+   "description": "Si está marcado, se muestra el botón \"Crédito\" en la sección de Pago de FacEx Screen (venta sin cobro inmediato, factura queda pendiente).",
+   "fieldname": "permite_pago_credito",
+   "fieldtype": "Check",
+   "label": "Permitir Pago a Crédito"
+  },
+  {
+   "default": "0",
+   "description": "Si está marcado, se muestra el botón \"Contra Entrega\" en la sección de Pago de FacEx Screen (no cobra ahora, el transportista cobra al entregar; habilita capturar Guías de Transporte).",
+   "fieldname": "permite_pago_contra_entrega",
+   "fieldtype": "Check",
+   "label": "Permitir Pago Contra Entrega"
+  },
+  {
+   "fieldname": "sec_flete",
+   "fieldtype": "Section Break",
+   "label": "Recargo y Flete"
+  },
+  {
+   "description": "Se lee siempre del registro de la COMPAÑÍA (sin usuario). Al marcar \"Incluir Flete\" en FacEx Clásico o FacEx Screen se toma el precio de este ítem en la lista de precios de la factura y se registra como fila \"Flete\" en cargos (cuenta configurada abajo), no como línea de producto. Vacío = esa casilla no se muestra.",
+   "fieldname": "item_flete",
+   "fieldtype": "Link",
+   "label": "Ítem de Flete",
+   "options": "Item"
+  },
+  {
+   "fieldname": "cuenta_recargo_entrega",
+   "fieldtype": "Link",
+   "label": "Cuenta Recargo por Entrega",
+   "options": "Account",
+   "description": "Se lee del registro de la COMPAÑÍA. Cuenta de pasivo (p. ej. \"Recargos por Pagar a Transportista\") a la que va la fila \"Recargo por entrega\" cuando la lista de precios de la factura tiene Recargo por pieza > 0. No es ingreso: ese dinero se le paga al repartidor."
+  },
+  {
+   "fieldname": "cuenta_flete",
+   "fieldtype": "Link",
+   "label": "Cuenta de Flete",
+   "options": "Account",
+   "description": "Se lee del registro de la COMPAÑÍA. Cuenta de pasivo a la que va la fila \"Flete\" cuando el cajero marca \"Incluir Flete\". El monto se toma del precio del Ítem de Flete en la lista de precios de la factura; ya no se agrega como línea de producto."
+  },
+  {
+   "fieldname": "recargo_flete_con_iva",
+   "fieldtype": "Check",
+   "label": "Recargo y Flete llevan IVA",
+   "default": "0",
+   "description": "Apagado: la fila de recargo/flete se suma después del IVA (no grava). Encendido: cada cargo se parte en neto (cuenta de pasivo) + IVA (cuenta de IVA de la plantilla). Definir con el contador."
+  },
+  {
+   "fieldname": "sec_politicas",
+   "fieldtype": "Section Break",
+   "label": "Políticas de Catálogo"
+  },
+  {
+   "default": "0",
+   "description": "Si está marcado en el registro de la COMPAÑÍA (sin usuario), cada alta o edición de un producto desde FacEx convierte su Nombre a MAYÚSCULAS automáticamente. El Código solo se fuerza a mayúsculas al CREAR el ítem — un código ya existente en minúscula no se toca al editarlo.",
+   "fieldname": "mayusculas_items",
+   "fieldtype": "Check",
+   "label": "Forzar Nombre y Código de Ítems en Mayúsculas"
+  },
+  {
+   "default": "0",
+   "description": "Si está marcado en el registro de la COMPAÑÍA (sin usuario), cada alta o edición de un cliente desde FacEx convierte su Nombre a MAYÚSCULAS automáticamente. No afecta al cliente \"Consumidor Final\".",
+   "fieldname": "mayusculas_clientes",
+   "fieldtype": "Check",
+   "label": "Forzar Nombre de Clientes en Mayúsculas"
+  },
+  {
+   "default": "0",
+   "description": "Si está marcado en el registro de la COMPAÑÍA (sin usuario), al crear un producto desde FacEx el Código se guarda tal cual se escribe (o A001, A002… si es automático), SIN concatenar el sufijo \"-ABREVIATURA\" de la compañía. Desmarcado = comportamiento actual (A001-NEKO, MICODIGO-NEKO).",
+   "fieldname": "sin_sufijo_compania_items",
+   "fieldtype": "Check",
+   "label": "No concatenar el sufijo de la compañía al Código de Ítems"
+  },
+  {
+   "default": "0",
+   "description": "Si está marcado en el registro de la COMPAÑÍA (sin usuario), toda alta o edición de ítems de esta compañía desde FacEx obliga a asignar una Familia de Precio.",
+   "fieldname": "exige_familia_item",
+   "fieldtype": "Check",
+   "label": "Exigir Familia en los ítems (política de la compañía)"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-09-23 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FacEx Multi",
+ "name": "FacEx Configuracion Compania",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 0,
+   "export": 1,
+   "print": 0,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 0,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1,
+ "title_field": "company",
+ "description": "Configuración de FacEx a nivel de compañía (antes: fila de FacEx Settings sin usuario)."
+}

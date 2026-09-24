@@ -7,7 +7,14 @@ class FacExSettings(Document):
         self._validate_socio_venta_por_defecto()
         self._validate_listas_precios()
 
-        # user="" → registro de compañía (config DIGECAM); solo puede haber uno por compañía
+        # user="" → registro de compañía heredado. La configuración de compañía
+        # ahora vive en «FacEx Configuracion Compania»: ya no se crean filas
+        # nuevas sin usuario; las existentes se pueden seguir guardando.
+        if not self.user and self.is_new():
+            frappe.throw(
+                "La configuración de compañía ahora se edita en «FacEx Configuracion Compania». "
+                "FacEx Settings requiere un Usuario."
+            )
         if not self.user:
             existing = frappe.db.get_value(
                 "FacEx Settings",

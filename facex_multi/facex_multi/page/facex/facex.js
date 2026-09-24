@@ -2312,7 +2312,7 @@ class EFastSalePage {
         <span id="ef-sec-user-status" style="font-size:11px; color:#64748b;"></span>
       </div>
       <p style="margin:-8px 0 14px 0; font-size:11.5px; color:#64748b;">
-        Solo se listan los permisos <b>por usuario</b>. La configuración a nivel de compañía (columnas visibles en el facturador, series DIGECAM, adendas, tipo de inventario, condiciones de pago) se edita en el registro de FacEx Settings <b>sin usuario asignado</b> de esta compañía, no aquí.
+        Solo se listan los permisos <b>por usuario</b>. La configuración a nivel de compañía (columnas visibles en el facturador, series DIGECAM, adendas, tipo de inventario, condiciones de pago, flete y políticas de catálogo) se edita en <a href="/app/facex-configuracion-compania" target="_blank"><b>FacEx Configuracion Compania</b></a>, no aquí.
       </p>
       <div class="ef-table-wrapper" style="max-height: 420px; overflow-y: auto;">
         <table class="ef-table">
@@ -2838,6 +2838,7 @@ class EFastSalePage {
 					const fields = this._compact_dialog_breaks(
 						meta.fields
 							.filter((df) => df.fieldtype !== "Table"
+								&& !df.hidden
 								&& !SKIP_FIELDNAMES.has(df.fieldname)
 								&& !companyOnlyFields.has(df.fieldname))
 							.map((df) => ({

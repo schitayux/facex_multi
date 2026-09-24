@@ -396,24 +396,35 @@ def customer_has_permission(doc, user: str = None, ptype: str = None) -> bool:
     return (getattr(doc, "default_sales_partner", "") or "") == sp
 
 
+CONFIG_DOCTYPE = "FacEx Configuracion Compania"
+
+
 def get_facex_company_config(company: str) -> dict:
     """
-    Retorna la configuración DIGECAM/Inventario a nivel de compañía (registro con user='').
-    Si no existe, devuelve defaults (columnas visibles ON, resto OFF).
+    Configuración de FacEx a nivel de compañía (DIGECAM, columnas visibles,
+    condiciones de pago, flete, políticas de catálogo).
+    Vive en «FacEx Configuracion Compania» (uno por compañía). Mientras ese
+    registro no exista —código desplegado antes del migrate que lo crea— se
+    lee de la fila heredada de FacEx Settings con Usuario en blanco.
+    Sin ninguno de los dos: defaults (columnas visibles ON, resto OFF).
     """
     if not company:
         return _config_default()
-    # Solo columnas que existen físicamente: durante el intervalo entre desplegar
-    # el código y correr `bench migrate` puede faltar alguna (p. ej. campos nuevos
-    # de FacEx Settings todavía sin sincronizar).
-    meta = frappe.get_meta("FacEx Settings")
-    existing = [f for f in _COMPANY_CONFIG_FIELDS if meta.has_field(f)]
-    row = frappe.db.get_value(
-        "FacEx Settings",
-        {"bfel_company": company, "user": ["is", "not set"]},
-        existing,
-        as_dict=True,
-    ) if existing else None
+    row = None
+    if frappe.db.table_exists(CONFIG_DOCTYPE):
+        meta = frappe.get_meta(CONFIG_DOCTYPE)
+        existing = [f for f in _COMPANY_CONFIG_FIELDS if meta.has_field(f)]
+        row = frappe.db.get_value(CONFIG_DOCTYPE, company, existing, as_dict=True) if existing else None
+    if not row:
+        # Solo columnas que existen físicamente (campos nuevos aún sin migrar).
+        meta = frappe.get_meta("FacEx Settings")
+        existing = [f for f in _COMPANY_CONFIG_FIELDS if meta.has_field(f)]
+        row = frappe.db.get_value(
+            "FacEx Settings",
+            {"bfel_company": company, "user": ["is", "not set"]},
+            existing,
+            as_dict=True,
+        ) if existing else None
     if not row:
         return _config_default()
     result = {}
