@@ -21,8 +21,12 @@ _ALL_PERM_FIELDS = [
     "reporte_antiguedad_saldos", "reporte_cotizaciones",
     "reporte_recibos_pagos", "reporte_crecimiento_ventas",
     "reporte_imprimir_recibo", "reporte_analisis_utilidad",
-    "reporte_auditoria_sistema",
+    "reporte_auditoria_sistema", "reporte_ventas_vendedor",
 ]
+
+# Flags de _ALL_PERM_FIELDS que NO se conceden a un usuario sin fila de FacEx
+# Settings (acceso total heredado): solo con el check marcado o System Manager.
+_DENY_BY_DEFAULT_FIELDS = ("reporte_ventas_vendedor",)
 
 def _full_access() -> dict:
     return {f: 1 for f in _ALL_PERM_FIELDS}
@@ -116,7 +120,7 @@ def get_facex_permissions_for_company(company: str) -> dict:
         return _full_access()
     row = _row(company)
     if not row:
-        return _full_access()
+        return {**_full_access(), **{f: 0 for f in _DENY_BY_DEFAULT_FIELDS}}
     return {k: int(row.get(k) or 0) for k in _ALL_PERM_FIELDS}
 
 
@@ -177,6 +181,7 @@ PROFILE_PERM_FIELDS = [
     "reporte_imprimir_recibo",
     "reporte_analisis_utilidad",
     "reporte_auditoria_sistema",
+    "reporte_ventas_vendedor",
     "puede_compras",
     "puede_validar_compras",
     "puede_cancelar_compras",

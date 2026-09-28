@@ -1043,6 +1043,10 @@ class EFastSalePage {
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
               <span>Crecimiento de Ventas</span>
             </button>
+            <button class="ef-report-nav-btn" data-report="sales_by_seller">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/></svg>
+              <span>Ventas por Vendedor</span>
+            </button>
           </div>
         </div>
 
@@ -1230,6 +1234,12 @@ class EFastSalePage {
           <div class="ef-rep-filter ef-filter-warehouse" style="display: flex; flex-direction: column; gap: 4px; width: 200px;">
             <label class="ef-label" style="font-weight: 700; font-size: 10px;">Bodega / Almacén</label>
             <div id="ef-rep-warehouse-ctrl" class="ef-link-ctrl" style="min-height: 32px;"></div>
+          </div>
+
+          <!-- sales partner (vendedor) filter -->
+          <div class="ef-rep-filter ef-filter-sales-partner" style="display: flex; flex-direction: column; gap: 4px; width: 220px;">
+            <label class="ef-label" style="font-weight: 700; font-size: 10px;">Vendedor</label>
+            <div id="ef-rep-sales-partner-ctrl" class="ef-link-ctrl" style="min-height: 32px;"></div>
           </div>
 
           <!-- owners (usuario creador) filter -->
@@ -2685,6 +2695,7 @@ class EFastSalePage {
 			proveedor: ctrl(this.rep_supplier_ctrl),
 			bodegas: list(this.rep_warehouse_ctrl),
 			usuarios: list(this.rep_owner_ctrl),
+			vendedores: list(this.rep_sales_partner_ctrl),
 		};
 		Object.keys(params).forEach((k) => { if (!params[k]) delete params[k]; });
 		return params;
@@ -2716,6 +2727,7 @@ class EFastSalePage {
 		set_ctrl(this.rep_supplier_ctrl, p.proveedor);
 		set_list(this.rep_warehouse_ctrl, p.bodegas);
 		set_list(this.rep_owner_ctrl, p.usuarios);
+		set_list(this.rep_sales_partner_ctrl, p.vendedores);
 	}
 
 	// Aterrizaje según la URL: ?invoice=… abre esa factura, ?view=… esa vista.
@@ -7348,6 +7360,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			print_receipt:         "reporte_imprimir_recibo",
 			utility_analysis:      "reporte_analisis_utilidad",
 			system_audit:          "reporte_auditoria_sistema",
+			sales_by_seller:       "reporte_ventas_vendedor",
 		};
 	}
 
@@ -10487,6 +10500,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 				title: "Imprimir Recibo de Pago",
 				desc: "Busque cualquier factura del sistema para reimprimir su comprobante de pago personalizado."
 			},
+			sales_by_seller: {
+				title: "Ventas por Vendedor",
+				desc: "Ventas por el vendedor (Socio de Ventas) de cada factura: Contado, Crédito y Contra Entrega con la misma regla del Cierre Diario, cobranza y detalle de facturas."
+			},
 			system_audit: {
 				title: "Auditoría de Sistema",
 				desc: "Resumen por usuario (cantidad y monto) de Cotizaciones, Facturas No Enviar/Enviar, Pagos Aplicados y Guías Pendientes de Liquidar, por rango de fechas."
@@ -10728,6 +10745,34 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this.rep_warehouse_ctrl.refresh();
 		}
 
+		if (!this.rep_sales_partner_ctrl) {
+			this.rep_sales_partner_ctrl = frappe.ui.form.make_control({
+				parent: this.$body.find("#ef-rep-sales-partner-ctrl")[0],
+				df: {
+					label: "Vendedor",
+					fieldtype: "MultiSelectList",
+					fieldname: "rep_sales_partner",
+					get_data: (txt) => new Promise((resolve) => {
+						frappe.call({
+							method: "facex_multi.api.sales_partner.search_sales_partners",
+							args: { txt: txt || "", company: this.$body.find("#ef-rep-company").val() || get_company() },
+							callback: (r) => {
+								const opts = (r.message || []).map((sp) => ({ value: sp.name, description: sp.partner_name || sp.name }));
+								// Facturas sin Socio de Ventas: valor especial que entiende el backend.
+								if (!txt || "(sin vendedor)".includes(String(txt).toLowerCase())) {
+									opts.push({ value: "(Sin vendedor)", description: "Facturas sin vendedor asignado" });
+								}
+								resolve(opts);
+							},
+						});
+					}),
+				},
+				render_input: true,
+				only_input: false,
+			});
+			this.rep_sales_partner_ctrl.refresh();
+		}
+
 		if (!this.rep_owner_ctrl) {
 			this.rep_owner_ctrl = frappe.ui.form.make_control({
 				parent: this.$body.find("#ef-rep-owner-ctrl")[0],
@@ -10913,6 +10958,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this.$body.find(".ef-filter-company, .ef-filter-price-list, .ef-filter-cost-basis, .ef-filter-solo-precio, .ef-filter-item, .ef-filter-item-group, .ef-filter-supplier").show();
 		} else if (report_id === "system_audit") {
 			this.$body.find(".ef-filter-company, .ef-filter-date").show();
+		} else if (report_id === "sales_by_seller") {
+			this.$body.find(".ef-filter-company, .ef-filter-date, .ef-filter-sales-partner, .ef-filter-establecimiento").show();
+			this.$body.find("#ef-report-chart-container").show();
 		} else if (report_id === "print_receipt") {
 			this.$body.find("#ef-report-filters").hide();
 			this.$body.find("#ef-report-btn-export").hide();
@@ -10933,7 +10981,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 		// El filtro «Usuario Creador» solo tiene sentido con Alcance en Ventas
 		// «Toda la compañía»: en los otros alcances el backend ya fija qué ve.
 		const _veTodo = (this.perms || {}).alcance_ventas === "Toda la compañía";
-		if (report_id && report_id !== "print_receipt" && report_id !== "utility_analysis" && _veTodo) {
+		// Ventas por Vendedor ve toda la compañía por diseño y filtra por vendedor.
+		if (report_id && report_id !== "print_receipt" && report_id !== "utility_analysis" && report_id !== "sales_by_seller" && _veTodo) {
 			this.$body.find(".ef-filter-owners").show();
 		} else {
 			this.$body.find(".ef-filter-owners").hide();
@@ -10951,6 +11000,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const item_group = this.rep_item_group_ctrl ? this.rep_item_group_ctrl.get_value() : "";
 		const warehouse = this.rep_warehouse_ctrl ? this.rep_warehouse_ctrl.get_value() : [];
 		const owners = this.rep_owner_ctrl ? this.rep_owner_ctrl.get_value() : [];
+		const sales_partners = this.rep_sales_partner_ctrl ? this.rep_sales_partner_ctrl.get_value() : [];
 		const payment_method = this.$body.find("#ef-rep-payment-method").val();
 		const doc_type_filter = this.$body.find("#ef-rep-doc-type").val();
 		const year = this.$body.find("#ef-rep-year").val() || new Date().getFullYear();
@@ -11010,6 +11060,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 		} else if (report_id === "system_audit") {
 			method = "facex_multi.api.reports.get_system_audit";
 			args = { start_date, end_date, owners };
+		} else if (report_id === "sales_by_seller") {
+			method = "facex_multi.api.reports.get_sales_by_seller";
+			args = { start_date, end_date, sales_partners, establecimiento };
 		}
 
 		// Si el filtro de compañía está en "Todas" (vacío), el backend resolverá por permisos del usuario
@@ -11101,6 +11154,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			[".ef-filter-supplier", this.rep_supplier_ctrl],
 			[".ef-filter-warehouse", this.rep_warehouse_ctrl],
 			[".ef-filter-owners", this.rep_owner_ctrl],
+			[".ef-filter-sales-partner", this.rep_sales_partner_ctrl],
 			[".ef-filter-establecimiento", "#ef-rep-establecimiento"],
 			[".ef-filter-payment-method", "#ef-rep-payment-method"],
 			[".ef-filter-doc-type", "#ef-rep-doc-type"],
@@ -11806,6 +11860,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 					</tr>
 				`);
 			});
+
+		} else if (report_id === "sales_by_seller") {
+			this._render_sales_by_seller(data, $kpis, $thead, $tbody, $empty);
 		}
 
 		$tbody.off("click", ".ef-inv-load-link").on("click", ".ef-inv-load-link", (e) => {
@@ -11816,6 +11873,192 @@ body.facex-fullscreen-mode .ef-main-layout {
 			const inv_name = $(e.currentTarget).data("name");
 			this._switch_view("billing");
 			this._load_invoice_with_dirty_check(inv_name);
+		});
+	}
+
+	// Condición de venta del informe «Ventas por Vendedor». Colores: slots 1–3
+	// de la paleta categórica validada (azul / naranja / aqua), fijos por
+	// condición — nunca por posición.
+	_seller_condition_meta() {
+		return {
+			contado:        { label: "Contado",        color: "#2a78d6" },
+			credito:        { label: "Crédito",        color: "#eb6834" },
+			contra_entrega: { label: "Contra Entrega", color: "#1baf7a" },
+			devolucion:     { label: "Devolución",     color: "#8a8f98" },
+		};
+	}
+
+	_render_sales_by_seller(data, $kpis, $thead, $tbody, $empty) {
+		const sum = data.summary || {};
+		const sellers = data.sellers || [];
+		const invoices = data.invoices || [];
+		const COND = this._seller_condition_meta();
+		const Q = (v) => _fmtCurrency(v || 0, "GTQ");
+		const pct = (v) => `${_fmt(v || 0)}%`;
+		const card = (accent, label, value, sub = "", valueStyle = "") => `
+			<div class="ef-stat-card" style="border-left: 4px solid ${accent}; cursor: default;">
+				<div class="ef-stat-label">${label}</div>
+				<div class="ef-stat-value" style="font-family:monospace; ${valueStyle}">${value}</div>
+				${sub ? `<div style="font-size:11px; color:var(--ef-text-muted); margin-top:4px; line-height:1.4;">${sub}</div>` : ""}
+			</div>`;
+
+		// --- KPIs generales -------------------------------------------------
+		let growth = `<span>Sin ventas en el periodo anterior</span>`;
+		if (sum.crecimiento !== null && sum.crecimiento !== undefined) {
+			const up = sum.crecimiento >= 0;
+			growth = `<span style="font-weight:700; color:${up ? "var(--ef-success)" : "var(--ef-danger)"};">${up ? "▲ +" : "▼ "}${_fmt(sum.crecimiento)}%</span> vs periodo anterior (${Q(sum.venta_anterior)})`;
+		}
+		const cobro = Math.min(Math.max(sum.pct_cobrado || 0, 0), 100);
+		$kpis.append(
+			card("var(--ef-primary)", "Venta Neta", Q(sum.venta_neta), growth)
+			+ card("var(--ef-info)", "Facturas · Ticket Promedio", `${sum.facturas || 0}`,
+				`Ticket promedio <b>${Q(sum.ticket_promedio)}</b>`)
+			+ card("#153375", "Clientes Atendidos", `${sum.clientes || 0}`,
+				`<b>${sum.clientes_nuevos || 0}</b> clientes nuevos en el periodo`)
+			+ card("var(--ef-success)", "Cobrado", Q(sum.cobrado),
+				`<div style="height:6px; background:var(--ef-border); border-radius:3px; overflow:hidden; margin:2px 0 4px;"><div style="height:100%; width:${cobro}%; background:var(--ef-success); border-radius:3px;"></div></div>`
+				+ `${pct(sum.pct_cobrado)} cobrado · pendiente <b style="color:var(--ef-warning);">${Q(sum.saldo)}</b>`)
+		);
+		["contado", "credito", "contra_entrega"].forEach((k) => {
+			const c = sum[k] || {};
+			$kpis.append(card(COND[k].color, `Ventas ${COND[k].label}`, Q(c.monto),
+				`<b>${pct(c.pct)}</b> de la venta · ${c.facturas || 0} facturas · ${c.clientes || 0} clientes`));
+		});
+		$kpis.append(card("var(--ef-warning)", "Mejor Vendedor",
+			_esc(sum.top_vendedor || "—"),
+			sum.top_vendedor ? `${Q(sum.top_vendedor_monto)} · ${sum.vendedores || 0} vendedores activos` : "", "font-size:16px;"));
+		if ((sum.devoluciones || {}).facturas) {
+			$kpis.append(card(COND.devolucion.color, "Devoluciones", Q(sum.devoluciones.monto),
+				`${sum.devoluciones.facturas} notas · ya restadas de la venta neta`));
+		}
+		if (sum.sin_vendedor) {
+			$kpis.append(card("var(--ef-danger)", "Sin Vendedor Asignado", Q(sum.sin_vendedor),
+				"Facturas sin Socio de Ventas"));
+		}
+
+		// --- Gráfica + resumen por vendedor (en el contenedor de gráficas) ---
+		const $chart = this.$body.find("#ef-report-chart-container");
+		$chart.empty();
+		if (!sellers.length) {
+			$chart.html('<div style="text-align:center; color:var(--ef-text-muted); font-size:12px; padding:20px;">Sin ventas en el periodo</div>');
+		} else {
+			const keys = ["contado", "credito", "contra_entrega"];
+			const max = Math.max(...sellers.map((s) => keys.reduce((a, k) => a + (s[k] || 0), 0)), 1);
+			const legend = keys.map((k) => `
+				<span style="display:inline-flex; align-items:center; gap:6px; font-size:11px; color:var(--ef-text);">
+					<span style="width:10px; height:10px; border-radius:2px; background:${COND[k].color};"></span>${COND[k].label}
+				</span>`).join("");
+			const bars = sellers.map((s, i) => {
+				const total = keys.reduce((a, k) => a + (s[k] || 0), 0);
+				const segs = keys.filter((k) => s[k] > 0).map((k, j, arr) => {
+					const last = j === arr.length - 1;
+					return `<div class="ef-seller-seg" data-i="${i}" data-k="${k}" style="width:${(s[k] / max) * 100}%; background:${COND[k].color}; height:100%; ${last ? "border-radius:0 4px 4px 0;" : "margin-right:2px;"}"></div>`;
+				}).join("");
+				return `
+					<div style="display:grid; grid-template-columns:minmax(90px,160px) 1fr minmax(90px,auto); align-items:center; gap:10px; padding:4px 0;">
+						<div style="font-size:12px; font-weight:600; color:var(--ef-text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${_esc(s.vendedor)}">${_esc(s.vendedor)}</div>
+						<div style="display:flex; height:18px; align-items:stretch;">${segs}</div>
+						<div style="font-size:12px; font-family:monospace; text-align:right; color:var(--ef-text);">${Q(total)} <span style="color:var(--ef-text-muted);">· ${_fmt(s.participacion)}%</span></div>
+					</div>`;
+			}).join("");
+
+			const rows = sellers.map((s) => `
+				<tr>
+					<td class="ef-td" style="font-weight:600;">${_esc(s.vendedor)}</td>
+					<td class="ef-td ef-td-num">${s.facturas}</td>
+					<td class="ef-td ef-td-num">${s.clientes}</td>
+					<td class="ef-td ef-td-num" style="font-family:monospace;">${Q(s.contado)}</td>
+					<td class="ef-td ef-td-num" style="font-family:monospace;">${Q(s.credito)}</td>
+					<td class="ef-td ef-td-num" style="font-family:monospace;">${Q(s.contra_entrega)}</td>
+					<td class="ef-td ef-td-num" style="font-family:monospace; color:var(--ef-text-muted);">${s.devoluciones ? "−" + Q(s.devoluciones) : "—"}</td>
+					<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700;">${Q(s.venta_neta)}</td>
+					<td class="ef-td ef-td-num">${_fmt(s.participacion)}%</td>
+					<td class="ef-td ef-td-num" style="font-family:monospace;">${Q(s.ticket_promedio)}</td>
+					<td class="ef-td ef-td-num" style="font-family:monospace; color:${s.saldo > 0 ? "var(--ef-warning)" : "var(--ef-success)"};">${Q(s.saldo)}</td>
+				</tr>`).join("");
+
+			$chart.html(`
+				<div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:10px; margin-bottom:12px;">
+					<div style="font-size:13px; font-weight:800; color:#153375;">Venta por vendedor y condición</div>
+					<div style="display:flex; gap:14px; flex-wrap:wrap;">${legend}</div>
+				</div>
+				<div class="ef-seller-bars" style="position:relative;">${bars}
+					<div class="ef-seller-tip" style="display:none; position:absolute; pointer-events:none; z-index:5; background:var(--ef-card, #fff); border:1px solid var(--ef-border); border-radius:8px; box-shadow:var(--ef-shadow); padding:8px 10px; font-size:11px; color:var(--ef-text); white-space:nowrap;"></div>
+				</div>
+				<div style="font-size:12px; font-weight:800; color:#153375; margin:20px 0 8px;">Resumen por vendedor</div>
+				<div class="ef-table-wrapper" style="overflow-x:auto;">
+					<table class="ef-table" style="min-width:1000px;">
+						<thead><tr>
+							<th class="ef-th">Vendedor</th>
+							<th class="ef-th ef-td-num">Facturas</th>
+							<th class="ef-th ef-td-num">Clientes</th>
+							<th class="ef-th ef-td-num">Contado</th>
+							<th class="ef-th ef-td-num">Crédito</th>
+							<th class="ef-th ef-td-num">Contra Entrega</th>
+							<th class="ef-th ef-td-num">Devoluciones</th>
+							<th class="ef-th ef-td-num">Venta Neta</th>
+							<th class="ef-th ef-td-num">Participación</th>
+							<th class="ef-th ef-td-num">Ticket Prom.</th>
+							<th class="ef-th ef-td-num">Saldo Pendiente</th>
+						</tr></thead>
+						<tbody>${rows}</tbody>
+					</table>
+				</div>
+			`);
+
+			// Tooltip por segmento: vendedor, condición, monto y % de su venta.
+			const $wrap = $chart.find(".ef-seller-bars");
+			const $tip = $wrap.find(".ef-seller-tip");
+			$wrap.on("mousemove", ".ef-seller-seg", (e) => {
+				const s = sellers[$(e.currentTarget).data("i")];
+				const k = $(e.currentTarget).data("k");
+				const total = keys.reduce((a, kk) => a + (s[kk] || 0), 0) || 1;
+				$tip.html(`<b>${_esc(s.vendedor)}</b><br>
+					<span style="display:inline-block; width:8px; height:8px; border-radius:2px; background:${COND[k].color}; margin-right:4px;"></span>${COND[k].label}: <b>${Q(s[k])}</b> (${_fmt((s[k] / total) * 100)}%)`);
+				const off = $wrap.offset();
+				let left = e.pageX - off.left + 12;
+				const w = $tip.outerWidth() || 160;
+				if (left + w > $wrap.width()) left = e.pageX - off.left - w - 12;
+				$tip.css({ display: "block", left, top: e.pageY - off.top + 12 });
+			}).on("mouseleave", ".ef-seller-seg", () => $tip.hide());
+		}
+
+		// --- Detalle de facturas (tabla principal) --------------------------
+		if (!invoices.length) {
+			$empty.show();
+			return;
+		}
+		this.$body.find("#ef-report-table").css("min-width", "1180px");
+		$thead.append(`
+			<tr>
+				<th class="ef-th">Factura</th>
+				<th class="ef-th">Fecha</th>
+				<th class="ef-th">Vendedor</th>
+				<th class="ef-th">Cliente</th>
+				<th class="ef-th">Estab.</th>
+				<th class="ef-th">Condición</th>
+				<th class="ef-th">Vence</th>
+				<th class="ef-th ef-td-num">Total</th>
+				<th class="ef-th ef-td-num">Pagado</th>
+				<th class="ef-th ef-td-num">Saldo</th>
+			</tr>
+		`);
+		invoices.forEach((inv) => {
+			const c = COND[inv.condicion] || { label: inv.condicion, color: "#8a8f98" };
+			$tbody.append(`
+				<tr>
+					<td class="ef-td"><a class="ef-inv-load-link" title="Clic: abrir aquí · Ctrl+clic: abrir en pestaña nueva" href="/app/facex?invoice=${encodeURIComponent(inv.name)}" data-name="${_esc(inv.name)}" style="color:var(--ef-primary); font-weight:700; text-decoration:underline; cursor:pointer;">${_esc(inv.name)}</a>${_peekBtn(inv.name)}</td>
+					<td class="ef-td">${inv.posting_date}</td>
+					<td class="ef-td">${_esc(inv.vendedor)}</td>
+					<td class="ef-td">${_esc(inv.customer_name || inv.customer)}</td>
+					<td class="ef-td">${_esc(inv.establecimiento || "")}</td>
+					<td class="ef-td" title="${_esc(inv.plantilla || "")}"><span style="display:inline-flex; align-items:center; gap:6px;"><span style="width:8px; height:8px; border-radius:2px; background:${c.color};"></span>${c.label}</span></td>
+					<td class="ef-td">${inv.due_date || ""}</td>
+					<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700;">${Q(inv.grand_total)}</td>
+					<td class="ef-td ef-td-num" style="font-family:monospace;">${Q(inv.pagado)}</td>
+					<td class="ef-td ef-td-num" style="font-family:monospace; color:${inv.saldo > 0 ? "var(--ef-warning)" : "var(--ef-success)"};">${Q(inv.saldo)}</td>
+				</tr>
+			`);
 		});
 	}
 
@@ -12295,6 +12538,19 @@ body.facex-fullscreen-mode .ef-main-layout {
 			csvContent += "Codigo,Nombre,Grupo,Precio Neto,Precio c/IVA,Costo Estandar,Costo Prom Ponderado,Ultimo Precio Compra,Costo Usado,Utilidad Q,Utilidad %,Margen s/Precio %\n";
 			(data.rows || []).forEach(r => {
 				csvContent += `"${r.item_code}","${(r.item_name || '').replace(/"/g, '""')}","${r.item_group}",${r.precio_neto},${r.precio_con_iva},${r.costo_estandar},${r.costo_ponderado},${r.costo_ultima_compra},${r.costo},${r.utilidad_q},${r.utilidad_pct.toFixed(2)},${r.margen_sobre_precio_pct.toFixed(2)}\n`;
+			});
+		} else if (report_id === "sales_by_seller") {
+			const q = (v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
+			const cond = this._seller_condition_meta();
+			csvContent += "Resumen por vendedor\n";
+			csvContent += "Vendedor,Facturas,Clientes,Contado,Credito,Contra Entrega,Devoluciones,Venta Neta,Participacion %,Ticket Promedio,Saldo Pendiente\n";
+			(data.sellers || []).forEach(r => {
+				csvContent += `${q(r.vendedor)},${r.facturas},${r.clientes},${r.contado},${r.credito},${r.contra_entrega},${r.devoluciones},${r.venta_neta},${(r.participacion || 0).toFixed(2)},${(r.ticket_promedio || 0).toFixed(2)},${r.saldo}\n`;
+			});
+			csvContent += "\nDetalle de facturas\n";
+			csvContent += "Factura,Fecha,Vencimiento,Vendedor,Cliente,Establecimiento,Condicion,Plantilla,Estado FEL,Total,Pagado,Saldo\n";
+			(data.invoices || []).forEach(r => {
+				csvContent += `${q(r.name)},${q(r.posting_date)},${q(r.due_date)},${q(r.vendedor)},${q(r.customer_name || r.customer)},${q(r.establecimiento)},${q((cond[r.condicion] || {}).label || r.condicion)},${q(r.plantilla)},${q(r.bfel_status)},${r.grand_total},${r.pagado},${r.saldo}\n`;
 			});
 		} else if (report_id === "system_audit") {
 			csvContent += "Usuario,Cotizaciones (cant),Cotizaciones (monto),Facturas No Enviar (cant),Facturas No Enviar (monto),Facturas Enviar (cant),Facturas Enviar (monto),Pagos (cant),Pagos (monto),Guias Pendientes (cant),Guias Pendientes (monto),Total Operaciones\n";

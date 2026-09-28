@@ -7,7 +7,7 @@ Consultas seguras parametrizadas aisladas a Sales Invoice y eFast Invoice Paymen
 from __future__ import annotations
 
 import frappe
-from frappe.utils import today, getdate, add_days
+from frappe.utils import today, getdate, add_days, flt
 import datetime
 from facex_multi.api.invoice import get_effective_company
 
@@ -157,7 +157,7 @@ _REPORT_FLAGS = (
     "reporte_ventas_fecha", "reporte_ventas_producto", "reporte_facturas_canceladas",
     "reporte_estados_cuenta", "reporte_antiguedad_saldos", "reporte_cotizaciones",
     "reporte_recibos_pagos", "reporte_crecimiento_ventas", "reporte_imprimir_recibo",
-    "reporte_analisis_utilidad", "reporte_auditoria_sistema",
+    "reporte_analisis_utilidad", "reporte_auditoria_sistema", "reporte_ventas_vendedor",
 )
 
 
@@ -935,6 +935,248 @@ def get_system_audit(start_date: str, end_date: str, owners=None, company: str =
             "user_count": len(rows),
             "total_operaciones": sum(r.get("total_operaciones", 0) for r in rows),
             "total_monto": sum(sum(r.get(k, 0) for k in amount_keys) for r in rows),
+            "count": len(rows),
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# 11. Ventas por Vendedor (Gerencia)
+# ---------------------------------------------------------------------------
+# Vendedor = Socio de Ventas de la FACTURA (Sales Invoice.sales_partner), no
+# el del cliente. La condición (Contado / Crédito / Contra Entrega) se decide
+# con la misma regla del Cierre Diario (cierre._clasificar_por_pagos) para
+# que ambos cuadren. Permiso propio deny-by-default: reporte_ventas_vendedor.
+# Informe de Gerencia: NO aplica el Alcance en Ventas (varios gerentes lo
+# tienen en «Solo lo creado por mí» y verían solo lo suyo); el permiso mismo
+# implica ver a todos los vendedores. Sigue acotado a las compañías del
+# usuario y a sus bodegas (salvo «todas las bodegas en reportes»).
+
+SIN_VENDEDOR = "(Sin vendedor)"
+_CLASES = ("contado", "credito", "contra_entrega")
+
+
+def _sales_by_seller_conditions(company, establecimiento, sales_partners) -> tuple:
+    company_cond, company_vals = _build_company_condition(company)
+    conditions = ["docstatus = 1", "COALESCE(bfel_documento_anulado, 0) != 1", company_cond]
+    values = {**company_vals}
+
+    wh_mode, wh_val = _resolve_warehouse_filter(company, None)
+    if wh_mode == "in":
+        conditions.append("name IN (SELECT parent FROM `tabSales Invoice Item` WHERE warehouse IN %(allowed_warehouses)s)")
+        values["allowed_warehouses"] = wh_val
+
+    if establecimiento:
+        conditions.append("bfel_establecimiento = %(establecimiento)s")
+        values["establecimiento"] = establecimiento
+
+    partners = _parse_multi(sales_partners)
+    if partners:
+        parts = []
+        named = [p for p in partners if p != SIN_VENDEDOR]
+        if named:
+            parts.append("sales_partner IN %(sales_partners)s")
+            values["sales_partners"] = tuple(named)
+        if SIN_VENDEDOR in partners:
+            parts.append("IFNULL(sales_partner, '') = ''")
+        conditions.append("(" + " OR ".join(parts) + ")")
+    return conditions, values
+
+
+def _parse_multi(value) -> list:
+    if isinstance(value, str):
+        value = frappe.parse_json(value) if value.startswith("[") else ([value] if value else [])
+    return [v for v in (value or []) if v]
+
+
+@frappe.whitelist()
+def get_sales_by_seller(start_date: str, end_date: str, sales_partners=None,
+                        company: str = None, establecimiento: str = None) -> dict:
+    _require_report(company, "reporte_ventas_vendedor")
+
+    from facex_multi.api.cierre import _clasificar_por_pagos, _inv_total
+
+    conditions, values = _sales_by_seller_conditions(company, establecimiento, sales_partners)
+    where = " AND ".join(conditions)
+
+    meta = frappe.get_meta("Sales Invoice")
+    optional = [f for f in ("payment_terms_template", "bfel_pago_contra_entrega", "bfel_status")
+                if meta.has_field(f)]
+    invoices = frappe.db.sql(
+        f"""
+        SELECT name, posting_date, due_date, customer, customer_name, sales_partner,
+            bfel_establecimiento, company, owner, is_return, grand_total, rounded_total,
+            disable_rounded_total, total_taxes_and_charges
+            {"".join(", " + f for f in optional)}
+        FROM `tabSales Invoice`
+        WHERE posting_date BETWEEN %(start)s AND %(end)s AND {where}
+        ORDER BY posting_date DESC, name DESC
+        """,
+        {"start": start_date, "end": end_date, **values},
+        as_dict=True,
+    )
+
+    payments_by_inv = {}
+    if invoices:
+        for p in frappe.db.sql(
+            """
+            SELECT parent, payment_date, payment_method, amount
+            FROM `tabeFast Invoice Payment`
+            WHERE parenttype = 'Sales Invoice' AND parentfield = 'custom_efast_payments'
+                AND parent IN %(names)s
+            """,
+            {"names": tuple(i.name for i in invoices)},
+            as_dict=True,
+        ):
+            payments_by_inv.setdefault(p.parent, []).append(p)
+
+    def _bucket():
+        return {"monto": 0.0, "facturas": 0, "clientes": set()}
+
+    clases = {c: _bucket() for c in _CLASES}
+    devoluciones = _bucket()
+    sellers = {}
+    customers = set()
+    cobrado = 0.0
+    saldo = 0.0
+    impuestos = 0.0
+    rows = []
+
+    for inv in invoices:
+        gt = _inv_total(inv)
+        pays = payments_by_inv.get(inv.name, [])
+        pagado = sum(flt(p.amount) for p in pays)
+        pendiente = max(gt - pagado, 0.0) if not inv.is_return else 0.0
+        seller = inv.sales_partner or SIN_VENDEDOR
+        s = sellers.setdefault(seller, {
+            "vendedor": seller, "facturas": 0, "clientes": set(), "venta_bruta": 0.0,
+            "devoluciones": 0.0, "saldo": 0.0, **{c: 0.0 for c in _CLASES},
+        })
+        impuestos += flt(inv.total_taxes_and_charges)
+
+        if inv.is_return:
+            clase = "devolucion"
+            devoluciones["monto"] += abs(gt)
+            devoluciones["facturas"] += 1
+            devoluciones["clientes"].add(inv.customer)
+            s["devoluciones"] += abs(gt)
+        else:
+            clase, _ce, _cred = _clasificar_por_pagos(
+                gt, pays, getdate(inv.posting_date), inv.get("bfel_pago_contra_entrega"), inv.due_date,
+            )
+            b = clases[clase]
+            b["monto"] += gt
+            b["facturas"] += 1
+            b["clientes"].add(inv.customer)
+            s[clase] += gt
+            s["venta_bruta"] += gt
+            s["facturas"] += 1
+            s["clientes"].add(inv.customer)
+            s["saldo"] += pendiente
+            customers.add(inv.customer)
+            cobrado += min(pagado, gt)
+            saldo += pendiente
+
+        rows.append({
+            "name": inv.name,
+            "posting_date": inv.posting_date,
+            "due_date": inv.due_date,
+            "customer": inv.customer,
+            "customer_name": inv.customer_name,
+            "vendedor": seller,
+            "establecimiento": inv.bfel_establecimiento,
+            "condicion": clase,
+            "plantilla": inv.get("payment_terms_template") or "",
+            "bfel_status": inv.get("bfel_status") or "",
+            "grand_total": gt,
+            "pagado": pagado,
+            "saldo": pendiente,
+            "owner": inv.owner,
+        })
+
+    venta_bruta = sum(b["monto"] for b in clases.values())
+    venta_neta = venta_bruta - devoluciones["monto"]
+    num_facturas = sum(b["facturas"] for b in clases.values())
+
+    seller_rows = []
+    for s in sellers.values():
+        neto = s["venta_bruta"] - s["devoluciones"]
+        seller_rows.append({
+            **{k: v for k, v in s.items() if k != "clientes"},
+            "clientes": len(s["clientes"]),
+            "venta_neta": neto,
+            "ticket_promedio": s["venta_bruta"] / s["facturas"] if s["facturas"] else 0.0,
+            "participacion": (neto / venta_neta * 100.0) if venta_neta else 0.0,
+        })
+    seller_rows.sort(key=lambda r: (r["vendedor"] == SIN_VENDEDOR, -r["venta_neta"]))
+
+    # Periodo anterior de la misma duración, con los mismos filtros.
+    d0, d1 = getdate(start_date), getdate(end_date)
+    days = (d1 - d0).days + 1
+    prev_start, prev_end = add_days(d0, -days), add_days(d0, -1)
+    prev = frappe.db.sql(
+        f"""
+        SELECT COALESCE(SUM(CASE WHEN IFNULL(disable_rounded_total, 0) = 0 AND rounded_total != 0
+                                 THEN rounded_total ELSE grand_total END), 0) AS neto
+        FROM `tabSales Invoice`
+        WHERE posting_date BETWEEN %(start)s AND %(end)s AND {where}
+        """,
+        {"start": prev_start, "end": prev_end, **values},
+        as_dict=True,
+    )[0]
+    venta_anterior = flt(prev.neto)
+    crecimiento = ((venta_neta - venta_anterior) / venta_anterior * 100.0) if venta_anterior else None
+
+    # Clientes nuevos: su primera factura validada en la compañía cae en el rango.
+    clientes_nuevos = 0
+    if customers:
+        company_cond, company_vals = _build_company_condition(company)
+        clientes_nuevos = frappe.db.sql(
+            f"""
+            SELECT COUNT(*) FROM (
+                SELECT customer, MIN(posting_date) AS primera
+                FROM `tabSales Invoice`
+                WHERE docstatus = 1 AND is_return = 0 AND customer IN %(customers)s AND {company_cond}
+                GROUP BY customer
+            ) t WHERE t.primera BETWEEN %(start)s AND %(end)s
+            """,
+            {"customers": tuple(customers), "start": start_date, "end": end_date, **company_vals},
+        )[0][0]
+
+    def _clase_summary(b):
+        return {
+            "monto": b["monto"],
+            "facturas": b["facturas"],
+            "clientes": len(b["clientes"]),
+            "pct": (b["monto"] / venta_bruta * 100.0) if venta_bruta else 0.0,
+        }
+
+    top = next((r for r in seller_rows if r["vendedor"] != SIN_VENDEDOR), None)
+    return {
+        "invoices": rows,
+        "sellers": seller_rows,
+        "summary": {
+            "venta_bruta": venta_bruta,
+            "venta_neta": venta_neta,
+            "impuestos": impuestos,
+            "facturas": num_facturas,
+            "clientes": len(customers),
+            "clientes_nuevos": clientes_nuevos,
+            "ticket_promedio": venta_bruta / num_facturas if num_facturas else 0.0,
+            "cobrado": cobrado,
+            "saldo": saldo,
+            "pct_cobrado": (cobrado / venta_bruta * 100.0) if venta_bruta else 0.0,
+            "vendedores": len([r for r in seller_rows if r["vendedor"] != SIN_VENDEDOR]),
+            "sin_vendedor": next((r["venta_neta"] for r in seller_rows if r["vendedor"] == SIN_VENDEDOR), 0.0),
+            "top_vendedor": top["vendedor"] if top else "",
+            "top_vendedor_monto": top["venta_neta"] if top else 0.0,
+            "venta_anterior": venta_anterior,
+            "crecimiento": round(crecimiento, 2) if crecimiento is not None else None,
+            "periodo_anterior": [str(prev_start), str(prev_end)],
+            "contado": _clase_summary(clases["contado"]),
+            "credito": _clase_summary(clases["credito"]),
+            "contra_entrega": _clase_summary(clases["contra_entrega"]),
+            "devoluciones": {k: v for k, v in _clase_summary(devoluciones).items() if k != "pct"},
             "count": len(rows),
         },
     }

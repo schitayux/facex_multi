@@ -53,6 +53,7 @@
   "reporte_imprimir_recibo",
   "reporte_analisis_utilidad",
   "reporte_auditoria_sistema",
+  "reporte_ventas_vendedor",
   "sec_3",
   "puede_compras",
   "puede_validar_compras",
@@ -410,6 +411,13 @@
    "fieldname": "reporte_auditoria_sistema",
    "fieldtype": "Check",
    "label": "Auditoría de Sistema"
+  },
+  {
+   "default": "0",
+   "description": "Informe «Ventas por Vendedor» (Gerencia): ventas por Socio de Ventas de la factura con KPIs de Contado / Crédito / Contra Entrega y el detalle de facturas. Denegado por defecto.",
+   "fieldname": "reporte_ventas_vendedor",
+   "fieldtype": "Check",
+   "label": "Ventas por Vendedor (Gerencia)"
   },
   {
    "fieldname": "sec_3",
