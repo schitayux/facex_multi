@@ -20,3 +20,10 @@ class FacExConfiguracionCompania(Document):
 			account = self.get(field)
 			if account and frappe.db.get_value("Account", account, "company") != self.company:
 				frappe.throw(f"La cuenta '{account}' no pertenece a la compañía '{self.company}'.")
+
+		from facex_multi.api.series import validate_series_table
+		validate_series_table(self, self.company)
+
+	def on_update(self):
+		from facex_multi.api.permissions import clear_permissions_cache
+		clear_permissions_cache()

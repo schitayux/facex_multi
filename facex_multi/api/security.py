@@ -151,6 +151,15 @@ def save_user_facex_settings(user: str, company: str, data_json: str):
             continue
         if not doc.meta.has_field(fieldname):
             continue
+        if fieldname == "series_documentos":
+            # Filas del grid del diálogo: solo los campos del child (sin el
+            # name/idx temporales del front). Lo valida validate_series_table.
+            value = [
+                {k: r.get(k) for k in ("tipo_documento", "naming_series", "establecimiento", "por_defecto")}
+                for r in (value or []) if r.get("tipo_documento") or r.get("naming_series")
+            ]
+        elif doc.meta.get_field(fieldname).fieldtype == "Table":
+            continue  # los demás grids se editan en el formulario del DocType
         doc.set(fieldname, value)
 
     doc.save()

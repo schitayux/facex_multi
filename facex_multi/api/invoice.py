@@ -482,9 +482,6 @@ def get_defaults(company: str = None):
     # Resolver la compañía efectiva
     company = get_effective_company(company)
 
-    # Naming series disponibles para Sales Invoice
-    naming_series = _get_naming_series("Sales Invoice")
-
     # Obtener establecimientos de la compañía
     establishments = []
     try:
@@ -524,7 +521,10 @@ def get_defaults(company: str = None):
 
     # Filtrar por el primer establecimiento activo por defecto
     default_est = establishments[0]["establecimiento_id"] if establishments else None
-    naming_series = filter_naming_series_for_company(naming_series, company, default_est)
+    # Series de Factura del usuario (FacEx Settings → Config. Compañía →
+    # todas las compatibles); la por defecto va primero. Ver api/series.py.
+    from facex_multi.api.series import get_series, TIPO_FACTURA
+    naming_series = get_series(company, TIPO_FACTURA, default_est)
 
     from facex_multi.api.permissions import get_facex_allowed_warehouses
     allowed_warehouses = get_facex_allowed_warehouses(company, "venta")
@@ -1038,10 +1038,11 @@ def get_transporte_kpis(company: str = None, days: int = 14):
 @frappe.whitelist()
 def get_compatible_series(company: str, establecimiento: str = None) -> list:
     """
-    Retorna las series de numeración compatibles con la compañía y establecimiento especificados.
+    Retorna las series de Factura que el usuario puede usar en la compañía y
+    establecimiento especificados, la por defecto primero (api/series.py).
     """
-    all_series = _get_naming_series("Sales Invoice")
-    return filter_naming_series_for_company(all_series, company, establecimiento)
+    from facex_multi.api.series import get_series, TIPO_FACTURA
+    return get_series(get_effective_company(company), TIPO_FACTURA, establecimiento)
 
 
 
@@ -1347,12 +1348,35 @@ def save_draft(doc_json: str):
     require_facex_permission(company, "puede_guardar",
                              msg="No tiene permiso para guardar facturas en FacEx.")
 
-    # Validar naming series
-    if data.get("naming_series"):
-        all_series = _get_naming_series("Sales Invoice")
-        compat_series = filter_naming_series_for_company(all_series, company, data.get("bfel_establecimiento"))
+    # Notas de Crédito / Débito: permiso propio, deny-by-default. Se evalúa
+    # sobre el payload Y sobre el documento guardado — un documento nuevo se
+    # arma con frappe.get_doc(data), así que is_return/is_debit_note podrían
+    # venir en el payload aunque el front no los mande.
+    from facex_multi.api.series import TIPO_FACTURA, TIPO_NC, TIPO_ND, tipo_de_factura, get_series
+    _name = (data.get("name") or "").strip()
+    _saved = (
+        frappe.db.get_value("Sales Invoice", _name, ["is_return", "is_debit_note"], as_dict=True)
+        if _name and _name != "new" else None
+    ) or {}
+    tipo_doc = tipo_de_factura({
+        "is_return": data.get("is_return") or _saved.get("is_return"),
+        "is_debit_note": data.get("is_debit_note") or _saved.get("is_debit_note"),
+    })
+    if tipo_doc != TIPO_FACTURA:
+        from facex_multi.api.permissions import (
+            get_facex_can_issue_credit_notes, get_facex_can_issue_debit_notes,
+        )
+        allowed = (get_facex_can_issue_credit_notes if tipo_doc == TIPO_NC
+                   else get_facex_can_issue_debit_notes)(company)
+        if not allowed:
+            frappe.throw(f"No tiene permiso para emitir {tipo_doc} en FacEx.", frappe.PermissionError)
+
+    # Validar naming series: debe estar entre las series de Factura del usuario
+    # (NC/ND las valida el hook central series.enforce_sales_invoice_series).
+    if data.get("naming_series") and tipo_doc == TIPO_FACTURA:
+        compat_series = get_series(company, TIPO_FACTURA, data.get("bfel_establecimiento"))
         if data["naming_series"] not in compat_series:
-            frappe.throw(f"La serie de facturación '{data['naming_series']}' no es compatible con la compañía '{company}' y el establecimiento '{data.get('bfel_establecimiento') or ''}'.")
+            frappe.throw(f"La serie de facturación '{data['naming_series']}' no está habilitada para su usuario en la compañía '{company}' y el establecimiento '{data.get('bfel_establecimiento') or ''}'.")
 
     # Validar cliente
     customer = data.get("customer")
@@ -2266,6 +2290,12 @@ def _create_payment_entry(invoice_doc, payment_method, payment_date, reference, 
     paid_to_currency   = frappe.db.get_value("Account", paid_to,   "account_currency") or "GTQ"
 
     pe = frappe.new_doc("Payment Entry")
+    # Serie de Recibo de Pago del usuario / compañía (api/series.py); sin
+    # configuración queda la de ERPNext (primera opción del doctype).
+    from facex_multi.api.series import get_default_series, TIPO_RECIBO
+    recibo_series = get_default_series(invoice_doc.company, TIPO_RECIBO)
+    if recibo_series:
+        pe.naming_series = recibo_series
     pe.payment_type               = "Receive"
     pe.party_type                 = "Customer"
     pe.party                      = invoice_doc.customer

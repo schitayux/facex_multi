@@ -40,6 +40,8 @@
   "asignacion_precios",
   "puede_eliminar_ventas_espera",
   "puede_anular_facturas",
+  "puede_emitir_nota_credito",
+  "puede_emitir_nota_debito",
   "sb_reportes",
   "reporte_ventas_fecha",
   "reporte_ventas_producto",
@@ -80,6 +82,8 @@
   "lista_precios_por_defecto",
   "cb_listas_precios",
   "listas_precios_habilitadas",
+  "sb_series_documentos",
+  "series_documentos",
   "sb_columnas",
   "mostrar_almacen",
   "mostrar_desc_pct",
@@ -403,6 +407,20 @@
    "label": "Anular/Cancelar Documentos FacEx"
   },
   {
+   "default": "0",
+   "fieldname": "puede_emitir_nota_credito",
+   "fieldtype": "Check",
+   "label": "Emitir Notas de Crédito",
+   "description": "Permite emitir Notas de Crédito (NCRE) desde FacEx. Deshabilitado por defecto."
+  },
+  {
+   "default": "0",
+   "fieldname": "puede_emitir_nota_debito",
+   "fieldtype": "Check",
+   "label": "Emitir Notas de Débito",
+   "description": "Permite emitir Notas de Débito (NDEB) desde FacEx. Deshabilitado por defecto."
+  },
+  {
    "fieldname": "sb_reportes",
    "fieldtype": "Section Break",
    "label": "Reportes"
@@ -636,6 +654,19 @@
    "fieldtype": "Table",
    "label": "Listas de Precios Habilitadas",
    "options": "FacEx Settings Lista Precios"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "sb_series_documentos",
+   "fieldtype": "Section Break",
+   "label": "Series de Documentos"
+  },
+  {
+   "description": "Series que este usuario puede usar por tipo de documento; la marcada «Por Defecto» se preselecciona. Vacío para un tipo = usa las de FacEx Configuracion Compania (y si allá tampoco hay, todas las compatibles).",
+   "fieldname": "series_documentos",
+   "fieldtype": "Table",
+   "label": "Series por Tipo de Documento",
+   "options": "FacEx Serie Documento"
   },
   {
    "fieldname": "sb_columnas",
@@ -1169,7 +1200,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-09-23 15:00:00.000000",
+ "modified": "2026-09-24 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Settings",
@@ -1190,5 +1221,6 @@
  ],
  "sort_field": "modified",
  "sort_order": "DESC",
- "states": []
+ "states": [],
+ "track_changes": 1
 }

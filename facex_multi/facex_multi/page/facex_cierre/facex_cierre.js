@@ -690,6 +690,10 @@ class FacexCierreDiario {
 			this.$body.find("#cd-usuario").on("change", reload);
 		}
 
+		// Reabrir aplica justo cuando el cierre NO es editable (Cerrado): se
+		// enlaza antes del corte por !editable.
+		this.$body.find("#cd-btn-reopen").on("click", () => this._reopen());
+
 		if (!editable) return;
 
 		const mark = () => { this._dirty = true; };
@@ -720,7 +724,6 @@ class FacexCierreDiario {
 
 		this.$body.find("#cd-btn-save").on("click", () => this._save(false));
 		this.$body.find("#cd-btn-close").on("click", () => this._save(true));
-		this.$body.find("#cd-btn-reopen").on("click", () => this._reopen());
 		this.$body.find("#cd-btn-delete").on("click", () => this._delete());
 	}
 

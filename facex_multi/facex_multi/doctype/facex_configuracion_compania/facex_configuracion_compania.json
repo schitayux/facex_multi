@@ -32,7 +32,9 @@
   "mayusculas_items",
   "mayusculas_clientes",
   "sin_sufijo_compania_items",
-  "exige_familia_item"
+  "exige_familia_item",
+  "sb_series_documentos",
+  "series_documentos"
  ],
  "fields": [
   {
@@ -205,11 +207,24 @@
    "fieldname": "exige_familia_item",
    "fieldtype": "Check",
    "label": "Exigir Familia en los ítems (política de la compañía)"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "sb_series_documentos",
+   "fieldtype": "Section Break",
+   "label": "Series de Documentos"
+  },
+  {
+   "description": "Series por defecto de la compañía, para usuarios sin series propias en FacEx Settings. Vacío para un tipo = todas las series compatibles (la primera es la por defecto).",
+   "fieldname": "series_documentos",
+   "fieldtype": "Table",
+   "label": "Series por Tipo de Documento",
+   "options": "FacEx Serie Documento"
   }
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-09-23 12:00:00.000000",
+ "modified": "2026-09-24 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Configuracion Compania",

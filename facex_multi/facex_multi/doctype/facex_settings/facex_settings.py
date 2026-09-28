@@ -6,6 +6,8 @@ class FacExSettings(Document):
         self._validate_bodegas_habilitadas()
         self._validate_socio_venta_por_defecto()
         self._validate_listas_precios()
+        from facex_multi.api.series import validate_series_table
+        validate_series_table(self, self.bfel_company)
         from facex_multi.api.perfiles import sync_settings_with_profile
         sync_settings_with_profile(self)
 

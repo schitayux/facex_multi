@@ -315,10 +315,18 @@ def _clasificar_por_pagos(gt: float, payments: list, fecha, bfel_pago_contra_ent
     return clasificacion, ce, credito
 
 
+def _inv_total(inv) -> float:
+    """Total a cobrar de la factura: el redondeado si ERPNext aplicó redondeo
+    (es lo que muestra la factura y lo que se paga), si no el grand_total."""
+    if not cint(inv.get("disable_rounded_total")) and flt(inv.get("rounded_total")):
+        return flt(inv.rounded_total)
+    return flt(inv.grand_total)
+
+
 def _si_fields() -> list:
     meta = frappe.get_meta("Sales Invoice")
-    fields = ["name", "customer", "customer_name", "posting_date", "due_date", "grand_total", "total",
-              "net_total", "discount_amount", "is_return", "outstanding_amount", "owner"]
+    fields = ["name", "customer", "customer_name", "posting_date", "due_date", "grand_total", "rounded_total",
+              "disable_rounded_total", "total", "net_total", "discount_amount", "is_return", "outstanding_amount", "owner"]
     for f in ("bfel_status", "bfel_pago_contra_entrega", "custom_pagado", "set_warehouse"):
         if meta.has_field(f):
             fields.append(f)
@@ -459,7 +467,7 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
     sum_lineas = venta_sin_desc + venta_con_desc + flete_fact + recargo_fact
 
     for inv in invoices:
-        gt = flt(inv.grand_total)
+        gt = _inv_total(inv)
         total_venta += gt
         paid_non_ce = 0.0
         ce_rows = 0.0
@@ -573,7 +581,8 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
     total_devoluciones = 0.0
     dev_clasif = {"contado": 0.0, "contra_entrega": 0.0, "credito": 0.0}
 
-    cancel_fields = ["name", "customer", "customer_name", "posting_date", "due_date", "grand_total"]
+    cancel_fields = ["name", "customer", "customer_name", "posting_date", "due_date", "grand_total",
+                     "rounded_total", "disable_rounded_total"]
     if frappe.get_meta("Sales Invoice").has_field("bfel_pago_contra_entrega"):
         cancel_fields.append("bfel_pago_contra_entrega")
 
@@ -599,7 +608,7 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
                 cpay_by_inv.setdefault(p.parent, []).append(p)
 
         for c in cancelados:
-            gt = flt(c.grand_total)
+            gt = _inv_total(c)
             clasificacion, ce, credito = _clasificar_por_pagos(
                 gt, cpay_by_inv.get(c.name, []), fecha, c.get("bfel_pago_contra_entrega"), c.get("due_date"),
             )
@@ -697,7 +706,8 @@ def _pending_days(company: str, usuario: str | None) -> list:
     rows = frappe.db.sql(
         f"""
         SELECT si.posting_date AS fecha, si.owner AS usuario, u.full_name AS usuario_nombre,
-               COUNT(*) AS num_facturas, SUM(si.grand_total) AS total_venta,
+               COUNT(*) AS num_facturas, SUM(IF(IFNULL(si.disable_rounded_total, 0) = 0 AND IFNULL(si.rounded_total, 0) != 0,
+                       si.rounded_total, si.grand_total)) AS total_venta,
                (SELECT c.name FROM `tabFacEx Cierre Diario` c
                  WHERE c.company = si.company AND c.usuario = si.owner AND c.fecha = si.posting_date
                  ORDER BY c.modified DESC LIMIT 1) AS cierre,

@@ -38,6 +38,8 @@
   "asignacion_precios",
   "puede_eliminar_ventas_espera",
   "puede_anular_facturas",
+  "puede_emitir_nota_credito",
+  "puede_emitir_nota_debito",
   "sec_2",
   "reporte_ventas_fecha",
   "reporte_ventas_producto",
@@ -315,6 +317,20 @@
    "fieldname": "puede_anular_facturas",
    "fieldtype": "Check",
    "label": "Anular/Cancelar Documentos FacEx"
+  },
+  {
+   "default": "0",
+   "fieldname": "puede_emitir_nota_credito",
+   "fieldtype": "Check",
+   "label": "Emitir Notas de Crédito",
+   "description": "Permite emitir Notas de Crédito (NCRE) desde FacEx. Deshabilitado por defecto."
+  },
+  {
+   "default": "0",
+   "fieldname": "puede_emitir_nota_debito",
+   "fieldtype": "Check",
+   "label": "Emitir Notas de Débito",
+   "description": "Permite emitir Notas de Débito (NDEB) desde FacEx. Deshabilitado por defecto."
   },
   {
    "fieldname": "sec_2",
@@ -751,7 +767,7 @@
   }
  ],
  "links": [],
- "modified": "2026-09-23 15:00:00.000000",
+ "modified": "2026-09-24 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Perfil de Permisos",

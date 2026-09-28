@@ -53,6 +53,7 @@ def clear_permissions_cache(doc=None, method=None) -> None:
     """Invalida la caché de la petición (hook on_update/on_trash de FacEx Settings)."""
     frappe.local.facex_settings_rows = None
     frappe.local.facex_settings_children = None
+    frappe.local.facex_series_rows = None
 
 
 def _row(company: str, user: str = None):
@@ -139,7 +140,7 @@ def require_facex_permission(company: str, *flags: str, msg: str = None) -> None
         )
 
 
-# Los 71 checks de permiso que un «FacEx Perfil de Permisos» define y que la
+# Los checks de permiso que un «FacEx Perfil de Permisos» define y que la
 # fila de FacEx Settings materializa (perfil + excepciones = valor efectivo).
 # Semilla del catálogo de permisos: agregar un permiso nuevo es agregarlo aquí,
 # en FacEx Settings y en el perfil.
@@ -163,6 +164,8 @@ PROFILE_PERM_FIELDS = [
     "asignacion_precios",
     "puede_eliminar_ventas_espera",
     "puede_anular_facturas",
+    "puede_emitir_nota_credito",
+    "puede_emitir_nota_debito",
     "reporte_ventas_fecha",
     "reporte_ventas_producto",
     "reporte_facturas_canceladas",
@@ -738,6 +741,20 @@ def get_facex_can_delete_held_sales(company: str) -> bool:
 
 def get_facex_can_cancel_invoices(company: str) -> bool:
     return _flag(company, "puede_anular_facturas")
+
+
+# ---------------------------------------------------------------------------
+# Notas de Crédito / Débito desde FacEx
+# ---------------------------------------------------------------------------
+# Deny-by-default: todos los usuarios nacen sin estos permisos (la emisión
+# de NC/ND desde FacEx aún no está habilitada). Ver api/series.py.
+
+def get_facex_can_issue_credit_notes(company: str) -> bool:
+    return _flag(company, "puede_emitir_nota_credito")
+
+
+def get_facex_can_issue_debit_notes(company: str) -> bool:
+    return _flag(company, "puede_emitir_nota_debito")
 
 
 # ---------------------------------------------------------------------------

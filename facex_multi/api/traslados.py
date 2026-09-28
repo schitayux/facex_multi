@@ -120,6 +120,24 @@ def _get_recepcion(stock_entry: str):
     return frappe.get_doc("FacEx Recepcion Traslado", name) if name else None
 
 
+def _assert_se_hacia_transito(stock_entry: str, transito: str):
+    """El receptor solo puede abrir/recibir traslados que entraron a SU tránsito.
+    Sin esto bastaba conocer el nombre de un Stock Entry de la compañía para ver
+    su detalle (y el de las bodegas de otros usuarios)."""
+    ok = frappe.db.sql(
+        f"SELECT 1 FROM `tabStock Entry` se WHERE se.name = %(se)s AND {_origin_transfer_condition('se')}",
+        {"se": stock_entry, "transito": transito},
+    )
+    if not ok:
+        frappe.throw("Ese traslado no está dirigido a su Almacén de Tránsito.", frappe.PermissionError)
+
+
+def _assert_rec_propia(rec, transito: str):
+    """Una recepción/devolución pertenece al tránsito en el que se abrió."""
+    if rec.almacen_transito != transito:
+        frappe.throw("Esa recepción corresponde al tránsito de otro usuario.", frappe.PermissionError)
+
+
 def _origin_header(stock_entry: str) -> dict:
     se = frappe.db.get_value(
         "Stock Entry", stock_entry,
@@ -147,7 +165,7 @@ def list_traslados_pendientes(company: str = None):
 
     rows = frappe.db.sql(
         f"""
-        SELECT se.name, se.posting_date, se.from_warehouse,
+        SELECT se.name, se.posting_date, se.from_warehouse, se.remarks,
                (SELECT COUNT(*) FROM `tabStock Entry Detail` sd WHERE sd.parent = se.name) AS item_count,
                rt.name AS recepcion, rt.estado AS recepcion_estado,
                rt.total_pendiente_recepcion, rt.total_pendiente_devolucion
@@ -187,6 +205,7 @@ def list_traslados_pendientes(company: str = None):
             "unidades_pendientes": pendiente,
             "recepcion": r.recepcion,
             "estado": r.recepcion_estado or "Sin iniciar",
+            "es_devolucion": (r.remarks or "").startswith("Devolución de traslado "),
         })
     return {"transito": transito, "rows": out}
 
@@ -194,10 +213,10 @@ def list_traslados_pendientes(company: str = None):
 @frappe.whitelist()
 def list_devoluciones_pendientes(company: str = None):
     company = _guard(company)
-    _require_transito(company)
+    transito = _require_transito(company)
     rows = frappe.get_all(
         "FacEx Recepcion Traslado",
-        filters={"company": company, "total_pendiente_devolucion": [">", 0]},
+        filters={"company": company, "almacen_transito": transito, "total_pendiente_devolucion": [">", 0]},
         fields=["name", "stock_entry_origen", "almacen_origen", "fecha_origen",
                 "total_pendiente_devolucion", "estado"],
         order_by="modified desc",
@@ -217,8 +236,11 @@ def get_traslado_para_recepcion(stock_entry: str, company: str = None):
     se = _origin_header(stock_entry)
     if se.company != company:
         frappe.throw("Ese traslado pertenece a otra compañía.")
+    _assert_se_hacia_transito(stock_entry, transito)
 
     rec = _get_recepcion(stock_entry)
+    if rec:
+        _assert_rec_propia(rec, transito)
     origin = _origin_items(stock_entry)
     codes = list({it.item_code for it in origin})
     bin_qty = _transit_bin_qty(company, transito, codes)
@@ -267,10 +289,11 @@ def get_traslado_para_recepcion(stock_entry: str, company: str = None):
 @frappe.whitelist()
 def get_devolucion_detalle(recepcion: str, company: str = None):
     company = _guard(company)
-    _require_transito(company)
+    transito = _require_transito(company)
     rec = frappe.get_doc("FacEx Recepcion Traslado", recepcion)
     if rec.company != company:
         frappe.throw("Esa recepción pertenece a otra compañía.")
+    _assert_rec_propia(rec, transito)
 
     items = []
     for row in rec.items:
@@ -301,6 +324,7 @@ def resolver_codigo_escaneado(stock_entry: str, code: str, company: str = None):
     traslado: por código de ítem (con variantes de layout de teclado), por código
     de barras (Item Barcode) o por N° de serie presente en el traslado."""
     company = _guard(company)
+    _assert_se_hacia_transito(stock_entry, _require_transito(company))
     code = (code or "").strip()
     if not code:
         return None
@@ -395,10 +419,16 @@ def procesar_recepcion(payload: str):
     se = _origin_header(data.get("stock_entry"))
     if se.company != company:
         frappe.throw("Ese traslado pertenece a otra compañía.")
+    _assert_se_hacia_transito(se.name, transito)
+    _existing = _get_recepcion(se.name)
+    if _existing:
+        _assert_rec_propia(_existing, transito)
 
     destino = data.get("destino_warehouse")
     if not destino:
         frappe.throw("Seleccione la bodega destino.")
+    if destino not in _allowed_destinos(company):
+        frappe.throw("No tiene habilitada esa bodega destino.", frappe.PermissionError)
 
     payload_items = data.get("items") or []
     rec = _upsert_recepcion(company, se, transito)
@@ -498,10 +528,13 @@ def procesar_devolucion(payload: str):
     rec = frappe.get_doc("FacEx Recepcion Traslado", data.get("recepcion"))
     if rec.company != company:
         frappe.throw("Esa recepción pertenece a otra compañía.")
+    _assert_rec_propia(rec, transito)
 
     destino = data.get("almacen_devolucion")
     if not destino:
         frappe.throw("Seleccione la bodega a la que devolverá los productos.")
+    if destino not in _allowed_destinos(company):
+        frappe.throw("No tiene habilitada esa bodega para la devolución.", frappe.PermissionError)
 
     payload_items = data.get("items") or []
     transfer_rows = []
@@ -554,3 +587,88 @@ def procesar_devolucion(payload: str):
     frappe.db.commit()
 
     return {"stock_entry_generado": doc.name, "recepcion": rec.name, "estado": rec.estado, "devuelto": total}
+
+
+# ---------------------------------------------------------------------------
+# Estado de recepción visto desde el emisor
+# ---------------------------------------------------------------------------
+
+def _transitos_de_compania(company: str) -> set:
+    """Almacenes de tránsito configurados para algún usuario de la compañía
+    (FacEx Settings > transito_por_defecto) o marcados como Tipo «Transito»."""
+    out = set(frappe.get_all(
+        "FacEx Settings",
+        filters={"bfel_company": company, "transito_por_defecto": ["is", "set"]},
+        pluck="transito_por_defecto",
+    ) or [])
+    if frappe.get_meta("Warehouse").has_field("bfel_tipo_almacen"):
+        out.update(frappe.get_all(
+            "Warehouse", filters={"company": company, "bfel_tipo_almacen": "Transito"}, pluck="name",
+        ) or [])
+    return {w for w in out if w}
+
+
+def estado_recepcion_traslados(company: str, rows: list) -> None:
+    """Agrega a cada fila de traslados (dicts con name, to_warehouse, remarks,
+    docstatus) las claves `recepcion_estado` (texto) y `recepcion_tono`
+    (pending|partial|return|done|info) para que el emisor sepa en qué va el
+    traslado del lado del receptor. Filas que no pasan por tránsito quedan sin
+    estado."""
+    if not rows:
+        return
+    transitos = _transitos_de_compania(company)
+    names = [r["name"] for r in rows]
+
+    recs = {
+        r.stock_entry_origen: r
+        for r in frappe.get_all(
+            "FacEx Recepcion Traslado",
+            filters={"stock_entry_origen": ["in", names]},
+            fields=["name", "stock_entry_origen", "estado", "total_recibido",
+                    "total_pendiente_recepcion", "total_pendiente_devolucion", "total_devuelto"],
+        )
+    }
+    # Traslados que tienen alguna línea hacia un tránsito (el encabezado puede venir vacío).
+    hacia_transito = set()
+    if transitos:
+        hacia_transito = set(frappe.db.sql_list(
+            """
+            SELECT DISTINCT parent FROM `tabStock Entry Detail`
+            WHERE parent IN %(names)s AND t_warehouse IN %(tr)s
+            """,
+            {"names": tuple(names), "tr": tuple(transitos)},
+        ))
+
+    for r in rows:
+        remarks = (r.get("remarks") or "").strip()
+        es_devolucion = remarks.startswith("Devolución de traslado ")
+        estado, tono = None, None
+        if remarks.startswith("Recepción de traslado "):
+            # Traslado automático tránsito → bodega que genera la recepción.
+            estado, tono = f"Ingreso de recepción ({remarks[len('Recepción de traslado '):]})", "info"
+        elif r.get("docstatus") == 1 and (r["name"] in recs or r.get("to_warehouse") in transitos or r["name"] in hacia_transito):
+            rec = recs.get(r["name"])
+            if not rec:
+                estado, tono = "En tránsito · pendiente de confirmar por el receptor", "pending"
+            elif flt(rec.total_pendiente_recepcion) > 0:
+                estado, tono = (
+                    ("Recibido parcial · resto pendiente de confirmar por el receptor", "partial")
+                    if flt(rec.total_recibido) > 0
+                    else ("En tránsito · pendiente de confirmar por el receptor", "pending")
+                )
+            elif flt(rec.total_pendiente_devolucion) > 0:
+                estado, tono = "Recibido con faltantes · devolución pendiente del receptor", "return"
+            elif flt(rec.total_devuelto) > 0:
+                estado, tono = "Cerrado · recibido con devolución", "done"
+            else:
+                estado, tono = "Recibido completo", "done"
+            if es_devolucion:
+                # La devolución viaja al tránsito del emisor original: es él
+                # quien la tiene que confirmar en su «Recepción de Traslados».
+                estado = "Devolución · " + estado[0].lower() + estado[1:]
+                if tono == "pending":
+                    tono = "return"
+        elif es_devolucion:
+            estado, tono = f"Devolución enviada a {r.get('to_warehouse') or ''}".strip(), "info"
+        r["recepcion_estado"] = estado
+        r["recepcion_tono"] = tono

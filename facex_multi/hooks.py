@@ -19,9 +19,13 @@ override_doctype_class = {
 # link_guard.js: quita la flechita "Abrir" de los campos Link (que navega a
 # ERPNext nativo) mientras el body tenga la clase facex-fullscreen-mode; no
 # afecta al Desk normal (ver public/js/link_guard.js).
+#
+# etiqueta_etiba.js: diálogo "e-Imprimir" + vista previa de etiquetas eTIBA,
+# compartido por FacEx Clásico e Inventario (ver public/js/etiqueta_etiba.js).
 app_include_js = [
     "/assets/facex_multi/js/history_guard.js",
     "/assets/facex_multi/js/link_guard.js",
+    "/assets/facex_multi/js/etiqueta_etiba.js",
 ]
 
 doctype_js = {
@@ -67,7 +71,11 @@ doc_events = {
         "on_update": "facex_multi.api.item.sync_lista_materiales_product_bundle"
     },
     "Sales Invoice": {
-        "before_insert": "facex_multi.api.invoice.fix_abbr_in_naming_series",
+        "before_insert": [
+            "facex_multi.api.invoice.fix_abbr_in_naming_series",
+            # Serie ↔ tipo de documento (FACT/NCRE/NDEB) y series por usuario.
+            "facex_multi.api.series.enforce_sales_invoice_series",
+        ],
         # Recargo Contra Entrega / Flete como filas de cargos: tiene que ir en
         # before_validate porque ERPNext calcula totales dentro de validate.
         "before_validate": "facex_multi.api.recargo.apply_recargo_y_flete",
@@ -97,6 +105,7 @@ after_migrate = [
     "facex_multi.api.familia.ensure_item_familia_field",
     "facex_multi.api.exencion.ensure_item_familia_tipo_fields",
     "facex_multi.api.recargo.ensure_recargo_flete_fields",
+    "facex_multi.api.series.ensure_payment_entry_naming_series",
 ]
 
 fixtures = [

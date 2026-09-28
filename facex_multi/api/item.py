@@ -406,7 +406,8 @@ def get_label_print_config(item_code: str, company: str = None):
             or "http://localhost:5001/ImpresionEtiquetas",
         "cantidad_por_defecto": cint(frappe.db.get_single_value("Etiba Settings", "cantidad_por_defecto")) or 1,
         "formatos": frappe.get_all(
-            "Etiba Formato", filters={"activo": 1}, fields=["name", "lenguaje"], order_by="name asc"
+            "Etiba Formato", filters={"activo": 1}, fields=["name", "lenguaje", "identificador_tipo"],
+            order_by="name asc"
         ),
     }
 
@@ -431,6 +432,25 @@ def imprimir_etiqueta_item(item_code: str, formato: str, cantidad=1, company: st
 
     identificador = serie or item_code
     return obtener_valores(identificador=identificador, formato=formato, codigo_producto=item_code, cantidad=cantidad)
+
+
+@frappe.whitelist()
+def previsualizar_etiqueta_item(item_code: str, formato: str, company: str = None, serie: str = None):
+    """Vista previa (SVG) de la etiqueta eTIBA de un producto, con el mismo código
+    que se enviaría a la impresora. Si el formato pide serie y aún no se eligió,
+    se previsualiza con el código de producto como identificador."""
+    if not has_efast_permission():
+        frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
+
+    company = get_effective_company(company)
+    _get_item_for_company(item_code, company)
+
+    try:
+        from etiba.api.vista_previa import previsualizar
+    except ImportError:
+        frappe.throw("La aplicación eTIBA no está instalada en este sitio o no soporta vista previa.")
+
+    return previsualizar(identificador=serie or item_code, formato=formato, codigo_producto=item_code)
 
 
 @frappe.whitelist()

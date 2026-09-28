@@ -1168,6 +1168,11 @@ def _list_stock_movements(mode: str, company: str = None, from_date: str = None,
     for r in rows:
         r["owner_name"] = r.get("owner_name") or r.get("owner")
 
+    # Traslados: en qué va del lado del receptor (tránsito / recibido / devolución).
+    if mode == "transfer":
+        from facex_multi.api.traslados import estado_recepcion_traslados
+        estado_recepcion_traslados(company, rows)
+
     # Fuga de costos: el valor del movimiento sólo se entrega a quien tiene
     # puede_ver_costos (mismo criterio que los reportes de inventario).
     can_view_costs = get_facex_can_view_costs(company)

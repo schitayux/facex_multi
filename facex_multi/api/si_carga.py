@@ -691,9 +691,9 @@ def _get_price_list(company: str) -> str:
 
 
 def _get_naming_series_for_company(company: str) -> list:
-    from facex_multi.api.invoice import _get_naming_series, filter_naming_series_for_company
-    all_series = _get_naming_series("Sales Invoice")
-    compat = filter_naming_series_for_company(all_series, company)
+    # Series de Factura del usuario, la por defecto primero (api/series.py).
+    from facex_multi.api.series import get_series, TIPO_FACTURA
+    compat = get_series(company, TIPO_FACTURA)
     return compat if compat else ["SINV-.YYYY.-"]
 
 

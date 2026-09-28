@@ -809,12 +809,27 @@ class FacexInventario {
   <td>${frappe.utils.escape_html(row.owner_name || row.owner || "")}</td>
   <td>${row.item_count}</td>
   <td>${value_cell}</td>
-  <td><span style="color:${color};font-weight:600;">${label}</span></td>
+  <td><span style="color:${color};font-weight:600;">${label}</span>${this._rt_estado_badge(row)}</td>
   <td>${frappe.utils.escape_html(row.remarks || "")}</td>
 </tr>`;
 				}).join(""));
 			},
 		});
+	}
+
+	// Traslados: estado del lado del receptor (lo calcula
+	// traslados.estado_recepcion_traslados). Vacío si no pasa por tránsito.
+	_rt_estado_badge(row) {
+		if (!row.recepcion_estado) return "";
+		const TONO = {
+			pending: ["#fff4e5", "#b45309", "#f59e0b"],
+			partial: ["#eef2ff", "#3730a3", "#818cf8"],
+			return:  ["#fdecec", "#b91c1c", "#f87171"],
+			done:    ["#e8f7ee", "#166534", "#4ade80"],
+			info:    ["#f1f5f9", "#475569", "#cbd5e1"],
+		};
+		const [bg, fg, bd] = TONO[row.recepcion_tono] || TONO.info;
+		return `<div style="margin-top:4px;"><span style="display:inline-block;background:${bg};color:${fg};border:1px solid ${bd};border-radius:10px;padding:1px 8px;font-size:11px;font-weight:600;white-space:normal;line-height:1.35;">${frappe.utils.escape_html(row.recepcion_estado)}</span></div>`;
 	}
 
 	_render_entry_rows() {
@@ -830,7 +845,7 @@ class FacexInventario {
 		$tbody.html(this.entry_rows.map((row) => {
 			const sinCosto = this.mode === "in" && row._has_estandar === false;
 			return `
-<tr data-row-id="${row.uid}" class="${sinCosto ? "inv-row-invalid" : ""}">
+<tr data-row-id="${row.uid}" class="${sinCosto ? "inv-row-invalid" : ""}${row._flash ? " inv-row-scan" : ""}">
   <td>
     <span class="inv-row-info" data-info="${row.uid}" title="Ver existencia y costo">&#9432;</span>
     <strong>${frappe.utils.escape_html(row.item_code)}</strong><br>
@@ -847,6 +862,7 @@ class FacexInventario {
   <td><span class="inv-row-remove" data-remove="${row.uid}">&times;</span></td>
 </tr>`;
 		}).join(""));
+		this.entry_rows.forEach((r) => { r._flash = false; });
 
 		this._recompute_grand_total();
 		this._refresh_save_enabled();
@@ -969,7 +985,7 @@ class FacexInventario {
 						frappe.show_alert({ message: __("Producto no encontrado para el código {0}.", [code]), indicator: "orange" });
 						return;
 					}
-					this._movement_add_row(r.message);
+					this._movement_scan_item(r.message);
 				},
 				error: () => $input.prop("disabled", false).focus(),
 			});
@@ -1058,6 +1074,18 @@ class FacexInventario {
 </div>`).join("")).show();
 			},
 		});
+	}
+
+	// Escaneo: si el producto ya está en el grid suma +1 a su línea en lugar de
+	// agregar otra (la última línea del mismo código, por si se partió en lotes).
+	_movement_scan_item(item) {
+		if (!item) return;
+		const code = item.item_code || item.name;
+		const row = [...this.entry_rows].reverse().find((r) => r.item_code === code);
+		if (!row) { this._movement_add_row(item); return; }
+		row.qty = flt(row.qty) + 1;
+		row._flash = true;
+		this._render_entry_rows();
 	}
 
 	_movement_add_row(item) {
@@ -2862,7 +2890,7 @@ ${rows.map(r => `<tr>
   </div>
   <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;overflow-x:auto;">
     <table class="inv-table" style="width:100%;">
-      <thead><tr><th>Código</th><th>Nombre</th><th>Grupo</th><th style="width:80px;">UOM</th><th style="width:110px;">Gestión</th><th style="width:90px;">Estado</th><th style="width:120px;"></th></tr></thead>
+      <thead><tr><th>Código</th><th>Nombre</th><th>Grupo</th><th style="width:80px;">UOM</th><th style="width:110px;">Gestión</th><th style="width:90px;">Estado</th><th style="width:200px;"></th></tr></thead>
       <tbody id="inv-mi-tbody"><tr><td colspan="7" style="text-align:center;color:#adb5bd;padding:20px;">Busque productos.</td></tr></tbody>
     </table>
     <div id="inv-mi-pager" style="margin-top:10px;text-align:center;"></div>
@@ -2874,6 +2902,7 @@ ${rows.map(r => `<tr>
 		this.$body.on("click", "#inv-mi-new", () => this._maestro_item_dialog(null));
 		this.$body.on("click", ".inv-mi-edit", (e) => this._maestro_item_dialog($(e.currentTarget).data("code")));
 		this.$body.on("click", ".inv-mi-del", (e) => this._maestro_item_delete($(e.currentTarget).data("code")));
+		this.$body.on("click", ".inv-mi-label", (e) => this._maestro_item_etiqueta($(e.currentTarget).data("code")));
 		this.$body.on("click", ".inv-mi-page", (e) => { this._mi_start = $(e.currentTarget).data("start"); this._load_maestro_items(); });
 		this._load_maestro_items();
 	}
@@ -2882,6 +2911,7 @@ ${rows.map(r => `<tr>
 		const $tbody = this.$body.find("#inv-mi-tbody");
 		$tbody.html(`<tr><td colspan="7" style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr>`);
 		const p = this.defaults.permissions || {};
+		const etiba = this._etiba_disponible();
 		const PAGE = 20;
 		frappe.call({
 			method: "facex_multi.api.item.search_items_maintenance",
@@ -2903,7 +2933,8 @@ ${rows.map(r => `<tr>
   <td>${frappe.utils.escape_html(row.stock_uom || "")}</td>
   <td>${frappe.utils.escape_html(row.gestionado_por || "")}</td>
   <td>${row.disabled ? `<span style="color:#e03e2d;">Inactivo</span>` : `<span style="color:#28a745;">Activo</span>`}</td>
-  <td>
+  <td style="white-space:nowrap;">
+    ${etiba ? `<button type="button" class="inv-btn inv-btn-secondary inv-mi-label" data-code="${frappe.utils.escape_html(row.name)}" style="padding:2px 8px;" title="Imprimir etiqueta (eTIBA) con vista previa">e-Imprimir</button>` : ""}
     ${p.modifica_items ? `<button type="button" class="inv-btn inv-btn-secondary inv-mi-edit" data-code="${frappe.utils.escape_html(row.name)}" style="padding:2px 8px;">Editar</button>` : ""}
     ${p.modifica_items ? `<button type="button" class="inv-btn inv-btn-danger inv-mi-del" data-code="${frappe.utils.escape_html(row.name)}" style="padding:2px 8px;">✕</button>` : ""}
   </td>
@@ -2948,6 +2979,11 @@ ${rows.map(r => `<tr>
 		const dlg = new frappe.ui.Dialog({
 			title: item_code ? "Editar producto" : "Nuevo producto",
 			fields,
+			// e-Imprimir (eTIBA) solo sobre productos ya guardados.
+			...(item_code && this._etiba_disponible() ? {
+				secondary_action_label: "e-Imprimir",
+				secondary_action: () => this._maestro_item_etiqueta(item_code),
+			} : {}),
 			primary_action_label: "Guardar",
 			primary_action: (v) => {
 				dlg.get_primary_btn().prop("disabled", true);
@@ -2986,6 +3022,16 @@ ${rows.map(r => `<tr>
 			});
 		}
 		dlg.show();
+	}
+
+	_etiba_disponible() {
+		return !!(facex_multi.etiqueta_etiba && facex_multi.etiqueta_etiba.disponible());
+	}
+
+	_maestro_item_etiqueta(item_code) {
+		// Diálogo compartido con FacEx Clásico (public/js/etiqueta_etiba.js):
+		// formato/cantidad/serie + vista previa de la etiqueta antes de imprimir.
+		facex_multi.etiqueta_etiba.abrir({ item_code, company: this.defaults.company, vista_previa: true });
 	}
 
 	_maestro_item_delete(item_code) {
@@ -3323,7 +3369,7 @@ ${rows.map(r => `<tr>
 				$b.html(`
 <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;overflow-x:auto;">
   <table class="inv-table" style="width:100%;">
-    <thead><tr><th>Traslado</th><th style="width:100px;">Fecha</th><th>Bodega Origen</th><th style="width:70px;">Ítems</th><th style="width:110px;">Unid. Pend.</th><th style="width:120px;">Estado</th><th style="width:90px;"></th></tr></thead>
+    <thead><tr><th>Traslado</th><th style="width:100px;">Fecha</th><th>Bodega Origen</th><th style="width:70px;">Ítems</th><th style="width:110px;">Unid. Pend.</th><th style="width:190px;">Estado</th><th style="width:90px;"></th></tr></thead>
     <tbody>
     ${rows.map(row => `<tr>
       <td><strong>${frappe.utils.escape_html(row.name)}</strong></td>
@@ -3331,7 +3377,11 @@ ${rows.map(r => `<tr>
       <td>${frappe.utils.escape_html(row.from_warehouse || "")}</td>
       <td>${row.item_count}</td>
       <td>${frappe.format(row.unidades_pendientes, { fieldtype: "Float" })}</td>
-      <td>${frappe.utils.escape_html(row.estado)}</td>
+      <td>${this._rt_estado_badge({
+        recepcion_estado: (row.es_devolucion ? "Devolución · " : "") + (row.estado === "Sin iniciar" ? "por confirmar (usted)"
+          : row.estado === "Pendiente" ? "recibido parcial, resto por confirmar (usted)" : row.estado),
+        recepcion_tono: row.es_devolucion ? "return" : (row.estado === "Sin iniciar" ? "pending" : "partial"),
+      })}</td>
       <td><button type="button" class="inv-btn inv-btn-primary inv-rt-open" data-se="${frappe.utils.escape_html(row.name)}" style="padding:3px 10px;">Recibir</button></td>
     </tr>`).join("")}
     </tbody>
@@ -3521,13 +3571,14 @@ ${rows.map(r => `<tr>
 				$b.html(`
 <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;overflow-x:auto;">
   <table class="inv-table" style="width:100%;">
-    <thead><tr><th>Recepción</th><th>Traslado Origen</th><th>Bodega Origen</th><th style="width:130px;">Unid. a Devolver</th><th style="width:90px;"></th></tr></thead>
+    <thead><tr><th>Recepción</th><th>Traslado Origen</th><th>Bodega Origen</th><th style="width:130px;">Unid. a Devolver</th><th style="width:190px;">Estado</th><th style="width:90px;"></th></tr></thead>
     <tbody>
     ${rows.map(row => `<tr>
       <td><strong>${frappe.utils.escape_html(row.name)}</strong></td>
       <td>${frappe.utils.escape_html(row.stock_entry_origen || "")}</td>
       <td>${frappe.utils.escape_html(row.almacen_origen || "")}</td>
       <td>${frappe.format(row.total_pendiente_devolucion, { fieldtype: "Float" })}</td>
+      <td>${this._rt_estado_badge({ recepcion_estado: "Devolución por confirmar (usted)", recepcion_tono: "return" })}</td>
       <td><button type="button" class="inv-btn inv-btn-primary inv-rt-dev-open" data-rec="${frappe.utils.escape_html(row.name)}" style="padding:3px 10px;">Devolver</button></td>
     </tr>`).join("")}
     </tbody>
@@ -3623,7 +3674,15 @@ ${rows.map(r => `<tr>
 <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:30px;text-align:center;">
   <div style="font-size:16px;font-weight:600;color:#28a745;margin-bottom:8px;">${titulo}</div>
   ${se ? `<div style="font-size:13px;color:#495057;">Traslado generado: <strong>${frappe.utils.escape_html(se)}</strong></div>` : `<div style="font-size:13px;color:#6c757d;">Sin traslado de stock (no se recibió ninguna unidad).</div>`}
-  <div style="font-size:12.5px;color:#6c757d;margin-top:4px;">Recepción ${frappe.utils.escape_html((msg || {}).recepcion || "")} · estado: ${frappe.utils.escape_html((msg || {}).estado || "")}</div>
+  <div style="font-size:12.5px;color:#6c757d;margin-top:4px;">Recepción ${frappe.utils.escape_html((msg || {}).recepcion || "")}</div>
+  <div style="margin-top:6px;">${this._rt_estado_badge({
+    recepcion_estado: ({
+      "Pendiente": "Quedan unidades por confirmar (pestaña Por Recibir)",
+      "Pendiente Devolución": "Quedan unidades por devolver (pestaña Por Devolver)",
+      "Cerrado": "Cerrado · no queda nada pendiente",
+    })[(msg || {}).estado] || ((msg || {}).estado || ""),
+    recepcion_tono: ({ "Pendiente": "partial", "Pendiente Devolución": "return", "Cerrado": "done" })[(msg || {}).estado] || "info",
+  })}</div>
   <div style="margin-top:16px;display:flex;gap:10px;justify-content:center;">
     ${se ? `<button type="button" id="inv-rt-print" class="inv-btn inv-btn-secondary">Imprimir traslado</button>` : ""}
     <button type="button" id="inv-rt-done" class="inv-btn inv-btn-primary">Volver a la lista</button>

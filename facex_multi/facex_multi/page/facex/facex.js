@@ -994,12 +994,25 @@ class EFastSalePage {
       </div>
     </aside>
 
-    <div style="display: grid; grid-template-columns: 280px 1fr; gap: 24px; min-height: 750px;">
+    <div class="ef-rep-layout" style="display: grid; grid-template-columns: 280px 1fr; gap: 24px; min-height: 750px;">
       
       <!-- Left Sidebar Menu -->
-      <div style="background: var(--ef-card); border: 1px solid var(--ef-border); border-radius: 12px; padding: 14px; box-shadow: var(--ef-shadow); display: flex; flex-direction: column; gap: 2px; align-self: start;">
-        <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.8px; color: var(--ef-text-muted); margin-bottom: 10px; padding-left: 8px;">
-          Portal de Reportes
+      <div class="ef-rep-sidebar" style="background: var(--ef-card); border: 1px solid var(--ef-border); border-radius: 12px; padding: 14px; box-shadow: var(--ef-shadow); display: flex; flex-direction: column; gap: 2px; align-self: start;">
+        <!-- Solo en móvil: el menú de reportes se pliega detrás de este botón
+             para que la tabla no quede debajo de una columna de 11 opciones. -->
+        <button type="button" class="ef-rep-picker" id="ef-rep-picker">
+          <span class="ef-rep-picker-label">Reporte</span>
+          <span class="ef-rep-picker-current" id="ef-rep-picker-current">—</span>
+          <svg class="ef-rep-picker-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="ef-rep-nav-list">
+        <div class="ef-rep-nav-heading" style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.8px; color: var(--ef-text-muted); margin-bottom: 10px; padding-left: 8px;">
+          <span class="ef-rep-nav-heading-text">Portal de Reportes</span>
+          <!-- Comprimir/expandir el menú: comprimido queda solo la columna de
+               íconos y el reporte usa el resto del ancho. -->
+          <button type="button" class="ef-rep-collapse-btn" id="ef-rep-collapse-btn" title="Comprimir menú">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="11 17 6 12 11 7"/><polyline points="18 17 13 12 18 7"/></svg>
+          </button>
         </div>
 
         <!-- Group: Ventas -->
@@ -1108,18 +1121,19 @@ class EFastSalePage {
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
           <span>Imprimir Recibo</span>
         </button>
+        </div><!-- /ef-rep-nav-list -->
       </div>
       
       <!-- Right Main Panel -->
-      <div style="display: flex; flex-direction: column; gap: 20px; min-width: 0;">
+      <div class="ef-rep-main" style="display: flex; flex-direction: column; gap: 20px; min-width: 0;">
         
         <!-- Header Info -->
-        <div style="background: var(--ef-card); border: 1px solid var(--ef-border); border-radius: 12px; padding: 20px; box-shadow: var(--ef-shadow); display: flex; justify-content: space-between; align-items: center;">
+        <div class="ef-rep-header" style="background: var(--ef-card); border: 1px solid var(--ef-border); border-radius: 12px; padding: 20px; box-shadow: var(--ef-shadow); display: flex; justify-content: space-between; align-items: center;">
           <div>
             <h2 id="ef-report-title" style="margin: 0; font-size: 18px; font-weight: 800; color: #153375;"></h2>
             <p id="ef-report-desc" style="margin: 6px 0 0 0; font-size: 12px; color: var(--ef-text-muted);"></p>
           </div>
-          <div style="display: flex; gap: 8px;">
+          <div class="ef-rep-header-actions" style="display: flex; gap: 8px;">
             <button id="ef-report-btn-export" class="ef-btn ef-btn-secondary" style="padding: 8px 14px; font-size: 12px; display: flex; align-items: center; gap: 6px;">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               <span>Exportar CSV</span>
@@ -1131,6 +1145,14 @@ class EFastSalePage {
           </div>
         </div>
         
+        <!-- Solo en móvil: los filtros se pliegan; el botón resume los activos. -->
+        <button type="button" class="ef-rep-filters-toggle" id="ef-rep-filters-toggle">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+          <span class="ef-rep-filters-toggle-title">Filtros</span>
+          <span class="ef-rep-filters-summary" id="ef-rep-filters-summary"></span>
+          <svg class="ef-rep-filters-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+
         <!-- Interactive Filter Bar -->
         <div id="ef-report-filters" style="background: var(--ef-card); border: 1px solid var(--ef-border); border-radius: 12px; padding: 18px; box-shadow: var(--ef-shadow); display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end;">
           <!-- date filters -->
@@ -1268,7 +1290,7 @@ class EFastSalePage {
           </div>
           
           <!-- buttons -->
-          <div style="display: flex; gap: 8px;">
+          <div class="ef-rep-filter-actions" style="display: flex; gap: 8px;">
             <button id="ef-rep-btn-apply" class="ef-btn ef-btn-primary" style="padding: 8px 16px; font-size: 12px; font-weight: 700;">
               Generar Reporte
             </button>
@@ -1369,7 +1391,14 @@ class EFastSalePage {
             </div>
           </div>
           
-          <div id="ef-report-table-title" class="ef-analytics-card-title">Detalle de Registros</div>
+          <div id="ef-report-table-title" class="ef-analytics-card-title ef-rep-table-title">
+            <span>Detalle de Registros</span>
+            <!-- Solo en móvil: tarjetas (una fila = una tarjeta) o la tabla completa con scroll lateral. -->
+            <div class="ef-rep-layout-switch" role="group" aria-label="Forma de ver el detalle">
+              <button type="button" data-rep-layout="cards">Tarjetas</button>
+              <button type="button" data-rep-layout="table">Tabla</button>
+            </div>
+          </div>
           
           <!-- Table -->
           <div class="ef-table-wrapper" id="ef-report-table-wrapper" style="max-height: 600px; overflow-y: auto; overflow-x: auto;">
@@ -1671,6 +1700,7 @@ class EFastSalePage {
             </div>
           </div>
           <div style="margin-top:20px; text-align:right;">
+            <button id="ef-maint-item-btn-preview-label" class="ef-btn ef-btn-secondary" style="padding:8px 24px; display:none; margin-right:8px;" title="Ver cómo quedará impresa la etiqueta (eTIBA)">Vista previa etiqueta</button>
             <button id="ef-maint-item-btn-print-label" class="ef-btn ef-btn-secondary" style="padding:8px 24px; display:none; margin-right:8px;" title="Imprimir etiqueta del producto (eTIBA)">e-Imprimir</button>
             <button id="ef-maint-item-btn-delete" class="ef-btn" style="background:#ef4444; color:white; padding:8px 24px; display:none; margin-right:8px;">Eliminar Producto</button>
             <button id="ef-maint-item-btn-save" class="ef-btn ef-btn-primary" style="padding:8px 24px;">Guardar Producto</button>
@@ -2821,9 +2851,41 @@ class EFastSalePage {
 			method: "facex_multi.api.security.get_company_config_fieldnames",
 			callback: (cfgRes) => {
 				const companyOnlyFields = new Set(cfgRes.message || []);
-				this._seguridad_user_settings_dialog_step2(user, company, companyOnlyFields);
+				// Opciones del grid «Series de Documentos» (por tipo).
+				frappe.call({
+					method: "facex_multi.api.series.get_series_options",
+					args: { company },
+					callback: (serRes) => {
+						this._secSeriesOptions = serRes.message || {};
+						this._seguridad_user_settings_dialog_step2(user, company, companyOnlyFields);
+					},
+				});
 			},
 		});
+	}
+
+	// Grid «Series de Documentos» del diálogo de Seguridad. Las opciones de
+	// «Serie» son todas las válidas de la compañía; la regla tipo ↔ serie y
+	// «una por defecto por tipo» las valida el servidor al guardar.
+	_seguridad_series_table_df(df) {
+		const opts = this._secSeriesOptions || {};
+		const all = [...new Set(Object.values(opts).flat())];
+		return {
+			fieldtype: "Table",
+			fieldname: "series_documentos",
+			label: df.label,
+			description: df.description,
+			cannot_add_rows: false,
+			in_place_edit: true,
+			data: [],
+			fields: [
+				{ fieldtype: "Select", fieldname: "tipo_documento", label: "Tipo de Documento", in_list_view: 1, reqd: 1, columns: 3,
+					options: ["Factura", "Nota de Crédito", "Nota de Débito", "Recibo de Pago"] },
+				{ fieldtype: "Autocomplete", fieldname: "naming_series", label: "Serie", in_list_view: 1, reqd: 1, columns: 4, options: all },
+				{ fieldtype: "Data", fieldname: "establecimiento", label: "Establecimiento", in_list_view: 1, columns: 1 },
+				{ fieldtype: "Check", fieldname: "por_defecto", label: "Por Defecto", in_list_view: 1, columns: 1 },
+			],
+		};
 	}
 
 	_seguridad_user_settings_dialog_step2(user, company, companyOnlyFields) {
@@ -2837,17 +2899,19 @@ class EFastSalePage {
 					const SKIP_FIELDNAMES = new Set(["user", "bfel_company"]);
 					const fields = this._compact_dialog_breaks(
 						meta.fields
-							.filter((df) => df.fieldtype !== "Table"
+							.filter((df) => (df.fieldtype !== "Table" || df.fieldname === "series_documentos")
 								&& !df.hidden
 								&& !SKIP_FIELDNAMES.has(df.fieldname)
 								&& !companyOnlyFields.has(df.fieldname))
-							.map((df) => ({
-								fieldtype: df.fieldtype,
-								fieldname: df.fieldname,
-								label: df.label,
-								options: df.options,
-								description: df.description,
-							}))
+							.map((df) => df.fieldname === "series_documentos"
+								? this._seguridad_series_table_df(df)
+								: {
+									fieldtype: df.fieldtype,
+									fieldname: df.fieldname,
+									label: df.label,
+									options: df.options,
+									description: df.description,
+								})
 					);
 
 					const d = new frappe.ui.Dialog({
@@ -2883,6 +2947,18 @@ class EFastSalePage {
 					}
 
 					d.show();
+					// El grid de series no se llena con set_values: se carga aparte.
+					const seriesRows = data.series_documentos || [];
+					delete data.series_documentos;
+					if (d.fields_dict.series_documentos) {
+						d.fields_dict.series_documentos.df.data = seriesRows.map((r) => ({
+							tipo_documento: r.tipo_documento,
+							naming_series: r.naming_series,
+							establecimiento: r.establecimiento,
+							por_defecto: r.por_defecto,
+						}));
+						d.fields_dict.series_documentos.grid.refresh();
+					}
 					Promise.resolve(d.set_values(data)).then(() => {
 						// Perfil de Permisos: elegir otro precarga sus permisos; lo que
 						// luego se marque distinto queda como excepción (ver api/perfiles.py).
@@ -5294,6 +5370,195 @@ body.facex-fullscreen-mode .ef-main-layout {
 .ef-report-group-items .ef-report-nav-btn {
   padding-left: 28px;
   font-size: 12px;
+}
+
+/* ── Reportes en móvil ──────────────────────────────────────────────
+   En escritorio no cambia nada: el selector de reporte, el botón de
+   filtros y el cambio Tarjetas/Tabla solo aparecen bajo 768px. Los
+   !important vencen los estilos inline del HTML del portal. */
+.ef-rep-picker, .ef-rep-filters-toggle, .ef-rep-layout-switch { display: none; }
+
+/* Menú de reportes comprimido (escritorio/tablet): columna de íconos */
+.ef-rep-layout { transition: grid-template-columns .2s ease; }
+.ef-rep-nav-heading { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.ef-rep-collapse-btn {
+  flex: 0 0 auto; width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--ef-card); border: 1px solid var(--ef-border); border-radius: 6px;
+  color: var(--ef-text-muted); cursor: pointer; padding: 0;
+}
+.ef-rep-collapse-btn:hover { color: var(--ef-primary); background: #f1f5f9; }
+.ef-rep-collapse-btn svg { transition: transform .2s ease; }
+.ef-rep-layout.ef-rep-collapsed { grid-template-columns: 58px minmax(0, 1fr) !important; gap: 16px !important; }
+.ef-rep-collapsed .ef-rep-sidebar { padding: 8px 6px !important; align-items: center; }
+.ef-rep-collapsed .ef-rep-nav-heading { justify-content: center; padding-left: 0 !important; margin-bottom: 6px !important; }
+.ef-rep-collapsed .ef-rep-nav-heading-text,
+.ef-rep-collapsed .ef-report-nav-btn span,
+.ef-rep-collapsed .ef-report-group-header span,
+.ef-rep-collapsed .ef-report-group-header .ef-group-chevron { display: none; }
+.ef-rep-collapsed .ef-rep-collapse-btn svg { transform: rotate(180deg); }
+.ef-rep-collapsed .ef-rep-nav-list { align-items: center; }
+/* Comprimido se muestran todos los íconos, aunque el grupo esté plegado */
+.ef-rep-collapsed .ef-report-group-items.ef-group-hidden { display: flex; }
+.ef-rep-collapsed .ef-report-group-header {
+  justify-content: center; padding: 6px 0; margin-top: 6px; pointer-events: none;
+  border-radius: 0; opacity: .55;
+}
+.ef-rep-collapsed .ef-report-group + .ef-report-group .ef-report-group-header { border-top: 1px solid var(--ef-border); }
+.ef-rep-collapsed .ef-report-nav-btn,
+.ef-rep-collapsed .ef-report-group-items .ef-report-nav-btn {
+  justify-content: center; padding: 10px 0 !important; width: 44px; border-radius: 8px;
+}
+.ef-rep-collapsed .ef-report-nav-btn.ef-report-nav-active { border-left: none; border-radius: 8px; box-shadow: inset 0 0 0 2px var(--ef-primary); }
+.ef-rep-collapsed .ef-report-nav-btn svg { width: 17px; height: 17px; }
+.ef-rep-table-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+
+@media (max-width: 768px) {
+  #ef-reports-view { padding: 10px 10px 24px !important; }
+  .ef-rep-layout { grid-template-columns: minmax(0, 1fr) !important; gap: 10px !important; min-height: 0 !important; }
+  .ef-rep-main { gap: 10px !important; }
+
+  /* Menú de reportes → desplegable */
+  .ef-rep-sidebar { padding: 6px !important; }
+  .ef-rep-picker {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    background: none; border: none; padding: 8px 10px; cursor: pointer;
+    text-align: left; color: var(--ef-text); font-size: 14px; font-weight: 700;
+  }
+  .ef-rep-picker-label {
+    font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .6px;
+    color: var(--ef-text-muted); flex: 0 0 auto;
+  }
+  .ef-rep-picker-current { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ef-primary); }
+  .ef-rep-picker-chevron { flex: 0 0 auto; transition: transform .2s ease; }
+  .ef-rep-sidebar .ef-rep-nav-list { display: none; }
+  .ef-rep-sidebar.ef-rep-sidebar-open .ef-rep-nav-list {
+    display: flex; flex-direction: column; gap: 2px;
+    max-height: 65vh; overflow-y: auto; border-top: 1px solid var(--ef-border); padding-top: 6px; margin-top: 4px;
+  }
+  .ef-rep-sidebar.ef-rep-sidebar-open .ef-rep-picker-chevron { transform: rotate(180deg); }
+  .ef-rep-nav-heading { display: none !important; }
+  /* En móvil manda el desplegable: se ignora el modo comprimido */
+  .ef-rep-layout.ef-rep-collapsed { grid-template-columns: minmax(0, 1fr) !important; gap: 10px !important; }
+  .ef-rep-collapsed .ef-rep-sidebar { align-items: stretch; }
+  .ef-rep-collapsed .ef-rep-nav-list { align-items: stretch; }
+  .ef-rep-collapsed .ef-report-nav-btn span,
+  .ef-rep-collapsed .ef-report-group-header span,
+  .ef-rep-collapsed .ef-report-group-header .ef-group-chevron { display: inline; }
+  .ef-rep-collapsed .ef-report-group-items.ef-group-hidden { display: none; }
+  .ef-rep-collapsed .ef-report-group-header { justify-content: flex-start; padding: 8px 10px; pointer-events: auto; border-top: none; opacity: 1; }
+  .ef-rep-collapsed .ef-report-nav-btn,
+  .ef-rep-collapsed .ef-report-group-items .ef-report-nav-btn { justify-content: flex-start; width: 100%; padding: 12px 14px !important; }
+  .ef-rep-collapsed .ef-report-group-items .ef-report-nav-btn { padding-left: 28px !important; }
+  .ef-rep-collapsed .ef-report-nav-btn.ef-report-nav-active { box-shadow: none; border-left: 3px solid var(--ef-primary); border-radius: 0 6px 6px 0; }
+  .ef-report-nav-btn { padding: 12px 14px; font-size: 14px; }
+  .ef-report-group-items .ef-report-nav-btn { font-size: 13.5px; }
+
+  /* Encabezado: título arriba, botones a lo ancho debajo */
+  .ef-rep-header { flex-direction: column; align-items: stretch !important; gap: 10px; padding: 12px 14px !important; }
+  #ef-report-title { font-size: 16px !important; }
+  #ef-report-desc {
+    font-size: 11.5px !important; line-height: 1.4;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .ef-rep-header-actions > .ef-btn { flex: 1; justify-content: center; }
+
+  /* Filtros plegables */
+  .ef-rep-filters-toggle {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    background: var(--ef-card); border: 1px solid var(--ef-border); border-radius: 12px;
+    box-shadow: var(--ef-shadow); padding: 11px 14px; cursor: pointer;
+    color: var(--ef-text); font-size: 13px; font-weight: 700; text-align: left;
+  }
+  .ef-rep-filters-summary {
+    flex: 1; min-width: 0; font-weight: 500; font-size: 12px; color: var(--ef-text-muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .ef-rep-filters-chevron { flex: 0 0 auto; transition: transform .2s ease; }
+  #ef-reports-view.ef-rep-filters-open .ef-rep-filters-chevron { transform: rotate(180deg); }
+  #ef-reports-view:not(.ef-rep-filters-open) #ef-report-filters { display: none !important; }
+  #ef-report-filters { gap: 10px !important; padding: 12px !important; margin-top: -4px; }
+  #ef-report-filters .ef-rep-filter { width: calc(50% - 5px) !important; min-width: 0; }
+  #ef-report-filters .ef-filter-company,
+  #ef-report-filters .ef-filter-establecimiento,
+  #ef-report-filters .ef-filter-customer,
+  #ef-report-filters .ef-filter-item,
+  #ef-report-filters .ef-filter-supplier,
+  #ef-report-filters .ef-filter-warehouse,
+  #ef-report-filters .ef-filter-owners,
+  #ef-report-filters .ef-filter-price-list,
+  #ef-report-filters .ef-filter-cost-basis,
+  #ef-report-filters .ef-filter-solo-precio { width: 100% !important; }
+  #ef-report-filters .ef-filter-solo-precio > .ef-label { display: none; }
+  #ef-report-filters input.ef-input,
+  #ef-report-filters select.ef-select { width: 100% !important; min-height: 38px; font-size: 16px; /* 16px evita el zoom de iOS */ }
+  .ef-rep-filter-actions { width: 100%; }
+  .ef-rep-filter-actions > .ef-btn { flex: 1; justify-content: center; min-height: 40px; }
+
+  /* KPIs: dos por fila, compactos */
+  #ef-report-kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 8px !important; }
+  #ef-report-kpi-row .ef-stat-card { padding: 10px 12px !important; min-width: 0; }
+  #ef-report-kpi-row .ef-stat-label { font-size: 9.5px; letter-spacing: .3px; }
+  #ef-report-kpi-row .ef-stat-value { font-size: 15px !important; overflow-wrap: anywhere; }
+
+  /* Gráfica y tarjeta de detalle */
+  #ef-report-chart-container { padding: 12px 8px !important; }
+  #ef-report-data-card { margin-bottom: 10px !important; }
+  .ef-rep-table-title { padding: 10px 12px; font-size: 12px; }
+  .ef-rep-layout-switch {
+    display: inline-flex; border: 1px solid var(--ef-border); border-radius: 8px; overflow: hidden; flex: 0 0 auto;
+  }
+  .ef-rep-layout-switch button {
+    background: var(--ef-card); border: none; padding: 5px 10px; font-size: 11px; font-weight: 700;
+    color: var(--ef-text-muted); text-transform: none; letter-spacing: 0; cursor: pointer;
+  }
+  .ef-rep-layout-switch button.ef-active { background: var(--ef-primary); color: #fff; }
+  /* Sin scroll anidado: la página es la que desplaza */
+  #ef-report-table-wrapper { max-height: none !important; }
+  #ef-report-print-receipt-container { padding: 12px !important; }
+  #ef-report-print-receipt-container > div { padding: 14px !important; }
+
+  /* Vista Tarjetas: cada fila del reporte se vuelve una tarjeta con
+     "Etiqueta ........ valor" (las etiquetas las pone _rep_label_cells). */
+  #ef-reports-view.ef-rep-cards #ef-report-table { min-width: 0 !important; width: 100%; }
+  #ef-reports-view.ef-rep-cards #ef-report-thead { display: none; }
+  #ef-reports-view.ef-rep-cards #ef-report-tbody > tr {
+    display: block; padding: 10px 12px; border-bottom: 1px solid var(--ef-border);
+  }
+  #ef-reports-view.ef-rep-cards #ef-report-tbody > tr:nth-child(even) { background: #fafbfd; }
+  #ef-reports-view.ef-rep-cards #ef-report-tbody > tr > td {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+    padding: 3px 0 !important; border: none !important; text-align: right !important;
+    white-space: normal !important; min-width: 0 !important; width: auto !important; font-size: 13px;
+    overflow-wrap: anywhere;
+  }
+  #ef-reports-view.ef-rep-cards #ef-report-tbody > tr > td::before {
+    content: attr(data-label); flex: 0 0 auto; max-width: 48%;
+    text-align: left; font-size: 11px; font-weight: 600; color: var(--ef-text-muted);
+    text-transform: uppercase; letter-spacing: .3px;
+  }
+  /* La primera columna (factura, código, cliente…) hace de título de la tarjeta */
+  #ef-reports-view.ef-rep-cards #ef-report-tbody > tr > td:first-child:not([colspan]) {
+    font-size: 14px; font-weight: 700; padding-bottom: 5px !important;
+  }
+  #ef-reports-view.ef-rep-cards #ef-report-tbody > tr > td[data-label=""] { justify-content: flex-start; text-align: left !important; }
+  #ef-reports-view.ef-rep-cards #ef-report-tbody > tr > td[data-label=""]::before,
+  #ef-reports-view.ef-rep-cards #ef-report-tbody > tr > td:not([data-label])::before { display: none; }
+  #ef-reports-view.ef-rep-cards #ef-report-tbody > tr > td:empty { display: none; }
+  /* Celdas que ocupan toda la fila (detalle de Antigüedad, totales): bloque con scroll propio */
+  #ef-reports-view.ef-rep-cards #ef-report-tbody > tr > td[colspan] {
+    display: block; text-align: left !important; padding: 6px 0 !important; overflow-x: auto;
+  }
+  #ef-reports-view.ef-rep-cards #ef-report-tbody > tr > td[colspan]::before { display: none; }
+  /* Antigüedad: la flecha de expandir va arriba a la izquierda */
+  #ef-reports-view.ef-rep-cards #ef-report-tbody > tr.ef-aging-summary-row > td:first-child { justify-content: flex-start; padding: 0 !important; }
+  #ef-reports-view.ef-rep-cards #ef-report-tbody > tr.ef-aging-summary-row > td:first-child::after {
+    content: "Ver facturas"; margin-left: 6px; font-size: 11px; font-weight: 600; color: var(--ef-primary);
+  }
+
+  /* Vista Tabla: tabla completa con scroll lateral, un poco más compacta */
+  #ef-reports-view:not(.ef-rep-cards) #ef-report-table { font-size: 12px; }
+  #ef-reports-view:not(.ef-rep-cards) #ef-report-table .ef-th,
+  #ef-reports-view:not(.ef-rep-cards) #ef-report-table .ef-td { white-space: nowrap; }
 }
 
 /* Fix long dropdown cut-off */
@@ -7805,12 +8070,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 				}
 			} else {
 				frappe.call({
-					method: "frappe.client.get_value",
-					args: {
-						doctype: "BFEL Settings",
-						filters: { company: d.company, enabled: 1 },
-						fieldname: "url_pdf"
-					},
+					// Solo campos no sensibles (BFEL Settings guarda credenciales).
+					method: "brainfel.api.public_settings.get_bfel_public_settings",
+					args: { company: d.company },
 					callback: (r) => {
 						const url = r.message ? r.message.url_pdf : null;
 						this._url_pdf_cache[cacheKey] = url || "";
@@ -7995,12 +8257,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-btn-certify").prop("disabled", true);
 
 		frappe.call({
-			method: "frappe.client.get_value",
-			args: {
-				doctype: "BFEL Settings",
-				filters: { company: this.doc.company, enabled: 1 },
-				fieldname: ["certifier", "test_mode"]
-			},
+			method: "brainfel.api.public_settings.get_bfel_public_settings",
+			args: { company: this.doc.company },
 			callback: (r) => {
 				const settings = r.message || {};
 				const certifier = settings.certifier || "Digifact";
@@ -10150,7 +10408,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			callback: (r) => {
 				const has_perm = r.message;
 				if (!has_perm) {
-					this.$body.find("#ef-report-filters").hide();
+					this.$body.find("#ef-report-filters, #ef-rep-filters-toggle").hide();
 					this.$body.find("#ef-report-kpi-row").hide();
 					this.$body.find("#ef-report-data-card").hide();
 					this.$body.find("#ef-report-unauthorized").show();
@@ -10238,6 +10496,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const meta = reportsMeta[report_id] || { title: "Reporte", desc: "" };
 		this.$body.find("#ef-report-title").text(meta.title);
 		this.$body.find("#ef-report-desc").text(meta.desc);
+		this.$body.find("#ef-rep-picker-current").text(meta.title);
+		this.$body.find(".ef-rep-sidebar").removeClass("ef-rep-sidebar-open");
 
 		this._update_filter_visibility(report_id);
 
@@ -10256,6 +10516,31 @@ body.facex-fullscreen-mode .ef-main-layout {
 			const report_id = $(e.currentTarget).data("report");
 			this._switch_report(report_id);
 		});
+
+		// Móvil: menú de reportes plegable, filtros plegables y Tarjetas/Tabla.
+		this.$body.find("#ef-rep-picker").off("click").on("click", () => {
+			this.$body.find(".ef-rep-sidebar").toggleClass("ef-rep-sidebar-open");
+		});
+		this.$body.find("#ef-rep-filters-toggle").off("click").on("click", () => {
+			this.$body.find("#ef-reports-view").toggleClass("ef-rep-filters-open");
+		});
+		this.$body.find(".ef-rep-layout-switch button").off("click").on("click", (e) => {
+			this._set_report_mobile_layout($(e.currentTarget).data("rep-layout"));
+		});
+		this._set_report_mobile_layout(this._get_report_mobile_layout());
+
+		// Comprimir/expandir el menú de reportes (se recuerda por navegador).
+		this.$body.find("#ef-rep-collapse-btn").off("click").on("click", () => {
+			const collapsed = !this.$body.find(".ef-rep-layout").hasClass("ef-rep-collapsed");
+			this._set_report_menu_collapsed(collapsed);
+		});
+		// Tooltip con el nombre del reporte, útil cuando solo se ven íconos.
+		this.$body.find(".ef-report-nav-btn").each((_, el) => {
+			if (!el.getAttribute("title")) el.setAttribute("title", (el.textContent || "").trim());
+		});
+		let _collapsed = false;
+		try { _collapsed = localStorage.getItem("facex_rep_menu_collapsed") === "1"; } catch (e) { /* sin storage */ }
+		this._set_report_menu_collapsed(_collapsed);
 
 		// Group header toggle
 		this.$body.find(".ef-report-group-header").off("click").on("click", (e) => {
@@ -10281,6 +10566,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		this.$body.find("#ef-rep-btn-apply").off("click").on("click", () => {
 			this._run_active_report();
+			// En móvil, al generar se pliegan los filtros para dejar ver el resultado.
+			if (this._is_report_mobile()) {
+				this.$body.find("#ef-reports-view").removeClass("ef-rep-filters-open");
+			}
 		});
 
 		// El link se arma con los filtros que están puestos ahora, sin depender
@@ -10632,6 +10921,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this.$body.find("#ef-report-print-receipt-container").show();
 		}
 
+		this.$body.find("#ef-rep-filters-toggle").toggle(report_id !== "print_receipt");
+
 		// Usuario Creador: selección múltiple, aplica a todos los reportes
 		// transaccionales (todos menos el recibo de impresión, que no es un
 		// listado). Análisis de Utilidad es agregado por producto/proveedor,
@@ -10733,9 +11024,93 @@ body.facex-fullscreen-mode .ef-main-layout {
 			callback: (r) => {
 				if (!r.exc && r.message) {
 					this._render_report_data(report_id, r.message);
+					this._rep_label_cells();
 				}
+				this._rep_update_filter_summary();
 			}
 		});
+	}
+
+	_set_report_menu_collapsed(collapsed) {
+		this.$body.find(".ef-rep-layout").toggleClass("ef-rep-collapsed", !!collapsed);
+		this.$body.find("#ef-rep-collapse-btn").attr("title", collapsed ? "Expandir menú" : "Comprimir menú");
+		try { localStorage.setItem("facex_rep_menu_collapsed", collapsed ? "1" : "0"); } catch (e) { /* sin storage */ }
+		// Tablas y gráfica ya se estiran solas (100% / viewBox); esto avisa a
+		// cualquier control que mida su ancho al cambiar el tamaño.
+		setTimeout(() => window.dispatchEvent(new Event("resize")), 220);
+	}
+
+	_is_report_mobile() {
+		return window.matchMedia("(max-width: 768px)").matches;
+	}
+
+	_get_report_mobile_layout() {
+		try {
+			return localStorage.getItem("facex_rep_mobile_layout") === "table" ? "table" : "cards";
+		} catch (e) {
+			return "cards";
+		}
+	}
+
+	// Solo tiene efecto visual bajo 768px (ver CSS «Reportes en móvil»).
+	_set_report_mobile_layout(layout) {
+		layout = layout === "table" ? "table" : "cards";
+		this.$body.find("#ef-reports-view").toggleClass("ef-rep-cards", layout === "cards");
+		this.$body.find(".ef-rep-layout-switch button").each((_, b) => {
+			$(b).toggleClass("ef-active", $(b).data("rep-layout") === layout);
+		});
+		try { localStorage.setItem("facex_rep_mobile_layout", layout); } catch (e) { /* sin storage */ }
+	}
+
+	// Copia el título de cada columna a sus celdas (data-label) para que la
+	// vista Tarjetas en móvil pueda mostrar «Etiqueta … valor». Respeta colspan.
+	_rep_label_cells() {
+		const labels = [];
+		this.$body.find("#ef-report-thead tr:last > th").each((_, th) => {
+			const span = parseInt(th.getAttribute("colspan") || "1", 10) || 1;
+			const text = (th.textContent || "").replace(/\s+/g, " ").trim();
+			for (let i = 0; i < span; i++) labels.push(text);
+		});
+		this.$body.find("#ef-report-tbody > tr").each((_, tr) => {
+			let col = 0;
+			Array.from(tr.children).forEach((td) => {
+				const span = parseInt(td.getAttribute("colspan") || "1", 10) || 1;
+				if (span === 1 && labels[col] !== undefined) td.setAttribute("data-label", labels[col]);
+				col += span;
+			});
+		});
+	}
+
+	// Resumen de los filtros activos en el botón «Filtros» (móvil).
+	_rep_update_filter_summary() {
+		const $f = this.$body.find("#ef-report-filters");
+		const visible = (cls) => $f.find(cls).css("display") !== "none";
+		const parts = [];
+		if (visible(".ef-filter-date")) {
+			const a = this.$body.find("#ef-rep-start-date").val();
+			const b = this.$body.find("#ef-rep-end-date").val();
+			if (a || b) parts.push(`${a ? frappe.datetime.str_to_user(a) : "…"} – ${b ? frappe.datetime.str_to_user(b) : "…"}`);
+		}
+		if (visible(".ef-filter-month")) {
+			parts.push(`${this.$body.find("#ef-rep-month option:selected").text()} ${this.$body.find("#ef-rep-year").val() || ""}`.trim());
+		}
+		const extra = [
+			[".ef-filter-customer", this.rep_customer_ctrl],
+			[".ef-filter-item", this.rep_item_ctrl],
+			[".ef-filter-item-group", this.rep_item_group_ctrl],
+			[".ef-filter-supplier", this.rep_supplier_ctrl],
+			[".ef-filter-warehouse", this.rep_warehouse_ctrl],
+			[".ef-filter-owners", this.rep_owner_ctrl],
+			[".ef-filter-establecimiento", "#ef-rep-establecimiento"],
+			[".ef-filter-payment-method", "#ef-rep-payment-method"],
+			[".ef-filter-doc-type", "#ef-rep-doc-type"],
+		].filter(([cls, src]) => {
+			if (!visible(cls) || !src) return false;
+			const v = typeof src === "string" ? this.$body.find(src).val() : src.get_value();
+			return Array.isArray(v) ? v.length > 0 : !!v;
+		}).length;
+		if (extra) parts.push(extra === 1 ? "1 filtro más" : `${extra} filtros más`);
+		this.$body.find("#ef-rep-filters-summary").text(parts.join(" · "));
 	}
 
 	_render_report_data(report_id, data) {
@@ -12477,7 +12852,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 		});
 
 		this.$body.find("#ef-maint-item-btn-print-label").on("click", () => {
-			this._imprimir_etiqueta_maint_item();
+			this._imprimir_etiqueta_maint_item(false);
+		});
+		this.$body.find("#ef-maint-item-btn-preview-label").on("click", () => {
+			this._imprimir_etiqueta_maint_item(true);
 		});
 
 		// ── Suppliers (búsqueda-primero, estilo SAP) ──
@@ -13540,7 +13918,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		if (mode === "search") {
 			$save.hide();
 			$delete.hide();
-			this.$body.find("#ef-maint-item-btn-print-label").hide();
+			this.$body.find("#ef-maint-item-btn-print-label, #ef-maint-item-btn-preview-label").hide();
 			this.$body.find("#ef-maint-item-title").text("Búsqueda de productos");
 		} else if (mode === "create") {
 			$save.show().text("Crear Producto");
@@ -13582,7 +13960,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 					this.$body.find("#ef-maint-item-is-stock")
 						.prop("checked", isStockForced || !!it.is_stock_item)
 						.prop("disabled", isStockForced);
-					if (frappe.boot.versions && frappe.boot.versions.etiba) this.$body.find("#ef-maint-item-btn-print-label").show();
+					if (facex_multi.etiqueta_etiba && facex_multi.etiqueta_etiba.disponible()) {
+						this.$body.find("#ef-maint-item-btn-print-label, #ef-maint-item-btn-preview-label").show();
+					}
 					this._maint_load_item_images(it.item_code);
 					this.$body.find("#ef-maint-item-keywords").val(it.palabras_busqueda || "");
 					this.$body.find("#ef-maint-item-costo-estandar").val(it.costo_estandar || "");
@@ -13696,80 +14076,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 		});
 	}
 
-	_imprimir_etiqueta_maint_item() {
-		const item_code = this._current_maint_item_code;
-		if (!item_code) {
-			frappe.show_alert({ message: "Guarde el producto antes de imprimir la etiqueta.", indicator: "orange" });
-			return;
-		}
-		frappe.call({
-			method: "facex_multi.api.item.get_label_print_config",
-			args: { item_code, company: this.doc.company || this.defaults.company || "" },
-			freeze: true,
-			callback: (r) => {
-				const cfg = r.message || {};
-				const formatos = cfg.formatos || [];
-				if (!formatos.length) {
-					frappe.msgprint("No hay formatos de etiqueta activos configurados en eTIBA.");
-					return;
-				}
-				const fields = [
-					{
-						label: "Formato", fieldname: "formato", fieldtype: "Select",
-						options: formatos.map((f) => f.name), default: cfg.formato_sugerido || formatos[0].name, reqd: 1,
-					},
-					{
-						label: "Cantidad", fieldname: "cantidad", fieldtype: "Int",
-						default: cfg.cantidad_por_defecto || 1, reqd: 1,
-					},
-				];
-				if (cfg.requiere_serie) {
-					fields.push({
-						label: "Serie", fieldname: "serie", fieldtype: "Link", options: "Serial No", reqd: 1,
-						get_query: () => ({ filters: { item_code, status: "Active" } }),
-					});
-				}
-				const d = new frappe.ui.Dialog({
-					title: `Imprimir Etiqueta — ${item_code}`,
-					fields,
-					primary_action_label: "Imprimir",
-					primary_action: (values) => {
-						d.hide();
-						this._enviar_etiqueta_a_imprimir(item_code, values, cfg.print_service_url);
-					},
-				});
-				d.show();
-			},
-		});
-	}
-
-	_enviar_etiqueta_a_imprimir(item_code, values, print_service_url) {
-		frappe.call({
-			method: "facex_multi.api.item.imprimir_etiqueta_item",
-			args: {
-				item_code, formato: values.formato, cantidad: values.cantidad, serie: values.serie || "",
-				company: this.doc.company || this.defaults.company || "",
-			},
-			freeze: true,
-			callback: (r) => {
-				const zplcode = r.message;
-				if (!zplcode) return;
-				fetch(print_service_url, {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ zplcode }),
-				})
-					.then((response) => {
-						if (response.ok) {
-							frappe.show_alert({ message: __("Etiqueta enviada a imprimir."), indicator: "green" });
-						} else {
-							frappe.msgprint("El servicio de impresión de etiquetas respondió con un error.");
-						}
-					})
-					.catch(() => {
-						frappe.msgprint("No se pudo conectar con el servicio de impresión de etiquetas (¿está corriendo en este equipo?).");
-					});
-			},
+	_imprimir_etiqueta_maint_item(vista_previa) {
+		// Diálogo compartido con FacEx Inventario (public/js/etiqueta_etiba.js):
+		// formato/cantidad/serie + vista previa de la etiqueta en pantalla.
+		facex_multi.etiqueta_etiba.abrir({
+			item_code: this._current_maint_item_code,
+			company: this.doc.company || this.defaults.company || "",
+			vista_previa: !!vista_previa,
 		});
 	}
 
@@ -13814,7 +14127,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-maint-item-gestionado-por").val("General");
 		this.$body.find("#ef-maint-item-is-stock").prop("checked", false).prop("disabled", false);
 		this.$body.find("#ef-maint-item-btn-delete").hide();
-		this.$body.find("#ef-maint-item-btn-print-label").hide();
+		this.$body.find("#ef-maint-item-btn-print-label, #ef-maint-item-btn-preview-label").hide();
 		this.$body.find("#ef-maint-item-keywords").val("");
 		this.$body.find("#ef-maint-item-costo-estandar").val("");
 		this.$body.find("#ef-maint-item-relations-wrap").hide();
