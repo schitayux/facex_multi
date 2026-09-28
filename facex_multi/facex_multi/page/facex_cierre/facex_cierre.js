@@ -417,6 +417,9 @@ class FacexCierreDiario {
 		const filtro = this._facturasFilter;
 		const factsView = filtro ? facts.filter((f) => f.clasificacion === filtro) : facts;
 		const CD_CLASE_LABEL = { contado: "Contado", contra_entrega: "C. Entrega", credito: "Crédito" };
+		// Reclasificar condición de pago: permiso propio, día abierto, factura
+		// no certificada (el servidor valida lo mismo).
+		const canReclass = !!ctx.puede_reclasificar && canManage && !cerrado;
 		// No se puede cerrar el día mientras haya facturas de Contado sin el
 		// pago real registrado (backend lo vuelve a validar en cerrar_cierre).
 		const bloqueaCierre = alertasContado.length > 0;
@@ -592,7 +595,7 @@ class FacexCierreDiario {
 					<tr class="${f.alerta_contado ? "cd-row-alert" : ""}">
 						<td><a href="/app/facex?invoice=${encodeURIComponent(f.sales_invoice)}" target="_blank">${_cd_esc(f.sales_invoice)}</a>${f.es_devolucion ? ` <span class="cd-tag">DEV</span>` : ""}${f.tiene_descuento ? ` <span class="cd-tag cd-tag-oferta">OFERTA</span>` : ""}</td>
 						<td>${_cd_esc(f.customer_name)}</td>
-						<td><span class="cd-tag cd-tag-clase-${f.clasificacion}">${CD_CLASE_LABEL[f.clasificacion] || ""}</span>${f.alerta_contado ? ` <span class="cd-tag cd-tag-alerta" title="Contado sin pagar">⚠</span>` : ""}</td>
+						<td><span class="cd-tag cd-tag-clase-${f.clasificacion}" title="${_cd_esc(f.condicion || "")}">${CD_CLASE_LABEL[f.clasificacion] || ""}</span>${f.alerta_contado ? ` <span class="cd-tag cd-tag-alerta" title="Contado sin pagar">⚠</span>` : ""}${canReclass && !f.es_devolucion ? (f.certificada ? ` <span class="cd-muted" title="Certificada ante SAT: la condición de pago no se puede cambiar">🔒</span>` : ` <a href="#" class="cd-reclass" data-inv="${_cd_esc(f.sales_invoice)}" title="Cambiar condición de pago">✎</a>`) : ""}</td>
 						<td class="r">${this.fmt(f.grand_total)}</td>
 						<td class="r">${this.fmt(ceNeto)}</td>
 						<td class="r">${this.fmt(recargo)}</td>
@@ -690,6 +693,11 @@ class FacexCierreDiario {
 			this.$body.find("#cd-usuario").on("change", reload);
 		}
 
+		this.$body.find(".cd-reclass").on("click", (e) => {
+			e.preventDefault();
+			this._reclasificar($(e.currentTarget).data("inv"));
+		});
+
 		// Reabrir aplica justo cuando el cierre NO es editable (Cerrado): se
 		// enlaza antes del corte por !editable.
 		this.$body.find("#cd-btn-reopen").on("click", () => this._reopen());
@@ -775,6 +783,46 @@ class FacexCierreDiario {
 			</div>`,
 			doit
 		);
+	}
+
+	_reclasificar(invoice) {
+		const f = ((this.snap || {}).facturas || []).find((x) => x.sales_invoice === invoice);
+		if (!f) return;
+		const LABEL = { contado: "Contado", contra_entrega: "Contra Entrega", credito: "Crédito" };
+		const opts = (this.ctx.condiciones || []).map((c) => c.name);
+		const d = new frappe.ui.Dialog({
+			title: __("Condición de pago — {0}", [invoice]),
+			fields: [
+				{ fieldtype: "HTML", options: `<p>${_cd_esc(f.customer_name)} — <b>${this.fmt(f.grand_total)}</b><br>${__("Condición actual")}: <b>${_cd_esc(f.condicion || "—")}</b> (${LABEL[f.clasificacion] || ""})</p>` },
+				{ fieldname: "template", fieldtype: "Select", label: __("Nueva condición de pago"), options: [""].concat(opts), reqd: 1 },
+				{ fieldname: "info", fieldtype: "HTML" },
+				{ fieldname: "motivo", fieldtype: "Small Text", label: __("Motivo del cambio"), reqd: 1 },
+			],
+			primary_action_label: __("Cambiar condición"),
+			primary_action: (v) => {
+				if (v.template === f.condicion) {
+					frappe.msgprint(__("La factura ya tiene esa condición."));
+					return;
+				}
+				d.hide();
+				frappe.call({
+					method: "facex_multi.api.cierre.reclasificar_condicion",
+					args: { invoice, template: v.template, motivo: v.motivo },
+					freeze: true,
+					freeze_message: __("Actualizando la factura…"),
+					callback: (r) => {
+						if (r.exc) return;
+						frappe.show_alert({ message: __("Condición de {0} actualizada.", [invoice]), indicator: "green" });
+						this._recompute(() => this._render_detail());
+					},
+				});
+			},
+		});
+		d.fields_dict.template.$input.on("change", () => {
+			const c = (this.ctx.condiciones || []).find((x) => x.name === d.get_value("template"));
+			d.fields_dict.info.$wrapper.html(c ? `<p class="text-muted">${__("Se clasificará como")} <b>${LABEL[c.clasificacion]}</b>${c.dias ? ` — ${__("vence a {0} días de la fecha de la factura", [c.dias])}` : ""}.</p>` : "");
+		});
+		d.show();
 	}
 
 	_reopen() {

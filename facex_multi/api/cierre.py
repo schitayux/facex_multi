@@ -25,6 +25,10 @@ Permisos (FacEx Settings):
   * Rol (Clasificación) «Gerencia» → ver los cierres de todos, crear/cerrar
     los de cualquier usuario y REABRIR un cierre Cerrado (única vía para
     corregir facturas o pagos ya congelados).
+  * puede_reclasificar_condicion → cambiar la condición de pago (plantilla)
+    de una factura validada, NO certificada y con el día abierto
+    (reclasificar_condicion). Sin tocar asientos: solo condición, vencimiento,
+    cronograma y la marca de contra entrega.
   * System Manager → acceso total.
 """
 from __future__ import annotations
@@ -40,6 +44,7 @@ from facex_multi.api.invoice import get_effective_company
 from facex_multi.api.permissions import (
     get_facex_can_create_cierres,
     get_facex_company_config,
+    get_facex_can_reclassify_terms,
     get_facex_can_reopen_cierres,
     get_facex_can_supervise_cierres,
     get_user_can_supervise_cierres,
@@ -97,6 +102,11 @@ def _is_gerencia(company: str) -> bool:
 def _can_reopen(company: str) -> bool:
     """Reabrir un cierre Cerrado (cierre_reabrir)."""
     return _installed() and (_is_sysman() or get_facex_can_reopen_cierres(company))
+
+
+def _can_reclassify(company: str) -> bool:
+    """Cambiar la condición de pago de facturas validadas (puede_reclasificar_condicion)."""
+    return _installed() and (_is_sysman() or get_facex_can_reclassify_terms(company))
 
 
 def _can_create(company: str) -> bool:
@@ -327,7 +337,8 @@ def _si_fields() -> list:
     meta = frappe.get_meta("Sales Invoice")
     fields = ["name", "customer", "customer_name", "posting_date", "due_date", "grand_total", "rounded_total",
               "disable_rounded_total", "total", "net_total", "discount_amount", "is_return", "outstanding_amount", "owner"]
-    for f in ("bfel_status", "bfel_pago_contra_entrega", "custom_pagado", "set_warehouse"):
+    for f in ("bfel_status", "bfel_uuid", "bfel_pago_contra_entrega", "custom_pagado", "set_warehouse",
+              "payment_terms_template"):
         if meta.has_field(f):
             fields.append(f)
     return fields
@@ -539,6 +550,8 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
             "clasificacion": clasificacion,
             "dias_credito": dias_credito,
             "alerta_contado": 1 if alerta_contado else 0,
+            "condicion": inv.get("payment_terms_template") or "",
+            "certificada": 1 if _is_certified(inv) else 0,
         })
 
     ajuste = total_venta - sum_lineas
@@ -780,6 +793,8 @@ def get_context(company: str = None) -> dict:
         "user": me,
         "user_fullname": me_fullname,
         "es_gerencia": int(gerencia),
+        "puede_reclasificar": int(_can_reclassify(company)),
+        "condiciones": _terms_options() if _can_reclassify(company) else [],
         "puede_crear_cierres": int(_can_create(company)),
         "today": today(),
         "users": users,
@@ -1005,6 +1020,138 @@ def reabrir_cierre(name: str, motivo: str = None) -> dict:
     doc.save(ignore_permissions=True)
     frappe.db.commit()
     return _doc_to_dict(doc)
+
+
+# ---------------------------------------------------------------------------
+# Reclasificar la condición de pago de una factura validada
+# ---------------------------------------------------------------------------
+# El usuario se equivocó de condición (Contado / Crédito N días / Contra
+# Entrega). ERPNext no permite editar payment_terms_template, due_date ni
+# payment_schedule después de validar, y cancelar/rehacer cambia el número.
+# Como contado y crédito usan la misma cuenta por cobrar y el mismo monto, NO
+# hay asientos que corregir: se reescriben la condición, el vencimiento (en la
+# factura, GL Entry y Payment Ledger Entry para antigüedad de saldos), el
+# cronograma y bfel_pago_contra_entrega. Queda Version + comentario en la
+# factura. Facturas certificadas: bloqueo total (FACT vs FCAM ante SAT).
+
+def _is_certified(inv) -> bool:
+    return bool(inv.get("bfel_uuid")) or inv.get("bfel_status") == "02 Procesada"
+
+
+def _terms_options() -> list:
+    meta = frappe.get_meta("Payment Terms Template")
+    fields = ["name"]
+    if meta.has_field("custom_es_contra_entrega"):
+        fields.append("custom_es_contra_entrega")
+    filters = {"disabled": 0} if meta.has_field("disabled") else {}
+    out = []
+    for t in frappe.get_all("Payment Terms Template", filters=filters, fields=fields, order_by="name"):
+        dias = max(
+            [cint(d.credit_days) + 30 * cint(d.credit_months) for d in frappe.get_all(
+                "Payment Terms Template Detail", filters={"parent": t.name},
+                fields=["credit_days", "credit_months"],
+            )] or [0]
+        )
+        cod = cint(t.get("custom_es_contra_entrega"))
+        out.append({
+            "name": t.name,
+            "dias": dias,
+            "es_contra_entrega": cod,
+            "clasificacion": "contra_entrega" if cod else ("credito" if dias > 0 else "contado"),
+        })
+    return out
+
+
+def _new_schedule(si, template: str) -> list:
+    """Cronograma de la plantilla nueva, conservando lo ya pagado del
+    cronograma anterior (repartido en orden)."""
+    from erpnext.controllers.accounts_controller import get_payment_terms
+
+    total = _inv_total(si)
+    rounded = abs(total - flt(si.grand_total)) > 0.0001
+    base_total = flt(si.base_rounded_total) if rounded else flt(si.base_grand_total)
+    terms = get_payment_terms(template, si.posting_date, total, base_total) or []
+    if not terms:
+        frappe.throw(_("La condición {0} no tiene términos de pago.").format(template))
+    rate = flt(si.conversion_rate) or 1
+    pagado = sum(flt(r.paid_amount) for r in si.payment_schedule or [])
+    for t in terms:
+        aplica = min(pagado, flt(t.payment_amount))
+        pagado -= aplica
+        t.paid_amount = aplica
+        t.base_paid_amount = flt(aplica * rate, 2)
+        t.outstanding = flt(t.payment_amount) - aplica
+        t.base_outstanding = flt(t.base_payment_amount) - t.base_paid_amount
+    return terms
+
+
+@frappe.whitelist()
+def reclasificar_condicion(invoice: str, template: str, motivo: str = None) -> dict:
+    si = frappe.get_doc("Sales Invoice", invoice)
+    if get_effective_company(si.company) != si.company:
+        frappe.throw(_("La factura no pertenece a la compañía activa."), frappe.PermissionError)
+    if not _can_reclassify(si.company):
+        frappe.throw(_("No tiene el permiso «Reclasificar condición de pago desde el cierre»."), frappe.PermissionError)
+    _assert_can_manage(si.company, si.owner)
+    if si.docstatus != 1:
+        frappe.throw(_("Solo se reclasifican facturas validadas."))
+    if cint(si.get("is_return")):
+        frappe.throw(_("Las notas de crédito / devoluciones no se reclasifican."))
+    if _is_certified(si):
+        frappe.throw(_("La factura {0} está certificada ante SAT: su condición de pago no se puede cambiar.").format(si.name))
+    if getdate(si.posting_date) in _closed_dates(si.company, si.owner):
+        frappe.throw(_frozen_msg(si.company, si.owner, si.posting_date), title=_("Cierre Diario"))
+    motivo = (motivo or "").strip()
+    if not motivo:
+        frappe.throw(_("Indique el motivo del cambio."))
+    opciones = {o["name"]: o for o in _terms_options()}
+    if template not in opciones:
+        frappe.throw(_("Condición de pago no válida: {0}").format(template))
+    anterior = si.payment_terms_template or ""
+    if template == anterior:
+        frappe.throw(_("La factura ya tiene la condición {0}.").format(template))
+
+    cod = cint(opciones[template]["es_contra_entrega"])
+    if not cod and si.get("bfel_guias_transportista"):
+        frappe.throw(_("La factura tiene guía de transporte asociada: es Contra Entrega. Quite la guía antes de cambiar la condición."))
+
+    schedule = _new_schedule(si, template)
+    due_date = max(getdate(t.due_date) for t in schedule)
+    old_due = si.due_date
+    old_cod = cint(si.get("bfel_pago_contra_entrega"))
+
+    frappe.db.delete("Payment Schedule", {"parent": si.name, "parenttype": "Sales Invoice"})
+    for idx, t in enumerate(schedule, 1):
+        row = frappe.new_doc("Payment Schedule")
+        row.update(t)
+        row.update({"parent": si.name, "parenttype": "Sales Invoice", "parentfield": "payment_schedule",
+                    "idx": idx, "docstatus": 1})
+        row.db_insert()
+
+    values = {"payment_terms_template": template, "due_date": due_date}
+    if si.meta.has_field("bfel_pago_contra_entrega"):
+        values["bfel_pago_contra_entrega"] = cod
+    frappe.db.set_value("Sales Invoice", si.name, values)  # actualiza modified
+    frappe.db.sql(
+        "UPDATE `tabGL Entry` SET due_date = %s WHERE voucher_type = 'Sales Invoice' AND voucher_no = %s AND IFNULL(party, '') != ''",
+        (due_date, si.name),
+    )
+    frappe.db.sql(
+        "UPDATE `tabPayment Ledger Entry` SET due_date = %s WHERE voucher_type = 'Sales Invoice' AND voucher_no = %s",
+        (due_date, si.name),
+    )
+
+    changed = [["payment_terms_template", anterior, template], ["due_date", str(old_due), str(due_date)]]
+    if "bfel_pago_contra_entrega" in values and old_cod != cod:
+        changed.append(["bfel_pago_contra_entrega", old_cod, cod])
+    frappe.get_doc({
+        "doctype": "Version", "ref_doctype": "Sales Invoice", "docname": si.name,
+        "data": frappe.as_json({"changed": changed, "added": [], "removed": [], "row_changed": []}),
+    }).insert(ignore_permissions=True)
+    si.add_comment("Comment", _("Condición de pago reclasificada desde el Cierre Diario: «{0}» → «{1}» (vence {2}). Motivo: {3}").format(
+        anterior or "—", template, formatdate(due_date), frappe.utils.escape_html(motivo)))
+    frappe.db.commit()
+    return {"success": True, "invoice": si.name, "template": template, "due_date": str(due_date)}
 
 
 @frappe.whitelist()

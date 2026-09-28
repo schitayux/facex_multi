@@ -133,6 +133,7 @@
   "puede_crear_cierres",
   "cierre_supervisar",
   "cierre_reabrir",
+  "puede_reclasificar_condicion",
   "sb_pagos",
   "exige_pago_completo",
   "cb_pagos",
@@ -956,6 +957,13 @@
    "default": "0",
    "label": "Reabrir cierres",
    "description": "Reabrir un cierre ya Cerrado (descongela sus facturas)."
+  },
+  {
+   "fieldname": "puede_reclasificar_condicion",
+   "fieldtype": "Check",
+   "default": "0",
+   "label": "Reclasificar condición de pago desde el cierre",
+   "description": "Cambiar la condición de pago (plantilla) de facturas validadas y no certificadas desde el Cierre Diario, con el día abierto."
   },
   {
    "fieldname": "sb_pagos",

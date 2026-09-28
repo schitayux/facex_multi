@@ -208,6 +208,7 @@ PROFILE_PERM_FIELDS = [
     "puede_crear_cierres",
     "cierre_supervisar",
     "cierre_reabrir",
+    "puede_reclasificar_condicion",
     "puede_ver_menu_transporte",
     "puede_administrar_transportistas",
     "puede_editar_guias_transporte",
@@ -1099,6 +1100,12 @@ def get_facex_can_supervise_cierres(company: str) -> bool:
 def get_facex_can_reopen_cierres(company: str) -> bool:
     """Cierre Diario: reabrir un cierre Cerrado."""
     return _flag_or_legacy_gerencia(company, "cierre_reabrir")
+
+
+def get_facex_can_reclassify_terms(company: str) -> bool:
+    """Cierre Diario: cambiar la condición de pago de facturas validadas.
+    Deny-by-default (sin criterio heredado de «Gerencia»)."""
+    return _flag(company, "puede_reclasificar_condicion")
 
 
 def get_user_can_supervise_cierres(user: str, company: str) -> bool:
