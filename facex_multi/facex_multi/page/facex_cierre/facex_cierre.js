@@ -375,10 +375,71 @@ class FacexCierreDiario {
 		const egresos = this.form.egresos.reduce((a, e) => a + _cd_flt(e.monto), 0);
 		const total_venta = _cd_flt(s.total_venta);
 		const cobro_efectivo = _cd_flt(s.cobro_efectivo);
-		// Solo el efectivo cobrado se entrega para depósito: transferencias,
-		// depósitos bancarios, tarjeta, cheque, contra entrega y crédito no
-		// pasan por la caja.
-		return { egresos, total_venta, cobro_efectivo, a_depositar: cobro_efectivo - egresos };
+		const recuperado_efectivo = _cd_flt(s.recuperado_efectivo);
+		// Solo el efectivo se entrega para depósito (el de la venta del día más
+		// el recuperado hoy de facturas anteriores): transferencias, depósitos
+		// bancarios, tarjeta, cheque, contra entrega y crédito no pasan por la caja.
+		return { egresos, total_venta, cobro_efectivo, recuperado_efectivo,
+			a_depositar: cobro_efectivo + recuperado_efectivo - egresos };
+	}
+
+	// Recuperación de cartera: pagos de hoy a facturas de días anteriores. Va
+	// en su propia tarjeta para no mezclarse con el cuadre de la venta del día.
+	_recuperacion_html(s) {
+		const rows = s.abonos_detalle || [];
+		if (!rows.length) return "";
+		const tipos = s.recuperado_por_tipo;
+		const formas = s.recuperado_por_forma;
+		// Snapshots anteriores a esta versión solo traen forma y monto.
+		if (!tipos || !formas) {
+			return `<div class="cd-card"><div class="cd-card-title">RECUPERACIÓN DE CARTERA <span class="cd-muted">cobros de hoy a facturas de días anteriores</span></div>
+			<table class="cd-table cd-table-sm"><thead><tr><th>Factura</th><th>Cliente</th><th>Fecha factura</th><th>Forma</th><th>Ref.</th><th class="r">Monto</th></tr></thead>
+			<tbody>${rows.map((a) => `<tr><td>${_cd_esc(a.sales_invoice)}</td><td>${_cd_esc(a.customer_name)}</td><td>${this.short_date(a.posting_date)}</td><td>${_cd_esc(a.payment_method)}</td><td>${_cd_esc(a.reference)}</td><td class="r">${this.fmt(a.amount)}</td></tr>`).join("")}</tbody>
+			<tfoot><tr><td colspan="5">TOTAL</td><td class="r">${this.fmt(s.abonos_anteriores)}</td></tr></tfoot></table></div>`;
+		}
+		const recibido_venta = ["cobro_efectivo", "cobro_transferencia", "cobro_cheque", "cobro_tarjeta", "cobro_otros"]
+			.reduce((a, k) => a + _cd_flt(s[k]), 0);
+		const tipo_labels = { credito: "Recuperación de Crédito", cod: "Cobros de Contra Entrega (COD)", contado: "Saldos de Contado" };
+		return `
+	<div class="cd-card cd-card-recup">
+		<div class="cd-card-title">RECUPERACIÓN DE CARTERA <span class="cd-muted">cobros de hoy a facturas de días anteriores — no es venta del día y no entra en su cuadre</span></div>
+		<div class="cd-grid-3">
+			<div class="cd-block">
+				<div class="cd-block-title">POR TIPO DE FACTURA</div>
+				${Object.keys(tipo_labels).map((k) => `<div class="cd-line"><span>${tipo_labels[k]}</span><b>${this.fmt(tipos[k])}</b></div>`).join("")}
+				<div class="cd-line cd-line-total"><span>TOTAL RECUPERADO</span><b>${this.fmt(s.abonos_anteriores)}</b></div>
+				<div class="cd-hint">${s.recuperado_facturas || 0} factura(s) · ${s.recuperado_liquidadas || 0} quedaron liquidadas</div>
+			</div>
+			<div class="cd-block">
+				<div class="cd-block-title">POR FORMA DE PAGO</div>
+				${Object.entries(formas).map(([f, v]) => `<div class="cd-line"><span>${_cd_esc(f)}</span><b>${this.fmt(v)}</b></div>`).join("")}
+				<div class="cd-line cd-line-total"><span>TOTAL</span><b>${this.fmt(s.abonos_anteriores)}</b></div>
+				${_cd_flt(s.recuperado_efectivo) ? `<div class="cd-hint">El efectivo recuperado (${this.fmt(s.recuperado_efectivo)}) se suma al Total a Depositar.</div>` : ""}
+			</div>
+			<div class="cd-block">
+				<div class="cd-block-title">TOTAL RECIBIDO HOY</div>
+				<div class="cd-line"><span>Cobrado de la venta del día <span class="cd-muted">(sin CE ni crédito)</span></span><b>${this.fmt(recibido_venta)}</b></div>
+				<div class="cd-line"><span>Recuperación de cartera</span><b>${this.fmt(s.abonos_anteriores)}</b></div>
+				<div class="cd-line cd-line-total"><span>TOTAL RECIBIDO</span><b>${this.fmt(recibido_venta + _cd_flt(s.abonos_anteriores))}</b></div>
+			</div>
+		</div>
+		<div class="cd-table-wrap">
+		<table class="cd-table cd-table-sm">
+			<thead><tr><th>Factura</th><th>Cliente</th><th>Fecha factura</th><th class="r">Días</th><th>Tipo</th><th>Forma</th><th>Ref.</th><th class="r">Monto</th><th>Estado</th></tr></thead>
+			<tbody>${rows.map((a) => `<tr>
+				<td><a href="/app/facex?invoice=${encodeURIComponent(a.sales_invoice)}" target="_blank">${_cd_esc(a.sales_invoice)}</a></td>
+				<td>${_cd_esc(a.customer_name)}</td>
+				<td>${this.short_date(a.posting_date)}</td>
+				<td class="r">${a.dias || 0}</td>
+				<td>${_cd_esc(a.tipo_label)}</td>
+				<td>${_cd_esc(a.forma)}</td>
+				<td>${_cd_esc(a.reference)}</td>
+				<td class="r">${this.fmt(a.amount)}</td>
+				<td>${a.estado === "Liquidada" ? `<span class="cd-ok">✓ Liquidada</span>` : `Abono <span class="cd-muted">· saldo ${this.fmt(a.saldo_restante)}</span>`}</td>
+			</tr>`).join("")}</tbody>
+		</table>
+		</div>
+	</div>`;
 	}
 
 	_clasificacion_facturas(facts) {
@@ -523,13 +584,9 @@ class FacexCierreDiario {
 				${(s.devoluciones || []).length ? `<div class="cd-hint">${s.devoluciones.map((d) => `<a href="/app/facex?invoice=${encodeURIComponent(d.sales_invoice)}" target="_blank">${_cd_esc(d.sales_invoice)}</a> (${this.short_date(d.posting_date)})`).join(", ")}</div>` : `<div class="cd-hint">Sin devoluciones.</div>`}
 			</div>
 		</div>
-		${(s.abonos_detalle || []).length ? `
-		<details class="cd-details">
-			<summary>Abonos recibidos hoy de facturas anteriores: <b>${this.fmt(s.abonos_anteriores)}</b> <span class="cd-muted">(informativo, no entra en el total a depositar)</span></summary>
-			<table class="cd-table cd-table-sm"><thead><tr><th>Factura</th><th>Cliente</th><th>Fecha factura</th><th>Forma</th><th>Ref.</th><th class="r">Monto</th></tr></thead>
-			<tbody>${s.abonos_detalle.map((a) => `<tr><td>${_cd_esc(a.sales_invoice)}</td><td>${_cd_esc(a.customer_name)}</td><td>${this.short_date(a.posting_date)}</td><td>${_cd_esc(a.payment_method)}</td><td>${_cd_esc(a.reference)}</td><td class="r">${this.fmt(a.amount)}</td></tr>`).join("")}</tbody></table>
-		</details>` : ""}
 	</div>
+
+	${this._recuperacion_html(s)}
 
 	<!-- EGRESOS + TOTAL A DEPOSITAR -->
 	<div class="cd-grid-2">
@@ -547,7 +604,7 @@ class FacexCierreDiario {
 		<div class="cd-card cd-card-deposit">
 			<div class="cd-deposit-label">TOTAL A DEPOSITAR</div>
 			<div class="cd-deposit-value" id="cd-total-depositar">${this.fmt(t.a_depositar)}</div>
-			<div class="cd-deposit-formula">Efectivo cobrado ${this.fmt(t.cobro_efectivo)} − Egresos <span id="cd-dep-egresos">${this.fmt(t.egresos)}</span></div>
+			<div class="cd-deposit-formula">Efectivo venta del día ${this.fmt(t.cobro_efectivo)}${t.recuperado_efectivo ? ` + Efectivo recuperado ${this.fmt(t.recuperado_efectivo)}` : ""} − Egresos <span id="cd-dep-egresos">${this.fmt(t.egresos)}</span></div>
 			<div class="cd-field" style="margin-top:14px;"><label>Observaciones</label>
 				<textarea id="cd-observaciones" class="cd-input" rows="3" ${editable ? "" : "disabled"}>${_cd_esc(this.form.observaciones)}</textarea></div>
 		</div>
@@ -925,7 +982,12 @@ ${Math.abs(_cd_flt(s.ajuste_impuestos)) >= 0.01 ? `<tr><td>Ajustes (descuento gl
 <tr><td>Contado (pendiente de registrar)</td><td class="r">${money(s.contado_pendiente)}</td></tr>
 <tr><td>Al Crédito</td><td class="r">${money(s.al_credito)}</td></tr>
 <tr class="tot"><td>TOTAL</td><td class="r">${money(s.total_cobros)}</td></tr>
-${_cd_flt(s.abonos_anteriores) ? `<tr><td class="muted">Abonos recibidos hoy de facturas anteriores (informativo)</td><td class="r muted">${money(s.abonos_anteriores)}</td></tr>` : ""}
+${_cd_flt(s.abonos_anteriores) ? `<tr><td colspan="2" class="sec" style="background:#0f766e;">RECUPERACIÓN DE CARTERA (cobros de hoy a facturas de días anteriores)</td></tr>
+${s.recuperado_por_tipo ? `<tr><td>Recuperación de Crédito</td><td class="r">${money(s.recuperado_por_tipo.credito)}</td></tr>
+<tr><td>Cobros de Contra Entrega (COD)</td><td class="r">${money(s.recuperado_por_tipo.cod)}</td></tr>
+<tr><td>Saldos de Contado</td><td class="r">${money(s.recuperado_por_tipo.contado)}</td></tr>
+${Object.entries(s.recuperado_por_forma || {}).map(([f, v]) => `<tr><td class="muted">&nbsp;&nbsp;${_cd_esc(f)}</td><td class="r muted">${money(v)}</td></tr>`).join("")}` : ""}
+<tr class="tot"><td>TOTAL RECUPERADO ${s.recuperado_facturas ? `<span class="muted">(${s.recuperado_facturas} factura(s), ${s.recuperado_liquidadas || 0} liquidadas)</span>` : ""}</td><td class="r">${money(s.abonos_anteriores)}</td></tr>` : ""}
 <tr><td colspan="2" class="sec" style="background:#dc2626;">DEVOLUCIONES</td></tr>
 <tr><td>Contra Entrega</td><td class="r">${money(s.devoluciones_contra_entrega)}</td></tr>
 <tr><td>Al Crédito</td><td class="r">${money(s.devoluciones_credito)}</td></tr>
@@ -934,7 +996,7 @@ ${_cd_flt(s.abonos_anteriores) ? `<tr><td class="muted">Abonos recibidos hoy de 
 <tr><td colspan="2" class="sec" style="background:#3b82c4;">EGRESOS</td></tr>
 ${this.form.egresos.map((e) => `<tr><td>${_cd_esc(e.concepto)}${e.referencia ? ` <span class="muted">(${_cd_esc(e.referencia)})</span>` : ""}${e.observaciones ? ` <span class="muted">${_cd_esc(e.observaciones)}</span>` : ""}</td><td class="r">${money(e.monto)}</td></tr>`).join("")}
 <tr class="tot"><td>TOTAL EGRESOS</td><td class="r">${money(t.egresos)}</td></tr>
-<tr class="tot big"><td>TOTAL A DEPOSITAR</td><td class="r">${money(t.a_depositar)}</td></tr>
+<tr class="tot big"><td>TOTAL A DEPOSITAR <span class="muted">(efectivo venta ${money(t.cobro_efectivo)}${t.recuperado_efectivo ? ` + efectivo recuperado ${money(t.recuperado_efectivo)}` : ""} − egresos)</span></td><td class="r">${money(t.a_depositar)}</td></tr>
 </table>
 ${this.form.observaciones ? `<p><b>Observaciones:</b> ${_cd_esc(this.form.observaciones)}</p>` : ""}
 <div class="grid" style="margin-top:40px;"><div style="border-top:1px solid #333;text-align:center;padding-top:4px;">Entregado por</div><div style="border-top:1px solid #333;text-align:center;padding-top:4px;">Recibido por</div><div style="border-top:1px solid #333;text-align:center;padding-top:4px;">Gerencia</div></div>
@@ -1065,6 +1127,7 @@ body.facex-fullscreen-mode .layout-container, body.facex-fullscreen-mode #space-
 .cd-details table { margin-top:8px; }
 
 .cd-card-deposit { background:linear-gradient(135deg,#153375,#1f5fa8);color:#fff;border:none; }
+.cd-card-recup { border-left:4px solid #0f766e; }
 .cd-deposit-label { font-size:12px;font-weight:800;letter-spacing:1px;opacity:.9; }
 .cd-deposit-value { font-size:34px;font-weight:900;margin:6px 0 2px;letter-spacing:-.5px; }
 .cd-deposit-formula { font-size:12px;opacity:.85; }

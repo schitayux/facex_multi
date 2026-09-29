@@ -270,10 +270,10 @@
    "read_only": 1
   },
   {
-   "description": "Informativo: pagos con fecha de hoy aplicados a facturas de días anteriores de este usuario. No entra en el Total a Depositar.",
+   "description": "Pagos con fecha de hoy aplicados a facturas de días anteriores de este usuario (crédito, COD, saldos de contado). Se muestran aparte de la venta del día; su parte en efectivo se suma al Total a Depositar.",
    "fieldname": "abonos_anteriores",
    "fieldtype": "Currency",
-   "label": "Abonos recibidos hoy de facturas anteriores",
+   "label": "Recuperación de cartera (cobros de facturas anteriores)",
    "read_only": 1
   },
   {
@@ -353,7 +353,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-09-11 00:00:00.000000",
+ "modified": "2026-09-29 07:54:38.292532",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Cierre Diario",

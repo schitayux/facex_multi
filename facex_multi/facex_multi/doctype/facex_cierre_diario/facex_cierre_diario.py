@@ -58,9 +58,19 @@ class FacExCierreDiario(Document):
 		)
 		# Fórmula del cuadre: solo el efectivo cobrado en el día es lo que se
 		# entrega físicamente para depósito (transferencias, depósitos bancarios,
-		# tarjeta, cheque, contra entrega y crédito no pasan por la caja).
-		self.total_a_depositar = flt(self.cobro_efectivo) - flt(self.total_egresos)
+		# tarjeta, cheque, contra entrega y crédito no pasan por la caja). Incluye
+		# el efectivo recuperado hoy de facturas anteriores (sección Recuperación
+		# de cartera del snapshot).
+		self.total_a_depositar = (
+			flt(self.cobro_efectivo) + self._recuperado_efectivo() - flt(self.total_egresos)
+		)
 		self.num_facturas = len(self.facturas or [])
+
+	def _recuperado_efectivo(self) -> float:
+		try:
+			return flt((frappe.parse_json(self.snapshot_json or "{}") or {}).get("recuperado_efectivo"))
+		except Exception:
+			return 0.0
 
 	def on_trash(self):
 		if self.estado == "Cerrado" and "System Manager" not in frappe.get_roles():

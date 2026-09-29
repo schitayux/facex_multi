@@ -557,27 +557,7 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
     ajuste = total_venta - sum_lineas
     total_cobros = sum(cobros.values()) + cobro_otros + contado_pendiente
 
-    # ---- Abonos de hoy a facturas de días anteriores (informativo) ------------
-    abonos = []
-    if frappe.db.table_exists("eFast Invoice Payment"):
-        abonos = frappe.db.sql(
-            """
-            SELECT p.parent AS sales_invoice, si.customer_name, si.posting_date,
-                   p.payment_method, p.reference, p.amount
-            FROM `tabeFast Invoice Payment` p
-            JOIN `tabSales Invoice` si ON si.name = p.parent
-            WHERE si.company = %(company)s AND si.owner = %(usuario)s AND si.docstatus = 1
-              AND si.posting_date < %(fecha)s AND p.payment_date = %(fecha)s
-              AND p.parenttype = 'Sales Invoice' AND p.payment_method != %(ce)s
-            ORDER BY p.parent
-            """,
-            {"company": company, "usuario": usuario, "fecha": fecha, "ce": CONTRA_ENTREGA},
-            as_dict=True,
-        )
-    abonos_por_metodo = Counter()
-    for a in abonos:
-        abonos_por_metodo[a.payment_method or "Efectivo"] += flt(a.amount)
-        a["posting_date"] = str(a.posting_date)
+    recup = _recuperacion_cartera(company, fecha, usuario)
 
     # ---- Devoluciones (facturas ANULADAS de este usuario) ---------------------
     # Dos casos según la fecha ORIGINAL de la factura (posting_date), ambos
@@ -660,9 +640,7 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
         "al_credito": round(cobros["al_credito"], 2),
         "cobro_otros": round(cobro_otros, 2),
         "total_cobros": round(total_cobros, 2),
-        "abonos_anteriores": round(sum(abonos_por_metodo.values()), 2),
-        "abonos_detalle": abonos,
-        "abonos_por_metodo": dict(abonos_por_metodo),
+        **recup,
         "total_devoluciones": round(total_devoluciones, 2),
         "devoluciones_contado": round(dev_clasif["contado"], 2),
         "devoluciones_contra_entrega": round(dev_clasif["contra_entrega"], 2),
@@ -671,6 +649,110 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
         "devoluciones_hoy": devoluciones_hoy,
         "detalle_familias": familias,
         "facturas": facturas,
+    }
+
+
+_RECUP_TIPOS = OrderedDict([
+    ("credito", "Recuperación de Crédito"),
+    ("cod", "Cobros de Contra Entrega (COD)"),
+    ("contado", "Saldos de Contado"),
+])
+
+
+def _recuperacion_cartera(company: str, fecha, usuario: str) -> dict:
+    """Pagos con fecha `fecha` aplicados a facturas de días ANTERIORES del
+    usuario: dinero que entra hoy pero no es venta de hoy. Se presenta aparte
+    del cuadre de la venta del día para no mezclarlo con ella.
+
+    Tipo de la factura:
+      * cod     → factura Contra Entrega (bandera o filas «Contra Entrega»);
+                  la forma se reetiqueta «<forma> COD» (p.ej. «Transferencia
+                  COD», «Depósito COD») para no confundirla con cobros de hoy.
+      * credito → la factura tenía días de crédito (vencimiento > emisión).
+      * contado → pago tardío de una venta de contado.
+    Estado: «Liquidada» si con este pago la factura quedó sin saldo, si no
+    «Abono» con el saldo que resta."""
+    empty = {
+        "abonos_anteriores": 0.0, "recuperado_efectivo": 0.0, "abonos_detalle": [],
+        "recuperado_por_tipo": {k: 0.0 for k in _RECUP_TIPOS}, "recuperado_por_forma": {},
+        "recuperado_facturas": 0, "recuperado_liquidadas": 0,
+    }
+    if not frappe.db.table_exists("eFast Invoice Payment"):
+        return empty
+    meta = frappe.get_meta("Sales Invoice")
+    ce_col = "si.bfel_pago_contra_entrega" if meta.has_field("bfel_pago_contra_entrega") else "0"
+    rows = frappe.db.sql(
+        f"""
+        SELECT p.parent AS sales_invoice, si.customer_name, si.posting_date, si.due_date,
+               si.grand_total, si.rounded_total, si.disable_rounded_total,
+               {ce_col} AS bfel_pago_contra_entrega,
+               p.payment_method, p.reference, p.amount
+        FROM `tabeFast Invoice Payment` p
+        JOIN `tabSales Invoice` si ON si.name = p.parent
+        WHERE si.company = %(company)s AND si.owner = %(usuario)s AND si.docstatus = 1
+          AND si.posting_date < %(fecha)s AND p.payment_date = %(fecha)s
+          AND p.parenttype = 'Sales Invoice' AND p.payment_method != %(ce)s
+        ORDER BY si.posting_date, p.parent, p.idx
+        """,
+        {"company": company, "usuario": usuario, "fecha": fecha, "ce": CONTRA_ENTREGA},
+        as_dict=True,
+    )
+    if not rows:
+        return empty
+
+    names = sorted({r.sales_invoice for r in rows})
+    pagado = Counter()
+    tiene_ce = set()
+    for p in frappe.get_all(
+        "eFast Invoice Payment",
+        filters={"parent": ["in", names], "parenttype": "Sales Invoice"},
+        fields=["parent", "payment_method", "payment_date", "amount"],
+    ):
+        if p.payment_method == CONTRA_ENTREGA:
+            tiene_ce.add(p.parent)
+        elif not p.payment_date or getdate(p.payment_date) <= fecha:
+            pagado[p.parent] += flt(p.amount)
+
+    por_tipo = {k: 0.0 for k in _RECUP_TIPOS}
+    por_forma = OrderedDict()
+    efectivo = 0.0
+    liquidadas = set()
+    for r in rows:
+        amt = flt(r.amount)
+        metodo = r.payment_method or "Efectivo"
+        if cint(r.bfel_pago_contra_entrega) or r.sales_invoice in tiene_ce:
+            tipo, forma = "cod", f"{metodo} COD"
+        elif r.due_date and getdate(r.due_date) > getdate(r.posting_date):
+            tipo, forma = "credito", metodo
+        else:
+            tipo, forma = "contado", metodo
+        saldo = _inv_total(r) - pagado[r.sales_invoice]
+        r.update({
+            "posting_date": str(r.posting_date),
+            "tipo": tipo,
+            "tipo_label": _RECUP_TIPOS[tipo],
+            "forma": forma,
+            "saldo_restante": round(max(saldo, 0.0), 2),
+            "estado": "Liquidada" if saldo <= 0.004 else "Abono",
+            "dias": (fecha - getdate(r.posting_date)).days,
+        })
+        for k in ("due_date", "grand_total", "rounded_total", "disable_rounded_total", "bfel_pago_contra_entrega"):
+            r.pop(k, None)
+        por_tipo[tipo] += amt
+        por_forma[forma] = por_forma.get(forma, 0.0) + amt
+        if metodo == "Efectivo":
+            efectivo += amt
+        if saldo <= 0.004:
+            liquidadas.add(r.sales_invoice)
+
+    return {
+        "abonos_anteriores": round(sum(por_tipo.values()), 2),
+        "recuperado_efectivo": round(efectivo, 2),
+        "abonos_detalle": rows,
+        "recuperado_por_tipo": {k: round(v, 2) for k, v in por_tipo.items()},
+        "recuperado_por_forma": {k: round(v, 2) for k, v in por_forma.items()},
+        "recuperado_facturas": len(names),
+        "recuperado_liquidadas": len(liquidadas),
     }
 
 
