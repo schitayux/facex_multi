@@ -837,9 +837,13 @@ def get_pending_guias(company: str = None):
 
     company = get_effective_company(company)
 
-    from facex_multi.api.permissions import get_facex_invoice_partner_sql
+    from facex_multi.api.permissions import get_facex_invoice_partner_sql, get_facex_sales_scope_sql
     sp_cond, sp_params = get_facex_invoice_partner_sql(company, alias="si")
     sp_filter = f"and {sp_cond}" if sp_cond else ""
+    sc_cond, sc_params = get_facex_sales_scope_sql(company, "si")
+    if sc_cond:
+        sp_filter += f" and {sc_cond}"
+        sp_params = {**sp_params, **sc_params}
 
     return frappe.db.sql(
         f"""
@@ -873,6 +877,8 @@ def save_guias_transporte(invoice_name: str, guias_json: str):
         frappe.throw("Debe incluir al menos una guía.")
 
     doc = frappe.get_doc("Sales Invoice", invoice_name)
+    from facex_multi.api.permissions import assert_facex_invoice_in_sales_scope
+    assert_facex_invoice_in_sales_scope(doc)
 
     if doc.docstatus != 1:
         frappe.throw("Esta factura no está sometida; use el flujo normal de guardado.")
@@ -908,11 +914,11 @@ def get_guias_transporte(company: str = None, estado_entrega: str = None, transp
     conditions = ["si.company = %(company)s", "si.docstatus = 1"]
     values = {"company": company, "limit": int(limit or 200)}
 
-    from facex_multi.api.permissions import get_facex_invoice_partner_sql
-    sp_cond, sp_params = get_facex_invoice_partner_sql(company, alias="si")
-    if sp_cond:
-        conditions.append(sp_cond)
-        values.update(sp_params)
+    from facex_multi.api.permissions import get_facex_invoice_partner_sql, get_facex_sales_scope_sql
+    for cond, params in (get_facex_invoice_partner_sql(company, alias="si"), get_facex_sales_scope_sql(company, "si")):
+        if cond:
+            conditions.append(cond)
+            values.update(params)
 
     if estado_entrega:
         conditions.append("g.estado_entrega = %(estado_entrega)s")
@@ -953,6 +959,8 @@ def update_guia_estado(sales_invoice: str, guia_name: str, estado_entrega: str):
         frappe.throw("Estado de entrega no válido.")
 
     doc = frappe.get_doc("Sales Invoice", sales_invoice)
+    from facex_multi.api.permissions import assert_facex_invoice_in_sales_scope
+    assert_facex_invoice_in_sales_scope(doc)
     row = next((r for r in doc.bfel_guias_transportista if r.name == guia_name), None)
     if not row:
         frappe.throw("No se encontró la guía indicada en esta factura.")
@@ -976,9 +984,13 @@ def get_transporte_kpis(company: str = None, days: int = 14):
 
     days = int(days or 14)
 
-    from facex_multi.api.permissions import get_facex_invoice_partner_sql
+    from facex_multi.api.permissions import get_facex_invoice_partner_sql, get_facex_sales_scope_sql
     sp_cond, sp_params = get_facex_invoice_partner_sql(company, alias="si")
     sp_and = f"and {sp_cond}" if sp_cond else ""
+    sc_cond, sc_params = get_facex_sales_scope_sql(company, "si")
+    if sc_cond:
+        sp_and += f" and {sc_cond}"
+        sp_params = {**sp_params, **sc_params}
 
     por_estado = frappe.db.sql(
         f"""

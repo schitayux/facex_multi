@@ -46,6 +46,13 @@ def get_data(filters):
 		conditions.append(sp_cond)
 		values.update(sp_params)
 
+	# Alcance en Ventas del perfil (Solo lo creado por mí / Clientes donde soy vendedor).
+	from facex_multi.api.permissions import get_facex_companies_sales_scope_sql
+	sc_cond, sc_params = get_facex_companies_sales_scope_sql(companies, "si")
+	if sc_cond:
+		conditions.append(sc_cond)
+		values.update(sc_params)
+
 	if filters.transportista:
 		conditions.append("g.transportista = %(transportista)s")
 		values["transportista"] = filters.transportista

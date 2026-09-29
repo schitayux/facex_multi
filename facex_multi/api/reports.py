@@ -102,10 +102,11 @@ def _resolve_owner_filter(company: str, owners, alias: str = None,
     - Toda la compañía: el filtro del frontend manda (vacío = todos).
     - Clientes donde soy vendedor: aquí no filtra (lo hace
       _sales_partner_condition por cliente); en Auditoría (`audit`) = propio.
-    - Solo lo creado por mí: forzado a sus propias operaciones. Con
-      `customer_level` (Estados de Cuenta, Antigüedad de Saldos) significa
-      "clientes a los que yo facturé", con el saldo COMPLETO de esos clientes
-      — filtrar sus facturas por creador daría saldos incompletos.
+    - Solo lo creado por mí: forzado a sus propias operaciones, también en
+      Estados de Cuenta y Antigüedad de Saldos (`customer_level`): el saldo
+      es el de SUS facturas. Antes se mostraba el saldo completo de los
+      clientes a los que facturó, lo que exponía facturas de otros usuarios
+      (p. ej. todo Consumidor Final).
     """
     from facex_multi.api.permissions import (
         SCOPE_ALL, SCOPE_CUSTOMERS, get_facex_sales_scope,
@@ -115,13 +116,6 @@ def _resolve_owner_filter(company: str, owners, alias: str = None,
         return _owner_condition(owners, alias)
     if scope == SCOPE_CUSTOMERS and not audit:
         return "1=1", {}
-    if customer_level:
-        col = f"{alias}.customer" if alias else "customer"
-        return (
-            f"{col} IN (SELECT DISTINCT si_own.customer FROM `tabSales Invoice` si_own "
-            f"WHERE si_own.owner = %(facex_owner_me)s AND si_own.docstatus = 1)",
-            {"facex_owner_me": frappe.session.user},
-        )
     return _owner_condition([frappe.session.user], alias)
 
 

@@ -450,6 +450,63 @@ def get_facex_invoice_partner_sql(company: str = None, alias: str = "tabSales In
     return f"`{alias}`.sales_partner = %(facex_inv_sp)s", {"facex_inv_sp": sp}
 
 
+def get_facex_sales_scope_sql(company: str, alias: str = "si", param_prefix: str = "facex_scope"):
+    """(condicion_sql, params) que acota una consulta de Sales Invoice al
+    Alcance en Ventas del usuario en `company`, o ("", {}) si ve toda la
+    compañía. Para consultas SQL crudas (Transporte y similares) que no pasan
+    por los reportes de reports.py:
+    - Solo lo creado por mí → owner = usuario.
+    - Clientes donde soy vendedor → lo suyo + clientes cuyo Vendedor
+      (Customer.default_sales_partner) es su Socio de Venta.
+    `param_prefix` distingue los parámetros cuando se combinan varias
+    compañías en una misma consulta."""
+    scope = get_facex_sales_scope(company)
+    if scope == SCOPE_ALL:
+        return "", {}
+    me, sp_key = f"{param_prefix}_me", f"{param_prefix}_sp"
+    own = f"{alias}.owner = %({me})s"
+    params = {me: frappe.session.user}
+    sp = get_facex_user_sales_partner(company) if scope == SCOPE_CUSTOMERS else None
+    if not sp:
+        return own, params
+    params[sp_key] = sp
+    return (
+        f"({own} OR {alias}.customer IN (SELECT c.name FROM `tabCustomer` c "
+        f"WHERE c.default_sales_partner = %({sp_key})s))",
+        params,
+    )
+
+
+def get_facex_companies_sales_scope_sql(companies, alias: str = "si"):
+    """Igual que get_facex_sales_scope_sql para una consulta sobre varias
+    compañías: (compañía AND su alcance) OR ... Devuelve ("", {}) si en todas
+    ve toda la compañía."""
+    parts, params, restricted = [], {}, False
+    for i, company in enumerate(companies or []):
+        cond, p = get_facex_sales_scope_sql(company, alias, f"facex_scope{i}")
+        restricted = restricted or bool(cond)
+        key = f"facex_scope{i}_co"
+        params[key] = company
+        params.update(p)
+        parts.append(f"({alias}.company = %({key})s AND {cond})" if cond else f"{alias}.company = %({key})s")
+    if not restricted:
+        return "", {}
+    return "(" + " OR ".join(parts) + ")", params
+
+
+def assert_facex_invoice_in_sales_scope(doc) -> None:
+    """PermissionError si la factura `doc` está fuera del Alcance en Ventas
+    del usuario (escrituras puntuales sobre facturas, p. ej. guías)."""
+    scope = get_facex_sales_scope(doc.company)
+    if scope == SCOPE_ALL or doc.owner == frappe.session.user:
+        return
+    if scope == SCOPE_CUSTOMERS:
+        sp = get_facex_user_sales_partner(doc.company)
+        if sp and frappe.db.get_value("Customer", doc.customer, "default_sales_partner") == sp:
+            return
+    frappe.throw("La factura está fuera de su alcance de ventas.", frappe.PermissionError)
+
+
 def sales_invoice_query_conditions(user: str = None) -> str:
     """Hook permission_query_conditions para Sales Invoice (escritorio, report
     view, links). Un usuario limitado a un socio de ventas solo ve las facturas
