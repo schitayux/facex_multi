@@ -1,0 +1,129 @@
+{#-
+  FacEx Pagos — comprobante de pago a proveedor (Print Format «FacEx Pago a
+  Proveedor», Payment Entry). Elaborado por (owner) / Validado por
+  (facex_validado_por) / Recibido por el proveedor.
+  wkhtmltopdf: sin CSS Grid; Frappe fuerza padding 10px en td.
+-#}
+{%- set estado = {0: "Borrador", 1: "Validado", 2: "Cancelado"}.get(doc.docstatus, "") -%}
+{%- set bs = frappe.get_all("BFEL Settings", filters={"company": doc.company, "enabled": 1}, fields=["company_nit", "direccionemisor"], limit=1) -%}
+{%- set bfel = bs[0] if bs else {} -%}
+{%- set company_logo = frappe.db.get_value("Company", doc.company, "company_logo") -%}
+{%- set company_nit = bfel.company_nit or frappe.db.get_value("Company", doc.company, "tax_id") -%}
+{%- set supplier_nit = frappe.db.get_value("Supplier", doc.party, "tax_id") -%}
+{%- set formas = {"efectivo": "Efectivo", "cheque": "Cheque", "transferencia": "Transferencia", "deposito": "Depósito bancario"} -%}
+{%- set forma = formas.get(doc.get("facex_forma_pago")) or doc.mode_of_payment or "" -%}
+{%- set elaborado = frappe.get_fullname(doc.owner) -%}
+{%- set validado = frappe.get_fullname(doc.facex_validado_por) if doc.get("facex_validado_por") else "" -%}
+{%- macro m(v) -%}{{ frappe.format((v or 0)|abs, {"fieldtype": "Currency", "options": "currency"}, doc) }}{%- endmacro -%}
+{%- set ns = namespace(facturas=0, creditos=0, retenido=0, cargos=0) -%}
+{%- for r in doc.references -%}
+  {%- if r.allocated_amount > 0 -%}{%- set ns.facturas = ns.facturas + r.allocated_amount -%}{%- else -%}{%- set ns.creditos = ns.creditos - r.allocated_amount -%}{%- endif -%}
+{%- endfor -%}
+{%- for dd in doc.deductions -%}
+  {%- if dd.amount < 0 -%}{%- set ns.retenido = ns.retenido - dd.amount -%}{%- else -%}{%- set ns.cargos = ns.cargos + dd.amount -%}{%- endif -%}
+{%- endfor -%}
+{%- set entregado = doc.paid_amount - ns.cargos -%}
+
+<style>
+  .print-format .fxp { font-size: 11.5px; color: #1e293b; line-height: 1.35; }
+  .print-format .fxp table { width: 100%; border-collapse: collapse; }
+  .print-format .fxp td, .print-format .fxp th { padding: 3px 6px !important; line-height: 1.35 !important; vertical-align: top; }
+  .print-format .fxp .items th { background: #f1f5f9; border: 1px solid #94a3b8; font-size: 10.5px; text-transform: uppercase; }
+  .print-format .fxp .items td { border: 1px solid #cbd5e1; }
+  .print-format .fxp .num { text-align: right; white-space: nowrap; }
+  .print-format .fxp .muted { color: #64748b; }
+  .print-format .fxp .lbl { color: #64748b; font-size: 10px; text-transform: uppercase; }
+  .print-format .fxp .grand td { font-size: 13px; font-weight: 700; border-top: 1.5px solid #1e293b; }
+  .print-format .fxp .firma td { padding: 0 12px !important; text-align: center; }
+</style>
+
+<div class="fxp">
+  <table style="border-bottom: 2px solid #1e293b; margin-bottom: 10px;">
+    <tr>
+      <td style="width: 60%; padding-bottom: 6px !important;">
+        {%- if company_logo -%}<img src="{{ company_logo }}" style="max-height: 55px; max-width: 150px; margin-bottom: 4px;"><br>{%- endif -%}
+        <div style="font-size: 15px; font-weight: 700;">{{ doc.company }}</div>
+        {%- if company_nit -%}<div class="muted">NIT {{ company_nit }}</div>{%- endif -%}
+        {%- if bfel.direccionemisor -%}<div class="muted">{{ bfel.direccionemisor }}</div>{%- endif -%}
+      </td>
+      <td style="text-align: right; padding-bottom: 6px !important;">
+        <div style="font-size: 16px; font-weight: 700;">Comprobante de Pago a Proveedor</div>
+        <div style="font-size: 13px; font-weight: 700;">{{ doc.name }}</div>
+        <div class="muted">{{ estado }}</div>
+      </td>
+    </tr>
+  </table>
+
+  <table style="margin-bottom: 10px;">
+    <tr>
+      <td style="width: 55%;">
+        <div class="lbl">Pagado a</div>
+        <div style="font-weight: 700;">{{ doc.party_name or doc.party }}</div>
+        {%- if supplier_nit -%}<div>NIT {{ supplier_nit }}</div>{%- endif -%}
+      </td>
+      <td>
+        <table>
+          <tr><td class="lbl">Fecha</td><td>{{ frappe.utils.formatdate(doc.posting_date) }}</td></tr>
+          <tr><td class="lbl">Forma de pago</td><td>{{ forma }}</td></tr>
+          {%- if doc.reference_no and not doc.reference_no.startswith("EFE-") -%}<tr><td class="lbl">No. documento</td><td>{{ doc.reference_no }}</td></tr>{%- endif -%}
+          <tr><td class="lbl">Cuenta</td><td>{{ doc.paid_from }}</td></tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+
+  {%- if doc.references -%}
+  <table class="items">
+    <thead><tr><th style="width: 26px;">#</th><th>Documento</th><th>No. proveedor</th><th>Fecha</th><th class="num" style="width: 110px;">Aplicado</th></tr></thead>
+    <tbody>
+      {%- for r in doc.references -%}
+      {%- set inv = frappe.db.get_value("Purchase Invoice", r.reference_name, ["bill_no", "posting_date", "is_return"], as_dict=True) if r.reference_doctype == "Purchase Invoice" else {} -%}
+      <tr>
+        <td class="num">{{ loop.index }}</td>
+        <td>{{ "Nota de crédito" if r.allocated_amount < 0 else "Factura" }} {{ r.reference_name }}</td>
+        <td>{{ inv.bill_no or "" }}</td>
+        <td>{{ frappe.utils.formatdate(inv.posting_date) if inv.posting_date else "" }}</td>
+        <td class="num">{{ "-" if r.allocated_amount < 0 else "" }}{{ m(r.allocated_amount) }}</td>
+      </tr>
+      {%- endfor -%}
+    </tbody>
+  </table>
+  {%- endif -%}
+
+  <table style="margin-top: 8px;">
+    <tr>
+      <td style="width: 55%;">
+        {%- if doc.get("remarks") and not doc.remarks.startswith(("Amount ", "Monto ")) -%}<div class="lbl">Observaciones</div><div>{{ doc.remarks }}</div>{%- endif -%}
+        {%- if doc.docstatus == 1 and doc.unallocated_amount -%}<div class="lbl" style="margin-top: 6px;">Anticipo</div><div>{{ m(doc.unallocated_amount) }} quedan a favor de la empresa para aplicar a facturas futuras.</div>{%- endif -%}
+      </td>
+      <td>
+        <table>
+          <tr><td>Facturas pagadas</td><td class="num">{{ m(ns.facturas) }}</td></tr>
+          {%- if ns.creditos -%}<tr><td>(−) Notas de crédito aplicadas</td><td class="num">{{ m(ns.creditos) }}</td></tr>{%- endif -%}
+          {%- for dd in doc.deductions if dd.amount < 0 -%}<tr><td>(−) {{ dd.description or dd.account }}</td><td class="num">{{ m(dd.amount) }}</td></tr>{%- endfor -%}
+          {%- if doc.unallocated_amount -%}<tr><td>(+) Anticipo</td><td class="num">{{ m(doc.unallocated_amount) }}</td></tr>{%- endif -%}
+          <tr class="grand"><td>Monto entregado</td><td class="num">{{ m(entregado) }}</td></tr>
+          {%- if ns.cargos -%}<tr><td class="muted">Cargos bancarios</td><td class="num muted">{{ m(ns.cargos) }}</td></tr>{%- endif -%}
+        </table>
+      </td>
+    </tr>
+  </table>
+
+  <table class="firma" style="margin-top: 45px;">
+    <tr>
+      <td style="width: 33%;">
+        <div style="border-top: 1px solid #1e293b; padding-top: 3px;">Elaborado por</div>
+        <div style="font-weight: 700;">{{ elaborado }}</div>
+        <div class="muted">{{ frappe.utils.format_datetime(doc.creation, "dd-MM-yyyy HH:mm") }}</div>
+      </td>
+      <td style="width: 34%;">
+        <div style="border-top: 1px solid #1e293b; padding-top: 3px;">Validado por</div>
+        <div style="font-weight: 700;">{{ validado or "—" }}</div>
+        {%- if doc.get("facex_validado_el") -%}<div class="muted">{{ frappe.utils.format_datetime(doc.facex_validado_el, "dd-MM-yyyy HH:mm") }}</div>{%- endif -%}
+      </td>
+      <td style="width: 33%;">
+        <div style="border-top: 1px solid #1e293b; padding-top: 3px;">Recibido por (proveedor)</div>
+      </td>
+    </tr>
+  </table>
+</div>

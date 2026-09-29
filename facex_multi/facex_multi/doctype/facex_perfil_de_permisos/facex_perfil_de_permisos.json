@@ -76,6 +76,10 @@
   "nc_compra_grabar_borrador",
   "nc_compra_validar",
   "nc_compra_cancelar",
+  "sb_pagos_proveedor",
+  "pago_proveedor_grabar_borrador",
+  "pago_proveedor_validar",
+  "pago_proveedor_cancelar",
   "sec_4",
   "puede_ver_inventario",
   "puede_hacer_entradas",
@@ -581,6 +585,32 @@
    "description": "Cancelar notas de crédito de proveedor validadas."
   },
   {
+   "fieldname": "sb_pagos_proveedor",
+   "fieldtype": "Section Break",
+   "label": "Pagos a Proveedores (denegado por defecto)"
+  },
+  {
+   "default": "0",
+   "fieldname": "pago_proveedor_grabar_borrador",
+   "fieldtype": "Check",
+   "label": "Pago a Proveedor — Grabar Borrador",
+   "description": "Preparar pagos a proveedores (FacEx Pagos y «Registrar pago» en la factura de compra)."
+  },
+  {
+   "default": "0",
+   "fieldname": "pago_proveedor_validar",
+   "fieldtype": "Check",
+   "label": "Pago a Proveedor — Validar",
+   "description": "Validar pagos a proveedores: sale el dinero de caja/banco y baja la cuenta por pagar. También aplicar notas de crédito y anticipos a facturas."
+  },
+  {
+   "default": "0",
+   "fieldname": "pago_proveedor_cancelar",
+   "fieldtype": "Check",
+   "label": "Pago a Proveedor — Cancelar",
+   "description": "Cancelar pagos a proveedores validados."
+  },
+  {
    "fieldname": "sec_4",
    "fieldtype": "Section Break",
    "label": "Movimientos de Inventario",
@@ -950,7 +980,7 @@
   }
  ],
  "links": [],
- "modified": "2026-09-29 14:00:00.000000",
+ "modified": "2026-09-29 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Perfil de Permisos",

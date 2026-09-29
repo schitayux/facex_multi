@@ -265,6 +265,7 @@ def get_compras_defaults(company: str = None) -> dict:
         "factura_compra_grabar_borrador",
         "devolucion_compra_grabar_borrador", "devolucion_compra_validar", "devolucion_compra_cancelar",
         "nc_compra_grabar_borrador", "nc_compra_validar", "nc_compra_cancelar",
+        "pago_proveedor_grabar_borrador", "pago_proveedor_validar", "pago_proveedor_cancelar",
         "crea_proveedores", "modifica_proveedores", "puede_facturar",
     )}
     # Accesos de la barra superior (otras Pages de FacEx).
@@ -293,7 +294,9 @@ def get_compras_defaults(company: str = None) -> dict:
 # «Validado por» en los documentos de compra (formatos de impresión)
 # ---------------------------------------------------------------------------
 
-PURCHASE_DOCTYPES = ("Purchase Order", "Purchase Receipt", "Purchase Invoice")
+# Payment Entry: también el pago a proveedor (FacEx Pagos) muestra quién lo
+# validó; en los pagos de ventas el campo solo queda registrado.
+PURCHASE_DOCTYPES = ("Purchase Order", "Purchase Receipt", "Purchase Invoice", "Payment Entry")
 
 
 def ensure_compras_custom_fields():

@@ -282,6 +282,7 @@ class FacexCompras {
 	_render_topbar_links() {
 		const p = this.defaults.permissions || {};
 		const links = [
+			p.puede_compras && ["Pagos", "/app/facex-pagos"],
 			p.puede_facturar && ["Facturador", "/app/facex"],
 			p.puede_ver_pos && ["POS", "/app/facex-screen"],
 			p.puede_ver_menu_inventario && ["Inventario", "/app/facex-inventario"],
@@ -747,6 +748,9 @@ class FacexCompras {
 			}
 			if (kind === "en" && doc.status !== "Return Issued" && this._can("dv", "draft")) {
 				out.push(btn("cp-make-dv", "Crear Devolución", "cp-btn-secondary"));
+			}
+			if (kind === "fc" && cpFlt(doc.outstanding_amount) > 0 && this.perms.pago_proveedor_grabar_borrador) {
+				out.push(`<a class="cp-btn cp-btn-primary" href="/app/facex-pagos?proveedor=${encodeURIComponent(doc.supplier)}&factura=${encodeURIComponent(doc.name)}">Registrar pago</a>`);
 			}
 			if (kind === "fc" && this._can("nc", "draft")) {
 				out.push(btn("cp-make-nc", "Crear Nota de Crédito", "cp-btn-secondary"));
@@ -1483,6 +1487,15 @@ body.facex-fullscreen-mode #space-layout,
 body.facex-fullscreen-mode .main-section {
   width: 100% !important; max-width: 100% !important; margin: 0 !important; padding: 0 !important;
   display: block !important;
+}
+/* v16: el Desk envuelve el page en .container y en la columna
+   .layout-main-section-wrapper (ancho de grilla aunque no haya barra lateral). */
+body.facex-fullscreen-mode .page-container .container,
+body.facex-fullscreen-mode .main-section > .container,
+body.facex-fullscreen-mode .container.page-body,
+body.facex-fullscreen-mode .layout-main-section-wrapper {
+  flex: 0 0 100% !important;
+  width: 100% !important; max-width: 100% !important; padding-left: 0 !important; padding-right: 0 !important;
 }
 
 .cp-topbar { position:sticky;top:0;z-index:100;display:flex;align-items:center;justify-content:space-between;gap:10px;background:#fff;border-bottom:1px solid #d1d8dd;padding:10px 20px; }

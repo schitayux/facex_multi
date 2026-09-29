@@ -17,6 +17,7 @@ _ALL_PERM_FIELDS = [
     "factura_compra_grabar_borrador",
     "devolucion_compra_grabar_borrador", "devolucion_compra_validar", "devolucion_compra_cancelar",
     "nc_compra_grabar_borrador", "nc_compra_validar", "nc_compra_cancelar",
+    "pago_proveedor_grabar_borrador", "pago_proveedor_validar", "pago_proveedor_cancelar",
     "crea_clientes", "modifica_clientes",
     "crea_proveedores", "modifica_proveedores",
     "crea_items", "modifica_items", "actualiza_precios",
@@ -31,7 +32,11 @@ _ALL_PERM_FIELDS = [
 
 # Flags de _ALL_PERM_FIELDS que NO se conceden a un usuario sin fila de FacEx
 # Settings (acceso total heredado): solo con el check marcado o System Manager.
-_DENY_BY_DEFAULT_FIELDS = ("reporte_ventas_vendedor",)
+_DENY_BY_DEFAULT_FIELDS = (
+    "reporte_ventas_vendedor",
+    # Pagos a proveedores: sale dinero de caja/banco → solo con el check marcado.
+    "pago_proveedor_grabar_borrador", "pago_proveedor_validar", "pago_proveedor_cancelar",
+)
 
 def _full_access() -> dict:
     return {f: 1 for f in _ALL_PERM_FIELDS}
@@ -203,6 +208,9 @@ PROFILE_PERM_FIELDS = [
     "nc_compra_grabar_borrador",
     "nc_compra_validar",
     "nc_compra_cancelar",
+    "pago_proveedor_grabar_borrador",
+    "pago_proveedor_validar",
+    "pago_proveedor_cancelar",
     "puede_ver_inventario",
     "puede_hacer_entradas",
     "puede_hacer_salidas",
