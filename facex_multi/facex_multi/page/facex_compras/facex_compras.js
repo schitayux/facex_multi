@@ -1,13 +1,15 @@
 // FacEx Multi — Módulo de Compras (ciclo de compra estilo SAP B1)
-// Interfaz sobre los documentos nativos de ERPNext (Purchase Invoice, y en
-// fases siguientes Purchase Order / Purchase Receipt / devoluciones). Toda la
-// lógica contable y de stock permanece en ERPNext core; el backend vive en
-// facex_multi.api.compras.
+// Interfaz sobre los documentos nativos de ERPNext: Orden de Compra
+// (Purchase Order) → Entrada de Mercadería (Purchase Receipt) → Factura de
+// Compra (Purchase Invoice). Toda la lógica contable y de stock permanece en
+// ERPNext core; el backend vive en facex_multi.api.compras (documentos.py
+// maneja los tres documentos con los mismos endpoints, parametrizados por
+// `kind`: oc / en / fc).
 //
 // Vistas internas (una sola a la vez, dentro de #cp-content-root):
-//   hub        tarjetas de documentos / reportes según permisos
-//   fc-list    lista de Facturas de Compra
-//   fc-form    formulario de Factura de Compra
+//   hub        tarjetas de documentos según permisos
+//   list       lista de un documento (arg: kind)
+//   form       formulario (arg: {kind, name} o {kind, pending})
 //   fc-staging previsualización de una factura cargada desde Excel
 //
 // Responsive: las tablas marcadas .cp-cards se muestran como tarjetas bajo
@@ -39,23 +41,63 @@ const CP_TIPO_FEL = [
 	["L", "L - Exención Local"], ["N", "N - No Aplica"], ["X", "X - Sin Asignación"],
 ];
 
-// Documentos del ciclo de compra. Cada fase agrega su tarjeta aquí.
-const CP_DOCS = [
-	{ key: "puede_compras", view: "fc-list", title: "Facturas de Compra",
-	  desc: "Registrar facturas de proveedores. Al validarlas ingresan el inventario y la cuenta por pagar." },
-];
+// Documentos del ciclo de compra. perms = checks de FacEx Settings por acción.
+const CP_KINDS = {
+	oc: {
+		doctype: "Purchase Order", route: "purchase-order", print_format: "FacEx Orden de Compra",
+		one: "Orden de Compra", many: "Órdenes de Compra", short: "OC", param: "orden",
+		desc: "Pedidos a proveedores. Desde una orden validada se generan la Entrada y la Factura.",
+		perms: { draft: "oc_grabar_borrador", submit: "oc_validar", cancel: "oc_cancelar" },
+		states: [["0", "Borrador"], ["To Receive and Bill", "Por recibir y facturar"], ["To Receive", "Por recibir"],
+			["To Bill", "Por facturar"], ["Completed", "Completada"], ["Closed", "Cerrada"], ["2", "Cancelada"]],
+	},
+	en: {
+		doctype: "Purchase Receipt", route: "purchase-receipt", print_format: "FacEx Entrada de Mercaderia",
+		one: "Entrada de Mercadería", many: "Entradas de Mercadería", short: "Entrada", param: "entrada",
+		desc: "Recepción de la mercadería en bodega (con o sin orden). Al validarla ingresa el inventario.",
+		perms: { draft: "entrada_compra_grabar_borrador", submit: "entrada_compra_validar", cancel: "entrada_compra_cancelar" },
+		states: [["0", "Borrador"], ["To Bill", "Por facturar"], ["Partly Billed", "Facturada parcialmente"],
+			["Completed", "Completada"], ["2", "Cancelada"]],
+	},
+	fc: {
+		doctype: "Purchase Invoice", route: "purchase-invoice", print_format: "FacEx Factura de Compra",
+		one: "Factura de Compra", many: "Facturas de Compra", short: "Factura", param: "factura",
+		desc: "Facturas de proveedores: directas, desde una orden o desde una entrada. Registran la cuenta por pagar.",
+		perms: { draft: "factura_compra_grabar_borrador", submit: "puede_validar_compras", cancel: "puede_cancelar_compras" },
+		states: [["0", "Borrador"], ["Unpaid", "Pendiente de pago"], ["Overdue", "Vencida"],
+			["Partly Paid", "Pago parcial"], ["Paid", "Pagada"], ["2", "Cancelada"]],
+	},
+};
+const CP_ORDER = ["oc", "en", "fc"];
 
-// Status nativo de Purchase Invoice → etiqueta + color.
-const CP_PI_STATUS = {
+// Status nativos → etiqueta + color.
+const CP_STATUS = {
 	"Draft": ["Borrador", "#b45309", "#fef3c7"],
+	"To Receive and Bill": ["Por recibir y facturar", "#1d4ed8", "#dbeafe"],
+	"To Receive": ["Por recibir", "#1d4ed8", "#dbeafe"],
+	"To Bill": ["Por facturar", "#7c3aed", "#ede9fe"],
+	"Partly Billed": ["Facturada parcialmente", "#7c3aed", "#ede9fe"],
+	"Completed": ["Completada", "#047857", "#d1fae5"],
+	"Closed": ["Cerrada", "#475569", "#e2e8f0"],
+	"On Hold": ["En espera", "#b45309", "#fef3c7"],
+	"Delivered": ["Entregada", "#047857", "#d1fae5"],
+	"Return Issued": ["Con devolución", "#475569", "#e2e8f0"],
 	"Unpaid": ["Pendiente de pago", "#1d4ed8", "#dbeafe"],
 	"Overdue": ["Vencida", "#b91c1c", "#fee2e2"],
 	"Partly Paid": ["Pago parcial", "#7c3aed", "#ede9fe"],
 	"Paid": ["Pagada", "#047857", "#d1fae5"],
-	"Return": ["Nota de crédito", "#475569", "#e2e8f0"],
+	"Return": ["Devolución", "#475569", "#e2e8f0"],
 	"Debit Note Issued": ["Con nota de crédito", "#475569", "#e2e8f0"],
 	"Submitted": ["Validada", "#047857", "#d1fae5"],
 	"Cancelled": ["Cancelada", "#6b7280", "#f3f4f6"],
+};
+
+// Campos de enlace de cada línea con su documento de origen (se conservan
+// al grabar: así ERPNext actualiza % recibido / % facturado del origen).
+const CP_LINK_FIELDS = {
+	oc: [],
+	en: ["purchase_order", "purchase_order_item"],
+	fc: ["purchase_order", "po_detail", "purchase_receipt", "pr_detail"],
 };
 
 function cpEsc(v) {
@@ -76,9 +118,13 @@ function cpDate(d) {
 	return d ? frappe.datetime.str_to_user(d) : "";
 }
 
+function cpPct(v) {
+	return `${Math.round(cpFlt(v))}%`;
+}
+
 function cpStatusBadge(status, docstatus) {
 	const key = status || (docstatus === 2 ? "Cancelled" : docstatus === 1 ? "Submitted" : "Draft");
-	const [label, color, bg] = CP_PI_STATUS[key] || [key, "#475569", "#e2e8f0"];
+	const [label, color, bg] = CP_STATUS[key] || [key, "#475569", "#e2e8f0"];
 	return `<span class="cp-badge" style="color:${color};background:${bg};">${cpEsc(label)}</span>`;
 }
 
@@ -93,7 +139,9 @@ class FacexCompras {
 		this.$root = $(page.body);
 		this.defaults = null;
 		this.view = null;
+		this.kind = "fc";
 		this.dirty = false;
+		this._filters = {};
 		this._render_frame();
 		this.$body = this.$root.find("#cp-content-root");
 		this._load_defaults();
@@ -115,15 +163,15 @@ class FacexCompras {
 	// menú principal. Solo desde el menú principal se sale del page.
 	_internal_back() {
 		if (!this.view || this.view === "hub") return false;
-		const target = this.view === "fc-list" ? "hub" : "fc-list";
+		const go = () => (this.view === "list" ? this._go("hub") : this._go("list", this.kind));
 		if (this.dirty) {
 			frappe.confirm("Hay cambios sin guardar. ¿Desea salir de todos modos?", () => {
 				this.dirty = false;
-				this._go(target);
+				go();
 			});
 			return true;
 		}
-		this._go(target);
+		go();
 		return true;
 	}
 
@@ -134,8 +182,8 @@ class FacexCompras {
 		$(document).off(".cpView");
 		window.scrollTo(0, 0);
 		if (view === "hub") this._render_hub();
-		else if (view === "fc-list") this._render_fc_list();
-		else if (view === "fc-form") this._render_fc_form(arg);
+		else if (view === "list") this._render_list(arg);
+		else if (view === "form") this._render_form(arg);
 		else if (view === "fc-staging") this._render_fc_staging(arg);
 	}
 
@@ -275,10 +323,12 @@ class FacexCompras {
 			callback: (r) => {
 				this.defaults = r.message || {};
 				this._render_topbar_links();
+				// Enlace directo: ?orden=… / ?entrada=… / ?factura=…
 				const params = new URLSearchParams(window.location.search);
-				const factura = params.get("factura");
-				if (factura && (this.defaults.permissions || {}).puede_compras) {
-					this._go("fc-form", factura);
+				const kind = CP_ORDER.find((k) => params.get(CP_KINDS[k].param));
+				if (kind && this.perms.puede_compras) {
+					this.kind = kind;
+					this._go("form", { kind, name: params.get(CP_KINDS[kind].param) });
 				} else {
 					this._go("hub");
 				}
@@ -297,6 +347,10 @@ class FacexCompras {
 		return (this.defaults && this.defaults.company) || "";
 	}
 
+	_can(kind, action) {
+		return !!(this.perms.puede_compras && this.perms[CP_KINDS[kind].perms[action]]);
+	}
+
 	// ──────────────────────────────────────────────
 	// Menú principal
 	// ──────────────────────────────────────────────
@@ -313,12 +367,18 @@ class FacexCompras {
 				<span style="font-size:13px;">Contacte a un administrador para solicitar acceso.</span></div></div>`);
 			return;
 		}
-		const card = (c) => `
-			<button type="button" class="cp-hub-card" data-view="${c.view}">
-				<div class="cp-hub-title">${cpEsc(c.title)}</div>
+		const card = (k, i) => {
+			const c = CP_KINDS[k];
+			const can = ["draft", "submit", "cancel"].filter((a) => this._can(k, a));
+			const tag = can.length ? "Abrir →" : "Solo consulta →";
+			return `
+			<button type="button" class="cp-hub-card" data-kind="${k}">
+				<div class="cp-hub-step">${i + 1}</div>
+				<div class="cp-hub-title">${cpEsc(c.many)}</div>
 				<div class="cp-hub-desc">${cpEsc(c.desc)}</div>
-				<div class="cp-hub-tag">Abrir →</div>
+				<div class="cp-hub-tag">${tag}</div>
 			</button>`;
+		};
 		this.$body.html(`
 <div class="cp-wrap">
 	<div class="cp-hub-head">
@@ -327,31 +387,33 @@ class FacexCompras {
 			<div class="cp-muted">${cpEsc(this.company)}${this.perms.alcance_compras ? ` · Alcance: ${cpEsc(this.perms.alcance_compras)}` : ""}</div>
 		</div>
 	</div>
-	<div class="cp-section-title">Documentos</div>
-	<div class="cp-hub-grid">${CP_DOCS.filter((c) => this.perms[c.key]).map(card).join("")}</div>
+	<div class="cp-section-title">Documentos · Orden → Entrada → Factura</div>
+	<div class="cp-hub-grid">${CP_ORDER.map(card).join("")}</div>
 </div>`);
-		this.$body.on("click", ".cp-hub-card", (e) => this._go($(e.currentTarget).data("view")));
+		this.$body.on("click", ".cp-hub-card", (e) => this._go("list", $(e.currentTarget).data("kind")));
 	}
 
 	// ──────────────────────────────────────────────
-	// Facturas de Compra — lista
+	// Lista (cualquier documento)
 	// ──────────────────────────────────────────────
 
-	_render_fc_list() {
-		const f = this._fc_filters || {
+	_render_list(kind) {
+		this.kind = kind = kind || this.kind;
+		const c = CP_KINDS[kind];
+		const f = this._filters[kind] || {
 			start_date: frappe.datetime.month_start(),
 			end_date: frappe.datetime.get_today(),
-			supplier: "", supplier_label: "", docstatus: "",
+			supplier: "", supplier_label: "", estado: "",
 		};
-		this._fc_filters = f;
+		this._filters[kind] = f;
 		this.$body.html(`
 <div class="cp-wrap">
 	<div class="cp-page-head">
 		<button type="button" class="cp-back" data-back="hub">← Compras</button>
-		<div class="cp-h1">Facturas de Compra</div>
+		<div class="cp-h1">${cpEsc(c.many)}</div>
 		<div class="cp-head-actions">
-			<button type="button" class="cp-btn cp-btn-secondary" id="cp-fc-excel">Subir Excel</button>
-			<button type="button" class="cp-btn cp-btn-primary" id="cp-fc-new">+ Nueva</button>
+			${kind === "fc" && this._can("fc", "draft") ? `<button type="button" class="cp-btn cp-btn-secondary" id="cp-excel">Subir Excel</button>` : ""}
+			${this._can(kind, "draft") ? `<button type="button" class="cp-btn cp-btn-primary" id="cp-new">+ Nueva</button>` : ""}
 		</div>
 	</div>
 	<div class="cp-card cp-filters">
@@ -362,208 +424,318 @@ class FacexCompras {
 		<div class="cp-field"><label class="cp-label">Estado</label>
 			<select class="cp-input" id="cp-f-status">
 				<option value="">Todos</option>
-				<option value="0"${f.docstatus === "0" ? " selected" : ""}>Borrador</option>
-				<option value="1"${f.docstatus === "1" ? " selected" : ""}>Validada</option>
-				<option value="2"${f.docstatus === "2" ? " selected" : ""}>Cancelada</option>
+				${c.states.map(([v, l]) => `<option value="${cpEsc(v)}"${f.estado === v ? " selected" : ""}>${cpEsc(l)}</option>`).join("")}
 			</select></div>
 		<div class="cp-field cp-field-btn"><button type="button" class="cp-btn cp-btn-secondary cp-block" id="cp-f-apply">Filtrar</button></div>
 	</div>
-	<div id="cp-fc-list"></div>
+	<div id="cp-list"></div>
 </div>`);
 
 		this.$body.on("click", "[data-back]", () => this._go("hub"));
-		this.$body.on("click", "#cp-fc-new", () => this._go("fc-form", null));
-		this.$body.on("click", "#cp-fc-excel", () => this._excel_dialog());
-		this.$body.on("click", "#cp-f-apply", () => this._load_fc_list());
-		this.$body.on("click", "tr[data-name]", (e) => this._go("fc-form", $(e.currentTarget).data("name")));
-		this._bind_supplier_ac(this.$body.find("#cp-f-supplier"), { allow_empty: true });
-		this._load_fc_list();
+		this.$body.on("click", "#cp-new", () => this._go("form", { kind }));
+		this.$body.on("click", "#cp-excel", () => this._excel_dialog());
+		this.$body.on("click", "#cp-f-apply", () => this._load_list());
+		this.$body.on("click", "tr[data-name]", (e) => this._go("form", { kind, name: $(e.currentTarget).data("name") }));
+		this._bind_supplier_ac(this.$body.find("#cp-f-supplier"));
+		this._load_list();
 	}
 
-	_load_fc_list() {
+	_list_columns(kind) {
+		// [encabezado, (fila) => html, clase]
+		const cols = [
+			["Documento", (x) => cpEsc(x.name), "cp-strong"],
+			["Proveedor", (x) => cpEsc(x.supplier_name || x.supplier)],
+			["Fecha", (x) => cpDate(x.fecha)],
+		];
+		if (kind === "oc") {
+			cols.push(["Entrega", (x) => cpDate(x.schedule_date)]);
+		} else if (kind === "en") {
+			cols.push(["Envío / Remisión", (x) => cpEsc(x.supplier_delivery_note || "")]);
+		} else {
+			cols.push(["No. Factura Prov.", (x) => cpEsc(x.bill_no || "")]);
+		}
+		cols.push(["Total", (x) => cpMoney(x.grand_total, x.currency), "cp-num cp-strong"]);
+		if (kind === "oc") cols.push(["Recibido", (x) => (x.docstatus === 1 ? cpPct(x.per_received) : "—"), "cp-num"]);
+		if (kind !== "fc") cols.push(["Facturado", (x) => (x.docstatus === 1 ? cpPct(x.per_billed) : "—"), "cp-num"]);
+		if (kind === "fc") cols.push(["Saldo", (x) => (x.docstatus === 1 ? cpMoney(x.outstanding_amount, x.currency) : "—"), "cp-num"]);
+		cols.push(["Estado", (x) => cpStatusBadge(x.status, x.docstatus)]);
+		return cols;
+	}
+
+	_load_list() {
+		const kind = this.kind;
 		const $s = this.$body.find("#cp-f-supplier");
-		const f = this._fc_filters;
+		const f = this._filters[kind];
 		f.start_date = this.$body.find("#cp-f-start").val();
 		f.end_date = this.$body.find("#cp-f-end").val();
 		f.supplier = $s.val().trim() ? ($s.attr("data-value") || "") : "";
 		f.supplier_label = f.supplier ? $s.val() : "";
-		f.docstatus = this.$body.find("#cp-f-status").val();
-		const $list = this.$body.find("#cp-fc-list").html(`<div class="cp-empty">Cargando...</div>`);
+		f.estado = this.$body.find("#cp-f-status").val();
+		const $list = this.$body.find("#cp-list").html(`<div class="cp-empty">Cargando...</div>`);
 		frappe.call({
-			method: "facex_multi.api.compras.facturas.get_purchase_list",
-			args: { company: this.company, start_date: f.start_date, end_date: f.end_date, supplier: f.supplier, docstatus: f.docstatus },
+			method: "facex_multi.api.compras.documentos.get_document_list",
+			args: { kind, company: this.company, start_date: f.start_date, end_date: f.end_date, supplier: f.supplier, estado: f.estado },
 			callback: (r) => {
+				if (this.view !== "list" || this.kind !== kind) return;
 				const rows = r.message || [];
 				if (!rows.length) {
-					$list.html(`<div class="cp-card cp-empty">Sin facturas de compra con estos filtros.</div>`);
+					$list.html(`<div class="cp-card cp-empty">Sin ${cpEsc(CP_KINDS[kind].many.toLowerCase())} con estos filtros.</div>`);
 					return;
 				}
-				const total = rows.filter((x) => x.docstatus === 1).reduce((s, x) => s + cpFlt(x.grand_total), 0);
-				const saldo = rows.filter((x) => x.docstatus === 1).reduce((s, x) => s + cpFlt(x.outstanding_amount), 0);
+				const cols = this._list_columns(kind);
+				const valid = rows.filter((x) => x.docstatus === 1);
+				const total = valid.reduce((s, x) => s + cpFlt(x.grand_total), 0);
+				const saldo = valid.reduce((s, x) => s + cpFlt(x.outstanding_amount), 0);
 				$list.html(`
 <div class="cp-card cp-table-card">
 	<table class="cp-table cp-cards">
-		<thead><tr>
-			<th>Documento</th><th>Proveedor</th><th>Fecha</th><th>No. Factura Prov.</th>
-			<th class="cp-num">Total</th><th class="cp-num">Saldo</th><th>Estado</th>
-		</tr></thead>
+		<thead><tr>${cols.map(([h, , cls]) => `<th class="${(cls || "").includes("cp-num") ? "cp-num" : ""}">${cpEsc(h)}</th>`).join("")}</tr></thead>
 		<tbody>${rows.map((x) => `
 			<tr data-name="${cpEsc(x.name)}" class="cp-row-link">
-				<td data-label="Documento" class="cp-strong">${cpEsc(x.name)}</td>
-				<td data-label="Proveedor">${cpEsc(x.supplier_name || x.supplier)}</td>
-				<td data-label="Fecha">${cpDate(x.posting_date)}</td>
-				<td data-label="No. Factura Prov.">${cpEsc(x.bill_no || "")}</td>
-				<td data-label="Total" class="cp-num cp-strong">${cpMoney(x.grand_total, x.currency)}</td>
-				<td data-label="Saldo" class="cp-num">${x.docstatus === 1 ? cpMoney(x.outstanding_amount, x.currency) : "—"}</td>
-				<td data-label="Estado">${cpStatusBadge(x.status, x.docstatus)}</td>
+				${cols.map(([h, fn, cls]) => `<td data-label="${cpEsc(h)}" class="${cls || ""}">${fn(x)}</td>`).join("")}
 			</tr>`).join("")}
 		</tbody>
 	</table>
-	<div class="cp-list-foot">${rows.length} documento(s) · Validadas: <b>${cpMoney(total)}</b> · Saldo: <b>${cpMoney(saldo)}</b></div>
+	<div class="cp-list-foot">${rows.length} documento(s) · Validados: <b>${cpMoney(total)}</b>${kind === "fc" ? ` · Saldo: <b>${cpMoney(saldo)}</b>` : ""}</div>
 </div>`);
 			},
 		});
 	}
 
 	// ──────────────────────────────────────────────
-	// Facturas de Compra — formulario
+	// Formulario (cualquier documento)
 	// ──────────────────────────────────────────────
 
-	_empty_fc(overrides) {
+	_empty_doc(kind, overrides) {
 		const d = this.defaults;
 		return Object.assign({
-			name: null, docstatus: 0, status: "", owner_fullname: "",
+			kind, name: null, docstatus: 0, status: "", owner_fullname: "", validado_por_fullname: "",
 			supplier: "", supplier_name: "",
-			posting_date: d.today, bill_no: "", bill_date: d.today,
+			date: d.today, schedule_date: d.today,
+			bill_no: "", bill_date: d.today, supplier_delivery_note: "", remarks: "",
 			currency: d.currency || "GTQ",
 			tax_type: d.default_tax_template || "",
 			bfel_multi_tipo: "",
+			source: null, related: [],
 			items: [],
 		}, overrides || {});
 	}
 
-	_render_fc_form(name) {
-		if (!name) {
-			this.fc = this.fc_pending || this._empty_fc();
-			this.fc_pending = null;
-			this._paint_fc_form();
-			if (this.fc.items.length) this.dirty = true;
+	_render_form(arg) {
+		const kind = (this.kind = arg.kind);
+		if (!arg.name) {
+			this.doc = this._empty_doc(kind, arg.pending);
+			this._paint_form();
+			if (this.doc.items.length) this.dirty = true;
 			return;
 		}
-		this.$body.html(`<div class="cp-empty">Cargando factura...</div>`);
+		this.$body.html(`<div class="cp-empty">Cargando...</div>`);
 		frappe.call({
-			method: "facex_multi.api.compras.facturas.get_purchase_invoice",
-			args: { name, company: this.company },
+			method: "facex_multi.api.compras.documentos.get_document",
+			args: { kind, name: arg.name, company: this.company },
 			callback: (r) => {
 				if (!r.message) return;
 				const d = r.message;
-				this.fc = this._empty_fc({
-					name: d.name, docstatus: d.docstatus, status: d.status, owner_fullname: d.owner_fullname,
+				this.doc = this._empty_doc(kind, {
+					name: d.name, docstatus: d.docstatus, status: d.status,
+					owner_fullname: d.owner_fullname, validado_por_fullname: d.validado_por_fullname,
 					supplier: d.supplier, supplier_name: d.supplier_name || d.supplier,
-					posting_date: d.posting_date, bill_no: d.bill_no || "", bill_date: d.bill_date || d.posting_date,
+					date: kind === "oc" ? d.transaction_date : d.posting_date,
+					schedule_date: d.schedule_date || "",
+					bill_no: d.bill_no || "", bill_date: d.bill_date || d.posting_date,
+					supplier_delivery_note: d.supplier_delivery_note || "",
+					remarks: this._user_remarks(d.remarks),
 					currency: d.currency, tax_type: d.taxes_and_charges || "",
 					bfel_multi_tipo: d.bfel_multi_tipo || "",
 					grand_total: d.grand_total, total_taxes_and_charges: d.total_taxes_and_charges,
 					net_total: d.net_total, outstanding_amount: d.outstanding_amount,
-					items: (d.items || []).map((it) => ({
-						item_code: it.item_code, item_name: it.item_name || it.item_code,
-						has_serial_no: it.has_serial_no, has_batch_no: it.has_batch_no, is_stock_item: it.is_stock_item,
-						uom: it.uom, qty: it.qty, rate: it.rate, warehouse: it.warehouse || "",
-						bfel_multi_tipo: it.bfel_multi_tipo || "",
-						serial_no: it.serial_no || "", batch_no: it.batch_no || "",
-					})),
+					per_received: d.per_received, per_billed: d.per_billed, update_stock: d.update_stock,
+					related: d.related || [],
+					items: (d.items || []).map((it) => {
+						const row = {
+							item_code: it.item_code, item_name: it.item_name || it.item_code,
+							has_serial_no: it.has_serial_no, has_batch_no: it.has_batch_no, is_stock_item: it.is_stock_item,
+							uom: it.uom, conversion_factor: it.conversion_factor, qty: it.qty, rate: it.rate,
+							warehouse: it.warehouse || "", bfel_multi_tipo: it.bfel_multi_tipo || "",
+							serial_no: it.serial_no || "", batch_no: it.batch_no || "",
+							received_qty: it.received_qty,
+						};
+						CP_LINK_FIELDS[kind].forEach((f) => { row[f] = it[f] || ""; });
+						return row;
+					}),
 				});
-				this._paint_fc_form();
+				this._paint_form();
 			},
-			error: () => this._go("fc-list"),
+			error: () => this._go("list", kind),
 		});
 	}
 
-	_paint_fc_form() {
-		const fc = this.fc;
-		const p = this.perms;
-		const editable = fc.docstatus === 0;
+	// ERPNext autocompleta remarks de la factura («Against Supplier Invoice …»):
+	// no es una observación del usuario.
+	_user_remarks(r) {
+		r = r || "";
+		return /^(Against Supplier Invoice|Contra factura del proveedor|No Remarks)/.test(r) ? "" : r;
+	}
+
+	// Factura que viene de una Entrada: no mueve inventario (ya ingresó).
+	_from_receipt() {
+		return this.doc.kind === "fc" && this.doc.items.some((it) => it.pr_detail);
+	}
+
+	_line_moves_stock(it) {
+		const k = this.doc.kind;
+		return !!it.is_stock_item && (k === "en" || (k === "fc" && !this._from_receipt()));
+	}
+
+	_paint_form() {
+		const doc = this.doc;
+		const kind = doc.kind;
+		const c = CP_KINDS[kind];
+		const editable = doc.docstatus === 0;
 		const dis = editable ? "" : "disabled";
 		const templates = this.defaults.tax_templates || [];
 		const taxOptions = templates.length
-			? templates.map((t) => `<option value="${cpEsc(t.name)}"${t.name === fc.tax_type ? " selected" : ""}>${cpEsc(t.name)} (${cpFlt(t.rate)}%)</option>`).join("")
+			? templates.map((t) => `<option value="${cpEsc(t.name)}"${t.name === doc.tax_type ? " selected" : ""}>${cpEsc(t.name)} (${cpFlt(t.rate)}%)</option>`).join("")
 			: `<option value="">Sin plantilla de impuestos configurada</option>`;
-		const currencies = this.defaults.currencies || ["GTQ"];
-		if (fc.currency && !currencies.includes(fc.currency)) currencies.push(fc.currency);
-		const title = fc.name ? fc.name : "Nueva Factura de Compra";
+		const currencies = (this.defaults.currencies || ["GTQ"]).slice();
+		if (doc.currency && !currencies.includes(doc.currency)) currencies.push(doc.currency);
+		const fromSource = !!doc.source || doc.items.some((it) => CP_LINK_FIELDS[kind].some((f) => it[f]));
+		const title = doc.name ? doc.name : `Nueva ${c.one}`;
+		const meta = [
+			doc.owner_fullname && `Elaborado por <b>${cpEsc(doc.owner_fullname)}</b>`,
+			doc.validado_por_fullname && `Validado por <b>${cpEsc(doc.validado_por_fullname)}</b>`,
+			doc.source && `Desde ${cpEsc(CP_KINDS[doc.source.kind].one)} <b>${cpEsc(doc.source.name)}</b>`,
+		].filter(Boolean).join(" · ");
+
+		const field = (label, html, wide) => `<div class="cp-field${wide ? " cp-field-wide" : ""}"><label class="cp-label">${label}</label>${html}</div>`;
+		const header = [
+			field("Proveedor *", `<div class="cp-ac"><input type="text" class="cp-input" id="cp-h-supplier" placeholder="Buscar por nombre, código o NIT..." value="${cpEsc(doc.supplier_name || doc.supplier)}" data-value="${cpEsc(doc.supplier)}" ${editable && !fromSource ? "" : "disabled"}></div>`, true),
+		];
+		if (kind === "fc") {
+			header.push(
+				field("No. Factura Proveedor *", `<input type="text" class="cp-input" id="cp-h-bill-no" value="${cpEsc(doc.bill_no)}" placeholder="Serie - número" ${dis}>`),
+				field("Fecha Factura *", `<input type="date" class="cp-input" id="cp-h-bill-date" value="${cpEsc(doc.bill_date)}" ${dis}>`),
+				field("Fecha de Registro", `<input type="date" class="cp-input" id="cp-h-date" value="${cpEsc(doc.date)}" ${dis}>`),
+			);
+		} else if (kind === "oc") {
+			header.push(
+				field("Fecha", `<input type="date" class="cp-input" id="cp-h-date" value="${cpEsc(doc.date)}" ${dis}>`),
+				field("Fecha de Entrega *", `<input type="date" class="cp-input" id="cp-h-schedule" value="${cpEsc(doc.schedule_date)}" ${dis}>`),
+			);
+		} else {
+			header.push(
+				field("Fecha de Recepción", `<input type="date" class="cp-input" id="cp-h-date" value="${cpEsc(doc.date)}" ${dis}>`),
+				field("No. Envío / Remisión", `<input type="text" class="cp-input" id="cp-h-dn" value="${cpEsc(doc.supplier_delivery_note)}" placeholder="Documento del proveedor" ${dis}>`),
+			);
+		}
+		header.push(
+			field("Moneda", `<select class="cp-input" id="cp-h-currency" ${editable && !fromSource ? "" : "disabled"}>${currencies.map((x) => `<option${x === doc.currency ? " selected" : ""}>${cpEsc(x)}</option>`).join("")}</select>`),
+			field("Tipo de Compra", `<select class="cp-input" id="cp-h-tax" ${dis}>${taxOptions}</select>`),
+		);
+		if (kind === "fc") header.push(field("Tipo FEL", `<select class="cp-input" id="cp-h-tipo" ${dis}>${cpTipoOptions(doc.bfel_multi_tipo)}</select>`));
+		if (kind !== "oc") header.push(field("Observaciones", `<input type="text" class="cp-input" id="cp-h-remarks" value="${cpEsc(doc.remarks)}" ${dis}>`, true));
 
 		this.$body.html(`
 <div class="cp-wrap cp-has-actionbar">
 	<div class="cp-page-head">
-		<button type="button" class="cp-back" id="cp-fc-back">← Facturas</button>
-		<div class="cp-h1">${cpEsc(title)} ${fc.name ? cpStatusBadge(fc.status, fc.docstatus) : `<span class="cp-badge" style="color:#1d4ed8;background:#dbeafe;">Nueva</span>`}</div>
-		${fc.owner_fullname ? `<div class="cp-muted cp-head-meta">Elaborado por <b>${cpEsc(fc.owner_fullname)}</b></div>` : ""}
+		<button type="button" class="cp-back" id="cp-form-back">← ${cpEsc(c.many)}</button>
+		<div class="cp-h1">${cpEsc(title)} ${doc.name ? cpStatusBadge(doc.status, doc.docstatus) : `<span class="cp-badge" style="color:#1d4ed8;background:#dbeafe;">Nueva</span>`}</div>
+		${meta ? `<div class="cp-muted cp-head-meta">${meta}</div>` : ""}
 	</div>
+	${this._related_html()}
+	${kind === "fc" && this._from_receipt() && editable ? `<div class="cp-alert cp-alert-info">Factura desde Entrada de Mercadería: el inventario ya ingresó con la entrada; esta factura solo registra la cuenta por pagar.</div>` : ""}
 
-	<div class="cp-card">
-		<div class="cp-grid">
-			<div class="cp-field cp-field-wide"><label class="cp-label">Proveedor *</label>
-				<div class="cp-ac"><input type="text" class="cp-input" id="cp-h-supplier" placeholder="Buscar por nombre, código o NIT..." value="${cpEsc(fc.supplier_name || fc.supplier)}" data-value="${cpEsc(fc.supplier)}" ${dis}></div></div>
-			<div class="cp-field"><label class="cp-label">No. Factura Proveedor *</label>
-				<input type="text" class="cp-input" id="cp-h-bill-no" value="${cpEsc(fc.bill_no)}" placeholder="Serie - número" ${dis}></div>
-			<div class="cp-field"><label class="cp-label">Fecha Factura *</label>
-				<input type="date" class="cp-input" id="cp-h-bill-date" value="${cpEsc(fc.bill_date)}" ${dis}></div>
-			<div class="cp-field"><label class="cp-label">Fecha de Registro</label>
-				<input type="date" class="cp-input" id="cp-h-posting-date" value="${cpEsc(fc.posting_date)}" ${dis}></div>
-			<div class="cp-field"><label class="cp-label">Moneda</label>
-				<select class="cp-input" id="cp-h-currency" ${dis}>${currencies.map((c) => `<option${c === fc.currency ? " selected" : ""}>${cpEsc(c)}</option>`).join("")}</select></div>
-			<div class="cp-field"><label class="cp-label">Tipo de Compra</label>
-				<select class="cp-input" id="cp-h-tax" ${dis}>${taxOptions}</select></div>
-			<div class="cp-field"><label class="cp-label">Tipo FEL</label>
-				<select class="cp-input" id="cp-h-tipo" ${dis}>${cpTipoOptions(fc.bfel_multi_tipo)}</select></div>
-		</div>
-	</div>
+	<div class="cp-card"><div class="cp-grid">${header.join("")}</div></div>
 
 	<div class="cp-card">
 		<div class="cp-card-head">
 			<div class="cp-section-title" style="margin:0;">Productos</div>
-			${editable ? `<button type="button" class="cp-btn cp-btn-secondary" id="cp-fc-add">+ Agregar producto</button>` : ""}
+			${editable ? `<button type="button" class="cp-btn cp-btn-secondary" id="cp-add">+ Agregar producto</button>` : ""}
 		</div>
-		<div id="cp-fc-items"></div>
+		<div id="cp-items"></div>
 	</div>
 
-	<div class="cp-card cp-totals" id="cp-fc-totals"></div>
+	<div class="cp-card cp-totals" id="cp-totals"></div>
 
-	<div class="cp-actionbar">
-		${fc.name ? `<a class="cp-btn cp-btn-ghost" href="/app/purchase-invoice/${encodeURIComponent(fc.name)}" target="_blank">Abrir en ERP</a>` : ""}
-		${fc.name && editable && p.puede_compras ? `<button type="button" class="cp-btn cp-btn-danger" id="cp-fc-delete">Eliminar</button>` : ""}
-		${fc.docstatus === 1 && p.puede_cancelar_compras ? `<button type="button" class="cp-btn cp-btn-danger" id="cp-fc-cancel">Cancelar Factura</button>` : ""}
-		<span class="cp-spacer"></span>
-		${editable && p.puede_compras ? `<button type="button" class="cp-btn cp-btn-secondary" id="cp-fc-save">Grabar Borrador</button>` : ""}
-		${editable && p.puede_validar_compras ? `<button type="button" class="cp-btn cp-btn-primary" id="cp-fc-submit">Validar</button>` : ""}
-	</div>
+	<div class="cp-actionbar">${this._actions_html()}</div>
 </div>`);
 
-		this._render_fc_items();
-		this._bind_fc_form();
+		this._render_items();
+		this._bind_form();
 	}
 
-	_bind_fc_form() {
-		const $b = this.$body;
-		$b.on("click", "#cp-fc-back", () => this._internal_back());
-		$b.on("click", "#cp-fc-add", () => this._add_item_dialog());
-		$b.on("click", "#cp-fc-save", () => this._save_fc(false));
-		$b.on("click", "#cp-fc-submit", () => this._save_fc(true));
-		$b.on("click", "#cp-fc-cancel", () => this._cancel_fc());
-		$b.on("click", "#cp-fc-delete", () => this._delete_fc());
+	_related_html() {
+		const rel = this.doc.related || [];
+		if (!rel.length) return "";
+		const chip = (r) => `<button type="button" class="cp-chip" data-rel-kind="${r.kind}" data-rel-name="${cpEsc(r.name)}">
+			<span class="cp-chip-kind">${cpEsc(CP_KINDS[r.kind].short)}</span> ${cpEsc(r.name)} ${cpStatusBadge(r.status, r.docstatus)}</button>`;
+		return `<div class="cp-related">${CP_ORDER.flatMap((k) => rel.filter((r) => r.kind === k)).map(chip).join("")}</div>`;
+	}
 
-		if (this.fc.docstatus !== 0) return;
-		this._bind_supplier_ac($b.find("#cp-h-supplier"), {
-			on_pick: (s) => { this.fc.supplier = s.value; this.fc.supplier_name = s.label; this.dirty = true; },
+	_actions_html() {
+		const doc = this.doc;
+		const kind = doc.kind;
+		const c = CP_KINDS[kind];
+		const editable = doc.docstatus === 0;
+		const btn = (id, label, cls) => `<button type="button" class="cp-btn ${cls}" id="${id}">${label}</button>`;
+		const out = [];
+		if (doc.name) {
+			out.push(`<a class="cp-btn cp-btn-ghost" href="/app/${c.route}/${encodeURIComponent(doc.name)}" target="_blank">Abrir en ERP</a>`);
+			out.push(btn("cp-print", "Imprimir", "cp-btn-secondary"));
+		}
+		if (doc.name && editable && this._can(kind, "draft")) out.push(btn("cp-delete", "Eliminar", "cp-btn-danger"));
+		if (doc.docstatus === 1 && this._can(kind, "cancel")) out.push(btn("cp-cancel", "Cancelar", "cp-btn-danger"));
+		if (kind === "oc" && doc.docstatus === 1 && this._can("oc", "submit")) {
+			if (doc.status === "Closed") out.push(btn("cp-reopen", "Reabrir", "cp-btn-secondary"));
+			else if (doc.status !== "Completed") out.push(btn("cp-close", "Cerrar Orden", "cp-btn-secondary"));
+		}
+		out.push(`<span class="cp-spacer"></span>`);
+		if (doc.docstatus === 1 && doc.status !== "Closed") {
+			if (kind === "oc" && cpFlt(doc.per_received) < 100 && this._can("en", "draft") && doc.items.some((it) => it.is_stock_item)) {
+				out.push(btn("cp-make-en", "Crear Entrada", "cp-btn-primary"));
+			}
+			if (kind !== "fc" && cpFlt(doc.per_billed) < 100 && this._can("fc", "draft")) {
+				out.push(btn("cp-make-fc", "Crear Factura", "cp-btn-primary"));
+			}
+		}
+		if (editable && this._can(kind, "draft")) out.push(btn("cp-save", "Grabar Borrador", "cp-btn-secondary"));
+		if (editable && this._can(kind, "submit")) out.push(btn("cp-submit", "Validar", "cp-btn-primary"));
+		return out.join("");
+	}
+
+	_bind_form() {
+		const $b = this.$body;
+		$b.on("click", "#cp-form-back", () => this._internal_back());
+		$b.on("click", "#cp-add", () => this._add_item_dialog());
+		$b.on("click", "#cp-save", () => this._save(false));
+		$b.on("click", "#cp-submit", () => this._save(true));
+		$b.on("click", "#cp-cancel", () => this._cancel());
+		$b.on("click", "#cp-delete", () => this._delete());
+		$b.on("click", "#cp-close", () => this._set_closed(1));
+		$b.on("click", "#cp-reopen", () => this._set_closed(0));
+		$b.on("click", "#cp-make-en", () => this._make_from("en"));
+		$b.on("click", "#cp-make-fc", () => this._make_from("fc"));
+		$b.on("click", "#cp-print", () => this._print());
+		$b.on("click", ".cp-chip", (e) => {
+			const $c = $(e.currentTarget);
+			const go = () => this._go("form", { kind: $c.data("rel-kind"), name: $c.data("rel-name") });
+			if (this.dirty) frappe.confirm("Hay cambios sin guardar. ¿Desea salir de todos modos?", go);
+			else go();
 		});
-		$b.on("change input", "#cp-h-bill-no,#cp-h-bill-date,#cp-h-posting-date,#cp-h-currency,#cp-h-tax,#cp-h-tipo", () => {
-			this._read_fc_header();
+
+		if (this.doc.docstatus !== 0) return;
+		this._bind_supplier_ac($b.find("#cp-h-supplier"), {
+			on_pick: (s) => { this.doc.supplier = s.value; this.doc.supplier_name = s.label; this.dirty = true; },
+		});
+		$b.on("change input", ".cp-grid .cp-input", (e) => {
+			if (e.target.id === "cp-h-supplier") return;
+			this._read_header();
 			this.dirty = true;
-			this._render_fc_totals();
+			this._render_totals();
 		});
 
 		// Líneas: delegación sobre el contenedor (sobrevive a los re-render).
-		const line = (e) => this.fc.items[parseInt($(e.target).closest("[data-idx]").data("idx"))];
+		const line = (e) => this.doc.items[parseInt($(e.target).closest("[data-idx]").data("idx"))];
 		$b.on("input", ".cp-l-qty", (e) => { const it = line(e); if (it) { it.qty = cpFlt(e.target.value); this._line_changed(e, it); } });
 		$b.on("input", ".cp-l-rate", (e) => { const it = line(e); if (it) { it.rate = cpFlt(e.target.value); this._line_changed(e, it); } });
 		$b.on("change", ".cp-l-wh", (e) => { const it = line(e); if (it) { it.warehouse = e.target.value; this.dirty = true; } });
@@ -579,43 +751,61 @@ class FacexCompras {
 			this._line_changed(e, it);
 		});
 		$b.on("click", ".cp-l-del", (e) => {
-			this.fc.items.splice(parseInt($(e.currentTarget).closest("[data-idx]").data("idx")), 1);
+			this.doc.items.splice(parseInt($(e.currentTarget).closest("[data-idx]").data("idx")), 1);
 			this.dirty = true;
-			this._render_fc_items();
+			this._render_items();
 		});
 	}
 
 	_line_changed(e, it) {
 		this.dirty = true;
-		$(e.target).closest("[data-idx]").find(".cp-l-amount").text(cpMoney(cpFlt(it.qty) * cpFlt(it.rate), this.fc.currency));
-		this._render_fc_totals();
+		$(e.target).closest("[data-idx]").find(".cp-l-amount").text(cpMoney(cpFlt(it.qty) * cpFlt(it.rate), this.doc.currency));
+		this._render_totals();
 	}
 
-	_read_fc_header() {
+	_read_header() {
 		const $b = this.$body;
-		const fc = this.fc;
+		const doc = this.doc;
 		const $s = $b.find("#cp-h-supplier");
+		const val = (id) => ($b.find(id).val() || "").trim();
 		// Solo cuenta un proveedor elegido de la lista (data-value); texto
 		// libre sin elegir deja el campo vacío para que la validación lo marque.
-		fc.supplier = $s.val().trim() ? ($s.attr("data-value") || "") : "";
-		fc.supplier_name = fc.supplier ? $s.val().trim() : "";
-		fc.bill_no = ($b.find("#cp-h-bill-no").val() || "").trim();
-		fc.bill_date = $b.find("#cp-h-bill-date").val();
-		fc.posting_date = $b.find("#cp-h-posting-date").val();
-		fc.currency = $b.find("#cp-h-currency").val();
-		fc.tax_type = $b.find("#cp-h-tax").val() || "";
-		fc.bfel_multi_tipo = $b.find("#cp-h-tipo").val() || "";
+		if (!$s.prop("disabled")) {
+			doc.supplier = $s.val().trim() ? ($s.attr("data-value") || "") : "";
+			doc.supplier_name = doc.supplier ? $s.val().trim() : "";
+		}
+		doc.date = val("#cp-h-date") || doc.date;
+		if (doc.kind === "oc") doc.schedule_date = val("#cp-h-schedule");
+		if (doc.kind === "fc") {
+			doc.bill_no = val("#cp-h-bill-no");
+			doc.bill_date = val("#cp-h-bill-date");
+			doc.bfel_multi_tipo = val("#cp-h-tipo");
+		}
+		if (doc.kind === "en") doc.supplier_delivery_note = val("#cp-h-dn");
+		if (doc.kind !== "oc") doc.remarks = val("#cp-h-remarks");
+		doc.currency = val("#cp-h-currency") || doc.currency;
+		doc.tax_type = val("#cp-h-tax");
 	}
 
-	_render_fc_items() {
-		const fc = this.fc;
-		const editable = fc.docstatus === 0;
+	_source_tag(it) {
+		const k = this.doc.kind;
+		if (k === "en" && it.purchase_order) return `OC ${it.purchase_order}`;
+		if (k === "fc" && it.purchase_receipt) return `Entrada ${it.purchase_receipt}`;
+		if (k === "fc" && it.purchase_order) return `OC ${it.purchase_order}`;
+		return "";
+	}
+
+	_render_items() {
+		const doc = this.doc;
+		const kind = doc.kind;
+		const editable = doc.docstatus === 0;
 		const dis = editable ? "" : "disabled";
 		const whs = this.defaults.warehouses || [];
-		const $c = this.$body.find("#cp-fc-items");
-		if (!fc.items.length) {
+		const showTipo = kind === "fc";
+		const $c = this.$body.find("#cp-items");
+		if (!doc.items.length) {
 			$c.html(`<div class="cp-empty">${editable ? "Use <b>+ Agregar producto</b> para comenzar." : "Sin productos."}</div>`);
-			this._render_fc_totals();
+			this._render_totals();
 			return;
 		}
 		$c.html(`
@@ -623,55 +813,58 @@ class FacexCompras {
 	<thead><tr>
 		<th style="width:32px;">#</th><th>Producto</th><th class="cp-num" style="width:90px;">Cant.</th>
 		<th class="cp-num" style="width:120px;">Precio Unit.</th><th class="cp-num" style="width:120px;">Total</th>
-		<th style="width:170px;">Bodega</th><th style="width:150px;">Tipo FEL</th><th style="width:36px;"></th>
+		<th style="width:170px;">Bodega</th>${showTipo ? `<th style="width:150px;">Tipo FEL</th>` : ""}<th style="width:36px;"></th>
 	</tr></thead>
-	<tbody>${fc.items.map((it, idx) => {
+	<tbody>${doc.items.map((it, idx) => {
+		const moves = this._line_moves_stock(it);
+		const serialInput = moves && it.has_serial_no;
 		const whOptions = [`<option value="">Bodega...</option>`]
 			.concat(whs.map((w) => `<option value="${cpEsc(w)}"${w === it.warehouse ? " selected" : ""}>${cpEsc(w)}</option>`))
 			.concat(it.warehouse && !whs.includes(it.warehouse) ? [`<option selected>${cpEsc(it.warehouse)}</option>`] : [])
 			.join("");
+		const src = this._source_tag(it);
 		return `
 		<tr data-idx="${idx}">
 			<td data-label="#" class="cp-muted">${idx + 1}</td>
 			<td data-label="Producto" class="cp-cell-product">
-				<div class="cp-strong">${cpEsc(it.item_code)}</div>
-				<div class="cp-muted">${cpEsc(it.item_name || "")}${it.is_stock_item ? "" : ` · <i>sin inventario</i>`}</div>
-				${it.has_serial_no ? `<label class="cp-label cp-sub-label">Series (una por línea)</label>
+				<div class="cp-strong">${cpEsc(it.item_code)}${src ? ` <span class="cp-tag">${cpEsc(src)}</span>` : ""}</div>
+				<div class="cp-muted">${cpEsc(it.item_name || "")}${it.is_stock_item ? "" : ` · <i>sin inventario</i>`}${kind === "oc" && doc.docstatus === 1 ? ` · recibido ${cpFlt(it.received_qty)}` : ""}</div>
+				${serialInput ? `<label class="cp-label cp-sub-label">Series (una por línea)</label>
 					<textarea class="cp-input cp-l-serial cp-mono" rows="3" ${dis}>${cpEsc(it.serial_no || "")}</textarea>` : ""}
-				${it.has_batch_no ? `<label class="cp-label cp-sub-label">Lote del proveedor</label>
+				${moves && it.has_batch_no ? `<label class="cp-label cp-sub-label">Lote del proveedor</label>
 					<input type="text" class="cp-input cp-l-batch cp-mono" value="${cpEsc(it.batch_no || "")}" ${dis}>` : ""}
 			</td>
-			<td data-label="Cantidad" class="cp-num">${it.has_serial_no
+			<td data-label="Cantidad" class="cp-num">${serialInput
 				? `<span class="cp-strong cp-l-qty-ro">${cpFlt(it.qty)}</span>`
 				: `<input type="number" class="cp-input cp-num cp-l-qty" min="0" step="any" value="${cpFlt(it.qty)}" ${dis}>`}
 				<span class="cp-muted cp-uom">${cpEsc(it.uom || "")}</span></td>
 			<td data-label="Precio Unit." class="cp-num"><input type="number" class="cp-input cp-num cp-l-rate" min="0" step="any" value="${cpFlt(it.rate)}" ${dis}></td>
-			<td data-label="Total" class="cp-num cp-strong cp-l-amount">${cpMoney(cpFlt(it.qty) * cpFlt(it.rate), fc.currency)}</td>
+			<td data-label="Total" class="cp-num cp-strong cp-l-amount">${cpMoney(cpFlt(it.qty) * cpFlt(it.rate), doc.currency)}</td>
 			<td data-label="Bodega">${it.is_stock_item
-				? `<select class="cp-input cp-l-wh" ${dis}>${whOptions}</select>`
+				? `<select class="cp-input cp-l-wh" ${moves || kind === "oc" ? dis : "disabled"}>${whOptions}</select>`
 				: `<span class="cp-muted">—</span>`}</td>
-			<td data-label="Tipo FEL"><select class="cp-input cp-l-tipo" ${dis}>${cpTipoOptions(it.bfel_multi_tipo)}</select></td>
+			${showTipo ? `<td data-label="Tipo FEL"><select class="cp-input cp-l-tipo" ${dis}>${cpTipoOptions(it.bfel_multi_tipo)}</select></td>` : ""}
 			<td class="cp-cell-del">${editable ? `<button type="button" class="cp-del cp-l-del" title="Quitar">×</button>` : ""}</td>
 		</tr>`;
 	}).join("")}
 	</tbody>
 </table>`);
-		this._render_fc_totals();
+		this._render_totals();
 	}
 
-	_render_fc_totals() {
-		const fc = this.fc;
+	_render_totals() {
+		const doc = this.doc;
 		let net, tax, grand;
-		if (fc.docstatus !== 0 && fc.grand_total != null) {
+		if (doc.docstatus !== 0 && doc.grand_total != null) {
 			// Documento validado/cancelado: los totales reales de ERPNext.
-			net = fc.net_total; tax = fc.total_taxes_and_charges; grand = fc.grand_total;
+			net = doc.net_total; tax = doc.total_taxes_and_charges; grand = doc.grand_total;
 		} else {
 			// Estimado en vivo (el definitivo lo calcula ERPNext al grabar). Si la
 			// plantilla trae el impuesto incluido en el precio, el precio ya es
 			// el total y el impuesto se desglosa hacia adentro.
-			const t = (this.defaults.tax_templates || []).find((x) => x.name === fc.tax_type);
+			const t = (this.defaults.tax_templates || []).find((x) => x.name === doc.tax_type);
 			const rate = t ? cpFlt(t.rate) / 100 : 0;
-			const lines = fc.items.reduce((s, it) => s + cpFlt(it.qty) * cpFlt(it.rate), 0);
+			const lines = doc.items.reduce((s, it) => s + cpFlt(it.qty) * cpFlt(it.rate), 0);
 			if (t && t.included) {
 				grand = lines;
 				tax = grand - grand / (1 + rate);
@@ -682,11 +875,18 @@ class FacexCompras {
 				grand = net + tax;
 			}
 		}
-		this.$body.find("#cp-fc-totals").html(`
-			<div class="cp-total-row"><span>Subtotal</span><span>${cpMoney(net, fc.currency)}</span></div>
-			<div class="cp-total-row"><span>Impuestos</span><span>${cpMoney(tax, fc.currency)}</span></div>
-			<div class="cp-total-row cp-total-grand"><span>Total</span><span>${cpMoney(grand, fc.currency)}</span></div>
-			${fc.docstatus === 1 ? `<div class="cp-total-row"><span>Saldo pendiente</span><span>${cpMoney(fc.outstanding_amount, fc.currency)}</span></div>` : ""}`);
+		const row = (label, value, cls) => `<div class="cp-total-row${cls ? ` ${cls}` : ""}"><span>${label}</span><span>${value}</span></div>`;
+		const out = [
+			row("Subtotal", cpMoney(net, doc.currency)),
+			row("Impuestos", cpMoney(tax, doc.currency)),
+			row("Total", cpMoney(grand, doc.currency), "cp-total-grand"),
+		];
+		if (doc.docstatus === 1) {
+			if (doc.kind === "fc") out.push(row("Saldo pendiente", cpMoney(doc.outstanding_amount, doc.currency)));
+			if (doc.kind === "oc") out.push(row("Recibido", cpPct(doc.per_received)));
+			if (doc.kind !== "fc") out.push(row("Facturado", cpPct(doc.per_billed)));
+		}
+		this.$body.find("#cp-totals").html(out.join(""));
 	}
 
 	_add_item_dialog() {
@@ -707,17 +907,19 @@ class FacexCompras {
 					frappe.msgprint({ message: "Seleccione un producto de la lista.", indicator: "orange" });
 					return;
 				}
-				this.fc.items.push({
+				const it = {
 					item_code: picked.item_code, item_name: picked.item_name,
 					has_serial_no: picked.has_serial_no, has_batch_no: picked.has_batch_no,
-					is_stock_item: picked.is_stock_item, uom: picked.uom,
-					qty: picked.has_serial_no ? 0 : (cpFlt(v.qty) || 1), rate: cpFlt(v.rate),
+					is_stock_item: picked.is_stock_item, uom: picked.uom, conversion_factor: 1,
+					qty: cpFlt(v.qty) || 1, rate: cpFlt(v.rate),
 					warehouse: picked.warehouse || "",
-					bfel_multi_tipo: this.fc.bfel_multi_tipo || "",
+					bfel_multi_tipo: this.doc.bfel_multi_tipo || "",
 					serial_no: "", batch_no: "",
-				});
+				};
+				if (this._line_moves_stock(it) && it.has_serial_no) it.qty = 0;
+				this.doc.items.push(it);
 				this.dirty = true;
-				this._render_fc_items();
+				this._render_items();
 				dlg.hide();
 			},
 		});
@@ -732,118 +934,198 @@ class FacexCompras {
 			},
 			on_pick: (it) => {
 				picked = it;
+				const serialQty = it.has_serial_no && this._line_moves_stock(it);
 				$search.val(it.item_code);
 				dlg.$wrapper.find("#cp-add-picked").html(`<b>${cpEsc(it.item_code)}</b> — ${cpEsc(it.item_name)}
-					${it.has_serial_no ? "<br><i>Maneja series: la cantidad sale de las series que ingrese en la línea.</i>" : ""}
-					${it.has_batch_no ? "<br><i>Se gestiona por lote.</i>" : ""}
+					${serialQty ? "<br><i>Maneja series: la cantidad sale de las series que ingrese en la línea.</i>" : ""}
+					${it.has_batch_no && this._line_moves_stock(it) ? "<br><i>Se gestiona por lote.</i>" : ""}
 					${it.warehouse ? `<br>Bodega: <b>${cpEsc(it.warehouse)}</b>` : ""}`).show();
-				dlg.set_df_property("qty", "hidden", !!it.has_serial_no);
+				dlg.set_df_property("qty", "hidden", !!serialQty);
 			},
 		});
 		setTimeout(() => $search.trigger("focus"), 200);
 	}
 
-	_validate_fc() {
-		const fc = this.fc;
+	_validate() {
+		const doc = this.doc;
+		const kind = doc.kind;
 		const errors = [];
-		if (!fc.supplier) errors.push("Seleccione el proveedor de la lista.");
-		if (!fc.bill_no) errors.push("Ingrese el número de factura del proveedor.");
-		if (!fc.bill_date) errors.push("Ingrese la fecha de la factura del proveedor.");
-		if (!fc.items.length) errors.push("Agregue al menos un producto.");
-		fc.items.forEach((it, i) => {
+		if (!doc.supplier) errors.push("Seleccione el proveedor de la lista.");
+		if (kind === "fc") {
+			if (!doc.bill_no) errors.push("Ingrese el número de factura del proveedor.");
+			if (!doc.bill_date) errors.push("Ingrese la fecha de la factura del proveedor.");
+		}
+		if (kind === "oc") {
+			if (!doc.schedule_date) errors.push("Ingrese la fecha de entrega.");
+			else if (doc.date && doc.schedule_date < doc.date) errors.push("La fecha de entrega no puede ser anterior a la fecha de la orden.");
+		}
+		if (!doc.items.length) errors.push("Agregue al menos un producto.");
+		if (kind === "en" && doc.items.length && !doc.items.some((it) => it.is_stock_item)) {
+			errors.push("Una Entrada de Mercadería necesita al menos un producto de inventario.");
+		}
+		doc.items.forEach((it, i) => {
 			const n = `Línea ${i + 1} (${it.item_code})`;
+			const moves = this._line_moves_stock(it);
 			if (cpFlt(it.rate) <= 0) errors.push(`${n}: el precio debe ser mayor a 0.`);
-			if (it.has_serial_no && !cpFlt(it.qty)) errors.push(`${n}: ingrese al menos un número de serie.`);
+			if (moves && it.has_serial_no && !(it.serial_no || "").trim()) errors.push(`${n}: ingrese los números de serie (uno por línea).`);
 			else if (cpFlt(it.qty) <= 0) errors.push(`${n}: la cantidad debe ser mayor a 0.`);
-			if (it.has_batch_no && !(it.batch_no || "").trim()) errors.push(`${n}: ingrese el número de lote.`);
-			if (it.is_stock_item && !it.warehouse) errors.push(`${n}: seleccione la bodega.`);
+			if (moves && it.has_batch_no && !(it.batch_no || "").trim()) errors.push(`${n}: ingrese el número de lote.`);
+			if ((moves || kind === "oc") && it.is_stock_item && !it.warehouse) errors.push(`${n}: seleccione la bodega.`);
 		});
 		return errors;
 	}
 
-	_save_fc(then_submit) {
-		this._read_fc_header();
-		const errors = this._validate_fc();
+	_payload() {
+		const doc = this.doc;
+		const kind = doc.kind;
+		const p = {
+			name: doc.name, company: this.company, supplier: doc.supplier,
+			currency: doc.currency, tax_type: doc.tax_type, remarks: doc.remarks,
+		};
+		if (kind === "oc") Object.assign(p, { transaction_date: doc.date, schedule_date: doc.schedule_date });
+		if (kind === "en") Object.assign(p, { posting_date: doc.date, supplier_delivery_note: doc.supplier_delivery_note });
+		if (kind === "fc") Object.assign(p, { posting_date: doc.date, bill_no: doc.bill_no, bill_date: doc.bill_date, bfel_multi_tipo: doc.bfel_multi_tipo });
+		p.items = doc.items.map((it) => {
+			const row = {
+				item_code: it.item_code, qty: it.qty, rate: it.rate, uom: it.uom, conversion_factor: it.conversion_factor,
+				warehouse: it.warehouse, serial_no: it.serial_no, batch_no: it.batch_no, bfel_multi_tipo: it.bfel_multi_tipo,
+			};
+			CP_LINK_FIELDS[kind].forEach((f) => { if (it[f]) row[f] = it[f]; });
+			return row;
+		});
+		return p;
+	}
+
+	_save(then_submit) {
+		this._read_header();
+		const errors = this._validate();
+		const kind = this.doc.kind;
+		const c = CP_KINDS[kind];
 		if (errors.length) {
-			frappe.msgprint({ title: "Revise la factura", message: errors.map((e) => `• ${cpEsc(e)}`).join("<br>"), indicator: "red" });
+			frappe.msgprint({ title: `Revise la ${c.one.toLowerCase()}`, message: errors.map((e) => `• ${cpEsc(e)}`).join("<br>"), indicator: "red" });
 			return;
 		}
 		const run = () => {
-			const fc = this.fc;
-			const payload = {
-				name: fc.name, company: this.company, supplier: fc.supplier,
-				posting_date: fc.posting_date, bill_no: fc.bill_no, bill_date: fc.bill_date,
-				currency: fc.currency, tax_type: fc.tax_type, bfel_multi_tipo: fc.bfel_multi_tipo,
-				items: fc.items.map((it) => ({
-					item_code: it.item_code, qty: it.qty, rate: it.rate, warehouse: it.warehouse,
-					serial_no: it.serial_no, batch_no: it.batch_no, bfel_multi_tipo: it.bfel_multi_tipo,
-				})),
-			};
 			frappe.call({
-				method: "facex_multi.api.compras.facturas.save_purchase_invoice",
-				args: { data_json: JSON.stringify(payload) },
+				method: "facex_multi.api.compras.documentos.save_document",
+				args: { kind, data_json: JSON.stringify(this._payload()) },
 				freeze: true,
-				freeze_message: "Grabando factura de compra...",
+				freeze_message: "Grabando...",
 				callback: (r) => {
 					if (!r.message || !r.message.name) return;
 					const name = r.message.name;
 					this.dirty = false;
 					if (!then_submit) {
 						frappe.show_alert({ message: `Borrador grabado: <b>${cpEsc(name)}</b>`, indicator: "green" });
-						this._go("fc-form", name);
+						this._go("form", { kind, name });
 						return;
 					}
 					frappe.call({
-						method: "facex_multi.api.compras.facturas.submit_purchase_invoice",
-						args: { name },
+						method: "facex_multi.api.compras.documentos.submit_document",
+						args: { kind, name },
 						freeze: true,
-						freeze_message: "Validando factura de compra...",
+						freeze_message: "Validando...",
 						callback: (r2) => {
-							if (r2.message) frappe.show_alert({ message: `Factura <b>${cpEsc(name)}</b> validada.`, indicator: "green" });
-							this._go("fc-form", name);
+							if (r2.message) frappe.show_alert({ message: `${cpEsc(c.one)} <b>${cpEsc(name)}</b> validada.`, indicator: "green" });
+							this._go("form", { kind, name });
 						},
 						// El borrador sí quedó grabado: recargarlo para no perder el nombre.
-						error: () => this._go("fc-form", name),
+						error: () => this._go("form", { kind, name }),
 					});
 				},
 			});
 		};
 		if (then_submit) {
-			frappe.confirm("¿Validar esta factura de compra? Ingresará el inventario y la cuenta por pagar; después solo podrá cancelarse.", run);
+			const effect = {
+				oc: "Quedará confirmada ante el proveedor; después solo podrá cerrarse o cancelarse.",
+				en: "Ingresará el inventario en bodega; después solo podrá cancelarse.",
+				fc: this._from_receipt()
+					? "Registrará la cuenta por pagar; después solo podrá cancelarse."
+					: "Registrará la cuenta por pagar y, si trae productos de inventario, los ingresará; después solo podrá cancelarse.",
+			}[kind];
+			frappe.confirm(`¿Validar esta ${cpEsc(c.one.toLowerCase())}? ${effect}`, run);
 		} else {
 			run();
 		}
 	}
 
-	_cancel_fc() {
-		frappe.confirm(`¿Cancelar la factura <b>${cpEsc(this.fc.name)}</b>? Se revertirán el inventario y la cuenta por pagar.`, () => {
+	_cancel() {
+		const c = CP_KINDS[this.doc.kind];
+		const effect = { oc: "", en: " Se revertirá el inventario.", fc: " Se revertirán la cuenta por pagar y, si aplica, el inventario." }[this.doc.kind];
+		frappe.confirm(`¿Cancelar ${cpEsc(c.one.toLowerCase())} <b>${cpEsc(this.doc.name)}</b>?${effect}`, () => {
 			frappe.call({
-				method: "facex_multi.api.compras.facturas.cancel_purchase_invoice",
-				args: { name: this.fc.name },
+				method: "facex_multi.api.compras.documentos.cancel_document",
+				args: { kind: this.doc.kind, name: this.doc.name },
 				freeze: true,
 				freeze_message: "Cancelando...",
 				callback: (r) => {
-					if (r.message) frappe.show_alert({ message: "Factura cancelada.", indicator: "blue" });
-					this._go("fc-form", this.fc.name);
+					if (r.message) frappe.show_alert({ message: `${cpEsc(c.one)} cancelada.`, indicator: "blue" });
+					this._go("form", { kind: this.doc.kind, name: this.doc.name });
 				},
 			});
 		});
 	}
 
-	_delete_fc() {
-		frappe.confirm(`¿Eliminar el borrador <b>${cpEsc(this.fc.name)}</b>? No se puede deshacer.`, () => {
+	_delete() {
+		frappe.confirm(`¿Eliminar el borrador <b>${cpEsc(this.doc.name)}</b>? No se puede deshacer.`, () => {
 			frappe.call({
-				method: "facex_multi.api.compras.facturas.delete_purchase_invoice",
-				args: { name: this.fc.name },
+				method: "facex_multi.api.compras.documentos.delete_document",
+				args: { kind: this.doc.kind, name: this.doc.name },
 				freeze: true,
 				callback: (r) => {
 					if (!r.message) return;
 					frappe.show_alert({ message: "Borrador eliminado.", indicator: "blue" });
 					this.dirty = false;
-					this._go("fc-list");
+					this._go("list", this.doc.kind);
 				},
 			});
 		});
+	}
+
+	_set_closed(closed) {
+		const msg = closed
+			? `¿Cerrar la orden <b>${cpEsc(this.doc.name)}</b>? Ya no se esperará lo pendiente de recibir ni de facturar.`
+			: `¿Reabrir la orden <b>${cpEsc(this.doc.name)}</b>?`;
+		frappe.confirm(msg, () => {
+			frappe.call({
+				method: "facex_multi.api.compras.documentos.set_order_closed",
+				args: { name: this.doc.name, closed },
+				freeze: true,
+				callback: () => this._go("form", { kind: "oc", name: this.doc.name }),
+			});
+		});
+	}
+
+	_make_from(target) {
+		const source = this.doc;
+		frappe.call({
+			method: "facex_multi.api.compras.documentos.make_from",
+			args: { source_kind: source.kind, name: source.name, target_kind: target },
+			freeze: true,
+			freeze_message: "Preparando...",
+			callback: (r) => {
+				if (!r.message) return;
+				const m = r.message;
+				this._go("form", {
+					kind: target,
+					pending: {
+						supplier: m.supplier, supplier_name: m.supplier_name, currency: m.currency,
+						tax_type: m.tax_type || this.defaults.default_tax_template || "",
+						source: m.source, related: [{ kind: source.kind, name: source.name, docstatus: 1, status: source.status }],
+						items: m.items,
+					},
+				});
+				this.dirty = true;
+				frappe.show_alert({ message: `Revise cantidades${target === "fc" ? " y datos de la factura" : ""} y grabe.`, indicator: "blue" });
+			},
+		});
+	}
+
+	_print() {
+		const c = CP_KINDS[this.doc.kind];
+		const url = `/printview?doctype=${encodeURIComponent(c.doctype)}&name=${encodeURIComponent(this.doc.name)}`
+			+ `&format=${encodeURIComponent(c.print_format)}&no_letterhead=1&trigger_print=1`;
+		window.open(frappe.urllib.get_full_url(url), "_blank");
 	}
 
 	// ──────────────────────────────────────────────
@@ -885,12 +1167,13 @@ class FacexCompras {
 	}
 
 	_render_fc_staging(result) {
+		this.kind = "fc";
 		const h = result.header || {};
 		this.stg = {
 			warnings: result.errors || [],
-			fc: this._empty_fc({
+			fc: this._empty_doc("fc", {
 				supplier: h.supplier || "", supplier_name: h.supplier || "",
-				posting_date: h.posting_date || this.defaults.today,
+				date: h.posting_date || this.defaults.today,
 				bill_no: h.bill_no || "", bill_date: h.bill_date || this.defaults.today,
 				currency: h.currency || this.defaults.currency,
 				items: (result.items || []).map((it) => Object.assign({ bfel_multi_tipo: "" }, it)),
@@ -969,8 +1252,8 @@ class FacexCompras {
 				this._paint_staging();
 				return;
 			}
-			this.fc_pending = fc;
-			this._go("fc-form", null);
+			this._go("form", { kind: "fc", pending: fc });
+			this.dirty = true;
 			frappe.show_alert({ message: `${fc.items.length} línea(s) importadas. Revise el encabezado y grabe.`, indicator: "green" });
 		});
 	}
@@ -1164,6 +1447,14 @@ input.cp-num { max-width:120px;margin-left:auto;display:block; }
 .cp-ac-item { padding:8px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9; }
 .cp-ac-item:hover { background:#f5f8ff; }
 .cp-ac-none { padding:10px 12px;color:#6c757d;font-size:12.5px; }
+
+.cp-hub-card { position:relative; }
+.cp-hub-step { position:absolute;top:14px;right:16px;width:24px;height:24px;border-radius:50%;background:#eef2f7;color:#153375;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center; }
+.cp-alert-info { background:#f0f9ff;border:1px solid #bae6fd;color:#0c4a6e; }
+.cp-related { display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px; }
+.cp-chip { display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid #d1d8dd;border-radius:20px;padding:4px 6px 4px 10px;font-size:12.5px;font-weight:600;color:#1e293b;cursor:pointer; }
+.cp-chip:hover { border-color:#153375;background:#f5f8ff; }
+.cp-chip-kind { font-size:10.5px;font-weight:700;color:#6c757d;text-transform:uppercase; }
 
 /* ── Móvil ─────────────────────────────────────────────── */
 @media (max-width: 720px) {

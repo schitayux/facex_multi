@@ -1,0 +1,167 @@
+{#-
+  FacEx Compras — formato común de Orden de Compra, Entrada de Mercadería y
+  Factura de Compra (Print Formats «FacEx Orden de Compra», «FacEx Entrada de
+  Mercadería», «FacEx Factura de Compra»). Muestra quién elaboró (owner) y
+  quién validó (facex_validado_por, lo llena el hook on_submit).
+  wkhtmltopdf: sin CSS Grid; Frappe fuerza padding 10px en td → selectores
+  .print-format ... !important.
+-#}
+{%- set es_oc = doc.doctype == "Purchase Order" -%}
+{%- set es_en = doc.doctype == "Purchase Receipt" -%}
+{%- set es_fc = doc.doctype == "Purchase Invoice" -%}
+{%- if es_oc -%}{%- set titulo = "Orden de Compra" -%}
+{%- elif es_en -%}{%- set titulo = "Devolución de Mercadería" if doc.is_return else "Entrada de Mercadería" -%}
+{%- else -%}{%- set titulo = "Nota de Crédito de Proveedor" if doc.is_return else "Factura de Compra" -%}{%- endif -%}
+{%- set estados = {
+  "Draft": "Borrador", "To Receive and Bill": "Por recibir y facturar", "To Bill": "Por facturar",
+  "To Receive": "Por recibir", "Completed": "Completada", "Closed": "Cerrada", "Cancelled": "Cancelada",
+  "Partly Billed": "Facturada parcialmente", "Return Issued": "Con devolución", "Return": "Devolución",
+  "Unpaid": "Pendiente de pago", "Overdue": "Vencida", "Partly Paid": "Pago parcial", "Paid": "Pagada",
+  "Debit Note Issued": "Con nota de crédito", "On Hold": "En espera", "Submitted": "Validada"
+} -%}
+{%- set estado = estados.get(doc.status) or doc.status or ("Borrador" if doc.docstatus == 0 else "") -%}
+{%- set fecha = doc.transaction_date if es_oc else doc.posting_date -%}
+{%- set bs = frappe.get_all("BFEL Settings", filters={"company": doc.company, "enabled": 1}, fields=["company_nit", "direccionemisor"], limit=1) -%}
+{%- set bfel = bs[0] if bs else {} -%}
+{%- set company_logo = frappe.db.get_value("Company", doc.company, "company_logo") -%}
+{%- set company_nit = bfel.company_nit or frappe.db.get_value("Company", doc.company, "tax_id") -%}
+{%- set supplier_nit = frappe.db.get_value("Supplier", doc.supplier, "tax_id") -%}
+{%- set elaborado = frappe.get_fullname(doc.owner) -%}
+{%- set validado = frappe.get_fullname(doc.facex_validado_por) if doc.get("facex_validado_por") else "" -%}
+{%- set origen_oc = [] -%}{%- set origen_en = [] -%}
+{%- for it in doc.items -%}
+  {%- if it.get("purchase_order") and it.purchase_order not in origen_oc -%}{%- set _ = origen_oc.append(it.purchase_order) -%}{%- endif -%}
+  {%- if it.get("purchase_receipt") and it.purchase_receipt not in origen_en -%}{%- set _ = origen_en.append(it.purchase_receipt) -%}{%- endif -%}
+{%- endfor -%}
+{%- set muestra_bodega = es_en or (es_fc and doc.update_stock) or es_oc -%}
+
+<style>
+  .print-format .fxc { font-size: 11.5px; color: #1e293b; line-height: 1.35; }
+  .print-format .fxc table { width: 100%; border-collapse: collapse; }
+  .print-format .fxc td, .print-format .fxc th { padding: 3px 6px !important; line-height: 1.35 !important; vertical-align: top; }
+  .print-format .fxc .fxc-head td { padding: 0 !important; }
+  .print-format .fxc .fxc-items th { background: #f1f5f9; border: 1px solid #94a3b8; font-size: 10.5px; text-transform: uppercase; }
+  .print-format .fxc .fxc-items td { border: 1px solid #cbd5e1; }
+  .print-format .fxc .num { text-align: right; white-space: nowrap; }
+  .print-format .fxc .muted { color: #64748b; }
+  .print-format .fxc .lbl { color: #64748b; font-size: 10px; text-transform: uppercase; }
+  .print-format .fxc .tot td { padding: 2px 6px !important; }
+  .print-format .fxc .tot .grand td { font-size: 13px; font-weight: 700; border-top: 1.5px solid #1e293b; }
+  .print-format .fxc .firma td { padding: 0 12px !important; text-align: center; }
+</style>
+
+<div class="fxc">
+  <table class="fxc-head" style="border-bottom: 2px solid #1e293b; margin-bottom: 10px;">
+    <tr>
+      <td style="width: 60%; padding-bottom: 6px !important;">
+        {%- if company_logo -%}<img src="{{ company_logo }}" style="max-height: 55px; max-width: 150px; margin-bottom: 4px;"><br>{%- endif -%}
+        <div style="font-size: 15px; font-weight: 700;">{{ doc.company }}</div>
+        {%- if company_nit -%}<div class="muted">NIT {{ company_nit }}</div>{%- endif -%}
+        {%- if bfel.direccionemisor -%}<div class="muted">{{ bfel.direccionemisor }}</div>{%- endif -%}
+      </td>
+      <td style="text-align: right; padding-bottom: 6px !important;">
+        <div style="font-size: 16px; font-weight: 700;">{{ titulo }}</div>
+        <div style="font-size: 13px; font-weight: 700;">{{ doc.name }}</div>
+        {%- if estado -%}<div class="muted">{{ estado }}</div>{%- endif -%}
+      </td>
+    </tr>
+  </table>
+
+  <table style="margin-bottom: 10px;">
+    <tr>
+      <td style="width: 55%;">
+        <div class="lbl">Proveedor</div>
+        <div style="font-weight: 700;">{{ doc.supplier_name or doc.supplier }}</div>
+        {%- if supplier_nit -%}<div>NIT {{ supplier_nit }}</div>{%- endif -%}
+        {%- if doc.get("address_display") -%}<div class="muted">{{ doc.address_display }}</div>{%- endif -%}
+      </td>
+      <td>
+        <table>
+          <tr><td class="lbl">Fecha</td><td>{{ frappe.utils.formatdate(fecha) }}</td></tr>
+          {%- if es_oc and doc.schedule_date -%}<tr><td class="lbl">Fecha de entrega</td><td>{{ frappe.utils.formatdate(doc.schedule_date) }}</td></tr>{%- endif -%}
+          {%- if es_fc and doc.bill_no -%}<tr><td class="lbl">Factura proveedor</td><td>{{ doc.bill_no }}{% if doc.bill_date %} · {{ frappe.utils.formatdate(doc.bill_date) }}{% endif %}</td></tr>{%- endif -%}
+          {%- if es_fc and doc.due_date and not doc.is_return -%}<tr><td class="lbl">Vence</td><td>{{ frappe.utils.formatdate(doc.due_date) }}</td></tr>{%- endif -%}
+          {%- if es_en and doc.supplier_delivery_note -%}<tr><td class="lbl">Envío / remisión</td><td>{{ doc.supplier_delivery_note }}</td></tr>{%- endif -%}
+          {%- if origen_oc -%}<tr><td class="lbl">Orden de compra</td><td>{{ origen_oc | join(", ") }}</td></tr>{%- endif -%}
+          {%- if origen_en -%}<tr><td class="lbl">Entrada</td><td>{{ origen_en | join(", ") }}</td></tr>{%- endif -%}
+          {%- if doc.get("return_against") -%}<tr><td class="lbl">Sobre</td><td>{{ doc.return_against }}</td></tr>{%- endif -%}
+          <tr><td class="lbl">Moneda</td><td>{{ doc.currency }}{% if doc.conversion_rate and doc.conversion_rate != 1 %} (T.C. {{ doc.get_formatted("conversion_rate") }}){% endif %}</td></tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+
+  <table class="fxc-items">
+    <thead>
+      <tr>
+        <th style="width: 26px;">#</th>
+        <th>Producto</th>
+        {%- if muestra_bodega -%}<th style="width: 120px;">Bodega</th>{%- endif -%}
+        <th class="num" style="width: 70px;">Cant.</th>
+        <th style="width: 50px;">UdM</th>
+        <th class="num" style="width: 90px;">Precio</th>
+        <th class="num" style="width: 95px;">Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      {%- for it in doc.items -%}
+      <tr>
+        <td class="num">{{ it.idx }}</td>
+        <td>
+          <b>{{ it.item_code }}</b>{% if it.item_name and it.item_name != it.item_code %} — {{ it.item_name }}{% endif %}
+          {%- if it.get("batch_no") -%}<div class="muted">Lote: {{ it.batch_no }}</div>{%- endif -%}
+          {%- if it.get("serial_no") -%}<div class="muted" style="white-space: pre-line;">Series: {{ it.serial_no }}</div>{%- endif -%}
+        </td>
+        {%- if muestra_bodega -%}<td>{{ it.warehouse or "" }}</td>{%- endif -%}
+        <td class="num">{{ it.get_formatted("qty") }}</td>
+        <td>{{ it.uom or "" }}</td>
+        <td class="num">{{ it.get_formatted("rate", doc) }}</td>
+        <td class="num">{{ it.get_formatted("amount", doc) }}</td>
+      </tr>
+      {%- endfor -%}
+    </tbody>
+  </table>
+
+  <table style="margin-top: 8px;">
+    <tr>
+      <td style="width: 58%;">
+        {%- if doc.get("in_words") -%}<div class="lbl">Total en letras</div><div>{{ doc.in_words }}</div>{%- endif -%}
+        {#- ERPNext autocompleta remarks («Against Supplier Invoice …» / «Contra factura del proveedor …»): no se imprime. -#}
+        {%- if doc.get("remarks") and doc.remarks not in ("No Remarks", "No hay observaciones") and not doc.remarks.startswith(("Against Supplier Invoice", "Contra factura del proveedor")) -%}
+          <div class="lbl" style="margin-top: 6px;">Observaciones</div><div>{{ doc.remarks }}</div>
+        {%- endif -%}
+      </td>
+      <td>
+        <table class="tot">
+          <tr><td>Subtotal</td><td class="num">{{ doc.get_formatted("net_total") }}</td></tr>
+          {%- for t in doc.taxes if t.tax_amount -%}
+          <tr><td>{{ t.description or t.account_head }}</td><td class="num">{{ t.get_formatted("tax_amount", doc) }}</td></tr>
+          {%- endfor -%}
+          {%- if doc.discount_amount -%}<tr><td>Descuento</td><td class="num">-{{ doc.get_formatted("discount_amount") }}</td></tr>{%- endif -%}
+          <tr class="grand"><td>Total</td><td class="num">{{ doc.get_formatted("grand_total") }}</td></tr>
+          {%- if es_fc and doc.docstatus == 1 and not doc.is_return -%}
+          <tr><td>Saldo pendiente</td><td class="num">{{ doc.get_formatted("outstanding_amount") }}</td></tr>
+          {%- endif -%}
+        </table>
+      </td>
+    </tr>
+  </table>
+
+  <table class="firma" style="margin-top: 45px;">
+    <tr>
+      <td style="width: 33%;">
+        <div style="border-top: 1px solid #1e293b; padding-top: 3px;">Elaborado por</div>
+        <div style="font-weight: 700;">{{ elaborado }}</div>
+        <div class="muted">{{ frappe.utils.format_datetime(doc.creation, "dd-MM-yyyy HH:mm") }}</div>
+      </td>
+      <td style="width: 34%;">
+        <div style="border-top: 1px solid #1e293b; padding-top: 3px;">Validado por</div>
+        <div style="font-weight: 700;">{{ validado or "—" }}</div>
+        {%- if doc.get("facex_validado_el") -%}<div class="muted">{{ frappe.utils.format_datetime(doc.facex_validado_el, "dd-MM-yyyy HH:mm") }}</div>{%- endif -%}
+      </td>
+      <td style="width: 33%;">
+        <div style="border-top: 1px solid #1e293b; padding-top: 3px;">{{ "Recibido por" if es_en else "Autorizado por" }}</div>
+      </td>
+    </tr>
+  </table>
+</div>

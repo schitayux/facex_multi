@@ -61,8 +61,17 @@
   "reporte_ventas_vendedor",
   "sb_compras",
   "puede_compras",
-  "puede_validar_compras",
+  "sb_compras_docs",
+  "oc_grabar_borrador",
+  "oc_validar",
+  "oc_cancelar",
   "cb_compras",
+  "entrada_compra_grabar_borrador",
+  "entrada_compra_validar",
+  "entrada_compra_cancelar",
+  "cb_compras_fc",
+  "factura_compra_grabar_borrador",
+  "puede_validar_compras",
   "puede_cancelar_compras",
   "sb_digecam",
   "maneja_series",
@@ -532,23 +541,82 @@
    "default": "1",
    "fieldname": "puede_compras",
    "fieldtype": "Check",
-   "label": "Acceder al Módulo de Compras"
+   "label": "Acceder al Módulo de Compras",
+   "description": "Entrar a FacEx Compras y consultar documentos y proveedores. Qué documentos puede grabar, validar o cancelar se define abajo, por documento."
   },
   {
-   "default": "1",
-   "fieldname": "puede_validar_compras",
+   "fieldname": "sb_compras_docs",
+   "fieldtype": "Section Break",
+   "label": "Compras — Documentos"
+  },
+  {
+   "default": "0",
+   "fieldname": "oc_grabar_borrador",
    "fieldtype": "Check",
-   "label": "Validar Facturas de Compra"
+   "label": "Orden de Compra — Grabar Borrador",
+   "description": "Crear y editar Órdenes de Compra en borrador."
+  },
+  {
+   "default": "0",
+   "fieldname": "oc_validar",
+   "fieldtype": "Check",
+   "label": "Orden de Compra — Validar",
+   "description": "Validar (confirmar) Órdenes de Compra; cerrar / reabrir órdenes validadas."
+  },
+  {
+   "default": "0",
+   "fieldname": "oc_cancelar",
+   "fieldtype": "Check",
+   "label": "Orden de Compra — Cancelar",
+   "description": "Cancelar Órdenes de Compra validadas que no tengan entradas ni facturas vigentes."
   },
   {
    "fieldname": "cb_compras",
    "fieldtype": "Column Break"
   },
   {
+   "default": "0",
+   "fieldname": "entrada_compra_grabar_borrador",
+   "fieldtype": "Check",
+   "label": "Entrada de Mercadería — Grabar Borrador",
+   "description": "Crear y editar Entradas de Mercadería (recepción de compras) en borrador."
+  },
+  {
+   "default": "0",
+   "fieldname": "entrada_compra_validar",
+   "fieldtype": "Check",
+   "label": "Entrada de Mercadería — Validar",
+   "description": "Validar Entradas de Mercadería: ingresa el inventario."
+  },
+  {
+   "default": "0",
+   "fieldname": "entrada_compra_cancelar",
+   "fieldtype": "Check",
+   "label": "Entrada de Mercadería — Cancelar",
+   "description": "Cancelar Entradas de Mercadería validadas (revierte el inventario)."
+  },
+  {
+   "fieldname": "cb_compras_fc",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "factura_compra_grabar_borrador",
+   "fieldtype": "Check",
+   "label": "Factura de Compra — Grabar Borrador",
+   "description": "Crear y editar Facturas de Compra en borrador."
+  },
+  {
+   "default": "1",
+   "fieldname": "puede_validar_compras",
+   "fieldtype": "Check",
+   "label": "Factura de Compra — Validar"
+  },
+  {
    "default": "1",
    "fieldname": "puede_cancelar_compras",
    "fieldtype": "Check",
-   "label": "Cancelar Facturas de Compra"
+   "label": "Factura de Compra — Cancelar"
   },
   {
    "fieldname": "sb_digecam",
@@ -858,6 +926,29 @@
    "label": "Transferencia — Validar y Confirmar"
   },
   {
+   "fieldname": "sb_inv_transformar",
+   "fieldtype": "Section Break",
+   "label": "Transformar (Inventario)"
+  },
+  {
+   "default": "0",
+   "fieldname": "transformar_grabar_borrador",
+   "fieldtype": "Check",
+   "label": "Transformar — Grabar Borrador",
+   "description": "Crear documentos «Transformar» (producto padre ← productos hijos). Quedan en Borrador hasta que un autorizador los valide; el usuario solo ve los documentos que él creó."
+  },
+  {
+   "fieldname": "cb_inv_transformar",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "transformar_autorizar",
+   "fieldtype": "Check",
+   "label": "Transformar — Autorizar / Validar",
+   "description": "Recibe el aviso de Transformaciones pendientes y las Autoriza (genera la Salida de los hijos y la Entrada del padre) o las Rechaza. Si además tiene «Grabar Borrador» puede autorizar las suyas."
+  },
+  {
    "fieldname": "sb_inventario_reportes",
    "fieldtype": "Section Break",
    "label": "Reportes de Inventario"
@@ -921,6 +1012,13 @@
    "fieldname": "reporte_inv_entradas_proveedor",
    "fieldtype": "Check",
    "label": "Entradas por Proveedor"
+  },
+  {
+   "default": "0",
+   "fieldname": "reporte_inv_transformaciones",
+   "fieldtype": "Check",
+   "label": "Transformaciones",
+   "description": "Informe de documentos Transformar con usuario creador y autorizador."
   },
   {
    "fieldname": "sb_inventario_maestros",
@@ -1217,41 +1315,11 @@
    "fieldtype": "Check",
    "label": "No concatenar el sufijo de la compañía al Código de Ítems (GLOBAL)",
    "hidden": 1
-  },
-  {
-   "fieldname": "sb_inv_transformar",
-   "fieldtype": "Section Break",
-   "label": "Transformar (Inventario)"
-  },
-  {
-   "default": "0",
-   "fieldname": "transformar_grabar_borrador",
-   "fieldtype": "Check",
-   "label": "Transformar — Grabar Borrador",
-   "description": "Crear documentos «Transformar» (producto padre ← productos hijos). Quedan en Borrador hasta que un autorizador los valide; el usuario solo ve los documentos que él creó."
-  },
-  {
-   "fieldname": "cb_inv_transformar",
-   "fieldtype": "Column Break"
-  },
-  {
-   "default": "0",
-   "fieldname": "transformar_autorizar",
-   "fieldtype": "Check",
-   "label": "Transformar — Autorizar / Validar",
-   "description": "Recibe el aviso de Transformaciones pendientes y las Autoriza (genera la Salida de los hijos y la Entrada del padre) o las Rechaza. Si además tiene «Grabar Borrador» puede autorizar las suyas."
-  },
-  {
-   "default": "0",
-   "fieldname": "reporte_inv_transformaciones",
-   "fieldtype": "Check",
-   "label": "Transformaciones",
-   "description": "Informe de documentos Transformar con usuario creador y autorizador."
   }
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-09-28 23:00:00.000000",
+ "modified": "2026-09-29 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Settings",

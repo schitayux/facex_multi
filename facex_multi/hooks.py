@@ -91,7 +91,11 @@ doc_events = {
     },
     "Payment Entry": {
         "before_cancel": "facex_multi.api.cierre.guard_payment_entry_cancel"
-    }
+    },
+    # FacEx Compras: «Validado por» para los formatos de impresión.
+    "Purchase Order": {"on_submit": "facex_multi.api.compras.common.set_validado_por"},
+    "Purchase Receipt": {"on_submit": "facex_multi.api.compras.common.set_validado_por"},
+    "Purchase Invoice": {"on_submit": "facex_multi.api.compras.common.set_validado_por"},
 }
 
 after_migrate = [
@@ -106,6 +110,7 @@ after_migrate = [
     "facex_multi.api.exencion.ensure_item_familia_tipo_fields",
     "facex_multi.api.recargo.ensure_recargo_flete_fields",
     "facex_multi.api.series.ensure_payment_entry_naming_series",
+    "facex_multi.api.compras.common.ensure_compras_custom_fields",
 ]
 
 fixtures = [

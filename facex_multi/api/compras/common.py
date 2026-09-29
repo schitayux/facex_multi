@@ -184,6 +184,26 @@ def get_naming_series(doctype: str, company: str) -> list:
 # aplican en el servidor (no solo ocultan botones). Retrocompatibles: sin fila
 # de FacEx Settings o System Manager → pasan.
 
+# Checks por documento (patch add_compras_documentos_permisos) → check
+# heredado equivalente, mientras el sitio no haya corrido migrate (gunicorn
+# recarga el .py antes de que existan las columnas).
+_LEGACY_PERM = {
+    "oc_grabar_borrador": "puede_compras",
+    "entrada_compra_grabar_borrador": "puede_compras",
+    "factura_compra_grabar_borrador": "puede_compras",
+    "oc_validar": "puede_validar_compras",
+    "entrada_compra_validar": "puede_validar_compras",
+    "oc_cancelar": "puede_cancelar_compras",
+    "entrada_compra_cancelar": "puede_cancelar_compras",
+}
+
+
+def perm_field(field: str) -> str:
+    if field in _LEGACY_PERM and not frappe.get_meta("FacEx Settings").has_field(field):
+        return _LEGACY_PERM[field]
+    return field
+
+
 def require_purchase(company: str = None, *flags: str, msg: str = None) -> str:
     from facex_multi.api.invoice import get_effective_company, get_user_companies
     from facex_multi.api.permissions import require_facex_permission
@@ -232,8 +252,11 @@ def get_compras_defaults(company: str = None) -> dict:
         company = companies[0]
 
     general = get_facex_permissions_for_company(company)
-    perms = {k: int(general.get(k) or 0) for k in (
+    perms = {k: int(general.get(perm_field(k)) or 0) for k in (
         "puede_compras", "puede_validar_compras", "puede_cancelar_compras",
+        "oc_grabar_borrador", "oc_validar", "oc_cancelar",
+        "entrada_compra_grabar_borrador", "entrada_compra_validar", "entrada_compra_cancelar",
+        "factura_compra_grabar_borrador",
         "crea_proveedores", "modifica_proveedores", "puede_facturar",
     )}
     # Accesos de la barra superior (otras Pages de FacEx).
@@ -256,3 +279,48 @@ def get_compras_defaults(company: str = None) -> dict:
         "warehouses":           get_warehouses(company, "compra") if (company and perms["puede_compras"]) else [],
         "today":                today(),
     }
+
+
+# ---------------------------------------------------------------------------
+# «Validado por» en los documentos de compra (formatos de impresión)
+# ---------------------------------------------------------------------------
+
+PURCHASE_DOCTYPES = ("Purchase Order", "Purchase Receipt", "Purchase Invoice")
+
+
+def ensure_compras_custom_fields():
+    """after_migrate: quién y cuándo validó el documento. El creador ya es
+    `owner`; el formato de impresión muestra ambos."""
+    from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
+
+    fields = [
+        {
+            "fieldname": "facex_validado_por",
+            "label": "Validado por",
+            "fieldtype": "Link",
+            "options": "User",
+            "insert_after": "amended_from",
+            "read_only": 1,
+            "no_copy": 1,
+            "allow_on_submit": 1,
+            "print_hide": 1,
+        },
+        {
+            "fieldname": "facex_validado_el",
+            "label": "Validado el",
+            "fieldtype": "Datetime",
+            "insert_after": "facex_validado_por",
+            "read_only": 1,
+            "no_copy": 1,
+            "allow_on_submit": 1,
+            "print_hide": 1,
+        },
+    ]
+    create_custom_fields({dt: fields for dt in PURCHASE_DOCTYPES}, update=True)
+
+
+def set_validado_por(doc, method=None):
+    """on_submit de Purchase Order / Receipt / Invoice (desde FacEx o el Desk)."""
+    if doc.meta.has_field("facex_validado_por"):
+        doc.db_set({"facex_validado_por": frappe.session.user,
+                    "facex_validado_el": frappe.utils.now_datetime()}, update_modified=False)
