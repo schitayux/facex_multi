@@ -3,13 +3,16 @@ facex_multi.api.compras.documentos
 ----------------------------------
 Documentos del ciclo de compra de FacEx Compras sobre los doctypes nativos:
 
-    oc  Orden de Compra        Purchase Order
-    en  Entrada de Mercadería  Purchase Receipt
-    fc  Factura de Compra      Purchase Invoice
+    oc  Orden de Compra              Purchase Order
+    en  Entrada de Mercadería        Purchase Receipt
+    dv  Devolución de Mercadería     Purchase Receipt (is_return)
+    fc  Factura de Compra            Purchase Invoice
+    nc  Nota de Crédito de Proveedor Purchase Invoice (is_return)
 
 Un solo juego de endpoints (lista / lectura / grabar / validar / cancelar /
 eliminar) parametrizado por `kind`. Los documentos se encadenan con los
-mapeadores de ERPNext (OC → Entrada, OC → Factura, Entrada → Factura), así
+mapeadores de ERPNext (OC → Entrada, OC → Factura, Entrada → Factura,
+Entrada → Devolución, Factura → Nota de Crédito, Devolución → Nota de Crédito), así
 las cantidades pendientes, % recibido / % facturado y los estados de cada
 documento los lleva ERPNext.
 
@@ -53,10 +56,24 @@ KINDS = {
         draft="factura_compra_grabar_borrador", submit="puede_validar_compras",
         cancel="puede_cancelar_compras",
     ),
+    "dv": frappe._dict(
+        doctype="Purchase Receipt", label="Devolución de Mercadería", date="posting_date", is_return=1,
+        draft="devolucion_compra_grabar_borrador", submit="devolucion_compra_validar",
+        cancel="devolucion_compra_cancelar",
+    ),
+    "nc": frappe._dict(
+        doctype="Purchase Invoice", label="Nota de Crédito de Proveedor", date="posting_date", is_return=1,
+        draft="nc_compra_grabar_borrador", submit="nc_compra_validar", cancel="nc_compra_cancelar",
+    ),
 }
+RETURN_KINDS = ("dv", "nc")
 
 # Qué documento puede generarse desde cuál (origen, destino).
-MAKE_FROM = {("oc", "en"), ("oc", "fc"), ("en", "fc")}
+MAKE_FROM = {("oc", "en"), ("oc", "fc"), ("en", "fc"), ("en", "dv"), ("fc", "nc"), ("dv", "nc")}
+
+# Devoluciones: campo de la línea destino que apunta a la línea de origen
+# (clave con la que se aplican las cantidades que el usuario edita).
+RETURN_DETAIL = {"en": "purchase_receipt_item", "fc": "purchase_invoice_item", "dv": "pr_detail"}
 
 # Campos de enlace de cada línea con el documento de origen.
 LINK_FIELDS = {
@@ -69,6 +86,8 @@ LIST_FIELDS = {
     "oc": ["transaction_date as fecha", "schedule_date", "per_received", "per_billed"],
     "en": ["posting_date as fecha", "supplier_delivery_note", "per_billed"],
     "fc": ["posting_date as fecha", "bill_no", "bill_date", "due_date", "outstanding_amount"],
+    "dv": ["posting_date as fecha", "return_against", "per_billed"],
+    "nc": ["posting_date as fecha", "bill_no", "return_against", "outstanding_amount"],
 }
 
 
@@ -111,7 +130,7 @@ def get_document_list(kind: str, company: str = None, start_date: str = None, en
     date = cfg.date
     filters = [["company", "=", company]]
     if kind != "oc":
-        filters.append(["is_return", "=", 0])
+        filters.append(["is_return", "=", int(kind in RETURN_KINDS)])
     if start_date and end_date:
         filters.append([date, "between", [start_date, end_date]])
     elif start_date:
@@ -149,32 +168,54 @@ def _item_flags(item_code: str) -> dict:
     }
 
 
+def _kind_of(doctype: str, name: str) -> str:
+    is_return = frappe.db.get_value(doctype, name, "is_return")
+    if doctype == "Purchase Receipt":
+        return "dv" if is_return else "en"
+    return "nc" if is_return else "fc"
+
+
 def _related(kind: str, doc) -> list:
     """Documentos vinculados (origen y siguientes) para la cadena del formulario."""
     out, seen = [], set()
 
-    def add(k, names):
+    def add(doctype, names):
         for n in names:
-            if n and (k, n) not in seen:
-                seen.add((k, n))
-                row = frappe.db.get_value(KINDS[k].doctype, n, ["docstatus", "status", "grand_total"], as_dict=True)
-                if row:
-                    out.append({"kind": k, "name": n, **row})
+            if not n or (doctype, n) in seen or n == doc.name:
+                continue
+            seen.add((doctype, n))
+            row = frappe.db.get_value(doctype, n, ["docstatus", "status", "grand_total", "is_return"]
+                                      if doctype != "Purchase Order" else ["docstatus", "status", "grand_total"],
+                                      as_dict=True)
+            if row:
+                k = "oc" if doctype == "Purchase Order" else _kind_of(doctype, n)
+                row.pop("is_return", None)
+                out.append({"kind": k, "name": n, **row})
 
     def children(child_dt, field, value):
         return frappe.get_all(child_dt, filters={field: value, "docstatus": ["<", 2]},
                               pluck="parent", distinct=True)
 
+    def returns_of(doctype, name):
+        return frappe.get_all(doctype, filters={"return_against": name, "is_return": 1, "docstatus": ["<", 2]},
+                              pluck="name")
+
     items = doc.get("items") or []
     if kind == "oc":
-        add("en", children("Purchase Receipt Item", "purchase_order", doc.name))
-        add("fc", children("Purchase Invoice Item", "purchase_order", doc.name))
-    elif kind == "en":
-        add("oc", [i.purchase_order for i in items])
-        add("fc", children("Purchase Invoice Item", "purchase_receipt", doc.name))
+        add("Purchase Receipt", children("Purchase Receipt Item", "purchase_order", doc.name))
+        add("Purchase Invoice", children("Purchase Invoice Item", "purchase_order", doc.name))
+    elif kind in ("en", "dv"):
+        add("Purchase Order", [i.purchase_order for i in items])
+        if kind == "dv":
+            add("Purchase Receipt", [doc.return_against])
+        add("Purchase Receipt", returns_of("Purchase Receipt", doc.name))
+        add("Purchase Invoice", children("Purchase Invoice Item", "purchase_receipt", doc.name))
     else:
-        add("oc", [i.purchase_order for i in items])
-        add("en", [i.purchase_receipt for i in items])
+        add("Purchase Order", [i.purchase_order for i in items])
+        add("Purchase Receipt", [i.purchase_receipt for i in items])
+        if kind == "nc":
+            add("Purchase Invoice", [doc.return_against])
+        add("Purchase Invoice", returns_of("Purchase Invoice", doc.name))
     return out
 
 
@@ -191,7 +232,37 @@ def get_document(kind: str, name: str, company: str = None) -> dict:
     validado = doc.get("facex_validado_por")
     d["validado_por_fullname"] = frappe.utils.get_fullname(validado) if validado else ""
     d["related"] = _related(kind, doc)
+    if kind in RETURN_KINDS:
+        _add_return_info(kind, doc, d)
     return d
+
+
+def _return_source(kind: str, doc) -> tuple:
+    """(kind, name) del documento contra el que se devuelve."""
+    if kind == "dv":
+        return "en", doc.return_against
+    if doc.return_against:
+        return "fc", doc.return_against
+    prs = [i.purchase_receipt for i in doc.items if i.get("purchase_receipt")]
+    return ("dv", prs[0]) if prs else (None, None)
+
+
+def _add_return_info(kind: str, doc, d: dict) -> None:
+    """Cantidades en positivo + máximo devolvible por línea (para el borrador)."""
+    src_kind, src_name = _return_source(kind, doc)
+    d["return_source"] = {"kind": src_kind, "name": src_name} if src_kind else None
+    detail_f = RETURN_DETAIL.get(src_kind)
+    pending = {}
+    if doc.docstatus == 0 and src_kind:
+        try:
+            target = _mapped(src_kind, src_name, kind)
+            pending = {it.get(detail_f): abs(flt(it.qty)) for it in target.items}
+        except frappe.ValidationError:
+            frappe.clear_messages()
+    for it in d.get("items", []):
+        it["detail"] = it.get(detail_f) if detail_f else None
+        it["qty"] = abs(flt(it.get("qty")))
+        it["max_qty"] = pending.get(it["detail"], it["qty"])
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +282,8 @@ def save_document(kind: str, data_json: str) -> dict:
     """
     cfg = _cfg(kind)
     data = json.loads(data_json) if isinstance(data_json, str) else data_json
+    if kind in RETURN_KINDS:
+        return _save_return(kind, data)
     company = _require(kind, data.get("company"), "draft")
     name = (data.get("name") or "").strip()
     supplier = (data.get("supplier") or "").strip()
@@ -407,9 +480,17 @@ def cancel_document(kind: str, name: str) -> dict:
     return {"success": True, "name": doc.name}
 
 
+DOWNSTREAM = {
+    "oc": {"en", "dv", "fc", "nc"},
+    "en": {"dv", "fc", "nc"},
+    "dv": {"nc"},
+    "fc": {"nc"},
+    "nc": set(),
+}
+
+
 def _is_downstream(kind: str, other: str) -> bool:
-    order = ["oc", "en", "fc"]
-    return order.index(other) > order.index(kind)
+    return other in DOWNSTREAM[kind]
 
 
 @frappe.whitelist()
@@ -453,6 +534,12 @@ def set_order_closed(name: str, closed: int = 1) -> dict:
 # ---------------------------------------------------------------------------
 
 def _mapper(source_kind: str, target_kind: str):
+    if target_kind == "dv":
+        from erpnext.stock.doctype.purchase_receipt.purchase_receipt import make_purchase_return
+        return make_purchase_return
+    if source_kind == "fc" and target_kind == "nc":
+        from erpnext.accounts.doctype.purchase_invoice.purchase_invoice import make_debit_note
+        return make_debit_note
     if source_kind == "oc" and target_kind == "en":
         from erpnext.buying.doctype.purchase_order.purchase_order import make_purchase_receipt
         return make_purchase_receipt
@@ -472,22 +559,15 @@ def make_from(source_kind: str, name: str, target_kind: str) -> dict:
     source = _get(source_kind, name)
     company = _require(target_kind, source.company, "draft")
     check_doc_access(source, company)
+    _check_source_type(source_kind, source)
     if source.docstatus != 1:
         frappe.throw(f"Valide primero {KINDS[source_kind].label} {source.name}.")
     if source.get("status") == "Closed":
         frappe.throw(f"{KINDS[source_kind].label} {source.name} está cerrada.")
 
-    # Los mapeadores nativos exigen permisos de ERPNext sobre el doctype de
-    # origen/destino (p. ej. los usuarios de facturación no tienen Purchase
-    # Order); aquí el control es el permiso FacEx, ya verificado, y el
-    # resultado no se graba. Solo se cambia session.user durante el mapeo:
-    # frappe.set_user() además reemplazaría el sid de la sesión en curso.
-    user = frappe.session.user
-    try:
-        frappe.local.session.user = "Administrator"
-        target = _mapper(source_kind, target_kind)(source.name)
-    finally:
-        frappe.local.session.user = user
+    target = _mapped(source_kind, source.name, target_kind)
+    if target_kind in RETURN_KINDS:
+        return _return_payload(source_kind, source, target_kind, target)
 
     items = []
     for it in target.get("items") or []:
@@ -521,3 +601,169 @@ def make_from(source_kind: str, name: str, target_kind: str) -> dict:
         "source": {"kind": source_kind, "name": source.name},
         "items": items,
     }
+
+
+def _mapped(source_kind: str, source_name: str, target_kind: str):
+    """Documento destino armado por el mapeador nativo (sin grabar).
+
+    Los mapeadores exigen permisos de ERPNext sobre el doctype de origen /
+    destino (p. ej. los usuarios de facturación no tienen Purchase Order);
+    aquí el control es el permiso FacEx, ya verificado, y el resultado no se
+    graba. Solo se cambia session.user durante el mapeo: frappe.set_user()
+    además reemplazaría el sid de la sesión en curso."""
+    user = frappe.session.user
+    try:
+        frappe.local.session.user = "Administrator"
+        return _mapper(source_kind, target_kind)(source_name)
+    finally:
+        frappe.local.session.user = user
+
+
+# ---------------------------------------------------------------------------
+# Devoluciones (Devolución de Mercadería / Nota de Crédito de Proveedor)
+# ---------------------------------------------------------------------------
+# El documento SIEMPRE se reconstruye con el mapeador nativo contra su
+# origen; del usuario solo se toman la cantidad a devolver de cada línea
+# (≤ pendiente de devolver), qué series devuelve, fecha, observaciones y el
+# número de nota de crédito del proveedor. Precios, impuestos, bodegas,
+# lotes y enlaces son los del documento original.
+
+def _check_source_type(source_kind: str, source) -> None:
+    """Entrada / Factura vs Devolución / Nota de crédito comparten doctype."""
+    if source_kind != "oc" and int(source.get("is_return") or 0) != int(source_kind in RETURN_KINDS):
+        frappe.throw(f"{source.name} no es una {KINDS[source_kind].label}.")
+
+
+def _serials(txt) -> list:
+    return [x.strip() for x in (txt or "").replace(",", "\n").split("\n") if x.strip()]
+
+
+def _moves_stock(kind: str, doc, item) -> bool:
+    is_stock = frappe.get_cached_value("Item", item.item_code, "is_stock_item")
+    return bool(is_stock) and (kind == "dv" or bool(doc.get("update_stock")))
+
+
+def _return_payload(source_kind: str, source, target_kind: str, target) -> dict:
+    detail_f = RETURN_DETAIL[source_kind]
+    items = []
+    for it in target.get("items") or []:
+        qty = abs(flt(it.qty))
+        if qty <= 0:
+            continue
+        row = {
+            "detail": it.get(detail_f),
+            "item_code": it.item_code,
+            "item_name": it.item_name,
+            "qty": qty,
+            "max_qty": qty,
+            "rate": flt(it.rate),
+            "uom": it.uom,
+            "warehouse": it.get("warehouse") or "",
+            "serial_no": it.get("serial_no") or "",
+            "batch_no": it.get("batch_no") or "",
+            "purchase_order": it.get("purchase_order") or "",
+            "purchase_receipt": it.get("purchase_receipt") or "",
+        }
+        row.update(_item_flags(it.item_code))
+        items.append(row)
+    if not items:
+        frappe.throw(f"{KINDS[source_kind].label} {source.name} ya no tiene cantidades pendientes de devolver.")
+    return {
+        "supplier": source.supplier,
+        "supplier_name": source.supplier_name,
+        "currency": source.currency,
+        "tax_type": target.get("taxes_and_charges") or source.get("taxes_and_charges") or "",
+        "update_stock": int(target.get("update_stock") or 0) if target_kind == "nc" else 1,
+        "source": {"kind": source_kind, "name": source.name},
+        "items": items,
+    }
+
+
+def _save_return(kind: str, data: dict) -> dict:
+    cfg = _cfg(kind)
+    company = _require(kind, data.get("company"), "draft")
+    name = (data.get("name") or "").strip()
+    existing = None
+    if name and frappe.db.exists(cfg.doctype, name):
+        existing = frappe.get_doc(cfg.doctype, name)
+        check_doc_access(existing, company)
+        if existing.docstatus != 0:
+            frappe.throw("Solo se pueden editar documentos en borrador.")
+        src_kind, src_name = _return_source(kind, existing)
+    else:
+        src = data.get("source") or {}
+        src_kind, src_name = src.get("kind"), src.get("name")
+    if (src_kind, kind) not in MAKE_FROM or not src_name:
+        frappe.throw("Indique el documento contra el que se devuelve.")
+    source = _get(src_kind, src_name)
+    check_doc_access(source, company)
+    _check_source_type(src_kind, source)
+    if source.docstatus != 1:
+        frappe.throw(f"{KINDS[src_kind].label} {source.name} no está validada.")
+
+    target = _mapped(src_kind, source.name, kind)
+    detail_f = RETURN_DETAIL[src_kind]
+    wanted = {r.get("detail"): r for r in (data.get("items") or []) if r.get("detail")}
+
+    keep = []
+    for it in target.items:
+        w = wanted.get(it.get(detail_f))
+        if not w:
+            continue
+        qty = flt(w.get("qty"))
+        max_qty = abs(flt(it.qty))
+        if qty <= 0:
+            continue
+        if qty > max_qty + 1e-9:
+            frappe.throw(f"{it.item_code}: solo quedan {max_qty:g} pendientes de devolver.")
+        if _moves_stock(kind, target, it) and frappe.get_cached_value("Item", it.item_code, "has_serial_no"):
+            available = set(_serials(it.serial_no))
+            chosen = _serials(w.get("serial_no"))
+            if not chosen:
+                frappe.throw(f"{it.item_code}: indique las series que devuelve.")
+            invalid = [x for x in chosen if x not in available]
+            if invalid:
+                frappe.throw(f"{it.item_code}: las series {', '.join(invalid)} no están pendientes de devolver en {source.name}.")
+            qty = len(chosen)
+            it.serial_no = "\n".join(chosen)
+        it.qty = -qty
+        it.stock_qty = -qty * (flt(it.conversion_factor) or 1)
+        it.received_qty = it.qty + flt(it.get("rejected_qty"))
+        keep.append(it)
+    if not keep:
+        frappe.throw("Indique al menos una línea con cantidad a devolver.")
+
+    if existing:
+        doc = existing
+        doc.set("items", [])
+        doc.set("taxes", [])
+        skip = {"name", "parent", "parentfield", "parenttype", "idx", "doctype", "docstatus"}
+        for it in keep:
+            doc.append("items", {k: v for k, v in it.as_dict().items() if k not in skip})
+        for t in target.get("taxes") or []:
+            doc.append("taxes", {k: v for k, v in t.as_dict().items() if k not in skip})
+    else:
+        doc = target
+        doc.set("items", keep)
+        series = get_naming_series(cfg.doctype, company)
+        if series:
+            doc.naming_series = series[0]
+
+    doc.posting_date = data.get("posting_date") or today()
+    doc.set_posting_time = 1
+    if doc.meta.has_field("remarks"):
+        doc.remarks = data.get("remarks") or ""
+    if kind == "nc":
+        doc.bill_no = data.get("bill_no") or ""
+        doc.bill_date = data.get("bill_date") or doc.posting_date
+        doc.credit_to = get_payable_account(doc.supplier, company, doc.currency)
+        doc.set_expense_account(for_validate=False)
+        # Nota de crédito sobre una factura: rebaja el saldo de ESA factura
+        # (como en SAP B1). ERPNext por defecto deja el saldo negativo en la
+        # propia nota (update_outstanding_for_self=1).
+        if doc.return_against and doc.meta.has_field("update_outstanding_for_self"):
+            doc.update_outstanding_for_self = 0
+
+    doc.save(ignore_permissions=True)
+    frappe.db.commit()
+    return {"success": True, "name": doc.name}

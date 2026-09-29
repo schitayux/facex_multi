@@ -195,6 +195,12 @@ _LEGACY_PERM = {
     "entrada_compra_validar": "puede_validar_compras",
     "oc_cancelar": "puede_cancelar_compras",
     "entrada_compra_cancelar": "puede_cancelar_compras",
+    "devolucion_compra_grabar_borrador": "entrada_compra_grabar_borrador",
+    "devolucion_compra_validar": "entrada_compra_validar",
+    "devolucion_compra_cancelar": "entrada_compra_cancelar",
+    "nc_compra_grabar_borrador": "factura_compra_grabar_borrador",
+    "nc_compra_validar": "puede_validar_compras",
+    "nc_compra_cancelar": "puede_cancelar_compras",
 }
 
 
@@ -257,6 +263,8 @@ def get_compras_defaults(company: str = None) -> dict:
         "oc_grabar_borrador", "oc_validar", "oc_cancelar",
         "entrada_compra_grabar_borrador", "entrada_compra_validar", "entrada_compra_cancelar",
         "factura_compra_grabar_borrador",
+        "devolucion_compra_grabar_borrador", "devolucion_compra_validar", "devolucion_compra_cancelar",
+        "nc_compra_grabar_borrador", "nc_compra_validar", "nc_compra_cancelar",
         "crea_proveedores", "modifica_proveedores", "puede_facturar",
     )}
     # Accesos de la barra superior (otras Pages de FacEx).

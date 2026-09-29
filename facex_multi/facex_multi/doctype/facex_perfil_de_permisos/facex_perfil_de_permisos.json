@@ -68,6 +68,14 @@
   "factura_compra_grabar_borrador",
   "puede_validar_compras",
   "puede_cancelar_compras",
+  "sb_compras_dev",
+  "devolucion_compra_grabar_borrador",
+  "devolucion_compra_validar",
+  "devolucion_compra_cancelar",
+  "cb_compras_nc",
+  "nc_compra_grabar_borrador",
+  "nc_compra_validar",
+  "nc_compra_cancelar",
   "sec_4",
   "puede_ver_inventario",
   "puede_hacer_entradas",
@@ -522,6 +530,57 @@
    "label": "Factura de Compra — Cancelar"
   },
   {
+   "fieldname": "sb_compras_dev",
+   "fieldtype": "Section Break",
+   "label": "Compras — Devoluciones"
+  },
+  {
+   "default": "0",
+   "fieldname": "devolucion_compra_grabar_borrador",
+   "fieldtype": "Check",
+   "label": "Devolución de Mercadería — Grabar Borrador",
+   "description": "Preparar devoluciones al proveedor desde una Entrada de Mercadería validada."
+  },
+  {
+   "default": "0",
+   "fieldname": "devolucion_compra_validar",
+   "fieldtype": "Check",
+   "label": "Devolución de Mercadería — Validar",
+   "description": "Validar devoluciones: saca el inventario devuelto."
+  },
+  {
+   "default": "0",
+   "fieldname": "devolucion_compra_cancelar",
+   "fieldtype": "Check",
+   "label": "Devolución de Mercadería — Cancelar",
+   "description": "Cancelar devoluciones validadas (el inventario vuelve a la bodega)."
+  },
+  {
+   "fieldname": "cb_compras_nc",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "nc_compra_grabar_borrador",
+   "fieldtype": "Check",
+   "label": "Nota de Crédito de Proveedor — Grabar Borrador",
+   "description": "Preparar notas de crédito de proveedor desde una Factura de Compra o una Devolución."
+  },
+  {
+   "default": "0",
+   "fieldname": "nc_compra_validar",
+   "fieldtype": "Check",
+   "label": "Nota de Crédito de Proveedor — Validar",
+   "description": "Validar notas de crédito: rebaja la cuenta por pagar (y el inventario si la factura lo ingresó)."
+  },
+  {
+   "default": "0",
+   "fieldname": "nc_compra_cancelar",
+   "fieldtype": "Check",
+   "label": "Nota de Crédito de Proveedor — Cancelar",
+   "description": "Cancelar notas de crédito de proveedor validadas."
+  },
+  {
    "fieldname": "sec_4",
    "fieldtype": "Section Break",
    "label": "Movimientos de Inventario",
@@ -891,7 +950,7 @@
   }
  ],
  "links": [],
- "modified": "2026-09-29 10:00:00.000000",
+ "modified": "2026-09-29 14:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Perfil de Permisos",

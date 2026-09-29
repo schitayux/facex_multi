@@ -59,6 +59,14 @@ const CP_KINDS = {
 		states: [["0", "Borrador"], ["To Bill", "Por facturar"], ["Partly Billed", "Facturada parcialmente"],
 			["Completed", "Completada"], ["2", "Cancelada"]],
 	},
+	dv: {
+		doctype: "Purchase Receipt", route: "purchase-receipt", print_format: "FacEx Entrada de Mercaderia",
+		one: "Devolución de Mercadería", many: "Devoluciones de Mercadería", short: "Devolución", param: "devolucion",
+		ret: true, source_label: "Entrada",
+		desc: "Mercadería devuelta al proveedor, siempre contra una Entrada validada. Al validarla sale del inventario.",
+		perms: { draft: "devolucion_compra_grabar_borrador", submit: "devolucion_compra_validar", cancel: "devolucion_compra_cancelar" },
+		states: [["0", "Borrador"], ["Return", "Validada (sin nota de crédito)"], ["Completed", "Con nota de crédito"], ["2", "Cancelada"]],
+	},
 	fc: {
 		doctype: "Purchase Invoice", route: "purchase-invoice", print_format: "FacEx Factura de Compra",
 		one: "Factura de Compra", many: "Facturas de Compra", short: "Factura", param: "factura",
@@ -67,8 +75,16 @@ const CP_KINDS = {
 		states: [["0", "Borrador"], ["Unpaid", "Pendiente de pago"], ["Overdue", "Vencida"],
 			["Partly Paid", "Pago parcial"], ["Paid", "Pagada"], ["2", "Cancelada"]],
 	},
+	nc: {
+		doctype: "Purchase Invoice", route: "purchase-invoice", print_format: "FacEx Factura de Compra",
+		one: "Nota de Crédito de Proveedor", many: "Notas de Crédito de Proveedor", short: "NC", param: "nota",
+		ret: true, source_label: "Factura / Devolución",
+		desc: "Créditos del proveedor contra una Factura (rebaja su saldo) o contra una Devolución de mercadería.",
+		perms: { draft: "nc_compra_grabar_borrador", submit: "nc_compra_validar", cancel: "nc_compra_cancelar" },
+		states: [["0", "Borrador"], ["Return", "Validada"], ["2", "Cancelada"]],
+	},
 };
-const CP_ORDER = ["oc", "en", "fc"];
+const CP_ORDER = ["oc", "en", "dv", "fc", "nc"];
 
 // Status nativos → etiqueta + color.
 const CP_STATUS = {
@@ -86,7 +102,7 @@ const CP_STATUS = {
 	"Overdue": ["Vencida", "#b91c1c", "#fee2e2"],
 	"Partly Paid": ["Pago parcial", "#7c3aed", "#ede9fe"],
 	"Paid": ["Pagada", "#047857", "#d1fae5"],
-	"Return": ["Devolución", "#475569", "#e2e8f0"],
+	"Return": ["Validada", "#047857", "#d1fae5"],
 	"Debit Note Issued": ["Con nota de crédito", "#475569", "#e2e8f0"],
 	"Submitted": ["Validada", "#047857", "#d1fae5"],
 	"Cancelled": ["Cancelada", "#6b7280", "#f3f4f6"],
@@ -98,6 +114,8 @@ const CP_LINK_FIELDS = {
 	oc: [],
 	en: ["purchase_order", "purchase_order_item"],
 	fc: ["purchase_order", "po_detail", "purchase_receipt", "pr_detail"],
+	dv: [],
+	nc: [],
 };
 
 function cpEsc(v) {
@@ -387,7 +405,7 @@ class FacexCompras {
 			<div class="cp-muted">${cpEsc(this.company)}${this.perms.alcance_compras ? ` · Alcance: ${cpEsc(this.perms.alcance_compras)}` : ""}</div>
 		</div>
 	</div>
-	<div class="cp-section-title">Documentos · Orden → Entrada → Factura</div>
+	<div class="cp-section-title">Documentos · Orden → Entrada → Factura · Devoluciones y notas de crédito</div>
 	<div class="cp-hub-grid">${CP_ORDER.map(card).join("")}</div>
 </div>`);
 		this.$body.on("click", ".cp-hub-card", (e) => this._go("list", $(e.currentTarget).data("kind")));
@@ -449,14 +467,19 @@ class FacexCompras {
 		];
 		if (kind === "oc") {
 			cols.push(["Entrega", (x) => cpDate(x.schedule_date)]);
+		} else if (kind === "dv") {
+			cols.push(["Devolución de", (x) => cpEsc(x.return_against || "")]);
+		} else if (kind === "nc") {
+			cols.push(["No. NC Prov.", (x) => cpEsc(x.bill_no || "")]);
+			cols.push(["Sobre factura", (x) => cpEsc(x.return_against || "—")]);
 		} else if (kind === "en") {
 			cols.push(["Envío / Remisión", (x) => cpEsc(x.supplier_delivery_note || "")]);
 		} else {
 			cols.push(["No. Factura Prov.", (x) => cpEsc(x.bill_no || "")]);
 		}
-		cols.push(["Total", (x) => cpMoney(x.grand_total, x.currency), "cp-num cp-strong"]);
+		cols.push(["Total", (x) => cpMoney(Math.abs(cpFlt(x.grand_total)), x.currency), "cp-num cp-strong"]);
 		if (kind === "oc") cols.push(["Recibido", (x) => (x.docstatus === 1 ? cpPct(x.per_received) : "—"), "cp-num"]);
-		if (kind !== "fc") cols.push(["Facturado", (x) => (x.docstatus === 1 ? cpPct(x.per_billed) : "—"), "cp-num"]);
+		if (kind === "oc" || kind === "en") cols.push(["Facturado", (x) => (x.docstatus === 1 ? cpPct(x.per_billed) : "—"), "cp-num"]);
 		if (kind === "fc") cols.push(["Saldo", (x) => (x.docstatus === 1 ? cpMoney(x.outstanding_amount, x.currency) : "—"), "cp-num"]);
 		cols.push(["Estado", (x) => cpStatusBadge(x.status, x.docstatus)]);
 		return cols;
@@ -484,7 +507,7 @@ class FacexCompras {
 				}
 				const cols = this._list_columns(kind);
 				const valid = rows.filter((x) => x.docstatus === 1);
-				const total = valid.reduce((s, x) => s + cpFlt(x.grand_total), 0);
+				const total = valid.reduce((s, x) => s + Math.abs(cpFlt(x.grand_total)), 0);
 				const saldo = valid.reduce((s, x) => s + cpFlt(x.outstanding_amount), 0);
 				$list.html(`
 <div class="cp-card cp-table-card">
@@ -516,7 +539,7 @@ class FacexCompras {
 			currency: d.currency || "GTQ",
 			tax_type: d.default_tax_template || "",
 			bfel_multi_tipo: "",
-			source: null, related: [],
+			source: null, related: [], update_stock: 0,
 			items: [],
 		}, overrides || {});
 	}
@@ -550,7 +573,7 @@ class FacexCompras {
 					grand_total: d.grand_total, total_taxes_and_charges: d.total_taxes_and_charges,
 					net_total: d.net_total, outstanding_amount: d.outstanding_amount,
 					per_received: d.per_received, per_billed: d.per_billed, update_stock: d.update_stock,
-					related: d.related || [],
+					related: d.related || [], source: d.return_source || null,
 					items: (d.items || []).map((it) => {
 						const row = {
 							item_code: it.item_code, item_name: it.item_name || it.item_code,
@@ -559,6 +582,7 @@ class FacexCompras {
 							warehouse: it.warehouse || "", bfel_multi_tipo: it.bfel_multi_tipo || "",
 							serial_no: it.serial_no || "", batch_no: it.batch_no || "",
 							received_qty: it.received_qty,
+							detail: it.detail, max_qty: it.max_qty,
 						};
 						CP_LINK_FIELDS[kind].forEach((f) => { row[f] = it[f] || ""; });
 						return row;
@@ -584,6 +608,8 @@ class FacexCompras {
 
 	_line_moves_stock(it) {
 		const k = this.doc.kind;
+		if (k === "dv") return !!it.is_stock_item;
+		if (k === "nc") return !!it.is_stock_item && !!this.doc.update_stock;
 		return !!it.is_stock_item && (k === "en" || (k === "fc" && !this._from_receipt()));
 	}
 
@@ -599,19 +625,31 @@ class FacexCompras {
 			: `<option value="">Sin plantilla de impuestos configurada</option>`;
 		const currencies = (this.defaults.currencies || ["GTQ"]).slice();
 		if (doc.currency && !currencies.includes(doc.currency)) currencies.push(doc.currency);
-		const fromSource = !!doc.source || doc.items.some((it) => CP_LINK_FIELDS[kind].some((f) => it[f]));
+		const ret = !!c.ret;
+		const fromSource = ret || !!doc.source || doc.items.some((it) => CP_LINK_FIELDS[kind].some((f) => it[f]));
 		const title = doc.name ? doc.name : `Nueva ${c.one}`;
+		const srcLabel = doc.source ? CP_KINDS[doc.source.kind].one : "";
 		const meta = [
 			doc.owner_fullname && `Elaborado por <b>${cpEsc(doc.owner_fullname)}</b>`,
 			doc.validado_por_fullname && `Validado por <b>${cpEsc(doc.validado_por_fullname)}</b>`,
-			doc.source && `Desde ${cpEsc(CP_KINDS[doc.source.kind].one)} <b>${cpEsc(doc.source.name)}</b>`,
+			doc.source && `${ret ? "Contra" : "Desde"} ${cpEsc(srcLabel)} <b>${cpEsc(doc.source.name)}</b>`,
 		].filter(Boolean).join(" · ");
 
 		const field = (label, html, wide) => `<div class="cp-field${wide ? " cp-field-wide" : ""}"><label class="cp-label">${label}</label>${html}</div>`;
 		const header = [
 			field("Proveedor *", `<div class="cp-ac"><input type="text" class="cp-input" id="cp-h-supplier" placeholder="Buscar por nombre, código o NIT..." value="${cpEsc(doc.supplier_name || doc.supplier)}" data-value="${cpEsc(doc.supplier)}" ${editable && !fromSource ? "" : "disabled"}></div>`, true),
 		];
-		if (kind === "fc") {
+		if (kind === "nc") {
+			header.push(
+				field("No. Nota de Crédito Proveedor *", `<input type="text" class="cp-input" id="cp-h-bill-no" value="${cpEsc(doc.bill_no)}" placeholder="Serie - número" ${dis}>`),
+				field("Fecha Nota de Crédito", `<input type="date" class="cp-input" id="cp-h-bill-date" value="${cpEsc(doc.bill_date)}" ${dis}>`),
+				field("Fecha de Registro", `<input type="date" class="cp-input" id="cp-h-date" value="${cpEsc(doc.date)}" ${dis}>`),
+			);
+		} else if (kind === "dv") {
+			header.push(
+				field("Fecha de Devolución", `<input type="date" class="cp-input" id="cp-h-date" value="${cpEsc(doc.date)}" ${dis}>`),
+			);
+		} else if (kind === "fc") {
 			header.push(
 				field("No. Factura Proveedor *", `<input type="text" class="cp-input" id="cp-h-bill-no" value="${cpEsc(doc.bill_no)}" placeholder="Serie - número" ${dis}>`),
 				field("Fecha Factura *", `<input type="date" class="cp-input" id="cp-h-bill-date" value="${cpEsc(doc.bill_date)}" ${dis}>`),
@@ -630,7 +668,7 @@ class FacexCompras {
 		}
 		header.push(
 			field("Moneda", `<select class="cp-input" id="cp-h-currency" ${editable && !fromSource ? "" : "disabled"}>${currencies.map((x) => `<option${x === doc.currency ? " selected" : ""}>${cpEsc(x)}</option>`).join("")}</select>`),
-			field("Tipo de Compra", `<select class="cp-input" id="cp-h-tax" ${dis}>${taxOptions}</select>`),
+			field("Tipo de Compra", `<select class="cp-input" id="cp-h-tax" ${ret ? "disabled" : dis}>${taxOptions}</select>`),
 		);
 		if (kind === "fc") header.push(field("Tipo FEL", `<select class="cp-input" id="cp-h-tipo" ${dis}>${cpTipoOptions(doc.bfel_multi_tipo)}</select>`));
 		if (kind !== "oc") header.push(field("Observaciones", `<input type="text" class="cp-input" id="cp-h-remarks" value="${cpEsc(doc.remarks)}" ${dis}>`, true));
@@ -643,14 +681,15 @@ class FacexCompras {
 		${meta ? `<div class="cp-muted cp-head-meta">${meta}</div>` : ""}
 	</div>
 	${this._related_html()}
+	${ret && editable ? `<div class="cp-alert cp-alert-info">${this._return_hint()}</div>` : ""}
 	${kind === "fc" && this._from_receipt() && editable ? `<div class="cp-alert cp-alert-info">Factura desde Entrada de Mercadería: el inventario ya ingresó con la entrada; esta factura solo registra la cuenta por pagar.</div>` : ""}
 
 	<div class="cp-card"><div class="cp-grid">${header.join("")}</div></div>
 
 	<div class="cp-card">
 		<div class="cp-card-head">
-			<div class="cp-section-title" style="margin:0;">Productos</div>
-			${editable ? `<button type="button" class="cp-btn cp-btn-secondary" id="cp-add">+ Agregar producto</button>` : ""}
+			<div class="cp-section-title" style="margin:0;">${ret ? "Productos a devolver" : "Productos"}</div>
+			${editable && !ret ? `<button type="button" class="cp-btn cp-btn-secondary" id="cp-add">+ Agregar producto</button>` : ""}
 		</div>
 		<div id="cp-items"></div>
 	</div>
@@ -662,6 +701,15 @@ class FacexCompras {
 
 		this._render_items();
 		this._bind_form();
+	}
+
+	_return_hint() {
+		const doc = this.doc;
+		if (doc.kind === "dv") return "Indique cuánto devuelve de cada producto (hasta lo pendiente de la entrada). Sale de la misma bodega y con los mismos lotes/series; precios e impuestos son los de la entrada.";
+		if (doc.source && doc.source.kind === "dv") return "Nota de crédito por la mercadería devuelta: solo registra el crédito del proveedor (el inventario ya salió con la devolución).";
+		return doc.update_stock
+			? "Nota de crédito sobre la factura: rebaja su saldo y, como esa factura ingresó el inventario, también saca del inventario lo que indique."
+			: "Nota de crédito sobre la factura: rebaja su saldo. No mueve inventario (para devolver mercadería use una Devolución desde la Entrada).";
 	}
 
 	_related_html() {
@@ -694,8 +742,17 @@ class FacexCompras {
 			if (kind === "oc" && cpFlt(doc.per_received) < 100 && this._can("en", "draft") && doc.items.some((it) => it.is_stock_item)) {
 				out.push(btn("cp-make-en", "Crear Entrada", "cp-btn-primary"));
 			}
-			if (kind !== "fc" && cpFlt(doc.per_billed) < 100 && this._can("fc", "draft")) {
+			if ((kind === "oc" || kind === "en") && cpFlt(doc.per_billed) < 100 && this._can("fc", "draft")) {
 				out.push(btn("cp-make-fc", "Crear Factura", "cp-btn-primary"));
+			}
+			if (kind === "en" && doc.status !== "Return Issued" && this._can("dv", "draft")) {
+				out.push(btn("cp-make-dv", "Crear Devolución", "cp-btn-secondary"));
+			}
+			if (kind === "fc" && this._can("nc", "draft")) {
+				out.push(btn("cp-make-nc", "Crear Nota de Crédito", "cp-btn-secondary"));
+			}
+			if (kind === "dv" && cpFlt(doc.per_billed) < 100 && this._can("nc", "draft")) {
+				out.push(btn("cp-make-nc", "Crear Nota de Crédito", "cp-btn-primary"));
 			}
 		}
 		if (editable && this._can(kind, "draft")) out.push(btn("cp-save", "Grabar Borrador", "cp-btn-secondary"));
@@ -715,6 +772,8 @@ class FacexCompras {
 		$b.on("click", "#cp-reopen", () => this._set_closed(0));
 		$b.on("click", "#cp-make-en", () => this._make_from("en"));
 		$b.on("click", "#cp-make-fc", () => this._make_from("fc"));
+		$b.on("click", "#cp-make-dv", () => this._make_from("dv"));
+		$b.on("click", "#cp-make-nc", () => this._make_from("nc"));
 		$b.on("click", "#cp-print", () => this._print());
 		$b.on("click", ".cp-chip", (e) => {
 			const $c = $(e.currentTarget);
@@ -776,11 +835,11 @@ class FacexCompras {
 		}
 		doc.date = val("#cp-h-date") || doc.date;
 		if (doc.kind === "oc") doc.schedule_date = val("#cp-h-schedule");
-		if (doc.kind === "fc") {
+		if (doc.kind === "fc" || doc.kind === "nc") {
 			doc.bill_no = val("#cp-h-bill-no");
 			doc.bill_date = val("#cp-h-bill-date");
-			doc.bfel_multi_tipo = val("#cp-h-tipo");
 		}
+		if (doc.kind === "fc") doc.bfel_multi_tipo = val("#cp-h-tipo");
 		if (doc.kind === "en") doc.supplier_delivery_note = val("#cp-h-dn");
 		if (doc.kind !== "oc") doc.remarks = val("#cp-h-remarks");
 		doc.currency = val("#cp-h-currency") || doc.currency;
@@ -795,7 +854,52 @@ class FacexCompras {
 		return "";
 	}
 
+	_render_return_items() {
+		const doc = this.doc;
+		const editable = doc.docstatus === 0;
+		const dis = editable ? "" : "disabled";
+		const $c = this.$body.find("#cp-items");
+		if (!doc.items.length) {
+			$c.html(`<div class="cp-empty">Sin productos.</div>`);
+			this._render_totals();
+			return;
+		}
+		$c.html(`
+<table class="cp-table cp-cards cp-lines">
+	<thead><tr>
+		<th style="width:32px;">#</th><th>Producto</th><th class="cp-num" style="width:130px;">Cant. a devolver</th>
+		<th class="cp-num" style="width:110px;">Precio Unit.</th><th class="cp-num" style="width:120px;">Total</th>
+		<th style="width:170px;">Bodega</th><th style="width:36px;"></th>
+	</tr></thead>
+	<tbody>${doc.items.map((it, idx) => {
+		const moves = this._line_moves_stock(it);
+		const serialInput = moves && it.has_serial_no;
+		return `
+		<tr data-idx="${idx}">
+			<td data-label="#" class="cp-muted">${idx + 1}</td>
+			<td data-label="Producto" class="cp-cell-product">
+				<div class="cp-strong">${cpEsc(it.item_code)}</div>
+				<div class="cp-muted">${cpEsc(it.item_name || "")}${it.batch_no ? ` · Lote <b>${cpEsc(it.batch_no)}</b>` : ""}</div>
+				${serialInput ? `<label class="cp-label cp-sub-label">Series que devuelve (una por línea)</label>
+					<textarea class="cp-input cp-l-serial cp-mono" rows="3" ${dis}>${cpEsc(it.serial_no || "")}</textarea>` : ""}
+			</td>
+			<td data-label="Cant. a devolver" class="cp-num">${serialInput
+				? `<span class="cp-strong cp-l-qty-ro">${cpFlt(it.qty)}</span>`
+				: `<input type="number" class="cp-input cp-num cp-l-qty" min="0" max="${cpFlt(it.max_qty)}" step="any" value="${cpFlt(it.qty)}" ${dis}>`}
+				${editable ? `<span class="cp-muted cp-uom">de ${cpFlt(it.max_qty)} ${cpEsc(it.uom || "")}</span>` : `<span class="cp-muted cp-uom">${cpEsc(it.uom || "")}</span>`}</td>
+			<td data-label="Precio Unit." class="cp-num">${cpMoney(it.rate, doc.currency)}</td>
+			<td data-label="Total" class="cp-num cp-strong cp-l-amount">${cpMoney(cpFlt(it.qty) * cpFlt(it.rate), doc.currency)}</td>
+			<td data-label="Bodega">${cpEsc(it.warehouse || "—")}</td>
+			<td class="cp-cell-del">${editable ? `<button type="button" class="cp-del cp-l-del" title="No devolver">×</button>` : ""}</td>
+		</tr>`;
+	}).join("")}
+	</tbody>
+</table>`);
+		this._render_totals();
+	}
+
 	_render_items() {
+		if (CP_KINDS[this.doc.kind].ret) return this._render_return_items();
 		const doc = this.doc;
 		const kind = doc.kind;
 		const editable = doc.docstatus === 0;
@@ -857,7 +961,7 @@ class FacexCompras {
 		let net, tax, grand;
 		if (doc.docstatus !== 0 && doc.grand_total != null) {
 			// Documento validado/cancelado: los totales reales de ERPNext.
-			net = doc.net_total; tax = doc.total_taxes_and_charges; grand = doc.grand_total;
+			net = Math.abs(cpFlt(doc.net_total)); tax = Math.abs(cpFlt(doc.total_taxes_and_charges)); grand = Math.abs(cpFlt(doc.grand_total));
 		} else {
 			// Estimado en vivo (el definitivo lo calcula ERPNext al grabar). Si la
 			// plantilla trae el impuesto incluido en el precio, el precio ya es
@@ -879,12 +983,14 @@ class FacexCompras {
 		const out = [
 			row("Subtotal", cpMoney(net, doc.currency)),
 			row("Impuestos", cpMoney(tax, doc.currency)),
-			row("Total", cpMoney(grand, doc.currency), "cp-total-grand"),
+			row({ dv: "Total devuelto", nc: "Total acreditado" }[doc.kind] || "Total", cpMoney(grand, doc.currency), "cp-total-grand"),
 		];
 		if (doc.docstatus === 1) {
 			if (doc.kind === "fc") out.push(row("Saldo pendiente", cpMoney(doc.outstanding_amount, doc.currency)));
+			if (doc.kind === "nc" && cpFlt(doc.outstanding_amount)) out.push(row("Crédito disponible", cpMoney(Math.abs(cpFlt(doc.outstanding_amount)), doc.currency)));
 			if (doc.kind === "oc") out.push(row("Recibido", cpPct(doc.per_received)));
-			if (doc.kind !== "fc") out.push(row("Facturado", cpPct(doc.per_billed)));
+			if (doc.kind === "oc" || doc.kind === "en") out.push(row("Facturado", cpPct(doc.per_billed)));
+			if (doc.kind === "dv") out.push(row("Con nota de crédito", cpPct(doc.per_billed)));
 		}
 		this.$body.find("#cp-totals").html(out.join(""));
 	}
@@ -950,6 +1056,17 @@ class FacexCompras {
 		const doc = this.doc;
 		const kind = doc.kind;
 		const errors = [];
+		if (CP_KINDS[kind].ret) {
+			if (kind === "nc" && !doc.bill_no) errors.push("Ingrese el número de la nota de crédito del proveedor.");
+			if (!doc.items.some((it) => cpFlt(it.qty) > 0)) errors.push("Indique la cantidad a devolver de al menos un producto.");
+			doc.items.forEach((it, i) => {
+				const n = `Línea ${i + 1} (${it.item_code})`;
+				if (cpFlt(it.qty) < 0) errors.push(`${n}: la cantidad no puede ser negativa.`);
+				if (cpFlt(it.qty) > cpFlt(it.max_qty) + 1e-9) errors.push(`${n}: solo quedan ${cpFlt(it.max_qty)} pendientes de devolver.`);
+				if (this._line_moves_stock(it) && it.has_serial_no && cpFlt(it.qty) > 0 && !(it.serial_no || "").trim()) errors.push(`${n}: indique las series que devuelve.`);
+			});
+			return errors;
+		}
 		if (!doc.supplier) errors.push("Seleccione el proveedor de la lista.");
 		if (kind === "fc") {
 			if (!doc.bill_no) errors.push("Ingrese el número de factura del proveedor.");
@@ -978,6 +1095,13 @@ class FacexCompras {
 	_payload() {
 		const doc = this.doc;
 		const kind = doc.kind;
+		if (CP_KINDS[kind].ret) {
+			return {
+				name: doc.name, company: this.company, source: doc.source,
+				posting_date: doc.date, remarks: doc.remarks, bill_no: doc.bill_no, bill_date: doc.bill_date,
+				items: doc.items.filter((it) => cpFlt(it.qty) > 0).map((it) => ({ detail: it.detail, qty: it.qty, serial_no: it.serial_no })),
+			};
+		}
 		const p = {
 			name: doc.name, company: this.company, supplier: doc.supplier,
 			currency: doc.currency, tax_type: doc.tax_type, remarks: doc.remarks,
@@ -1038,6 +1162,10 @@ class FacexCompras {
 		if (then_submit) {
 			const effect = {
 				oc: "Quedará confirmada ante el proveedor; después solo podrá cerrarse o cancelarse.",
+				dv: "Sacará del inventario la mercadería devuelta; después solo podrá cancelarse.",
+				nc: this.doc.update_stock
+					? "Rebajará la cuenta por pagar y sacará del inventario lo devuelto; después solo podrá cancelarse."
+					: "Rebajará la cuenta por pagar con el proveedor; después solo podrá cancelarse.",
 				en: "Ingresará el inventario en bodega; después solo podrá cancelarse.",
 				fc: this._from_receipt()
 					? "Registrará la cuenta por pagar; después solo podrá cancelarse."
@@ -1051,7 +1179,10 @@ class FacexCompras {
 
 	_cancel() {
 		const c = CP_KINDS[this.doc.kind];
-		const effect = { oc: "", en: " Se revertirá el inventario.", fc: " Se revertirán la cuenta por pagar y, si aplica, el inventario." }[this.doc.kind];
+		const effect = {
+			oc: "", en: " Se revertirá el inventario.", fc: " Se revertirán la cuenta por pagar y, si aplica, el inventario.",
+			dv: " La mercadería vuelve a la bodega.", nc: " Se revierte el crédito del proveedor.",
+		}[this.doc.kind];
 		frappe.confirm(`¿Cancelar ${cpEsc(c.one.toLowerCase())} <b>${cpEsc(this.doc.name)}</b>?${effect}`, () => {
 			frappe.call({
 				method: "facex_multi.api.compras.documentos.cancel_document",
@@ -1112,11 +1243,13 @@ class FacexCompras {
 						supplier: m.supplier, supplier_name: m.supplier_name, currency: m.currency,
 						tax_type: m.tax_type || this.defaults.default_tax_template || "",
 						source: m.source, related: [{ kind: source.kind, name: source.name, docstatus: 1, status: source.status }],
+						update_stock: m.update_stock || 0,
 						items: m.items,
 					},
 				});
 				this.dirty = true;
-				frappe.show_alert({ message: `Revise cantidades${target === "fc" ? " y datos de la factura" : ""} y grabe.`, indicator: "blue" });
+				const what = { fc: " y datos de la factura", nc: " y el número de la nota de crédito" }[target] || "";
+				frappe.show_alert({ message: `Revise cantidades${what} y grabe.`, indicator: "blue" });
 			},
 		});
 	}

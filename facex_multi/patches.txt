@@ -39,3 +39,4 @@ facex_multi.patches.v1_0.add_bodega_operaciones_permitidas
 facex_multi.patches.v1_0.split_facex_configuracion_compania
 facex_multi.patches.v1_0.add_alcance_datos
 facex_multi.patches.v1_0.add_compras_documentos_permisos
+facex_multi.patches.v1_0.add_compras_devoluciones_permisos

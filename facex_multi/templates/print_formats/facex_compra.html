@@ -33,6 +33,10 @@
   {%- if it.get("purchase_order") and it.purchase_order not in origen_oc -%}{%- set _ = origen_oc.append(it.purchase_order) -%}{%- endif -%}
   {%- if it.get("purchase_receipt") and it.purchase_receipt not in origen_en -%}{%- set _ = origen_en.append(it.purchase_receipt) -%}{%- endif -%}
 {%- endfor -%}
+{#- Devoluciones / notas de crédito: ERPNext guarda cantidades y montos en
+    negativo; se imprimen en positivo (el título ya dice qué documento es). -#}
+{%- macro q(v) -%}{{ frappe.format((v or 0)|abs, {"fieldtype": "Float"}) }}{%- endmacro -%}
+{%- macro m(v) -%}{{ frappe.format((v or 0)|abs, {"fieldtype": "Currency", "options": "currency"}, doc) }}{%- endmacro -%}
 {%- set muestra_bodega = es_en or (es_fc and doc.update_stock) or es_oc -%}
 
 <style>
@@ -79,12 +83,12 @@
         <table>
           <tr><td class="lbl">Fecha</td><td>{{ frappe.utils.formatdate(fecha) }}</td></tr>
           {%- if es_oc and doc.schedule_date -%}<tr><td class="lbl">Fecha de entrega</td><td>{{ frappe.utils.formatdate(doc.schedule_date) }}</td></tr>{%- endif -%}
-          {%- if es_fc and doc.bill_no -%}<tr><td class="lbl">Factura proveedor</td><td>{{ doc.bill_no }}{% if doc.bill_date %} · {{ frappe.utils.formatdate(doc.bill_date) }}{% endif %}</td></tr>{%- endif -%}
+          {%- if es_fc and doc.bill_no -%}<tr><td class="lbl">{{ "Nota de crédito proveedor" if doc.is_return else "Factura proveedor" }}</td><td>{{ doc.bill_no }}{% if doc.bill_date %} · {{ frappe.utils.formatdate(doc.bill_date) }}{% endif %}</td></tr>{%- endif -%}
           {%- if es_fc and doc.due_date and not doc.is_return -%}<tr><td class="lbl">Vence</td><td>{{ frappe.utils.formatdate(doc.due_date) }}</td></tr>{%- endif -%}
           {%- if es_en and doc.supplier_delivery_note -%}<tr><td class="lbl">Envío / remisión</td><td>{{ doc.supplier_delivery_note }}</td></tr>{%- endif -%}
           {%- if origen_oc -%}<tr><td class="lbl">Orden de compra</td><td>{{ origen_oc | join(", ") }}</td></tr>{%- endif -%}
-          {%- if origen_en -%}<tr><td class="lbl">Entrada</td><td>{{ origen_en | join(", ") }}</td></tr>{%- endif -%}
-          {%- if doc.get("return_against") -%}<tr><td class="lbl">Sobre</td><td>{{ doc.return_against }}</td></tr>{%- endif -%}
+          {%- if origen_en -%}<tr><td class="lbl">{{ "Documento de recepción" if doc.is_return else "Entrada" }}</td><td>{{ origen_en | join(", ") }}</td></tr>{%- endif -%}
+          {%- if doc.get("return_against") -%}<tr><td class="lbl">{{ "Devolución de" if es_en else "Sobre factura" }}</td><td>{{ doc.return_against }}</td></tr>{%- endif -%}
           <tr><td class="lbl">Moneda</td><td>{{ doc.currency }}{% if doc.conversion_rate and doc.conversion_rate != 1 %} (T.C. {{ doc.get_formatted("conversion_rate") }}){% endif %}</td></tr>
         </table>
       </td>
@@ -113,10 +117,10 @@
           {%- if it.get("serial_no") -%}<div class="muted" style="white-space: pre-line;">Series: {{ it.serial_no }}</div>{%- endif -%}
         </td>
         {%- if muestra_bodega -%}<td>{{ it.warehouse or "" }}</td>{%- endif -%}
-        <td class="num">{{ it.get_formatted("qty") }}</td>
+        <td class="num">{{ q(it.qty) }}</td>
         <td>{{ it.uom or "" }}</td>
-        <td class="num">{{ it.get_formatted("rate", doc) }}</td>
-        <td class="num">{{ it.get_formatted("amount", doc) }}</td>
+        <td class="num">{{ m(it.rate) }}</td>
+        <td class="num">{{ m(it.amount) }}</td>
       </tr>
       {%- endfor -%}
     </tbody>
@@ -133,14 +137,14 @@
       </td>
       <td>
         <table class="tot">
-          <tr><td>Subtotal</td><td class="num">{{ doc.get_formatted("net_total") }}</td></tr>
+          <tr><td>Subtotal</td><td class="num">{{ m(doc.net_total) }}</td></tr>
           {%- for t in doc.taxes if t.tax_amount -%}
-          <tr><td>{{ t.description or t.account_head }}</td><td class="num">{{ t.get_formatted("tax_amount", doc) }}</td></tr>
+          <tr><td>{{ t.description or t.account_head }}</td><td class="num">{{ m(t.tax_amount) }}</td></tr>
           {%- endfor -%}
-          {%- if doc.discount_amount -%}<tr><td>Descuento</td><td class="num">-{{ doc.get_formatted("discount_amount") }}</td></tr>{%- endif -%}
-          <tr class="grand"><td>Total</td><td class="num">{{ doc.get_formatted("grand_total") }}</td></tr>
+          {%- if doc.discount_amount -%}<tr><td>Descuento</td><td class="num">-{{ m(doc.discount_amount) }}</td></tr>{%- endif -%}
+          <tr class="grand"><td>Total</td><td class="num">{{ m(doc.grand_total) }}</td></tr>
           {%- if es_fc and doc.docstatus == 1 and not doc.is_return -%}
-          <tr><td>Saldo pendiente</td><td class="num">{{ doc.get_formatted("outstanding_amount") }}</td></tr>
+          <tr><td>Saldo pendiente</td><td class="num">{{ m(doc.outstanding_amount) }}</td></tr>
           {%- endif -%}
         </table>
       </td>
@@ -160,7 +164,7 @@
         {%- if doc.get("facex_validado_el") -%}<div class="muted">{{ frappe.utils.format_datetime(doc.facex_validado_el, "dd-MM-yyyy HH:mm") }}</div>{%- endif -%}
       </td>
       <td style="width: 33%;">
-        <div style="border-top: 1px solid #1e293b; padding-top: 3px;">{{ "Recibido por" if es_en else "Autorizado por" }}</div>
+        <div style="border-top: 1px solid #1e293b; padding-top: 3px;">{{ ("Entregado al proveedor" if doc.is_return else "Recibido por") if es_en else "Autorizado por" }}</div>
       </td>
     </tr>
   </table>
