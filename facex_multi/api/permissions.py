@@ -200,6 +200,8 @@ PROFILE_PERM_FIELDS = [
     "salida_validar_confirmar",
     "transferencia_grabar_borrador",
     "transferencia_validar_confirmar",
+    "transformar_grabar_borrador",
+    "transformar_autorizar",
     "reporte_inv_kardex",
     "reporte_inv_existencias",
     "reporte_inv_trazabilidad",
@@ -208,6 +210,7 @@ PROFILE_PERM_FIELDS = [
     "reporte_inv_vencimientos",
     "reporte_inv_rotacion",
     "reporte_inv_entradas_proveedor",
+    "reporte_inv_transformaciones",
     "mantiene_costos_items",
     "mantiene_almacenes",
     "puede_crear_cierres",
@@ -564,6 +567,8 @@ _INVENTORY_PERM_FIELDS = [
     "entrada_grabar_borrador", "entrada_validar_confirmar",
     "salida_grabar_borrador", "salida_validar_confirmar",
     "transferencia_grabar_borrador", "transferencia_validar_confirmar",
+    "transformar_grabar_borrador", "transformar_autorizar",
+    "reporte_inv_transformaciones",
 ]
 
 

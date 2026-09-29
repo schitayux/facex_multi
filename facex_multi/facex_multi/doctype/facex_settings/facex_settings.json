@@ -114,6 +114,10 @@
   "cb_inv_estados_2",
   "transferencia_grabar_borrador",
   "transferencia_validar_confirmar",
+  "sb_inv_transformar",
+  "transformar_grabar_borrador",
+  "cb_inv_transformar",
+  "transformar_autorizar",
   "sb_inventario_reportes",
   "reporte_inv_kardex",
   "reporte_inv_existencias",
@@ -126,6 +130,7 @@
   "cb_inv_rep3",
   "reporte_inv_rotacion",
   "reporte_inv_entradas_proveedor",
+  "reporte_inv_transformaciones",
   "sb_inventario_maestros",
   "mantiene_costos_items",
   "cb_inv_maestros",
@@ -1212,11 +1217,41 @@
    "fieldtype": "Check",
    "label": "No concatenar el sufijo de la compañía al Código de Ítems (GLOBAL)",
    "hidden": 1
+  },
+  {
+   "fieldname": "sb_inv_transformar",
+   "fieldtype": "Section Break",
+   "label": "Transformar (Inventario)"
+  },
+  {
+   "default": "0",
+   "fieldname": "transformar_grabar_borrador",
+   "fieldtype": "Check",
+   "label": "Transformar — Grabar Borrador",
+   "description": "Crear documentos «Transformar» (producto padre ← productos hijos). Quedan en Borrador hasta que un autorizador los valide; el usuario solo ve los documentos que él creó."
+  },
+  {
+   "fieldname": "cb_inv_transformar",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "transformar_autorizar",
+   "fieldtype": "Check",
+   "label": "Transformar — Autorizar / Validar",
+   "description": "Recibe el aviso de Transformaciones pendientes y las Autoriza (genera la Salida de los hijos y la Entrada del padre) o las Rechaza. Si además tiene «Grabar Borrador» puede autorizar las suyas."
+  },
+  {
+   "default": "0",
+   "fieldname": "reporte_inv_transformaciones",
+   "fieldtype": "Check",
+   "label": "Transformaciones",
+   "description": "Informe de documentos Transformar con usuario creador y autorizador."
   }
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-09-24 12:00:00.000000",
+ "modified": "2026-09-28 23:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Settings",

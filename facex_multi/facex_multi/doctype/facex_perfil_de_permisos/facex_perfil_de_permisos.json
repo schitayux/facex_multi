@@ -77,6 +77,10 @@
   "salida_validar_confirmar",
   "transferencia_grabar_borrador",
   "transferencia_validar_confirmar",
+  "sec_transformar",
+  "transformar_grabar_borrador",
+  "col_transformar",
+  "transformar_autorizar",
   "sec_6",
   "reporte_inv_kardex",
   "reporte_inv_existencias",
@@ -87,6 +91,7 @@
   "reporte_inv_vencimientos",
   "reporte_inv_rotacion",
   "reporte_inv_entradas_proveedor",
+  "reporte_inv_transformaciones",
   "sec_7",
   "mantiene_costos_items",
   "mantiene_almacenes",
@@ -780,10 +785,40 @@
    "fieldname": "puede_resetear_password",
    "fieldtype": "Check",
    "label": "Reiniciar Contraseña de Usuarios"
+  },
+  {
+   "fieldname": "sec_transformar",
+   "fieldtype": "Section Break",
+   "label": "Transformar (Inventario)"
+  },
+  {
+   "default": "0",
+   "fieldname": "transformar_grabar_borrador",
+   "fieldtype": "Check",
+   "label": "Transformar — Grabar Borrador",
+   "description": "Crear documentos «Transformar» (producto padre ← productos hijos). Quedan en Borrador hasta que un autorizador los valide; el usuario solo ve los documentos que él creó."
+  },
+  {
+   "fieldname": "col_transformar",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "transformar_autorizar",
+   "fieldtype": "Check",
+   "label": "Transformar — Autorizar / Validar",
+   "description": "Recibe el aviso de Transformaciones pendientes y las Autoriza (genera la Salida de los hijos y la Entrada del padre) o las Rechaza. Si además tiene «Grabar Borrador» puede autorizar las suyas."
+  },
+  {
+   "default": "0",
+   "fieldname": "reporte_inv_transformaciones",
+   "fieldtype": "Check",
+   "label": "Transformaciones",
+   "description": "Informe de documentos Transformar con usuario creador y autorizador."
   }
  ],
  "links": [],
- "modified": "2026-09-24 12:00:00.000000",
+ "modified": "2026-09-28 23:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Perfil de Permisos",

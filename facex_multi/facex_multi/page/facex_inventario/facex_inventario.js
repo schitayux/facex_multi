@@ -37,6 +37,8 @@ frappe.pages["facex-inventario"].on_page_show = function (wrapper) {
 	// de pestaña (ver history_guard.js), así que sin esto el guard del botón
 	// Atrás dejaría de funcionar después de la primera visita a esta página.
 	facex_multi.setup_back_guard({ to: "/app", is_dirty: () => (wrapper.facexInventario.entry_rows || []).length > 0 });
+	// Link de la notificación de Transformar con la página ya abierta.
+	wrapper.facexInventario._check_url_transformar();
 };
 
 const INV_MOVEMENTS = [
@@ -54,6 +56,7 @@ const INV_REPORTS = [
 	{ key: "reporte_inv_vencimientos", id: "inv-rep-vencimientos", title: "Productos por Vencer", desc: "Lotes con existencia próximos a vencer o ya caducados, por rango de días." },
 	{ key: "reporte_inv_rotacion", id: "inv-rep-rotacion", title: "Rotación y Análisis ABC", desc: "Rotación de inventario y clasificación ABC por valor de consumo del periodo." },
 	{ key: "reporte_inv_entradas_proveedor", id: "inv-rep-entradas-prov", title: "Entradas por Proveedor", desc: "Resumen de ingresos de mercadería vía Facturas de Compra, por proveedor y producto." },
+	{ key: "reporte_inv_transformaciones", id: "inv-rep-transformaciones", title: "Transformaciones", desc: "Documentos Transformar por estado, con usuario creador y usuario que autorizó o rechazó." },
 ];
 
 const INV_MAESTROS = [
@@ -392,6 +395,8 @@ class FacexInventario {
 				this._can_costs = !!((this.defaults.permissions || {}).puede_ver_costos);
 				this._render_transporte_menu();
 				this._render_shell();
+				this._bind_trn_realtime();
+				this._check_url_transformar();
 			},
 			error: () => {
 				this.$body.html(`<div style="padding:40px;text-align:center;color:#e03e2d;">No se pudo cargar el módulo de Inventario.</div>`);
@@ -437,6 +442,7 @@ class FacexInventario {
     <div style="font-size:13px;color:#6c757d;margin-top:6px;">Contacte a un administrador para solicitar acceso.</div>
   </div>
   ` : `
+  <div id="inv-trn-banner"></div>
   <div style="font-size:13px;font-weight:600;color:#6c757d;text-transform:uppercase;letter-spacing:.4px;margin:4px 0 10px;">Movimientos</div>
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;margin-bottom:24px;">
     ${INV_MOVEMENTS.map(m => this._movement_card(m, !!this._mov_gate(m.mode).can_access)).join("")}
@@ -444,6 +450,13 @@ class FacexInventario {
     <div id="inv-card-recepcion" class="inv-card" data-recepcion="1">
       <div class="inv-card-title">Recepción de Traslados</div>
       <div class="inv-card-desc">Ingresar a bodega o devolver el stock que llega a su almacén de tránsito.</div>
+      <div class="inv-card-tag">Abrir →</div>
+    </div>` : ""}
+    ${this._trn_access() ? `
+    <div id="inv-card-transformar" class="inv-card" data-transformar="1">
+      <div class="inv-card-title">Transformar</div>
+      <div class="inv-card-desc">Convertir existencia de productos hijos en un producto padre, con autorización.</div>
+      <div class="inv-trn-chips" style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;"></div>
       <div class="inv-card-tag">Abrir →</div>
     </div>` : ""}
   </div>
@@ -471,6 +484,7 @@ class FacexInventario {
 		`);
 
 		this._bind_shell_events();
+		if (perms.puede_ver_inventario) this._refresh_trn_badges();
 	}
 
 	_movement_card(item, allowed) {
@@ -541,6 +555,7 @@ class FacexInventario {
 			if (report === "reporte_inv_vencimientos") { this._open_vencimientos(); return; }
 			if (report === "reporte_inv_rotacion") { this._open_rotacion_abc(); return; }
 			if (report === "reporte_inv_entradas_proveedor") { this._open_entradas_proveedor(); return; }
+			if (report === "reporte_inv_transformaciones") { this._open_rep_transformaciones(); return; }
 			frappe.show_alert({ message: __("Próximamente: {0}", [report]), indicator: "blue" });
 		});
 
@@ -560,6 +575,8 @@ class FacexInventario {
 		});
 
 		this.$body.on("click", "[data-recepcion]", () => this._open_recepcion_traslados());
+		this.$body.on("click", "[data-transformar]", () => this._open_transformar());
+		this.$body.on("click", "[data-trn-open]", (e) => this._open_transformar($(e.currentTarget).data("trn-open")));
 	}
 
 	// ──────────────────────────────────────────────
@@ -4445,6 +4462,787 @@ ${componentes.map((c) => `
 		});
 		d.show();
 	}
+
+	// ──────────────────────────────────────────────
+	// Transformar (padre ← hijos, Borrador → Autorizar)
+	// Backend: facex_multi.api.transformar
+	// ──────────────────────────────────────────────
+
+	_trn_access() {
+		const p = (this.defaults || {}).permissions || {};
+		return !!(p.transformar_grabar_borrador || p.transformar_autorizar);
+	}
+
+	// Contadores de la tarjeta + banner del inicio (pendientes de autorizar /
+	// resoluciones que el creador aún no vio).
+	_refresh_trn_badges() {
+		if (!this._trn_access()) return;
+		frappe.call({
+			method: "facex_multi.api.transformar.get_badges",
+			args: { company: this.defaults.company },
+			callback: (r) => {
+				const b = r.message || {};
+				this._trn_badges = b;
+				const $card = this.$body.find("#inv-card-transformar");
+				if ($card.length) {
+					const chips = [];
+					if (b.pendientes) chips.push(`<span class="inv-trn-chip inv-trn-chip-warn">${b.pendientes} por autorizar</span>`);
+					if (b.no_vistos) chips.push(`<span class="inv-trn-chip inv-trn-chip-new">${b.no_vistos} sin leer</span>`);
+					if (b.mis_borradores) chips.push(`<span class="inv-trn-chip">${b.mis_borradores} en borrador</span>`);
+					$card.find(".inv-trn-chips").html(chips.join(""));
+				}
+				const $banner = this.$body.find("#inv-trn-banner");
+				if ($banner.length) {
+					const msgs = [];
+					if (b.pendientes) msgs.push(`<div class="inv-trn-banner inv-trn-banner-warn"><span>Hay <strong>${b.pendientes}</strong> documento(s) Transformar pendientes de autorizar.</span><button type="button" class="inv-btn inv-btn-primary" data-trn-open="pendientes">Revisar</button></div>`);
+					if (b.no_vistos) msgs.push(`<div class="inv-trn-banner inv-trn-banner-new"><span>Tiene <strong>${b.no_vistos}</strong> transformación(es) resueltas que aún no ha visto.</span><button type="button" class="inv-btn inv-btn-secondary" data-trn-open="mis">Ver</button></div>`);
+					$banner.html(msgs.join(""));
+				}
+				const $tabp = this.$body.find("#inv-trn-count-pend");
+				if ($tabp.length) $tabp.text(b.pendientes ? ` (${b.pendientes})` : "");
+				const $tabm = this.$body.find("#inv-trn-count-mis");
+				if ($tabm.length) $tabm.text(b.no_vistos ? ` (${b.no_vistos} nuevo${b.no_vistos > 1 ? "s" : ""})` : "");
+			},
+		});
+	}
+
+	// Aviso en vivo (Notification Log + publish_realtime del backend).
+	_bind_trn_realtime() {
+		if (this._trn_rt_bound || !frappe.realtime) return;
+		this._trn_rt_bound = true;
+		frappe.realtime.on("facex_transformar", (data) => {
+			if (!this.defaults || (data && data.company && data.company !== this.defaults.company)) return;
+			this._refresh_trn_badges();
+			if (this.$body.find("#inv-trn-app").length) this._trn_load_tab();
+		});
+	}
+
+	// /app/facex-inventario?transformar=TRN-... (link de la notificación).
+	_check_url_transformar() {
+		if (!this.defaults) return;
+		const params = new URLSearchParams(window.location.search);
+		const name = params.get("transformar");
+		if (!name) return;
+		params.delete("transformar");
+		const qs = params.toString();
+		window.history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : ""));
+		if (!this._trn_access()) return;
+		this._open_transformar("mis", () => this._trn_view(name));
+	}
+
+	_open_transformar(tab, after) {
+		frappe.call({
+			method: "facex_multi.api.transformar.get_context",
+			args: { company: this.defaults.company },
+			freeze: true,
+			callback: (r) => {
+				if (!r.message) return;
+				const ctx = r.message;
+				this._trn_ctx = ctx;
+				this._trn_estado = this._trn_estado || "";
+				this._trn_tab = tab || (ctx.can_draft ? "nuevo" : "pendientes");
+				if (!this._trn_form) this._trn_reset_form();
+				this._render_transformar();
+				if (after) after();
+			},
+		});
+	}
+
+	_trn_default_wh(list) {
+		const def = this._trn_ctx.bodega_por_defecto;
+		if (def && list.includes(def)) return def;
+		return list.length === 1 ? list[0] : "";
+	}
+
+	_trn_reset_form() {
+		this._trn_form = {
+			name: null,
+			item_padre: "", item_name: "", stock_uom: "", uoms: [], uom: "",
+			cantidad: 1, has_batch_no: 0, batch_no: "", comentario: "", componentes: [],
+			almacen_destino: this._trn_default_wh(this._trn_ctx.almacenes_entrada || []),
+			items: [],
+		};
+		this._trn_uid = 0;
+		this._trn_token = frappe.utils.get_random(20);
+	}
+
+	_render_transformar() {
+		const ctx = this._trn_ctx;
+		const tabs = [];
+		if (ctx.can_draft || ctx.can_authorize) tabs.push(["nuevo", this._trn_form.name ? `Editar ${frappe.utils.escape_html(this._trn_form.name)}` : "Nueva Transformación"]);
+		tabs.push(["mis", `Mis Transformaciones<span id="inv-trn-count-mis"></span>`]);
+		if (ctx.can_authorize) {
+			tabs.push(["pendientes", `Por Autorizar<span id="inv-trn-count-pend"></span>`]);
+			tabs.push(["resueltas", "Resueltas por mí"]);
+		}
+		this.$body.html(`
+<div id="inv-trn-app" style="max-width:1200px;margin:0 auto;padding:16px 8px;">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;">
+    <button type="button" id="inv-back" class="inv-btn inv-btn-secondary">&larr; Volver</button>
+    <div style="font-size:16px;font-weight:600;color:#333;">Transformar</div>
+    <div style="font-size:12.5px;color:#6c757d;">${frappe.utils.escape_html(ctx.company)}</div>
+  </div>
+  <div class="inv-tabs" style="overflow-x:auto;">
+    ${tabs.map(([k, l]) => `<div class="inv-tab ${this._trn_tab === k ? "inv-tab-active" : ""}" data-trn-tab="${k}" style="white-space:nowrap;">${l}</div>`).join("")}
+  </div>
+  <div id="inv-trn-body"></div>
+</div>
+<style>${INV_STYLES}</style>`);
+		this._bind_transformar_events();
+		this._trn_load_tab();
+		this._refresh_trn_badges();
+	}
+
+	_trn_load_tab() {
+		const tab = this._trn_tab;
+		if (tab === "nuevo") { this._trn_render_form(); return; }
+		const $b = this.$body.find("#inv-trn-body");
+		if (tab === "mis") {
+			const estados = [["", "Todas"], ["Borrador", "Borrador"], ["Autorizado", "Autorizadas"], ["Rechazado", "Rechazadas"], ["Anulado", "Anuladas"]];
+			const con_fecha = !["Borrador", "Rechazado"].includes(this._trn_estado);
+			$b.html(`
+<div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:14px 18px;margin-bottom:14px;display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;">
+  <div style="display:flex;gap:6px;flex-wrap:wrap;">
+    ${estados.map(([v, l]) => `<button type="button" class="inv-btn ${this._trn_estado === v ? "inv-btn-primary" : "inv-btn-secondary"}" data-trn-estado="${v}">${l}</button>`).join("")}
+  </div>
+  ${con_fecha ? `
+  <div><label class="inv-label">Desde</label><br><input type="date" id="inv-trn-from" class="inv-select" value="${this._trn_from || frappe.datetime.month_start()}"></div>
+  <div><label class="inv-label">Hasta</label><br><input type="date" id="inv-trn-to" class="inv-select" value="${this._trn_to || frappe.datetime.month_end()}"></div>
+  <button type="button" id="inv-trn-refresh" class="inv-btn inv-btn-secondary">Actualizar</button>` : `<span style="font-size:12px;color:#6c757d;">Se muestran todos (trabajo pendiente, sin filtro de fecha).</span>`}
+</div>
+${this._trn_table_html()}`);
+			this._trn_fetch_list("facex_multi.api.transformar.list_mis_transformaciones", {
+				estado: this._trn_estado || null,
+				from_date: con_fecha ? (this._trn_from || frappe.datetime.month_start()) : null,
+				to_date: con_fecha ? (this._trn_to || frappe.datetime.month_end()) : null,
+			}, true);
+			return;
+		}
+		if (tab === "pendientes") {
+			$b.html(`<div style="font-size:12.5px;color:#6c757d;margin-bottom:10px;">Borradores de la compañía que involucran sus bodegas, del más antiguo al más reciente. Ábralos para autorizar o rechazar.</div>${this._trn_table_html()}`);
+			this._trn_fetch_list("facex_multi.api.transformar.list_pendientes", {}, false);
+			return;
+		}
+		if (tab === "resueltas") {
+			$b.html(`
+<div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:14px 18px;margin-bottom:14px;display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;">
+  <div><label class="inv-label">Desde</label><br><input type="date" id="inv-trn-from" class="inv-select" value="${this._trn_from || frappe.datetime.month_start()}"></div>
+  <div><label class="inv-label">Hasta</label><br><input type="date" id="inv-trn-to" class="inv-select" value="${this._trn_to || frappe.datetime.month_end()}"></div>
+  <button type="button" id="inv-trn-refresh" class="inv-btn inv-btn-secondary">Actualizar</button>
+</div>
+${this._trn_table_html()}`);
+			this._trn_fetch_list("facex_multi.api.transformar.list_resueltas_por_mi", {
+				from_date: this._trn_from || frappe.datetime.month_start(),
+				to_date: this._trn_to || frappe.datetime.month_end(),
+			}, false);
+		}
+	}
+
+	_trn_table_html() {
+		return `
+<div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:12px 14px;overflow-x:auto;">
+  <table class="inv-table" style="width:100%;min-width:760px;">
+    <thead><tr><th>Documento</th><th style="width:100px;">Estado</th><th>Producto Padre</th><th>Almacén Destino</th><th style="width:60px;">Hijos</th><th>Creado por</th><th>Autorizado / Rechazado por</th></tr></thead>
+    <tbody id="inv-trn-tbody"><tr><td colspan="7" style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr></tbody>
+  </table>
+</div>`;
+	}
+
+	_trn_estado_badge(estado) {
+		const cls = { Borrador: "borrador", Autorizado: "autorizado", Rechazado: "rechazado", Anulado: "anulado" }[estado] || "borrador";
+		const label = estado === "Borrador" ? "Por autorizar" : estado;
+		return `<span class="inv-trn-estado inv-trn-estado-${cls}">${frappe.utils.escape_html(label)}</span>`;
+	}
+
+	_trn_fecha(v) {
+		return v ? frappe.datetime.str_to_user(String(v).slice(0, 16)) : "";
+	}
+
+	_trn_fetch_list(method, args, mark_new) {
+		frappe.call({
+			method,
+			args: { company: this.defaults.company, ...args },
+			callback: (r) => {
+				const rows = (r.message && r.message.rows) || [];
+				const $tbody = this.$body.find("#inv-trn-tbody");
+				if (!rows.length) {
+					$tbody.html(`<tr><td colspan="7" style="text-align:center;color:#adb5bd;padding:20px;">Sin transformaciones.</td></tr>`);
+					return;
+				}
+				$tbody.html(rows.map((row) => {
+					const nuevo = mark_new && !cint(row.visto_por_creador);
+					return `
+<tr class="inv-mov-row ${nuevo ? "inv-trn-row-new" : ""}" data-trn-view="${frappe.utils.escape_html(row.name)}">
+  <td><strong>${frappe.utils.escape_html(row.name)}</strong>${nuevo ? ` <span class="inv-trn-chip inv-trn-chip-new">Nuevo</span>` : ""}</td>
+  <td>${this._trn_estado_badge(row.estado)}</td>
+  <td>${frappe.utils.escape_html(row.item_padre)} <span style="color:#6c757d;">${frappe.utils.escape_html(row.item_name || "")}</span><br><strong>+${flt(row.cantidad)} ${frappe.utils.escape_html(row.uom || "")}</strong></td>
+  <td>${frappe.utils.escape_html(row.almacen_destino || "")}</td>
+  <td>${cint(row.hijos)}</td>
+  <td>${frappe.utils.escape_html(row.creado_por_nombre || "")}<br><span style="color:#6c757d;font-size:11.5px;">${this._trn_fecha(row.fecha_creacion)}</span></td>
+  <td>${frappe.utils.escape_html(row.autorizado_por_nombre || "—")}<br><span style="color:#6c757d;font-size:11.5px;">${this._trn_fecha(row.fecha_autorizacion)}</span></td>
+</tr>`;
+				}).join(""));
+			},
+		});
+	}
+
+	_bind_transformar_events() {
+		this.$body.off();
+		$(document).off(".facexInv");
+		const $body = this.$body;
+
+		$body.on("click", "#inv-back", () => this._render_shell());
+		$body.on("click", "[data-trn-tab]", (e) => {
+			this._trn_tab = $(e.currentTarget).data("trn-tab");
+			$body.find(".inv-tab").removeClass("inv-tab-active");
+			$(e.currentTarget).addClass("inv-tab-active");
+			this._trn_load_tab();
+		});
+		$body.on("click", "[data-trn-estado]", (e) => {
+			this._trn_estado = String($(e.currentTarget).data("trn-estado") || "");
+			this._trn_load_tab();
+		});
+		$body.on("click", "#inv-trn-refresh", () => {
+			this._trn_from = $body.find("#inv-trn-from").val();
+			this._trn_to = $body.find("#inv-trn-to").val();
+			this._trn_load_tab();
+		});
+		$body.on("click", "[data-trn-view]", (e) => this._trn_view($(e.currentTarget).data("trn-view")));
+
+		// Formulario — producto padre
+		this._trn_bind_search("#inv-trn-padre-search", "#inv-trn-padre-results", (it) => this._trn_set_padre(it.item_code));
+		// Formulario — agregar hijo
+		this._trn_bind_search("#inv-trn-hijo-search", "#inv-trn-hijo-results", (it) => this._trn_add_hijo(it.item_code));
+		$(document).on("click.facexInv", (e) => {
+			if (!$(e.target).closest("#inv-trn-padre-search, #inv-trn-padre-results").length) $body.find("#inv-trn-padre-results").hide();
+			if (!$(e.target).closest("#inv-trn-hijo-search, #inv-trn-hijo-results").length) $body.find("#inv-trn-hijo-results").hide();
+		});
+
+		$body.on("input change", "[data-trn-f]", (e) => {
+			const f = $(e.currentTarget).data("trn-f");
+			this._trn_form[f] = e.currentTarget.value;
+		});
+		$body.on("input change", "[data-trn-h]", (e) => {
+			const uid = cint($(e.currentTarget).closest("tr").data("uid"));
+			const row = this._trn_form.items.find((x) => x.uid === uid);
+			if (!row) return;
+			const f = $(e.currentTarget).data("trn-h");
+			row[f] = e.currentTarget.value;
+			if (f === "uom" || f === "almacen" || f === "cantidad") this._trn_update_hint(row);
+		});
+		$body.on("click", "[data-trn-remove]", (e) => {
+			const uid = cint($(e.currentTarget).closest("tr").data("uid"));
+			this._trn_form.items = this._trn_form.items.filter((x) => x.uid !== uid);
+			this._trn_render_hijos();
+		});
+		$body.on("click", "#inv-trn-load-bom", () => this._trn_load_bom());
+		$body.on("click", "#inv-trn-cancel-edit", () => { this._trn_reset_form(); this._render_transformar(); });
+		$body.on("click", "[data-trn-save]", (e) => this._trn_save(cint($(e.currentTarget).data("trn-save"))));
+	}
+
+	_trn_bind_search(input, results, on_pick) {
+		const $body = this.$body;
+		let timer = null;
+		$body.on("input", input, (e) => {
+			clearTimeout(timer);
+			const val = e.target.value.trim();
+			if (val.length < 2) { $body.find(results).hide(); return; }
+			timer = setTimeout(() => {
+				frappe.call({
+					method: "facex_multi.api.stock.search_items_for_stock",
+					args: { txt: val, company: this.defaults.company },
+					callback: (r) => {
+						const items = r.message || [];
+						const $res = $body.find(results);
+						if (!items.length) { $res.html(`<div style="color:#adb5bd;">Sin resultados</div>`).show(); return; }
+						$res.html(items.map((it) => `<div data-code="${frappe.utils.escape_html(it.item_code)}"><strong>${frappe.utils.escape_html(it.item_code)}</strong> — ${frappe.utils.escape_html(it.item_name || "")} <span style="color:#adb5bd;">${frappe.utils.escape_html(it.stock_uom || "")}</span></div>`).join("")).show();
+					},
+				});
+			}, 300);
+		});
+		$body.on("keydown", input, (e) => {
+			if (e.key !== "Enter") return;
+			e.preventDefault();
+			const $first = $body.find(`${results} div[data-code]`).first();
+			if ($first.length) $first.trigger("click");
+		});
+		$body.on("click", `${results} div[data-code]`, (e) => {
+			$body.find(results).hide();
+			$body.find(input).val("");
+			on_pick({ item_code: String($(e.currentTarget).data("code")) });
+		});
+	}
+
+	_trn_item_info(item_code) {
+		return frappe.xcall("facex_multi.api.transformar.get_item_info", { item_code, company: this.defaults.company });
+	}
+
+	_trn_set_padre(item_code) {
+		this._trn_item_info(item_code).then((info) => {
+			const f = this._trn_form;
+			Object.assign(f, {
+				item_padre: info.item_code, item_name: info.item_name, stock_uom: info.stock_uom,
+				uoms: info.uoms || [], uom: info.stock_uom, has_batch_no: cint(info.has_batch_no),
+				batch_no: "", componentes: info.componentes || [],
+			});
+			this._trn_render_form();
+		});
+	}
+
+	_trn_new_row(info, extra) {
+		this._trn_uid += 1;
+		const stock = {};
+		(info.stock || []).forEach((s) => { stock[s.warehouse] = flt(s.actual_qty); });
+		return {
+			uid: this._trn_uid,
+			item_code: info.item_code, item_name: info.item_name, stock_uom: info.stock_uom,
+			uoms: info.uoms || [{ uom: info.stock_uom, conversion_factor: 1 }],
+			uom: info.stock_uom, cantidad: 1,
+			almacen: this._trn_default_wh(this._trn_ctx.almacenes_salida || []),
+			has_batch_no: cint(info.has_batch_no), has_serial_no: cint(info.has_serial_no),
+			batch_no: "", serial_no: "", stock,
+			...(extra || {}),
+		};
+	}
+
+	_trn_add_hijo(item_code) {
+		if (item_code === this._trn_form.item_padre) {
+			frappe.show_alert({ message: "El producto padre no puede ser también hijo.", indicator: "orange" });
+			return;
+		}
+		const existing = this._trn_form.items.find((x) => x.item_code === item_code);
+		if (existing) {
+			existing.cantidad = flt(existing.cantidad) + 1;
+			this._trn_render_hijos();
+			return;
+		}
+		this._trn_item_info(item_code).then((info) => {
+			this._trn_form.items.push(this._trn_new_row(info));
+			this._trn_render_hijos();
+			this.$body.find("#inv-trn-hijo-search").focus();
+		});
+	}
+
+	// Sugerencia: si el padre es Lista de Materiales, precarga sus componentes
+	// (cantidad por unidad × cantidad del padre); el usuario puede editarlos.
+	_trn_load_bom() {
+		const f = this._trn_form;
+		const comps = f.componentes || [];
+		if (!comps.length) return;
+		Promise.all(comps.map((c) => this._trn_item_info(c.item_code))).then((infos) => {
+			f.items = infos.map((info, i) => this._trn_new_row(info, { cantidad: flt(comps[i].qty) * (flt(f.cantidad) || 1) }));
+			this._trn_render_hijos();
+		});
+	}
+
+	_trn_render_form() {
+		const f = this._trn_form;
+		const ctx = this._trn_ctx;
+		const ent = ctx.almacenes_entrada || [];
+		const esc = frappe.utils.escape_html;
+		const uom_opts = (f.uoms.length ? f.uoms : [{ uom: f.stock_uom || "", conversion_factor: 1 }])
+			.map((u) => `<option value="${esc(u.uom)}" ${u.uom === f.uom ? "selected" : ""}>${esc(u.uom)}${u.conversion_factor !== 1 ? ` (× ${flt(u.conversion_factor)})` : ""}</option>`).join("");
+		const buttons = [];
+		if (ctx.can_draft) buttons.push(`<button type="button" class="inv-btn ${ctx.can_authorize ? "inv-btn-secondary" : "inv-btn-primary"}" data-trn-save="0">${f.name ? "Guardar cambios (Borrador)" : "Grabar Borrador"}</button>`);
+		if (ctx.can_authorize) buttons.push(`<button type="button" class="inv-btn inv-btn-primary" data-trn-save="1">${ctx.can_draft ? "Grabar y Autorizar" : "Autorizar"}</button>`);
+
+		this.$body.find("#inv-trn-body").html(`
+${!ctx.hay_autorizadores && !ctx.can_authorize ? `<div class="inv-trn-banner inv-trn-banner-warn" style="margin-bottom:12px;"><span>No hay ningún usuario con permiso «Transformar — Autorizar» en esta compañía: su borrador quedará pendiente hasta que se configure uno.</span></div>` : ""}
+<div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;margin-bottom:14px;">
+  <div style="font-size:13px;font-weight:600;color:#153375;margin-bottom:10px;">Producto Padre (ingresa a inventario)</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;align-items:end;">
+    <div style="grid-column:span 2;min-width:0;">
+      <label class="inv-label">Producto <span style="color:#e03e2d;">*</span></label>
+      ${f.item_padre ? `<div style="padding:6px 0;font-size:13px;"><strong>${esc(f.item_padre)}</strong> — ${esc(f.item_name || "")}</div>` : ""}
+      <div style="position:relative;">
+        <input type="text" id="inv-trn-padre-search" class="inv-select" style="width:100%;" placeholder="${f.item_padre ? "Cambiar producto padre..." : "Buscar o escanear producto..."}" autocomplete="off">
+        <div id="inv-trn-padre-results" class="inv-autocomplete"></div>
+      </div>
+    </div>
+    <div>
+      <label class="inv-label">Unidad de Medida</label>
+      <select class="inv-select" style="width:100%;" data-trn-f="uom" ${f.item_padre ? "" : "disabled"}>${uom_opts}</select>
+    </div>
+    <div>
+      <label class="inv-label">Cantidad <span style="color:#e03e2d;">*</span></label>
+      <input type="number" min="0" step="any" class="inv-select" style="width:100%;" data-trn-f="cantidad" value="${esc(String(f.cantidad))}">
+    </div>
+    <div>
+      <label class="inv-label">Almacén de Ingreso <span style="color:#e03e2d;">*</span></label>
+      <select class="inv-select" style="width:100%;" data-trn-f="almacen_destino">
+        <option value="">Seleccione...</option>
+        ${ent.map((w) => `<option value="${esc(w)}" ${w === f.almacen_destino ? "selected" : ""}>${esc(w)}</option>`).join("")}
+      </select>
+    </div>
+    ${f.has_batch_no ? `
+    <div>
+      <label class="inv-label">Lote de Ingreso <span style="color:#e03e2d;">*</span></label>
+      <input type="text" class="inv-select" style="width:100%;" data-trn-f="batch_no" value="${esc(f.batch_no || "")}" placeholder="Lote">
+    </div>` : ""}
+    <div style="grid-column:1/-1;">
+      <label class="inv-label">Comentario</label>
+      <input type="text" class="inv-select" style="width:100%;" data-trn-f="comentario" value="${esc(f.comentario || "")}" placeholder="Motivo u observación (opcional)">
+    </div>
+  </div>
+</div>
+
+<div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;margin-bottom:14px;">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+    <div style="font-size:13px;font-weight:600;color:#153375;">Productos Hijos (salen de inventario)</div>
+    ${(f.componentes || []).length ? `<button type="button" id="inv-trn-load-bom" class="inv-btn inv-btn-secondary">Cargar componentes de la Lista de Materiales</button>` : ""}
+  </div>
+  <div style="position:relative;max-width:520px;margin-bottom:10px;">
+    <input type="text" id="inv-trn-hijo-search" class="inv-select" style="width:100%;" placeholder="Agregar producto hijo (buscar o escanear)..." autocomplete="off">
+    <div id="inv-trn-hijo-results" class="inv-autocomplete"></div>
+  </div>
+  <div style="overflow-x:auto;">
+    <table class="inv-table" style="width:100%;min-width:720px;">
+      <thead><tr><th>Producto</th><th style="width:100px;">Cantidad</th><th style="width:150px;">Unidad de Medida</th><th style="width:220px;">Almacén de Salida</th><th style="width:170px;">Lote / Serie</th><th style="width:30px;"></th></tr></thead>
+      <tbody id="inv-trn-hijos"></tbody>
+    </table>
+  </div>
+</div>
+
+<div style="display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;">
+  ${f.name ? `<button type="button" id="inv-trn-cancel-edit" class="inv-btn inv-btn-secondary">Descartar edición</button>` : ""}
+  ${buttons.join("")}
+</div>`);
+		this._trn_render_hijos();
+	}
+
+	_trn_render_hijos() {
+		const f = this._trn_form;
+		const sal = this._trn_ctx.almacenes_salida || [];
+		const esc = frappe.utils.escape_html;
+		const $tb = this.$body.find("#inv-trn-hijos");
+		if (!f.items.length) {
+			$tb.html(`<tr><td colspan="6" style="text-align:center;color:#adb5bd;padding:18px;">Agregue los productos que se descargarán para formar el padre.</td></tr>`);
+			return;
+		}
+		$tb.html(f.items.map((r) => `
+<tr data-uid="${r.uid}">
+  <td><strong>${esc(r.item_code)}</strong><br><span style="color:#6c757d;">${esc(r.item_name || "")}</span></td>
+  <td><input type="number" min="0" step="any" data-trn-h="cantidad" value="${esc(String(r.cantidad))}"></td>
+  <td><select class="inv-select" style="width:100%;" data-trn-h="uom">${r.uoms.map((u) => `<option value="${esc(u.uom)}" ${u.uom === r.uom ? "selected" : ""}>${esc(u.uom)}${u.conversion_factor !== 1 ? ` (× ${flt(u.conversion_factor)})` : ""}</option>`).join("")}</select></td>
+  <td>
+    <select class="inv-select" style="width:100%;" data-trn-h="almacen">
+      <option value="">Seleccione...</option>
+      ${sal.map((w) => `<option value="${esc(w)}" ${w === r.almacen ? "selected" : ""}>${esc(w)}</option>`).join("")}
+    </select>
+    <div class="inv-trn-hint" style="font-size:11px;margin-top:3px;"></div>
+  </td>
+  <td>
+    ${r.has_batch_no ? `<input type="text" data-trn-h="batch_no" value="${esc(r.batch_no || "")}" placeholder="Lote">` : ""}
+    ${r.has_serial_no ? `<input type="text" data-trn-h="serial_no" value="${esc(r.serial_no || "")}" placeholder="Series (coma)" style="margin-top:3px;">` : ""}
+    ${!r.has_batch_no && !r.has_serial_no ? `<span style="color:#adb5bd;">—</span>` : ""}
+  </td>
+  <td><span class="inv-row-remove" data-trn-remove="1" title="Quitar">&times;</span></td>
+</tr>`).join(""));
+		f.items.forEach((r) => this._trn_update_hint(r));
+	}
+
+	_trn_cf(row) {
+		const u = (row.uoms || []).find((x) => x.uom === row.uom);
+		return u ? flt(u.conversion_factor) || 1 : 1;
+	}
+
+	// Existencia del hijo en el almacén elegido vs. lo que se va a descargar.
+	_trn_update_hint(row) {
+		const $hint = this.$body.find(`#inv-trn-hijos tr[data-uid="${row.uid}"] .inv-trn-hint`);
+		if (!row.almacen) { $hint.html(""); return; }
+		const disp = flt((row.stock || {})[row.almacen]);
+		const need = flt(row.cantidad) * this._trn_cf(row);
+		const ok = disp >= need;
+		$hint.html(`<span style="color:${ok ? "#28a745" : "#e03e2d"};">Existencia: ${disp} ${frappe.utils.escape_html(row.stock_uom || "")}${ok ? "" : ` · faltan ${flt(need - disp)}`}</span>`);
+	}
+
+	_trn_save(autorizar) {
+		const f = this._trn_form;
+		const warn = (m) => frappe.show_alert({ message: m, indicator: "orange" });
+		if (!f.item_padre) return warn("Seleccione el producto padre.");
+		if (!(flt(f.cantidad) > 0)) return warn("La cantidad del producto padre debe ser mayor a cero.");
+		if (!f.almacen_destino) return warn("Seleccione el almacén de ingreso del producto padre.");
+		if (f.has_batch_no && !(f.batch_no || "").trim()) return warn("Indique el lote de ingreso del producto padre.");
+		if (!f.items.length) return warn("Agregue al menos un producto hijo.");
+		for (const r of f.items) {
+			if (!(flt(r.cantidad) > 0)) return warn(`La cantidad de '${r.item_code}' debe ser mayor a cero.`);
+			if (!r.almacen) return warn(`Seleccione el almacén de salida de '${r.item_code}'.`);
+			if (r.has_batch_no && !(r.batch_no || "").trim()) return warn(`Indique el lote de '${r.item_code}'.`);
+		}
+		const payload = {
+			company: this.defaults.company,
+			name: f.name,
+			autorizar,
+			item_padre: f.item_padre, uom: f.uom, cantidad: flt(f.cantidad),
+			almacen_destino: f.almacen_destino, batch_no: f.batch_no, comentario: f.comentario,
+			items: f.items.map((r) => ({
+				item_code: r.item_code, cantidad: flt(r.cantidad), uom: r.uom, almacen: r.almacen,
+				batch_no: r.batch_no, serial_no: r.serial_no,
+			})),
+		};
+		const faltantes = f.items.filter((r) => flt((r.stock || {})[r.almacen]) < flt(r.cantidad) * this._trn_cf(r));
+		const esc = frappe.utils.escape_html;
+		const resumen = `<strong>+${flt(f.cantidad)} ${esc(f.uom)}</strong> de <strong>${esc(f.item_padre)}</strong> en ${esc(f.almacen_destino)}, descargando ${f.items.length} producto(s).`;
+		const go = () => frappe.call({
+			method: "facex_multi.api.transformar.save_transformacion",
+			args: { payload: JSON.stringify(payload), client_token: this._trn_token },
+			freeze: true,
+			freeze_message: autorizar ? "Autorizando transformación…" : "Grabando borrador…",
+			callback: (r) => {
+				if (!r.message) return;
+				const m = r.message;
+				frappe.show_alert({
+					message: m.estado === "Autorizado"
+						? `Transformación ${m.name} autorizada (movimiento ${m.stock_entry}).`
+						: `Transformación ${m.name} grabada en Borrador; se avisó a los autorizadores.`,
+					indicator: "green",
+				}, 7);
+				this._trn_reset_form();
+				this._trn_tab = "mis";
+				this._trn_estado = "";
+				this._render_transformar();
+				this._trn_view(m.name);
+			},
+			error: () => { this._trn_token = frappe.utils.get_random(20); },
+		});
+		if (autorizar) {
+			frappe.confirm(
+				`¿Autorizar ahora? Se registrará ${resumen}${faltantes.length ? `<br><br><span style="color:#e03e2d;">Atención: ${faltantes.length} hijo(s) sin existencia suficiente; ERPNext rechazará la operación si no permite stock negativo.</span>` : ""}`,
+				go,
+			);
+		} else {
+			go();
+		}
+	}
+
+	_trn_view(name) {
+		frappe.call({
+			method: "facex_multi.api.transformar.get_transformacion",
+			args: { name },
+			freeze: true,
+			callback: (r) => {
+				if (!r.message) return;
+				this._trn_show_detail(r.message);
+				this._refresh_trn_badges();
+				// La fila «Nuevo» deja de serlo al abrirla.
+				this.$body.find(`tr[data-trn-view="${name}"]`).removeClass("inv-trn-row-new").find(".inv-trn-chip-new").remove();
+			},
+		});
+	}
+
+	_trn_show_detail(doc) {
+		const esc = frappe.utils.escape_html;
+		const exist = doc.existencia || {};
+		const rows = (doc.items || []).map((h) => {
+			let hint = "";
+			if (doc.estado === "Borrador") {
+				const disp = flt((exist[h.item_code] || {})[h.almacen]);
+				const need = flt(h.stock_qty || h.cantidad);
+				hint = `<br><span style="font-size:11px;color:${disp >= need ? "#28a745" : "#e03e2d"};">Existencia: ${disp}${disp >= need ? "" : ` · faltan ${flt(need - disp)}`}</span>`;
+			}
+			return `<tr>
+  <td><strong>${esc(h.item_code)}</strong><br><span style="color:#6c757d;">${esc(h.item_name || "")}</span></td>
+  <td style="color:#e03e2d;font-weight:600;">-${flt(h.cantidad)} ${esc(h.uom || "")}</td>
+  <td>${esc(h.almacen || "")}${hint}</td>
+  <td>${esc(h.batch_no || "")}${h.serial_no ? `<br><span style="font-size:11px;">${esc(h.serial_no).replace(/\n/g, ", ")}</span>` : ""}</td>
+</tr>`;
+		}).join("");
+		const audit = [
+			["Creado por", `${esc(doc.creado_por_nombre || "")} · ${this._trn_fecha(doc.fecha_creacion)}`],
+			doc.autorizado_por ? [doc.estado === "Rechazado" ? "Rechazado por" : "Autorizado por", `${esc(doc.autorizado_por_nombre)} · ${this._trn_fecha(doc.fecha_autorizacion)}`] : null,
+			doc.motivo_rechazo ? ["Motivo del rechazo", esc(doc.motivo_rechazo)] : null,
+			doc.anulado_por ? ["Anulado por", `${esc(doc.anulado_por_nombre)} · ${this._trn_fecha(doc.fecha_anulacion)}`] : null,
+			doc.stock_entry ? ["Movimiento de inventario", esc(doc.stock_entry)] : null,
+			(doc.valor_total !== null && doc.valor_total !== undefined && doc.estado !== "Borrador") ? ["Valor", this._money(doc.valor_total)] : null,
+			doc.comentario ? ["Comentario", esc(doc.comentario)] : null,
+		].filter(Boolean);
+
+		const actions = [];
+		if (doc.puede_editar) {
+			actions.push(`<button type="button" class="inv-btn inv-btn-secondary" data-trn-act="editar">Editar${doc.estado === "Rechazado" ? " y reenviar" : ""}</button>`);
+			actions.push(`<button type="button" class="inv-btn inv-btn-danger" data-trn-act="eliminar">Eliminar</button>`);
+		}
+		if (doc.puede_autorizar) {
+			actions.push(`<button type="button" class="inv-btn inv-btn-danger" data-trn-act="rechazar">Rechazar</button>`);
+			actions.push(`<button type="button" class="inv-btn inv-btn-primary" data-trn-act="autorizar">Autorizar</button>`);
+		}
+		if (doc.puede_anular) actions.push(`<button type="button" class="inv-btn inv-btn-danger" data-trn-act="anular">Anular</button>`);
+
+		const d = new frappe.ui.Dialog({
+			title: `Transformar ${doc.name}`,
+			size: "large",
+			fields: [{
+				fieldtype: "HTML",
+				fieldname: "detail",
+				options: `
+<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">${this._trn_estado_badge(doc.estado)}<span style="font-size:12.5px;color:#6c757d;">${esc(doc.company)}</span></div>
+<div style="background:#f0f4ff;border-radius:6px;padding:10px 12px;margin-bottom:12px;">
+  <div style="font-size:11px;text-transform:uppercase;color:#6c757d;font-weight:600;">Producto padre (ingresa)</div>
+  <div style="font-size:14px;"><strong>${esc(doc.item_padre)}</strong> — ${esc(doc.item_name || "")}</div>
+  <div style="font-size:13px;color:#28a745;font-weight:600;">+${flt(doc.cantidad)} ${esc(doc.uom || "")} → ${esc(doc.almacen_destino || "")}${doc.batch_no ? ` · Lote ${esc(doc.batch_no)}` : ""}</div>
+</div>
+<div style="overflow-x:auto;"><table class="inv-table" style="width:100%;min-width:520px;"><thead><tr><th>Producto hijo (sale)</th><th style="width:110px;">Cantidad</th><th>Almacén</th><th style="width:130px;">Lote / Serie</th></tr></thead><tbody>${rows}</tbody></table></div>
+<table style="width:100%;margin-top:12px;font-size:12.5px;">${audit.map(([k, v]) => `<tr><td style="color:#6c757d;padding:3px 8px 3px 0;width:170px;vertical-align:top;">${k}</td><td style="padding:3px 0;">${v}</td></tr>`).join("")}</table>
+${actions.length ? `<div style="display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:16px;border-top:1px solid #eee;padding-top:12px;">${actions.join("")}</div>` : ""}
+<style>${INV_STYLES}</style>`,
+			}],
+		});
+		d.$wrapper.on("click", "[data-trn-act]", (e) => {
+			const act = $(e.currentTarget).data("trn-act");
+			if (act === "editar") { d.hide(); this._trn_edit(doc); return; }
+			if (act === "eliminar") {
+				frappe.confirm(`¿Eliminar el borrador <strong>${esc(doc.name)}</strong>?`, () => this._trn_action("delete_transformacion", { name: doc.name }, d, "Borrador eliminado."));
+				return;
+			}
+			if (act === "autorizar") {
+				frappe.confirm(
+					`¿Autorizar <strong>${esc(doc.name)}</strong>? Se descargarán los hijos y se dará ingreso a <strong>+${flt(doc.cantidad)} ${esc(doc.uom || "")}</strong> de ${esc(doc.item_padre)}.`,
+					() => this._trn_action("autorizar_transformacion", { name: doc.name }, d, "Transformación autorizada."),
+				);
+				return;
+			}
+			if (act === "rechazar") {
+				frappe.prompt(
+					[{ fieldname: "motivo", fieldtype: "Small Text", label: "Motivo del rechazo", reqd: 1 }],
+					(v) => this._trn_action("rechazar_transformacion", { name: doc.name, motivo: v.motivo }, d, "Transformación rechazada; se avisó al creador."),
+					"Rechazar transformación", "Rechazar",
+				);
+				return;
+			}
+			if (act === "anular") {
+				frappe.confirm(`¿Anular <strong>${esc(doc.name)}</strong>? Se revierte el movimiento ${esc(doc.stock_entry || "")}.`, () => this._trn_action("anular_transformacion", { name: doc.name }, d, "Transformación anulada."));
+			}
+		});
+		d.show();
+	}
+
+	_trn_action(method, args, dialog, ok_msg) {
+		frappe.call({
+			method: `facex_multi.api.transformar.${method}`,
+			args,
+			freeze: true,
+			callback: (r) => {
+				if (!r.message) return;
+				dialog.hide();
+				frappe.show_alert({ message: ok_msg, indicator: "green" }, 6);
+				if (this.$body.find("#inv-trn-app").length) this._trn_load_tab();
+				this._refresh_trn_badges();
+			},
+		});
+	}
+
+	_trn_edit(doc) {
+		const infos = [doc.item_padre, ...(doc.items || []).map((h) => h.item_code)];
+		Promise.all(infos.map((c) => this._trn_item_info(c))).then((res) => {
+			const [padre, ...hijos] = res;
+			this._trn_reset_form();
+			const f = this._trn_form;
+			Object.assign(f, {
+				name: doc.name,
+				item_padre: padre.item_code, item_name: padre.item_name, stock_uom: padre.stock_uom,
+				uoms: padre.uoms || [], uom: doc.uom || padre.stock_uom, cantidad: flt(doc.cantidad),
+				has_batch_no: cint(padre.has_batch_no), batch_no: doc.batch_no || "",
+				comentario: doc.comentario || "", componentes: padre.componentes || [],
+				almacen_destino: doc.almacen_destino,
+			});
+			f.items = (doc.items || []).map((h, i) => this._trn_new_row(hijos[i], {
+				cantidad: flt(h.cantidad), uom: h.uom, almacen: h.almacen,
+				batch_no: h.batch_no || "", serial_no: (h.serial_no || "").replace(/\n/g, ", "),
+			}));
+			this._trn_tab = "nuevo";
+			this._render_transformar();
+		});
+	}
+
+	// ──────────────────────────────────────────────
+	// Reporte: Transformaciones (creador / autorizador)
+	// ──────────────────────────────────────────────
+
+	_open_rep_transformaciones() {
+		const esc = frappe.utils.escape_html;
+		const p = this.defaults.permissions || {};
+		const users = this.defaults.report_users || [];
+		const scope_all = p.alcance_inventario !== "Solo lo creado por mí";
+		const user_select = (id, label) => `
+<div>
+  <label class="inv-label">${label}</label>
+  <select id="${id}" class="inv-select" multiple size="1">
+    ${users.map((u) => `<option value="${esc(u.name)}">${esc(u.full_name || u.name)}</option>`).join("")}
+  </select>
+</div>`;
+		const filters = `
+      <div><label class="inv-label">Desde</label><input type="date" id="inv-rt-from" class="inv-select" value="${frappe.datetime.month_start()}"></div>
+      <div><label class="inv-label">Hasta</label><input type="date" id="inv-rt-to" class="inv-select" value="${frappe.datetime.month_end()}"></div>
+      <div><label class="inv-label">Estado</label>
+        <select id="inv-rt-estado" class="inv-select"><option value="">Todos</option><option>Borrador</option><option>Autorizado</option><option>Rechazado</option><option>Anulado</option></select></div>
+      <div><label class="inv-label">Almacén</label>
+        <select id="inv-rt-wh" class="inv-select"><option value="">Todos</option>${(this.defaults.warehouses || []).map((w) => `<option value="${esc(w)}">${esc(w)}</option>`).join("")}</select></div>
+      ${this._report_item_filter("inv-rt-item", "inv-rt-item-code")}
+      ${scope_all ? user_select("inv-rt-creadores", "Usuario Creador") + user_select("inv-rt-autorizadores", "Usuario Autorizador") : ""}`;
+		const actions = `<button type="button" id="inv-rt-refresh" class="inv-btn inv-btn-primary">Filtrar</button>
+      <button type="button" id="inv-rt-export" class="inv-btn inv-btn-secondary">Exportar a Excel</button>`;
+		const body = `
+  <div id="inv-rt-summary" style="margin:10px 0;font-size:13px;color:#495057;"></div>
+  <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:12px 14px;overflow-x:auto;">
+    <table class="inv-table" style="width:100%;min-width:900px;">
+      <thead><tr><th>Documento</th><th>Estado</th><th>Producto Padre</th><th>Almacén</th><th>Hijos</th><th>Creado por</th><th>Autorizado / Rechazado por</th><th>Movimiento</th>${this._can_costs ? "<th>Valor</th>" : ""}</tr></thead>
+      <tbody id="inv-rt-tbody"><tr><td colspan="9" style="text-align:center;color:#adb5bd;padding:20px;">Filtre para ver las transformaciones.</td></tr></tbody>
+    </table>
+  </div>`;
+		this.$body.html(this._report_shell("Transformaciones", scope_all ? "" : "solo las que usted creó o resolvió", filters, actions, body));
+		this.$body.off(); $(document).off(".facexInv");
+		this._bind_filter_toggle();
+		this._bind_report_item_filter("inv-rt-item", "inv-rt-item-code");
+		this.$body.on("click", "#inv-back", () => this._render_shell());
+		this.$body.on("click", "#inv-rt-refresh", () => this._load_rep_transformaciones());
+		this.$body.on("click", "#inv-rt-export", () => window.open(this._export_url("facex_multi.api.transformar.export_transformaciones_excel", this._rep_trn_params()), "_blank"));
+		this.$body.on("click", "[data-trn-view]", (e) => this._trn_view($(e.currentTarget).data("trn-view")));
+		this._load_rep_transformaciones();
+	}
+
+	_rep_trn_params() {
+		return {
+			company: this.defaults.company,
+			from_date: this.$body.find("#inv-rt-from").val(),
+			to_date: this.$body.find("#inv-rt-to").val(),
+			estado: this.$body.find("#inv-rt-estado").val(),
+			warehouse: this.$body.find("#inv-rt-wh").val(),
+			item_code: this.$body.find("#inv-rt-item-code").val(),
+			creadores: this.$body.find("#inv-rt-creadores").val() || [],
+			autorizadores: this.$body.find("#inv-rt-autorizadores").val() || [],
+		};
+	}
+
+	_load_rep_transformaciones() {
+		const esc = frappe.utils.escape_html;
+		const $tbody = this.$body.find("#inv-rt-tbody");
+		$tbody.html(`<tr><td colspan="9" style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr>`);
+		frappe.call({
+			method: "facex_multi.api.transformar.get_transformaciones_report",
+			args: this._rep_trn_params(),
+			callback: (r) => {
+				const m = r.message || {};
+				const rows = m.rows || [];
+				const res = m.resumen || {};
+				this.$body.find("#inv-rt-summary").html(
+					`${rows.length} documento(s)` + Object.keys(res).map((k) => ` · ${esc(k)}: <strong>${res[k]}</strong>`).join("")
+				);
+				if (!rows.length) { $tbody.html(`<tr><td colspan="9" style="text-align:center;color:#adb5bd;padding:20px;">Sin transformaciones en el rango.</td></tr>`); return; }
+				$tbody.html(rows.map((row) => `
+<tr class="inv-mov-row" data-trn-view="${esc(row.name)}">
+  <td><strong>${esc(row.name)}</strong></td>
+  <td>${this._trn_estado_badge(row.estado)}</td>
+  <td>${esc(row.item_padre)} <span style="color:#6c757d;">${esc(row.item_name || "")}</span><br><strong>+${flt(row.cantidad)} ${esc(row.uom || "")}</strong></td>
+  <td>${esc(row.almacen_destino || "")}</td>
+  <td>${cint(row.hijos)}</td>
+  <td>${esc(row.creado_por_nombre || "")}<br><span style="color:#6c757d;font-size:11.5px;">${this._trn_fecha(row.fecha_creacion)}</span></td>
+  <td>${esc(row.autorizado_por_nombre || "—")}<br><span style="color:#6c757d;font-size:11.5px;">${this._trn_fecha(row.fecha_autorizacion)}</span>${row.motivo_rechazo ? `<br><span style="color:#e03e2d;font-size:11.5px;">${esc(row.motivo_rechazo)}</span>` : ""}</td>
+  <td>${esc(row.stock_entry || "")}</td>
+  ${this._can_costs ? `<td>${row.estado === "Borrador" ? "—" : this._money(row.valor_total)}</td>` : ""}
+</tr>`).join(""));
+			},
+		});
+	}
 }
 
 // Modo Enfoque — mismo bloque genérico ya usado por FacEx y FacEx Screen
@@ -4569,5 +5367,17 @@ const INV_STYLES = `
 .inv-abc-A { background:#e03e2d; } .inv-abc-B { background:#ff9f43; } .inv-abc-C { background:#28a745; }
 .inv-bucket-vencido { color:#e03e2d;font-weight:700; }
 .inv-maint-editable { width:110px;text-align:right; }
+.inv-trn-chip { display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#e9ecef;color:#495057; }
+.inv-trn-chip-warn { background:#fff3cd;color:#8a6100; }
+.inv-trn-chip-new { background:#5e64ff;color:#fff; }
+.inv-trn-banner { display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 16px;border-radius:6px;margin-bottom:10px;font-size:13px; }
+.inv-trn-banner-warn { background:#fff8e6;border:1px solid #f5d27a;color:#6b4e00; }
+.inv-trn-banner-new { background:#eef0ff;border:1px solid #c5c8ff;color:#2d3190; }
+.inv-trn-row-new td { background:#f5f6ff; font-weight:500; }
+.inv-trn-estado { display:inline-block;padding:2px 9px;border-radius:10px;font-size:11px;font-weight:700;white-space:nowrap; }
+.inv-trn-estado-borrador { background:#fff3cd;color:#8a6100; }
+.inv-trn-estado-autorizado { background:#d4edda;color:#1e6b33; }
+.inv-trn-estado-rechazado { background:#f8d7da;color:#9b1c1c; }
+.inv-trn-estado-anulado { background:#e9ecef;color:#6c757d;text-decoration:line-through; }
 .inv-popover { position:absolute;z-index:1050;background:#fff;border:1px solid #d1d8dd;border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.15);padding:12px 14px;min-width:260px;font-size:12.5px; }
 `;

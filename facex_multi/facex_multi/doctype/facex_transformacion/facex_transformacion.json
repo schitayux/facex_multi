@@ -1,0 +1,246 @@
+{
+ "actions": [],
+ "creation": "2026-09-28 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-09-28 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FacEx Multi",
+ "owner": "Administrator",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "name": "FacEx Transformacion",
+ "autoname": "naming_series:",
+ "naming_rule": "By \"Naming Series\" field",
+ "istable": 0,
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "title_field": "item_padre",
+ "track_changes": 1,
+ "field_order": [
+  "naming_series",
+  "company",
+  "estado",
+  "stock_entry",
+  "cb_1",
+  "item_padre",
+  "item_name",
+  "cantidad",
+  "uom",
+  "conversion_factor",
+  "stock_qty",
+  "almacen_destino",
+  "batch_no",
+  "sb_items",
+  "items",
+  "comentario",
+  "sb_audit",
+  "creado_por",
+  "fecha_creacion",
+  "visto_por_creador",
+  "cb_2",
+  "autorizado_por",
+  "fecha_autorizacion",
+  "motivo_rechazo",
+  "cb_3",
+  "anulado_por",
+  "fecha_anulacion",
+  "valor_total"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Serie",
+   "options": "TRN-.ABBR.-.#####",
+   "default": "TRN-.ABBR.-.#####",
+   "reqd": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Compañía",
+   "options": "Company",
+   "reqd": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "estado",
+   "fieldtype": "Select",
+   "label": "Estado",
+   "options": "Borrador\nAutorizado\nRechazado\nAnulado",
+   "default": "Borrador",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "stock_entry",
+   "fieldtype": "Link",
+   "label": "Movimiento de Inventario",
+   "options": "Stock Entry",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "item_padre",
+   "fieldtype": "Link",
+   "label": "Producto Padre",
+   "options": "Item",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "item_name",
+   "fieldtype": "Data",
+   "label": "Nombre",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cantidad",
+   "fieldtype": "Float",
+   "label": "Cantidad",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "uom",
+   "fieldtype": "Link",
+   "label": "Unidad de Medida",
+   "options": "UOM"
+  },
+  {
+   "fieldname": "conversion_factor",
+   "fieldtype": "Float",
+   "label": "Factor de Conversión",
+   "default": "1"
+  },
+  {
+   "fieldname": "stock_qty",
+   "fieldtype": "Float",
+   "label": "Cantidad en UdM de Stock",
+   "read_only": 1
+  },
+  {
+   "fieldname": "almacen_destino",
+   "fieldtype": "Link",
+   "label": "Almacén Destino (Entrada)",
+   "options": "Warehouse",
+   "reqd": 1
+  },
+  {
+   "fieldname": "batch_no",
+   "fieldtype": "Data",
+   "label": "Lote del Padre"
+  },
+  {
+   "fieldname": "sb_items",
+   "fieldtype": "Section Break",
+   "label": "Productos a Descargar (Hijos)"
+  },
+  {
+   "fieldname": "items",
+   "fieldtype": "Table",
+   "label": "Hijos",
+   "options": "FacEx Transformacion Item",
+   "reqd": 1
+  },
+  {
+   "fieldname": "comentario",
+   "fieldtype": "Small Text",
+   "label": "Comentario"
+  },
+  {
+   "fieldname": "sb_audit",
+   "fieldtype": "Section Break",
+   "label": "Autorización"
+  },
+  {
+   "fieldname": "creado_por",
+   "fieldtype": "Link",
+   "label": "Creado por",
+   "options": "User",
+   "read_only": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "fecha_creacion",
+   "fieldtype": "Datetime",
+   "label": "Fecha de Creación",
+   "read_only": 1
+  },
+  {
+   "fieldname": "visto_por_creador",
+   "fieldtype": "Check",
+   "label": "Resolución vista por el creador",
+   "default": "1",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "autorizado_por",
+   "fieldtype": "Link",
+   "label": "Autorizado / Rechazado por",
+   "options": "User",
+   "read_only": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "fecha_autorizacion",
+   "fieldtype": "Datetime",
+   "label": "Fecha de Autorización / Rechazo",
+   "read_only": 1
+  },
+  {
+   "fieldname": "motivo_rechazo",
+   "fieldtype": "Small Text",
+   "label": "Motivo del Rechazo",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_3",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "anulado_por",
+   "fieldtype": "Link",
+   "label": "Anulado por",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "fecha_anulacion",
+   "fieldtype": "Datetime",
+   "label": "Fecha de Anulación",
+   "read_only": 1
+  },
+  {
+   "fieldname": "valor_total",
+   "fieldtype": "Currency",
+   "label": "Valor del Movimiento",
+   "read_only": 1
+  }
+ ]
+}
