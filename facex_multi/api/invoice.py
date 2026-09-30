@@ -1737,6 +1737,60 @@ def _build_descripcion2(item_dict: dict, correlativo: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Fecha del documento en borradores rescatados
+# ---------------------------------------------------------------------------
+
+def _is_stale_posting_date(posting_date) -> bool:
+    """La fecha de emisión quedó en el pasado (borrador de otro día)."""
+    if not posting_date:
+        return False
+    return getdate(posting_date) < getdate(today())
+
+
+def _redate_draft_to_today(target) -> str:
+    """Re-fecha un borrador al día en que se graba/valida.
+
+    Una factura que se dejó en borrador y se rescata otro día debe salir con la
+    fecha de HOY: en ERPNext posting_date es a la vez la fecha del documento y la
+    de contabilización, así que mover una sola fecha alinea impresión, asiento
+    contable, kardex, Cierre Diario y certificación FEL. Con set_posting_time = 0
+    ERPNext estampa posting_date/posting_time = ahora al validar
+    (ver erpnext/utilities/transaction_base.validate_posting_time); lo dejamos
+    escrito igual para que el vencimiento se calcule sobre la fecha correcta.
+
+    El vencimiento se recorre los mismos días de crédito que tenía el borrador
+    (30 días siguen siendo 30 desde hoy). Si hay plantilla de condiciones de pago,
+    ERPNext reconstruye el cronograma desde la nueva posting_date y ese due_date
+    manda — por eso se limpia payment_schedule.
+
+    `target` es el dict del payload (save_draft) o el propio Document
+    (submit_invoice). Devuelve la fecha anterior como texto, para dejar rastro.
+    """
+    is_doc = not isinstance(target, dict)
+
+    anterior = getdate(target.get("posting_date"))
+    hoy = getdate(today())
+    due = target.get("due_date")
+    nuevo_due = add_days(hoy, max((getdate(due) - anterior).days, 0)) if due else None
+
+    valores = {
+        "posting_date": hoy,
+        "set_posting_time": 0,
+        "payment_schedule": [],
+    }
+    if nuevo_due:
+        valores["due_date"] = nuevo_due
+
+    for field, value in valores.items():
+        if is_doc:
+            setattr(target, field, value)
+        else:
+            target[field] = value
+
+    return str(anterior)
+
+
+# ---------------------------------------------------------------------------
 # 3. Guardar borrador
 # ---------------------------------------------------------------------------
 
@@ -1917,20 +1971,24 @@ def save_draft(doc_json: str):
         for _k in ("facex_incluir_flete", "facex_flete_amount", "facex_flete_amount_original"):
             data.pop(_k, None)
 
-    # Documento con fecha de emisión distinta a hoy (retroactivo o postfechado):
-    # ERPNext sobreescribe posting_date con la fecha actual salvo que
-    # set_posting_time = 1 (ver erpnext/utilities/transaction_base.validate_posting_time).
-    # Sin esto la posting_date real se pierde y las validaciones de vencimiento
-    # (validate_due_date / validate_due_date_with_template) usan HOY como base,
-    # lanzando "Due Date cannot be before Posting Date" o "Due Date cannot be
-    # after ...". Respetamos la fecha contable que ingresó el usuario: así se
-    # puede grabar una factura cuyo vencimiento es menor a la fecha actual
-    # siempre que la emisión sea <= al vencimiento (lo sigue validando ERPNext).
-    if data.get("posting_date") and getdate(data["posting_date"]) != getdate(today()):
-        data["set_posting_time"] = 1
-
     name = (data.get("name") or "").strip()
     is_new = not name or name == "new"
+
+    # Fecha del documento al grabar (ver _redate_draft_to_today): un borrador que
+    # se dejó pendiente y se rescata otro día se re-fecha al día en que se graba.
+    # Un documento postfechado (emisión futura) sí conserva su fecha: para eso
+    # ERPNext exige set_posting_time = 1 (rama siguiente).
+    if not is_new and _is_stale_posting_date(data.get("posting_date")):
+        _redate_draft_to_today(data)
+    elif data.get("posting_date") and getdate(data["posting_date"]) != getdate(today()):
+        # Documento con fecha de emisión distinta a hoy: ERPNext sobreescribe
+        # posting_date con la fecha actual salvo que set_posting_time = 1
+        # (ver erpnext/utilities/transaction_base.validate_posting_time).
+        # Sin esto la posting_date real se pierde y las validaciones de vencimiento
+        # (validate_due_date / validate_due_date_with_template) usan HOY como base,
+        # lanzando "Due Date cannot be before Posting Date" o "Due Date cannot be
+        # after ...".
+        data["set_posting_time"] = 1
 
     if is_new:
         data.pop("name", None)
@@ -2086,10 +2144,15 @@ def submit_invoice(name: str):
 
     _guard_stock_before_submit(doc)
 
-    # Documento retroactivo: conservar la fecha de emisión contable del borrador al
-    # validar (de lo contrario ERPNext la mueve a hoy y rompe la fecha de
-    # vencimiento). Ver save_draft para el detalle. doc.submit() persiste el flag.
-    if doc.posting_date and getdate(doc.posting_date) != getdate(today()) and not doc.set_posting_time:
+    # Borrador rescatado: se valida con la fecha de hoy. Se re-fecha aquí también
+    # (no solo al grabar) porque se puede abrir un borrador viejo y darle Validar
+    # sin tocar nada. Ver _redate_draft_to_today. doc.submit() persiste el cambio.
+    fecha_anterior = None
+    if _is_stale_posting_date(doc.posting_date):
+        fecha_anterior = _redate_draft_to_today(doc)
+    elif doc.posting_date and getdate(doc.posting_date) != getdate(today()) and not doc.set_posting_time:
+        # Documento postfechado: conservar la fecha de emisión contable del
+        # borrador (de lo contrario ERPNext la mueve a hoy y rompe el vencimiento).
         doc.set_posting_time = 1
 
     from facex_multi.api.permissions import get_facex_company_config
@@ -2113,12 +2176,21 @@ def submit_invoice(name: str):
             frappe.db.commit()
 
     doc.submit()
+    if fecha_anterior:
+        # Rastro de auditoría: la fecha del documento cambió al validarlo.
+        doc.add_comment(
+            "Comment",
+            f"Borrador rescatado: fecha del documento actualizada de {fecha_anterior} "
+            f"a {doc.posting_date} (día de validación).",
+        )
     frappe.db.commit()
 
     return {
         "success": True,
         "name": doc.name,
         "status": doc.status,
+        "posting_date": str(doc.posting_date),
+        "fecha_anterior": fecha_anterior,
         "docstatus": doc.docstatus,
         "grand_total": doc.grand_total,
     }

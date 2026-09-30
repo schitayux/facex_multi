@@ -8486,6 +8486,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					this._dirty = false;
 					this.doc = r.message;
 					this.doc._taxes_template = null;
+					this._redate_draft_on_open();
 					this._sync_ui_from_doc();
 					this._update_action_bar_state();
 					if (this.doc.taxes_and_charges) {
@@ -8499,6 +8500,29 @@ body.facex-fullscreen-mode .ef-main-layout {
 				}
 			},
 		});
+	}
+
+	// Un borrador que se dejó pendiente y se rescata otro día sale con la fecha
+	// de HOY al grabarlo o validarlo — la decide el servidor
+	// (facex_multi.api.invoice._redate_draft_to_today). Aquí solo se refleja al
+	// abrirlo, para que la fecha en pantalla sea la que va a quedar en el
+	// documento. El vencimiento se recorre los mismos días de crédito.
+	_redate_draft_on_open() {
+		const d = this.doc;
+		const hoy = frappe.datetime.get_today();
+		if (!d || d.docstatus !== 0 || !d.posting_date) return;
+		const anterior = String(d.posting_date).substring(0, 10);
+		if (anterior >= hoy) return;
+
+		if (d.due_date) {
+			const dias = Math.max(frappe.datetime.get_day_diff(d.due_date, anterior), 0);
+			d.due_date = frappe.datetime.add_days(hoy, dias).substring(0, 10);
+		}
+		d.posting_date = hoy;
+		frappe.show_alert({
+			message: `Borrador del ${anterior}: la fecha del documento se actualizó a hoy (${hoy}).`,
+			indicator: "orange",
+		}, 7);
 	}
 
 	_show_change_password_dialog() {
