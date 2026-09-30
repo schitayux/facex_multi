@@ -215,6 +215,9 @@ class EFastSalePage {
 	_new_invoice() {
 		this._dirty = false;
 		this._manualPayment = false;
+		// Documento nuevo: ninguna lectura previa con la que comparar (ver
+		// _add_or_increment_item / _notify_row_merged).
+		this._last_scan_item_code = null;
 		this.doc = this._empty_doc();
 		this.doc.company = this.defaults.company || "";
 		this.doc.naming_series = (this.defaults.naming_series || [])[0] || "SINV-.YYYY.-";
@@ -4187,6 +4190,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 .ef-tr.ef-tr-active { background: #eef2ff; }
 .ef-tr.ef-tr-no-stock { border-left: 3px solid #f59e0b; background: rgba(251,191,36,0.07) !important; }
 .ef-tr.ef-tr-no-stock.ef-tr-active { background: rgba(251,191,36,0.15) !important; }
+/* Lectura acumulada sobre una línea anterior: destello de aviso */
+@keyframes ef-merged-flash {
+  0%   { background: #fde68a; }
+  70%  { background: #fef3c7; }
+  100% { background: transparent; }
+}
+.ef-tr.ef-tr-merged > td { animation: ef-merged-flash 1.6s ease-out; }
 .ef-no-stock-badge { display: inline-block; font-size: 10px; font-weight: 700; color: #92400e; background: #fef3c7; border: 1px solid #f59e0b; border-radius: 3px; padding: 0 4px; margin-left: 4px; vertical-align: middle; white-space: nowrap; }
 .ef-exe-badge { display: inline-block; font-size: 10px; font-weight: 700; color: #166534; background: #dcfce7; border: 1px solid #22c55e; border-radius: 3px; padding: 0 4px; margin-left: 4px; vertical-align: middle; white-space: nowrap; }
 
@@ -5934,37 +5944,113 @@ body.facex-fullscreen-mode .ef-main-layout {
 				method: "facex_multi.api.item.find_item_by_code",
 				args: { txt: code, company: this.doc.company || this.defaults.company || "" },
 				callback: (r) => {
-					$input.val("").prop("disabled", false).trigger("focus");
+					$input.prop("disabled", false);
 					if (!r.message) {
+						this._focus_barcode_scan();
 						frappe.show_alert({ message: __("Producto no encontrado para el código {0}.", [code]), indicator: "orange" });
 						return;
 					}
-					this._add_or_increment_item(r.message);
+					this._add_or_increment_item(r.message, { from_scan: true });
 				},
 				error: () => {
-					$input.prop("disabled", false).trigger("focus");
+					// Falló la consulta: se conserva el código y se deja seleccionado
+					// para que una nueva lectura lo sobrescriba.
+					$input.prop("disabled", false);
+					this._focus_barcode_scan({ clear: false });
 				},
 			});
 		});
+
+		// Lectura continua: si un diálogo (serie, adenda, artículo en par) se
+		// quedó con el foco, el cursor vuelve al campo de escaneo al cerrarse.
+		$(document).off("hidden.bs.modal.efscan").on("hidden.bs.modal.efscan", () => {
+			if (!this._scan_refocus_pending) return;
+			this._focus_barcode_scan({ delay: 180 });
+		});
+	}
+
+	// Devuelve el cursor al campo de escaneo para dejarlo listo para la
+	// siguiente lectura. Si en ese momento hay un diálogo abierto (serie,
+	// adenda, artículo en par) se marca pendiente y se reintenta al cerrarse.
+	_focus_barcode_scan(opts = {}) {
+		const $input = this.$body.find("#ef-barcode-scan");
+		if (!$input.length) return;
+		if (opts.clear !== false) $input.val("");
+		const apply = () => {
+			if ($(".modal:visible").length) {
+				this._scan_refocus_pending = true;
+				return;
+			}
+			this._scan_refocus_pending = false;
+			const el = this.$body.find("#ef-barcode-scan")[0];
+			if (!el || !$(el).is(":visible") || el.disabled) return;
+			el.focus();
+			try { el.select(); } catch (err) { /* algunos navegadores no permiten select() */ }
+		};
+		// Inmediato para no perder ninguna tecla, y una reafirmación diferida
+		// por si un render posterior o un diálogo se llevó el foco.
+		apply();
+		clearTimeout(this._scan_focus_timer);
+		this._scan_focus_timer = setTimeout(apply, opts.delay !== undefined ? opts.delay : 60);
+	}
+
+	// Aviso de que la lectura se acumuló en una línea que ya existía: mensaje
+	// con el número de línea y la cantidad nueva, destello en la fila y la trae
+	// a la vista — sin quitarle el cursor al lector.
+	_notify_row_merged(idx, row) {
+		const nombre = row.item_name || row.item_code || "";
+		const qty = Math.round((parseFloat(row.qty) || 0) * 1000) / 1000;
+		frappe.show_alert(
+			{
+				message: __("{0} ya estaba en la línea {1} — cantidad: {2}", [nombre, idx + 1, qty]),
+				indicator: "blue",
+			},
+			5
+		);
+		const $tr = this.$body.find(`#ef-row-${idx}`);
+		if (!$tr.length) return;
+		$tr.removeClass("ef-tr-merged");
+		void $tr[0].offsetWidth; // reinicia la animación si el aviso se repite
+		$tr.addClass("ef-tr-merged");
+		clearTimeout(this._merged_flash_timer);
+		this._merged_flash_timer = setTimeout(() => $tr.removeClass("ef-tr-merged"), 1700);
+		if ($tr[0].scrollIntoView) $tr[0].scrollIntoView({ block: "nearest", behavior: "smooth" });
 	}
 
 	// Agrega una nueva línea para el ítem escaneado, o suma 1 a la cantidad
-	// si ya existe en la lista (salvo que maneje número de serie).
-	_add_or_increment_item(it) {
+	// si ya existe en la lista (salvo que maneje número de serie). Cuando
+	// viene de una lectura, el cursor regresa al campo de escaneo en vez de
+	// quedarse en la fila, para poder escanear el siguiente producto de una.
+	_add_or_increment_item(it, opts = {}) {
+		const from_scan = !!opts.from_scan;
 		if (!it.has_serial_no) {
 			const idx = this.doc.items.findIndex((row) => row.item_code === it.item_code);
 			if (idx !== -1) {
-				this.doc.items[idx].qty = (parseFloat(this.doc.items[idx].qty) || 0) + 1;
+				const row = this.doc.items[idx];
+				row.qty = (parseFloat(row.qty) || 0) + 1;
 				this._render_items();
 				this._update_local_footer();
 				this._mark_dirty();
-				this.$body.find(`#ef-row-${idx} .ef-qty`).trigger("focus");
+				if (from_scan) {
+					// Lecturas seguidas del mismo código = conteo normal, en
+					// silencio. El aviso es para cuando la lectura regresa a una
+					// línea anterior después de haber pasado por otros productos:
+					// esa línea puede estar fuera de la vista y el operador no
+					// tiene forma de saber que su lectura sí entró.
+					const repite = this._last_scan_item_code === it.item_code;
+					this._last_scan_item_code = it.item_code;
+					if (!repite) this._notify_row_merged(idx, row);
+					this._focus_barcode_scan();
+				} else {
+					this.$body.find(`#ef-row-${idx} .ef-qty`).trigger("focus");
+				}
 				return;
 			}
 		}
-		this._add_item_row({ item_code: it.item_code });
+		if (from_scan) this._last_scan_item_code = it.item_code;
+		this._add_item_row({ item_code: it.item_code }, { focus: !from_scan });
 		const newIdx = this.doc.items.length - 1;
-		this._fetch_item_details(newIdx, it.item_code);
+		this._fetch_item_details(newIdx, it.item_code, { from_scan });
 	}
 
 	_render_items() {
@@ -6218,7 +6304,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		});
 	}
 
-	_add_item_row(item = {}) {
+	_add_item_row(item = {}, opts = {}) {
 		const defaults = this.defaults;
 		const row = {
 			item_code: item.item_code || "",
@@ -6235,7 +6321,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.doc.items.push(row);
 		this._render_items();
 		const newIdx = this.doc.items.length - 1;
-		this.$body.find(`#ef-row-${newIdx} .ef-item-code`).focus();
+		// La fila agregada por escaneo no roba el foco: el cursor se queda en
+		// el campo de lectura (ver _add_or_increment_item).
+		if (opts.focus !== false) this.$body.find(`#ef-row-${newIdx} .ef-item-code`).focus();
 		this._update_local_footer();
 		this._mark_dirty();
 
@@ -6324,7 +6412,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		return (this.doc.items || []).reduce((sum, r) => sum + this._row_recargo(r), 0);
 	}
 
-	_fetch_item_details(idx, item_code) {
+	_fetch_item_details(idx, item_code, opts = {}) {
 		if (!item_code) return;
 		frappe.call({
 			method: "facex_multi.api.invoice.get_item_details",
@@ -6371,9 +6459,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 						}
 						this._render_items();
 						this._update_local_footer();
-						this._handle_item_serial_adenda(idx, d);
+						this._handle_item_serial_adenda(idx, d, opts);
 						this._update_row_stock_flag(idx);
-						this._maybe_suggest_pair(item_code);
+						this._maybe_suggest_pair(item_code, opts);
 					}
 				}
 			},
@@ -6449,7 +6537,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 	// ── Artículos en Par / Alternativos / Búsqueda por Palabras Clave ──────
 
-	_maybe_suggest_pair(item_code) {
+	_maybe_suggest_pair(item_code, opts = {}) {
+		const from_scan = !!opts.from_scan;
 		frappe.call({
 			method: "facex_multi.api.item_relations.get_item_pair_suggestion",
 			args: { item_code },
@@ -6461,10 +6550,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 				frappe.confirm(
 					`<strong>${_esc(item_code)}</strong> tiene un artículo en par configurado: <strong>${_esc(pair.item_name || pair.item_code)}</strong>. ¿Agregarlo también a la factura?`,
 					() => {
-						this._add_item_row({ item_code: pair.item_code });
-						this._fetch_item_details(this.doc.items.length - 1, pair.item_code);
+						this._add_item_row({ item_code: pair.item_code }, { focus: !from_scan });
+						this._fetch_item_details(this.doc.items.length - 1, pair.item_code, { from_scan });
 					}
 				);
+				// La confirmación se lleva el foco: al cerrarla vuelve al lector.
+				if (from_scan) this._scan_refocus_pending = true;
 			},
 		});
 	}
@@ -6841,23 +6932,33 @@ body.facex-fullscreen-mode .ef-main-layout {
 	// Series y Adendas DIGECAM
 	// -----------------------------------------------------------------------
 
-	_handle_item_serial_adenda(idx, details) {
+	_handle_item_serial_adenda(idx, details, opts = {}) {
 		const cfg = this.company_config || {};
 		const has_serial = details.has_serial_no;
 		const tiene_adenda = details.custom_tiene_adenda;
+		const from_scan = !!opts.from_scan;
+		// Fin del alta de la fila: por escaneo el cursor vuelve al lector; en
+		// captura manual se queda en la cantidad como siempre.
+		const _focus_next = () => {
+			if (from_scan) this._focus_barcode_scan();
+			else this.$body.find(`#ef-row-${idx} .ef-qty`).focus().select();
+		};
 
 		if (has_serial && cfg.maneja_series) {
 			this._show_serial_picker(idx, () => {
 				if (tiene_adenda && cfg.maneja_adendas) {
 					this._show_adenda_dialog(idx, "arma");
+					if (from_scan) this._scan_refocus_pending = true;
 				} else {
-					this.$body.find(`#ef-row-${idx} .ef-qty`).focus().select();
+					_focus_next();
 				}
 			});
+			if (from_scan) this._scan_refocus_pending = true;
 		} else if (tiene_adenda && cfg.maneja_adendas) {
 			this._show_adenda_dialog(idx, "municion");
+			if (from_scan) this._scan_refocus_pending = true;
 		} else {
-			this.$body.find(`#ef-row-${idx} .ef-qty`).focus().select();
+			_focus_next();
 		}
 	}
 
@@ -7572,6 +7673,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 	// -----------------------------------------------------------------------
 
 	_sync_ui_from_doc() {
+		// El documento en pantalla cambió (nuevo, cargado, duplicado o releído
+		// del servidor): la próxima lectura no tiene lectura previa con la que
+		// compararse (ver _add_or_increment_item).
+		this._last_scan_item_code = null;
 		const d = this.doc;
 
 		// Establecer valor de establecimiento

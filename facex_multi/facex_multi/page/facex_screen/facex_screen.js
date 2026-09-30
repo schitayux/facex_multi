@@ -446,7 +446,7 @@ class EFastPOSScreen {
 			e.preventDefault();
 			const matches = this._filtered_items();
 			if (matches.length === 1) {
-				this._add_or_prompt(matches[0]);
+				this._add_or_prompt(matches[0], { from_scan: true });
 				this._clear_efs_search();
 			} else {
 				// 0 coincidencias locales (filtro de grupo activo, etc.) o varias
@@ -454,6 +454,12 @@ class EFastPOSScreen {
 				// exacta por código de barras / código de producto en el servidor.
 				this._resolve_scanned_code(this.searchTxt);
 			}
+		});
+		// Lectura continua: si un diálogo (serie, adenda, artículo en par) se
+		// quedó con el foco, el cursor vuelve al buscador al cerrarse.
+		$(document).off("hidden.bs.modal.efsscan").on("hidden.bs.modal.efsscan", () => {
+			if (!this._scan_refocus_pending) return;
+			this._focus_efs_search({ delay: 180 });
 		});
 		this.$body.find("#efs-filter-instock").on("change", (e) => {
 			this.filterInStock = e.target.checked;
@@ -1669,11 +1675,36 @@ class EFastPOSScreen {
 		});
 	}
 
-	_clear_efs_search() {
+	// Deja el buscador vacío y con el cursor dentro, listo para la siguiente
+	// lectura. Se re-dibuja la grilla para que deje de mostrar el filtro del
+	// código recién escaneado.
+	_clear_efs_search(opts = {}) {
 		this.searchTxt = "";
-		const $search = this.$body.find("#efs-search");
-		$search.val("");
-		$search.trigger("focus");
+		this.$body.find("#efs-search").val("");
+		this._render_grid();
+		this._focus_efs_search(opts);
+	}
+
+	// Devuelve el cursor al buscador. Si en ese momento hay un diálogo abierto
+	// (serie, adenda, artículo en par) se marca pendiente y el foco regresa
+	// cuando se cierre, sin robárselo a la ventana.
+	_focus_efs_search(opts = {}) {
+		const apply = () => {
+			if ($(".modal:visible").length) {
+				this._scan_refocus_pending = true;
+				return;
+			}
+			this._scan_refocus_pending = false;
+			const el = this.$body.find("#efs-search")[0];
+			if (!el || !$(el).is(":visible")) return;
+			el.focus();
+			try { el.select(); } catch (err) { /* algunos navegadores no permiten select() */ }
+		};
+		// Inmediato para no perder ninguna tecla, y una reafirmación diferida
+		// por si un render posterior o un diálogo se llevó el foco.
+		apply();
+		clearTimeout(this._scan_focus_timer);
+		this._scan_focus_timer = setTimeout(apply, opts.delay !== undefined ? opts.delay : 60);
 	}
 
 	_resolve_scanned_code(code) {
@@ -1683,13 +1714,19 @@ class EFastPOSScreen {
 			args: { txt: code, company: this.doc.company || this.defaults.company || "" },
 			callback: (r) => {
 				if (!r.message) {
+					// Aun sin resultado se limpia y se devuelve el cursor: el
+					// lector queda listo para volver a intentar.
+					this._clear_efs_search();
 					frappe.show_alert({ message: __("Producto no encontrado."), indicator: "orange" });
 					return;
 				}
 				const found = r.message;
 				const local = this.allItems.find((it) => it.item_code === found.item_code);
-				this._add_or_prompt(local || Object.assign({}, found, { rate: found.standard_price }));
+				this._add_or_prompt(local || Object.assign({}, found, { rate: found.standard_price }), { from_scan: true });
 				this._clear_efs_search();
+			},
+			error: () => {
+				this._focus_efs_search();
 			},
 		});
 	}
@@ -1835,7 +1872,7 @@ class EFastPOSScreen {
 	// Carrito (ticket)
 	// -----------------------------------------------------------------------
 
-	_add_or_prompt(item) {
+	_add_or_prompt(item, opts = {}) {
 		if (item.is_stock_item && parseFloat(item.stock_qty) <= 0) {
 			frappe.show_alert({
 				message: __("{0} no tiene existencias en la bodega actual.", [item.item_name || item.item_code]),
@@ -1851,22 +1888,58 @@ class EFastPOSScreen {
 				row.qty = (parseFloat(row.qty) || 0) + 1;
 				this._render_cart();
 				this._render_grid();
+				if (opts.from_scan) {
+					// Lecturas seguidas del mismo código = conteo normal, en
+					// silencio. El aviso es para cuando la lectura regresa a una
+					// línea anterior del ticket después de haber pasado por otros
+					// productos (ver _notify_cart_merged).
+					const repite = this._last_scan_item_code === item.item_code;
+					this._last_scan_item_code = item.item_code;
+					if (!repite) this._notify_cart_merged(existingIdx, row);
+				}
 				return;
 			}
 		}
 
+		if (opts.from_scan) this._last_scan_item_code = item.item_code;
 		const idx = this._push_cart_row(item);
 		if (item.has_serial_no || item.custom_tiene_adenda) {
 			this._handle_item_serial_adenda(idx, item);
+			// La ventana de serie/adenda se queda con el foco: al cerrarla el
+			// cursor regresa solo al buscador.
+			if (opts.from_scan) this._scan_refocus_pending = true;
 		}
 		this._render_cart();
 		this._render_grid();
-		this._maybe_suggest_pair(item.item_code);
+		this._maybe_suggest_pair(item.item_code, opts);
+	}
+
+	// Aviso de que la lectura se acumuló en una línea que ya estaba en el
+	// ticket: mensaje con el número de línea y la cantidad nueva, destello en
+	// la línea y la trae a la vista — sin quitarle el cursor al buscador.
+	_notify_cart_merged(idx, row) {
+		const nombre = row.item_name || row.item_code || "";
+		const qty = Math.round((parseFloat(row.qty) || 0) * 1000) / 1000;
+		frappe.show_alert(
+			{
+				message: __("{0} ya estaba en la línea {1} — cantidad: {2}", [nombre, idx + 1, qty]),
+				indicator: "blue",
+			},
+			5
+		);
+		const $line = this.$body.find(`#efs-ticket-lines .efs-ticket-line[data-idx="${idx}"]`);
+		if (!$line.length) return;
+		$line.removeClass("efs-line-merged");
+		void $line[0].offsetWidth; // reinicia la animación si el aviso se repite
+		$line.addClass("efs-line-merged");
+		clearTimeout(this._merged_flash_timer);
+		this._merged_flash_timer = setTimeout(() => $line.removeClass("efs-line-merged"), 1700);
+		if ($line[0].scrollIntoView) $line[0].scrollIntoView({ block: "nearest", behavior: "smooth" });
 	}
 
 	// ── Artículos en Par / Alternativos / Búsqueda por Palabras Clave ──────
 
-	_maybe_suggest_pair(item_code) {
+	_maybe_suggest_pair(item_code, opts = {}) {
 		frappe.call({
 			method: "facex_multi.api.item_relations.get_item_pair_suggestion",
 			args: { item_code },
@@ -1892,11 +1965,13 @@ class EFastPOSScreen {
 									has_serial_no: d.has_serial_no,
 									custom_tiene_adenda: d.custom_tiene_adenda,
 									tax_exempt: d.tax_exempt,
-								});
+								}, opts);
 							},
 						});
 					}
 				);
+				// La confirmación se lleva el foco: al cerrarla vuelve al buscador.
+				if (opts.from_scan) this._scan_refocus_pending = true;
 			},
 		});
 	}
@@ -2250,7 +2325,7 @@ class EFastPOSScreen {
 		// detalles usan el ancho completo del ticket; los controles (cantidad,
 		// precio, importe, "…", quitar) quedan juntos en su propia fila.
 		return `
-			<div class="efs-ticket-line">
+			<div class="efs-ticket-line" data-idx="${idx}">
 				<div class="efs-line-top">
 					<div class="efs-line-name">${_efs_esc(row.item_name)} ${adendaBadge}</div>
 					<button class="efs-line-remove" data-idx="${idx}" title="Quitar">×</button>
@@ -4220,6 +4295,8 @@ class EFastPOSScreen {
 				callback: (r) => {
 					if (!r.message) return;
 					this.doc = r.message;
+					// Venta retomada: sin lectura previa con la que comparar.
+					this._last_scan_item_code = null;
 					// Los marcadores _has_serial_no/_custom_tiene_adenda/_item_group son
 					// transitorios (nunca se persisten en BD) — se restauran cruzando el
 					// catálogo ya cargado en memoria por item_code. Los datos reales de
@@ -4536,6 +4613,9 @@ class EFastPOSScreen {
 		this.doc = this._empty_doc();
 		this.customerDetails = null;
 		this._lastSavedInvoice = null;
+		// Venta nueva: ninguna lectura previa con la que comparar (ver
+		// _add_or_prompt / _notify_cart_merged).
+		this._last_scan_item_code = null;
 		this.doc.company = this.defaults.company || "";
 		this.doc.naming_series = (this.defaults.naming_series || [])[0] || "";
 		this.doc.bfel_establecimiento = String(((this.defaults.establishments || [])[0] || {}).establecimiento_id || "");
@@ -4859,6 +4939,13 @@ body.facex-fullscreen-mode .main-section {
   display: flex; flex-direction: column; gap: 4px;
   padding: 10px 8px; border-bottom: 1px solid #f1f5f9;
 }
+/* Lectura acumulada sobre una línea anterior del ticket: destello de aviso */
+@keyframes efs-merged-flash {
+  0%   { background: #fde68a; }
+  70%  { background: #fef3c7; }
+  100% { background: transparent; }
+}
+.efs-ticket-line.efs-line-merged { animation: efs-merged-flash 1.6s ease-out; }
 .efs-line-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .efs-line-name { font-size: 13px; font-weight: 600; line-height: 1.35; flex: 1; }
 .efs-line-tag { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 8px; margin-left: 6px; white-space: nowrap; }
