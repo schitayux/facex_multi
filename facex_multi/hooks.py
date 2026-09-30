@@ -81,6 +81,7 @@ doc_events = {
         "before_validate": "facex_multi.api.recargo.apply_recargo_y_flete",
         "validate": [
             "facex_multi.api.invoice.guard_guias_transporte_permission",
+            "facex_multi.api.invoice.validate_guias_transporte_unicas",
             "facex_multi.api.invoice.sync_contra_entrega_from_price_list",
             "facex_multi.api.recargo.set_totales_con_recargo",
         ],

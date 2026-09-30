@@ -58,6 +58,23 @@ class FacexTransporteModule {
 		$(`<style id="facex-transporte-module-styles">${EFT_STYLES}</style>`).appendTo("head");
 	}
 
+	// El detalle de una liquidación son 13 columnas: necesita todo el ancho del
+	// navegador. Cada host limita su contenedor (FacEx Clásico pone max-width
+	// 1200px inline en #ef-transporte-view), así que en vez de parchear cada
+	// uno se le quita el tope a los ancestros que tengan uno — y se les
+	// devuelve al salir de Liquidaciones, para no alterar el resto del módulo.
+	_setWideHost(on) {
+		if (!on) {
+			$(".efs-liq-host-wide").removeClass("efs-liq-host-wide");
+			return;
+		}
+		if (!this.$container || !this.$container.length) return;
+		this.$container.parents().filter(function () {
+			const mw = $(this).css("max-width");
+			return mw && mw !== "none" && mw !== "100%";
+		}).addClass("efs-liq-host-wide");
+	}
+
 	_hasAccess() {
 		const p = this.perms || {};
 		if (!p.puede_ver_menu_transporte) return false;
@@ -82,6 +99,7 @@ class FacexTransporteModule {
 	// -----------------------------------------------------------------------
 
 	showHub() {
+		this._setWideHost(false);
 		const p = this.perms || {};
 
 		const truckSvg = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13"></rect><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"></polygon><circle cx="5.5" cy="18.5" r="2.5"></circle><circle cx="18.5" cy="18.5" r="2.5"></circle></svg>`;
@@ -191,6 +209,7 @@ class FacexTransporteModule {
 	// -----------------------------------------------------------------------
 
 	showReportes() {
+		this._setWideHost(false);
 		const $view = this.$container;
 		const reports = [
 			{ key: "guias_estado", report_name: "FacEx Guias por Estado de Entrega", label: __("Guías por Estado") },
@@ -395,6 +414,7 @@ class FacexTransporteModule {
 	// -----------------------------------------------------------------------
 
 	showPendingGuias() {
+		this._setWideHost(false);
 		const $view = this.$container;
 		$view.html(`
 			<div class="efs-wizard efs-history-wizard">
@@ -636,6 +656,7 @@ class FacexTransporteModule {
 	// -----------------------------------------------------------------------
 
 	showGuias() {
+		this._setWideHost(false);
 		const $view = this.$container;
 		$view.html(`
 			<div class="efs-wizard efs-history-wizard">
@@ -760,6 +781,7 @@ class FacexTransporteModule {
 	// -----------------------------------------------------------------------
 
 	showTransportistas() {
+		this._setWideHost(false);
 		const $view = this.$container;
 		$view.html(`
 			<div class="efs-wizard efs-history-wizard">
@@ -866,6 +888,7 @@ class FacexTransporteModule {
 	// -----------------------------------------------------------------------
 
 	showLiquidaciones() {
+		this._setWideHost(true);
 		const $view = this.$container;
 		$view.html(`
 			<div class="efs-wizard efs-history-wizard efs-liq-wizard-wide">
@@ -898,13 +921,14 @@ class FacexTransporteModule {
 	_renderLiquidacionesResults() {
 		const $results = this.$container.find("#eft-liquidaciones-results");
 		const rows = this._liquidacionesRaw || [];
+		const canDelete = !!(this.perms || {}).puede_cargar_liquidaciones_transporte;
 		if (!rows.length) {
 			$results.html(`<div class="efs-cust-details-loading">${__("No hay liquidaciones registradas.")}</div>`);
 			return;
 		}
 		$results.html(`
 			<table class="efs-stock-table">
-				<thead><tr><th>${__("Liquidación")}</th><th>${__("Transportista")}</th><th>${__("Fecha")}</th><th>${__("Cliente")}</th><th>${__("Total Depositado")}</th></tr></thead>
+				<thead><tr><th>${__("Liquidación")}</th><th>${__("Transportista")}</th><th>${__("Fecha")}</th><th>${__("Cliente")}</th><th>${__("Total Depositado")}</th><th></th></tr></thead>
 				<tbody>
 					${rows.map((row) => `
 						<tr class="efs-hist-row" data-name="${_eft_esc(row.name)}">
@@ -913,6 +937,7 @@ class FacexTransporteModule {
 							<td>${_eft_esc(row.fecha || "")}</td>
 							<td>${_eft_esc(row.cliente || "")}</td>
 							<td>Q ${_eft_fmt(row.total_depositado)}</td>
+							<td class="efs-liq-row-actions">${canDelete ? `<button type="button" class="efs-pending-icon-btn efs-liq-delete-btn" data-name="${_eft_esc(row.name)}" title="${__("Eliminar liquidación")}">🗑</button>` : ""}</td>
 						</tr>
 					`).join("")}
 				</tbody>
@@ -921,6 +946,85 @@ class FacexTransporteModule {
 		$results.find(".efs-hist-row").on("click", (e) => {
 			this.showLiquidacionEditor($(e.currentTarget).data("name"));
 		});
+		$results.find(".efs-liq-delete-btn").on("click", (e) => {
+			e.stopPropagation();
+			this._deleteLiquidacion($(e.currentTarget).data("name"));
+		});
+	}
+
+	// Mantenimiento: anular (eliminar) una liquidación completa. Antes de
+	// preguntar se pide al servidor el plan — qué abonos se cancelan, qué pagos
+	// en borrador se sueltan y qué Cierres Diarios lo impiden — para que el
+	// aviso sea concreto y nadie anule a ciegas. Los cierres CERRADOS bloquean;
+	// uno en "Reabierto" no.
+	_deleteLiquidacion(name) {
+		if (!name) return;
+		frappe.call({
+			method: "facex_multi.api.invoice.preview_liquidacion_delete",
+			args: { name },
+			freeze: true,
+			freeze_message: __("Revisando pagos y cierres…"),
+			callback: (r) => this._showLiquidacionDeleteDialog(name, r.message || {}),
+		});
+	}
+
+	_showLiquidacionDeleteDialog(name, plan) {
+		const abonos = plan.abonos || [];
+		const borradores = plan.borradores || [];
+		const bloqueos = plan.bloqueos || [];
+
+		const lista = (titulo, filas, render) => filas.length
+			? `<div class="efs-liq-del-block"><div class="efs-liq-del-title">${titulo}</div><ul class="efs-liq-del-list">${filas.map(render).join("")}</ul></div>`
+			: "";
+
+		const cuerpo = `
+			<div class="efs-liq-del">
+				<p>${__("Se va a anular la liquidación <b>{0}</b> ({1}, {2}).", [_eft_esc(name), _eft_esc(plan.transportista || ""), _eft_esc(plan.fecha || "")])}</p>
+				${bloqueos.length ? `
+					<div class="efs-liq-del-block efs-liq-del-blocked">
+						<div class="efs-liq-del-title">${__("No se puede: hay Cierres Diarios cerrados")}</div>
+						<ul class="efs-liq-del-list">
+							${bloqueos.map((b) => `<li>${__("Factura")} <b>${_eft_esc(b.sales_invoice || "")}</b> — ${__("cierre")} <b>${_eft_esc(b.cierre || "")}</b> ${__("del")} ${_eft_esc(b.fecha || "")} ${__("de")} ${_eft_esc(b.usuario || "")}</li>`).join("")}
+						</ul>
+						<div class="efs-liq-del-hint">${__("Un usuario de Gerencia debe reabrir esos cierres en FacEx (Cierre Diario → Reabrir) y volver a intentarlo.")}</div>
+					</div>
+				` : ""}
+				${lista(__("Abonos que se van a CANCELAR (la factura recupera su saldo)"), abonos,
+					(a) => `<li><b>${_eft_esc(a.payment_entry)}</b> — Q ${_eft_fmt(a.monto)} · ${__("guía")} ${_eft_esc(a.guia || "")} → ${_eft_esc(a.sales_invoice || "")}</li>`)}
+				${lista(__("Pagos en borrador que se van a soltar de la factura"), borradores,
+					(b) => `<li><b>${_eft_esc(b.payment_entry)}</b> — Q ${_eft_fmt(b.monto)} → ${_eft_esc(b.sales_invoice || "")}</li>`)}
+				<div class="efs-liq-del-hint">${__("Las guías que había conciliado volverán a quedar pendientes de liquidar, y el pago se desasignará dentro de la factura en FacEx.")}</div>
+			</div>
+		`;
+
+		const dlg = new frappe.ui.Dialog({
+			title: __("Anular liquidación {0}", [name]),
+			size: "large",
+			fields: [{ fieldname: "detalle", fieldtype: "HTML", options: cuerpo }],
+			primary_action_label: bloqueos.length ? __("Cerrar") : __("Sí, anular"),
+			primary_action: () => {
+				dlg.hide();
+				if (bloqueos.length) return;
+				frappe.call({
+					method: "facex_multi.api.invoice.delete_liquidacion_transporte",
+					args: { name },
+					freeze: true,
+					freeze_message: __("Anulando liquidación…"),
+					callback: (r) => {
+						const m = r.message || {};
+						const partes = [__("Liquidación {0} anulada.", [name])];
+						if ((m.pagos_revertidos || []).length) partes.push(__("{0} abono(s) revertido(s).", [m.pagos_revertidos.length]));
+						if ((m.borradores_liberados || []).length) partes.push(__("{0} borrador(es) liberado(s).", [m.borradores_liberados.length]));
+						frappe.show_alert({ message: partes.join(" "), indicator: "green" }, 8);
+						this._loadLiquidaciones();
+					},
+				});
+			},
+		});
+		if (!bloqueos.length) dlg.set_secondary_action_label(__("Cancelar"));
+		dlg.show();
+		if (bloqueos.length) dlg.get_primary_btn().removeClass("btn-primary").addClass("btn-default");
+		else dlg.get_primary_btn().removeClass("btn-primary").addClass("btn-danger");
 	}
 
 	// Orden fijo de columnas para pegado desde Excel (coincide con el orden
@@ -959,10 +1063,21 @@ class FacexTransporteModule {
 		};
 
 		const NUMERIC_COLS = ["monto_cod", "efectivo", "comision", "valor_comision", "monto_liquidado"];
+		// Las hojas de liquidación traen, además del detalle, líneas de
+		// encabezado/resumen ("FECHA:", "CLIENTE:", "TOTAL DEPOSITADO:", …) en
+		// la primera columna. Si se pegan como guías quedan filas basura que
+		// nunca hacen match y encima chocan entre liquidaciones.
+		// Una etiqueta siempre termina en ":" (o es una palabra sola conocida);
+		// un No. de guía nunca.
+		const NO_ES_GUIA = (v) => /:\s*$/.test(v) || /^(guia|guía|resumen|total|piezas|estado)$/i.test(v);
 		const rows = [];
 		dataLines.forEach((line) => {
 			const cells = line.split("\t");
-			if (!(cells[0] || "").trim()) return;
+			// Limpia marcas invisibles (bidi / zero-width / BOM) que Excel mete
+			// dentro del número de guía: no se ven pero rompen el match.
+			const guiaCell = (cells[0] || "").replace(/[​-‏‪-‮⁠⁦-⁩﻿]/g, "").trim();
+			if (!guiaCell || NO_ES_GUIA(guiaCell)) return;
+			cells[0] = guiaCell;
 			const row = {};
 			this._LIQ_DETALLE_COLUMNS.forEach((col, idx) => {
 				const raw = cells[idx] != null ? cells[idx].trim() : "";
@@ -1016,6 +1131,9 @@ class FacexTransporteModule {
 			$editor.html(`
 				<div class="efs-liq-editor-back">
 					<button type="button" class="efs-btn-link" id="eft-liq-editor-back">${__("← Volver a la lista")}</button>
+						${doc && doc.name && (this.perms || {}).puede_cargar_liquidaciones_transporte
+							? `<button type="button" class="efs-btn-link efs-btn-link-danger" id="eft-liq-delete">${__("🗑 Eliminar liquidación")}</button>`
+							: ""}
 				</div>
 				<div class="efs-liq-header-fields">
 					<div class="efs-liq-field">
@@ -1104,19 +1222,21 @@ class FacexTransporteModule {
 			const addRow = (data = {}) => {
 				const $row = $(`
 					<tr class="efs-liq-row">
-						<td><input type="text" class="efs-liq-guia" value="${_eft_esc(data.guia || "")}" /></td>
-						<td><input type="number" min="0" class="efs-liq-piezas" value="${data.piezas != null ? data.piezas : ""}" /></td>
-						<td><input type="text" class="efs-liq-estado" value="${_eft_esc(data.estado || "")}" /></td>
-						<td><input type="number" step="any" class="efs-liq-monto-cod" value="${data.monto_cod != null ? data.monto_cod : ""}" /></td>
-						<td><input type="number" step="any" class="efs-liq-efectivo" value="${data.efectivo != null ? data.efectivo : ""}" /></td>
-						<td><input type="number" step="any" class="efs-liq-comision" value="${data.comision != null ? data.comision : ""}" /></td>
-						<td><input type="number" step="any" class="efs-liq-valor-comision" value="${data.valor_comision != null ? data.valor_comision : ""}" /></td>
-						<td><input type="number" step="any" class="efs-liq-monto-liquidado" value="${data.monto_liquidado != null ? data.monto_liquidado : ""}" /></td>
-						<td><input type="text" class="efs-liq-operacion" value="${_eft_esc(data.operacion || "")}" /></td>
-						<td><input type="text" class="efs-liq-autorizacion" value="${_eft_esc(data.autorizacion || "")}" /></td>
-						<td><input type="text" class="efs-liq-numero-cuenta" value="${_eft_esc(data.numero_cuenta || "")}" /></td>
-						<td class="efs-liq-match">${data.match_encontrado ? `✓ ${_eft_esc(data.sales_invoice || "")}` : (data.guia ? "—" : "")}</td>
-						<td><button type="button" class="efs-line-remove">×</button></td>
+						<td data-label="${__("Guía")}"><input type="text" class="efs-liq-guia" value="${_eft_esc(data.guia || "")}" /></td>
+						<td data-label="${__("Piezas")}"><input type="number" min="0" class="efs-liq-piezas" value="${data.piezas != null ? data.piezas : ""}" /></td>
+						<td data-label="${__("Estado")}"><input type="text" class="efs-liq-estado" value="${_eft_esc(data.estado || "")}" /></td>
+						<td data-label="${__("Monto COD")}"><input type="number" step="any" class="efs-liq-monto-cod" value="${data.monto_cod != null ? data.monto_cod : ""}" /></td>
+						<td data-label="${__("Efectivo")}"><input type="number" step="any" class="efs-liq-efectivo" value="${data.efectivo != null ? data.efectivo : ""}" /></td>
+						<td data-label="${__("Comisión %")}"><input type="number" step="any" class="efs-liq-comision" value="${data.comision != null ? data.comision : ""}" /></td>
+						<td data-label="${__("Valor Comisión")}"><input type="number" step="any" class="efs-liq-valor-comision" value="${data.valor_comision != null ? data.valor_comision : ""}" /></td>
+						<td data-label="${__("Monto Liquidado")}"><input type="number" step="any" class="efs-liq-monto-liquidado" value="${data.monto_liquidado != null ? data.monto_liquidado : ""}" /></td>
+						<td data-label="${__("Operación")}"><input type="text" class="efs-liq-operacion" value="${_eft_esc(data.operacion || "")}" /></td>
+						<td data-label="${__("Autorización")}"><input type="text" class="efs-liq-autorizacion" value="${_eft_esc(data.autorizacion || "")}" /></td>
+						<td data-label="${__("Núm. Cuenta")}"><input type="text" class="efs-liq-numero-cuenta" value="${_eft_esc(data.numero_cuenta || "")}" /></td>
+						<td class="efs-liq-match" data-label="${__("Match")}">${data.match_encontrado
+							? `✓ <a class="efs-liq-match-link" href="/app/facex?invoice=${encodeURIComponent(data.sales_invoice || "")}" target="_blank" rel="noopener" title="${__("Abrir la factura en FacEx, en una pestaña nueva")}">${_eft_esc(data.sales_invoice || "")}</a>${data.fecha_factura ? `<div class="efs-liq-match-fecha">${__("Fecha factura")}: ${_eft_esc(data.fecha_factura)}</div>` : ""}`
+							: (data.guia ? "—" : "")}</td>
+						<td class="efs-liq-row-remove"><button type="button" class="efs-line-remove" title="${__("Quitar la fila")}">×</button></td>
 					</tr>
 				`);
 				$row.find(".efs-line-remove").on("click", () => {
@@ -1147,6 +1267,7 @@ class FacexTransporteModule {
 			});
 
 			$editor.find("#eft-liq-editor-back").on("click", () => this._loadLiquidaciones());
+			$editor.find("#eft-liq-delete").on("click", () => this._deleteLiquidacion(doc && doc.name));
 
 			$editor.find("#eft-liq-save").on("click", () => {
 				const detalle = [];
@@ -1229,8 +1350,13 @@ const EFT_STYLES = `
 .efs-wizard-header { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
 .efs-wizard-title { font-size: 18px; font-weight: 800; }
 .efs-history-wizard { max-width: 900px; }
-.efs-liq-wizard-wide { max-width: 96vw; }
+.efs-liq-host-wide { max-width: none !important; }
+.efs-liq-wizard-wide { max-width: none; width: 100%; padding: 20px 16px; }
+@media (max-width: 860px) { .efs-liq-wizard-wide { padding: 16px 10px; } }
 .efs-history-results { overflow-x: auto; }
+/* La lista de liquidaciones son 6 columnas: estirarla a 2000px la deja hueca,
+   así que solo el editor del detalle usa todo el ancho. */
+#eft-liquidaciones-results { max-width: 1200px; }
 .efs-hist-row { cursor: pointer; }
 .efs-hist-row:hover { background: #f0f7ff; }
 .efs-pending-actions { display: flex; gap: 8px; }
@@ -1306,13 +1432,78 @@ const EFT_STYLES = `
 .efs-liq-header-fields { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
 .efs-liq-field { display: flex; flex-direction: column; gap: 4px; min-width: 160px; }
 .efs-liq-field label { font-size: 11px; font-weight: 700; color: var(--efs-text-muted); text-transform: uppercase; letter-spacing: .03em; }
+/* La tabla del detalle son 13 columnas: con anchos fijos en px se salía de la
+   pantalla y había que barrer en horizontal para ver el Match. Ahora es
+   table-layout:fixed con anchos en %, así que se estira al ancho real del
+   navegador y todo cabe sin scroll horizontal. Los inputs van al 100% de su
+   celda en vez de a un ancho propio. */
 .efs-liq-table-wrap { overflow-x: auto; margin-bottom: 10px; }
-.efs-liq-table { border-collapse: collapse; font-size: 12px; width: 100%; }
-.efs-liq-table th, .efs-liq-table td { padding: 6px; border-bottom: 1px solid var(--efs-border); white-space: nowrap; }
-.efs-liq-table th { text-align: left; color: var(--efs-text-muted); font-size: 10px; text-transform: uppercase; }
-.efs-liq-table input { width: 90px; padding: 5px 6px; border-radius: 6px; border: 1px solid var(--efs-border); font-size: 12px; }
-.efs-liq-table input.efs-liq-guia { width: 110px; }
-.efs-liq-match { font-size: 11px; color: var(--efs-success); white-space: normal; max-width: 140px; }
+.efs-liq-table { border-collapse: collapse; font-size: 12px; width: 100%; table-layout: fixed; }
+.efs-liq-table th, .efs-liq-table td { padding: 6px 5px; border-bottom: 1px solid var(--efs-border); vertical-align: middle; }
+.efs-liq-table th { text-align: left; color: var(--efs-text-muted); font-size: 10px; text-transform: uppercase; line-height: 1.25; word-break: break-word; }
+.efs-liq-table input { width: 100%; min-width: 0; padding: 5px 6px; border-radius: 6px; border: 1px solid var(--efs-border); font-size: 12px; }
+.efs-liq-table input[type="number"] { text-align: right; }
+.efs-liq-match { font-size: 11px; color: var(--efs-success); white-space: normal; word-break: break-word; }
+.efs-liq-row-remove { text-align: center; }
+/* Reparto del ancho por columna (suma 100): Guía, Piezas, Estado, COD,
+   Efectivo, Comisión %, Valor Comisión, Monto Liquidado, Operación,
+   Autorización, Núm. Cuenta, Match, quitar. */
+.efs-liq-table th:nth-child(1),  .efs-liq-table td:nth-child(1)  { width: 9%; }
+.efs-liq-table th:nth-child(2),  .efs-liq-table td:nth-child(2)  { width: 4.5%; }
+.efs-liq-table th:nth-child(3),  .efs-liq-table td:nth-child(3)  { width: 5.5%; }
+.efs-liq-table th:nth-child(4),  .efs-liq-table td:nth-child(4)  { width: 7%; }
+.efs-liq-table th:nth-child(5),  .efs-liq-table td:nth-child(5)  { width: 7%; }
+.efs-liq-table th:nth-child(6),  .efs-liq-table td:nth-child(6)  { width: 5%; }
+.efs-liq-table th:nth-child(7),  .efs-liq-table td:nth-child(7)  { width: 7%; }
+.efs-liq-table th:nth-child(8),  .efs-liq-table td:nth-child(8)  { width: 7.5%; }
+.efs-liq-table th:nth-child(9),  .efs-liq-table td:nth-child(9)  { width: 11%; }
+.efs-liq-table th:nth-child(10), .efs-liq-table td:nth-child(10) { width: 9%; }
+.efs-liq-table th:nth-child(11), .efs-liq-table td:nth-child(11) { width: 8%; }
+.efs-liq-table th:nth-child(12), .efs-liq-table td:nth-child(12) { width: 16%; }
+.efs-liq-table th:nth-child(13), .efs-liq-table td:nth-child(13) { width: 3.5%; }
+@media (max-width: 1400px) {
+  .efs-liq-table, .efs-liq-table input { font-size: 11px; }
+  .efs-liq-table th, .efs-liq-table td { padding: 5px 3px; }
+}
+/* Tablet/teléfono: 13 columnas no son legibles por angostas que se pongan, así
+   que cada fila pasa a ser una tarjeta con la etiqueta de la columna al lado
+   (data-label de cada celda). */
+@media (max-width: 860px) {
+  .efs-liq-table { table-layout: auto; }
+  .efs-liq-table thead { display: none; }
+  .efs-liq-table, .efs-liq-table tbody, .efs-liq-table tr, .efs-liq-table td { display: block; width: auto; }
+  .efs-liq-row {
+    border: 1px solid var(--efs-border); border-radius: var(--efs-radius);
+    padding: 8px 10px; margin-bottom: 10px; background: #fff; position: relative;
+  }
+  .efs-liq-table td {
+    border-bottom: 0; padding: 3px 0; display: flex; align-items: center; gap: 10px;
+  }
+  .efs-liq-table td::before {
+    content: attr(data-label); flex: 0 0 40%; font-size: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .03em; color: var(--efs-text-muted);
+  }
+  .efs-liq-table td:not([data-label])::before { content: none; }
+  .efs-liq-table input { flex: 1 1 auto; min-width: 0; text-align: left; }
+  .efs-liq-table th:nth-child(n), .efs-liq-table td:nth-child(n) { width: auto; }
+  .efs-liq-row-remove { position: absolute; top: 4px; right: 6px; padding: 0; }
+  .efs-liq-row-remove::before { content: none; }
+}
+.efs-liq-match-fecha { color: var(--efs-text-muted); font-size: 10px; margin-top: 2px; }
+.efs-liq-match-link { color: var(--efs-primary); font-weight: 700; text-decoration: none; }
+.efs-liq-match-link:hover { color: var(--efs-primary); text-decoration: underline; }
+.efs-liq-row-actions { white-space: nowrap; text-align: right; }
+.efs-liq-delete-btn { font-size: 13px; line-height: 1; }
+.efs-liq-delete-btn:hover { border-color: var(--efs-danger); color: var(--efs-danger); background: #fef2f2; }
+.efs-btn-link-danger { color: var(--efs-danger); margin-left: 16px; }
+.efs-liq-del { font-size: 13px; }
+.efs-liq-del-block { margin-top: 14px; padding: 10px 14px; border: 1px solid var(--efs-border); border-radius: var(--efs-radius); background: #f8fafc; }
+.efs-liq-del-blocked { background: #fef2f2; border-color: #fca5a5; }
+.efs-liq-del-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--efs-text-muted); margin-bottom: 6px; }
+.efs-liq-del-blocked .efs-liq-del-title { color: var(--efs-danger); }
+.efs-liq-del-list { margin: 0; padding-left: 18px; }
+.efs-liq-del-list li { margin-bottom: 3px; }
+.efs-liq-del-hint { font-size: 12px; color: var(--efs-text-muted); margin-top: 10px; }
 .efs-liq-table-actions { display: flex; gap: 16px; align-items: center; margin-top: 4px; }
 .efs-liq-footer-totals { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--efs-border); }
 .efs-liq-total-box {

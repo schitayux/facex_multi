@@ -17,6 +17,7 @@
   "autorizacion",
   "numero_cuenta",
   "sales_invoice",
+  "fecha_factura",
   "match_encontrado",
   "payment_entry"
  ],
@@ -110,6 +111,15 @@
    "columns": 2
   },
   {
+   "fieldname": "fecha_factura",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Fecha Factura",
+   "read_only": 1,
+   "columns": 2,
+   "description": "Fecha de emisión de la factura que hizo match. Se llena automáticamente al conciliar."
+  },
+  {
    "default": "0",
    "fieldname": "match_encontrado",
    "fieldtype": "Check",
@@ -125,7 +135,7 @@
    "options": "Payment Entry",
    "read_only": 1,
    "no_copy": 1,
-   "description": "Comprobante de pago (borrador, tipo Transferencia) generado automáticamente al hacer match con la factura. Se recrea si la fila cambia mientras siga en borrador; si ya fue sometido en Contabilidad, no se vuelve a tocar."
+   "description": "Comprobante de pago (tipo Transferencia) generado y SOMETIDO automáticamente al hacer match con la factura: el saldo de la factura baja en el acto. Para cambiar los montos de la fila o desligar la guía hay que revertirlo primero en Contabilidad; eliminar la liquidación completa desde Mantenimiento sí lo revierte por usted."
   }
  ],
  "index_web_pages_for_search": 0,

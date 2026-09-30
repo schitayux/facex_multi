@@ -94,6 +94,93 @@ def guard_guias_transporte_permission(doc, method=None):
         )
 
 
+# Marcas invisibles (bidi / zero-width / BOM) que arrastran las hojas de
+# liquidación de los transportistas: Excel guarda los números de guía como
+# "‭418335780-1‬" (U+202D … U+202C) y al pegarlos quedan dentro del valor. No
+# se ven en pantalla, pero hacen que el número NUNCA case con la guía
+# capturada en la factura, así que la liquidación no concilia nada.
+_GUIA_INVISIBLES = dict.fromkeys(
+    [0xFEFF, 0x2060]
+    + list(range(0x200B, 0x2010))   # ZWSP, ZWNJ, ZWJ, LRM, RLM
+    + list(range(0x202A, 0x202F))   # LRE, RLE, PDF, LRO, RLO
+    + list(range(0x2066, 0x206A))   # LRI, RLI, FSI, PDI
+)
+
+
+def clean_numero_guia(value) -> str:
+    """Limpia un No. de guía tal como se va a guardar: sin marcas invisibles y
+    sin espacios sobrantes. Conserva el casing que escribió el usuario."""
+    return " ".join((value or "").translate(_GUIA_INVISIBLES).split())
+
+
+def _norm_numero_guia(value) -> str:
+    """Igual que clean_numero_guia pero en mayúsculas — la forma con la que se
+    comparan dos números de guía entre sí."""
+    return clean_numero_guia(value).upper()
+
+
+def validate_guias_transporte_unicas(doc, method=None):
+    """
+    Se activa via doc_events Sales Invoice > validate: el mismo No. de guía no
+    puede repetirse para un mismo transportista, ni dentro de la factura ni
+    contra guías ya capturadas en otras facturas.
+
+    No es cosmético: FacExLiquidacionTransportista.match_guias busca la guía
+    por (numero_guia, transportista) y exige UN solo resultado — con el número
+    duplicado la liquidación no hace match, la guía nunca se marca liquidada y
+    la factura se queda sin su abono automático.
+    """
+    rows = doc.get("bfel_guias_transportista") or []
+    if not rows:
+        return
+
+    vistas = {}
+    for row in rows:
+        limpio = clean_numero_guia(row.numero_guia)
+        if limpio != (row.numero_guia or ""):
+            row.numero_guia = limpio
+        if not limpio or not row.transportista:
+            continue
+        key = (row.transportista, limpio.upper())
+        previa = vistas.get(key)
+        if previa:
+            frappe.throw(
+                f"El No. de guía <b>{frappe.utils.escape_html(limpio)}</b> de "
+                f"<b>{frappe.utils.escape_html(row.transportista)}</b> está repetido en esta "
+                f"factura (líneas {previa} y {row.idx}).",
+                title="Guía duplicada",
+            )
+        vistas[key] = row.idx
+
+    if not vistas:
+        return
+
+    conflictos = frappe.db.sql(
+        """
+        select g.numero_guia, g.transportista, g.parent
+        from `tabFacEx Guia Transportista` g
+        where g.parenttype = 'Sales Invoice'
+          and g.parent != %(parent)s
+          and g.transportista in %(transportistas)s
+          and upper(trim(g.numero_guia)) in %(numeros)s
+        """,
+        {
+            "parent": doc.name or "",
+            "transportistas": tuple({t for t, _ in vistas}),
+            "numeros": tuple({n for _, n in vistas}),
+        },
+        as_dict=True,
+    )
+    for c in conflictos:
+        if (c.transportista, _norm_numero_guia(c.numero_guia)) in vistas:
+            frappe.throw(
+                f"El No. de guía <b>{frappe.utils.escape_html(c.numero_guia or '')}</b> de "
+                f"<b>{frappe.utils.escape_html(c.transportista or '')}</b> ya está capturado en la "
+                f"factura <b>{frappe.utils.escape_html(c.parent or '')}</b>.",
+                title="Guía duplicada",
+            )
+
+
 def get_effective_company(company: str = None) -> str:
     """
     Resuelve la compañía efectiva. Prioridad:
@@ -1044,6 +1131,323 @@ def get_transporte_kpis(company: str = None, days: int = 14):
         "por_dia": por_dia,
         "cod_pendiente": cod_pendiente,
         "days": days,
+    }
+
+
+def _cierre_bloqueo_de_pago(pe_posting_date, invoice_name) -> dict:
+    """¿Un Cierre Diario CERRADO impide cancelar este abono? Misma regla que
+    api.cierre.guard_payment_entry_cancel (se reutilizan sus helpers para no
+    tener dos versiones de la verdad), pero informando en vez de tronar: así la
+    pantalla puede avisar ANTES y decir qué cierre hay que reabrir. Un cierre
+    en «Reabierto» no bloquea — es justo el caso que el usuario necesita."""
+    from facex_multi.api import cierre as _cierre
+
+    si = frappe.db.get_value(
+        "Sales Invoice", invoice_name, ["company", "owner", "posting_date"], as_dict=True
+    )
+    if not si:
+        return {}
+    cerrados = _cierre._closed_dates(si.company, si.owner)
+    if not cerrados:
+        return {}
+    if not (getdate(si.posting_date) in cerrados
+            or _cierre._row_frozen(pe_posting_date, si.posting_date, cerrados)):
+        return {}
+    fecha = si.posting_date if getdate(si.posting_date) in cerrados else pe_posting_date
+    return {
+        "cierre": frappe.db.get_value(
+            "FacEx Cierre Diario",
+            {"company": si.company, "usuario": si.owner, "fecha": getdate(fecha), "estado": "Cerrado"},
+            "name",
+        ) or "",
+        "fecha": str(getdate(fecha)),
+        "usuario": si.owner,
+        "sales_invoice": invoice_name,
+    }
+
+
+def _plan_anular_liquidacion(doc) -> dict:
+    """Qué pasaría al anular esta liquidación, sin tocar nada todavía:
+      abonos     — Payment Entry sometidos que se van a CANCELAR (devuelven el
+                   saldo a la factura).
+      borradores — pagos en borrador que quedaron colgando de las mismas
+                   facturas con la referencia de estas guías (típicamente de un
+                   match anterior): se sueltan para que la factura no siga
+                   mostrando un pago que ya no existe en FacEx.
+      bloqueos   — cierres CERRADOS que impiden la cancelación.
+    """
+    abonos, bloqueos = [], []
+    facturas, guias_norm = set(), set()
+
+    for row in doc.detalle:
+        if row.sales_invoice:
+            facturas.add(row.sales_invoice)
+        if row.guia:
+            guias_norm.add(_norm_numero_guia(row.guia))
+        if not row.payment_entry:
+            continue
+        pe = frappe.db.get_value(
+            "Payment Entry", row.payment_entry, ["name", "docstatus", "paid_amount", "posting_date"], as_dict=True
+        )
+        if not pe or pe.docstatus != 1:
+            continue
+        abonos.append({
+            "payment_entry": pe.name,
+            "monto": flt(pe.paid_amount),
+            "guia": row.guia,
+            "sales_invoice": row.sales_invoice,
+        })
+        bloqueo = _cierre_bloqueo_de_pago(pe.posting_date, row.sales_invoice)
+        if bloqueo:
+            bloqueo["payment_entry"] = pe.name
+            bloqueos.append(bloqueo)
+
+    borradores = []
+    if facturas and guias_norm:
+        for pe in frappe.db.sql(
+            """
+            select distinct pe.name, pe.paid_amount, pe.reference_no, ref.reference_name
+            from `tabPayment Entry` pe
+            inner join `tabPayment Entry Reference` ref on ref.parent = pe.name
+            where pe.docstatus = 0
+              and ref.reference_doctype = 'Sales Invoice'
+              and ref.reference_name in %(facturas)s
+            """,
+            {"facturas": tuple(facturas)},
+            as_dict=True,
+        ):
+            if _norm_numero_guia(pe.reference_no) in guias_norm:
+                borradores.append({
+                    "payment_entry": pe.name,
+                    "monto": flt(pe.paid_amount),
+                    "sales_invoice": pe.reference_name,
+                })
+
+    return {
+        "liquidacion": doc.name,
+        "transportista": doc.transportista,
+        "fecha": str(doc.fecha or ""),
+        "abonos": abonos,
+        "borradores": borradores,
+        "bloqueos": bloqueos,
+        "facturas": sorted(facturas),
+    }
+
+
+def _assert_liquidacion_sin_bloqueos(plan) -> None:
+    if not plan["bloqueos"]:
+        return
+    detalle = "<br>".join(
+        f"• Factura <b>{frappe.utils.escape_html(b['sales_invoice'] or '')}</b> — cierre "
+        f"<b>{frappe.utils.escape_html(b['cierre'])}</b> del {frappe.utils.escape_html(b['fecha'])} "
+        f"de {frappe.utils.escape_html(b['usuario'])}"
+        for b in plan["bloqueos"]
+    )
+    frappe.throw(
+        "No se puede anular la liquidación: hay Cierres Diarios CERRADOS que congelan sus "
+        f"pagos.<br><br>{detalle}<br><br>Un usuario de Gerencia debe reabrir esos cierres en "
+        "FacEx (Cierre Diario → Reabrir) y volver a intentarlo. Un cierre en «Reabierto» no estorba.",
+        title="Cierre Diario",
+    )
+
+
+def _assert_pago_facex_no_congelado(invoice_name, payment_date) -> None:
+    """Un pago no se puede agregar a una factura si su fecha cae en un Cierre
+    Diario ya cerrado — misma regla que cierre.guard_sales_invoice_update_after_submit
+    aplica cuando el pago entra por la pestaña Pagos. Aquí se comprueba a mano
+    porque la fila se escribe por db (sin pasar por el validate de la factura)."""
+    from facex_multi.api import cierre as _cierre
+
+    si = frappe.db.get_value(
+        "Sales Invoice", invoice_name, ["company", "owner", "posting_date"], as_dict=True
+    )
+    if not si:
+        return
+    cerrados = _cierre._closed_dates(si.company, si.owner)
+    if cerrados and _cierre._row_frozen(payment_date, si.posting_date, cerrados):
+        frappe.throw(
+            f"El abono del {frappe.utils.escape_html(str(payment_date))} para la factura "
+            f"<b>{frappe.utils.escape_html(invoice_name)}</b> cae en un Cierre Diario ya cerrado "
+            f"de {frappe.utils.escape_html(si.owner)}. Gerencia debe reabrirlo antes de liquidar "
+            "esa guía.",
+            title="Cierre Diario",
+        )
+
+
+# Forma de pago con la que se registra en la factura el abono de una
+# liquidación de transporte: el transportista DEPOSITA al banco, no entrega
+# efectivo, así que en el Cierre Diario debe cuadrar como Transferencia
+# (cierre._METHOD_FIELD → cobro_transferencia) y no inflar el efectivo
+# recuperado. Ojo: la partida contable del Payment Entry sí puede caer en la
+# cuenta de Efectivo mientras el Mode of Payment de transferencia no tenga
+# cuenta configurada en la compañía (ver _resolve_mode_of_payment_account).
+FORMA_PAGO_LIQUIDACION = "Transferencia"
+
+
+def _sync_pago_facex(invoice_name, payment_date, reference, amount) -> str:
+    """Deja en la factura la fila de «Pagos eFast» que representa el abono de la
+    liquidación, idempotente (se identifica por la referencia = No. de guía).
+
+    Sin esta fila el Cierre Diario NO ve el dinero: tanto el cuadre del día
+    como Recuperación de Cartera leen solo `tabeFast Invoice Payment`, nunca los
+    Payment Entry (ver cierre._recuperacion_cartera). Se escribe por db, no con
+    doc.save(), para no re-disparar todo el validate de una factura ya sometida.
+    Devuelve "creado", "actualizado" o "" si no hubo cambios."""
+    ref_norm = _norm_numero_guia(reference)
+    existentes = [
+        r for r in frappe.get_all(
+            "eFast Invoice Payment",
+            filters={"parenttype": "Sales Invoice", "parent": invoice_name},
+            fields=["name", "payment_method", "payment_date", "reference", "amount"],
+        )
+        if _norm_numero_guia(r.reference) == ref_norm
+    ]
+
+    accion = ""
+    if existentes:
+        fila = existentes[0]
+        cambios = {}
+        if fila.payment_method != FORMA_PAGO_LIQUIDACION:
+            cambios["payment_method"] = FORMA_PAGO_LIQUIDACION
+        if str(fila.payment_date or "") != str(payment_date or ""):
+            cambios["payment_date"] = payment_date
+        if abs(flt(fila.amount) - flt(amount)) > 0.005:
+            cambios["amount"] = flt(amount)
+        if cambios:
+            _assert_pago_facex_no_congelado(invoice_name, payment_date)
+            frappe.db.set_value("eFast Invoice Payment", fila.name, cambios, update_modified=False)
+            accion = "actualizado"
+    else:
+        _assert_pago_facex_no_congelado(invoice_name, payment_date)
+        idx = (frappe.db.sql(
+            "select max(idx) from `tabeFast Invoice Payment` where parenttype = 'Sales Invoice' and parent = %s",
+            invoice_name,
+        )[0][0] or 0) + 1
+        fila = frappe.get_doc({
+            "doctype": "eFast Invoice Payment",
+            "parenttype": "Sales Invoice",
+            "parent": invoice_name,
+            "parentfield": "custom_efast_payments",
+            "idx": idx,
+            "payment_method": FORMA_PAGO_LIQUIDACION,
+            "payment_date": payment_date,
+            "reference": clean_numero_guia(reference),
+            "amount": flt(amount),
+        })
+        fila.insert(ignore_permissions=True)
+        accion = "creado"
+
+    # El check «Pagado» de FacEx solo se marca si la factura quedó sin saldo:
+    # un abono parcial no la deja pagada.
+    if flt(frappe.db.get_value("Sales Invoice", invoice_name, "outstanding_amount")) <= 0.005:
+        frappe.db.set_value("Sales Invoice", invoice_name, "custom_pagado", 1, update_modified=False)
+    return accion
+
+
+def _desasignar_pago_facex(invoice_name, guias_norm) -> list:
+    """Quita de la factura el pago que había puesto la liquidación: las filas de
+    «Pagos eFast» cuya referencia es una de estas guías y, si con eso la factura
+    se queda sin pagos, el check «Pagado». Se escribe por db porque la factura
+    está sometida y esto solo deshace una asignación automática (el saldo real
+    lo devuelve la cancelación del Payment Entry)."""
+    quitadas = []
+    filas = frappe.get_all(
+        "eFast Invoice Payment",
+        filters={"parenttype": "Sales Invoice", "parent": invoice_name},
+        fields=["name", "reference", "amount", "payment_method"],
+    )
+    for fila in filas:
+        if _norm_numero_guia(fila.reference) in guias_norm:
+            frappe.db.delete("eFast Invoice Payment", {"name": fila.name})
+            quitadas.append({"sales_invoice": invoice_name, "monto": flt(fila.amount),
+                             "metodo": fila.payment_method})
+    if not quitadas:
+        return quitadas
+    if not frappe.db.count("eFast Invoice Payment", {"parenttype": "Sales Invoice", "parent": invoice_name}):
+        frappe.db.set_value("Sales Invoice", invoice_name, "custom_pagado", 0, update_modified=False)
+    return quitadas
+
+
+@frappe.whitelist()
+def preview_liquidacion_delete(name: str) -> dict:
+    """Solo lectura: qué se va a cancelar/soltar al anular la liquidación y qué
+    cierres lo impiden. La pantalla lo muestra en el diálogo de confirmación
+    para que nadie anule a ciegas."""
+    from facex_multi.api.permissions import get_facex_can_upload_liquidaciones_transporte
+
+    name = (name or "").strip()
+    if not name:
+        frappe.throw("Liquidación no especificada.")
+    if not get_facex_can_upload_liquidaciones_transporte(get_effective_company()):
+        frappe.throw(
+            "No tiene permiso para eliminar Liquidaciones de Transportistas.",
+            frappe.PermissionError,
+        )
+    return _plan_anular_liquidacion(frappe.get_doc("FacEx Liquidacion Transportista", name))
+
+
+@frappe.whitelist()
+def delete_liquidacion_transporte(name: str):
+    """Anula (elimina) una Liquidación de Transportista completa — Mantenimiento
+    de la pantalla «Liquidaciones de Transporte». Mismo permiso que gobierna
+    cargarlas/editarlas: puede_cargar_liquidaciones_transporte.
+
+    Qué hace, en orden:
+      1. Verifica que ningún Cierre Diario CERRADO congele sus pagos. Si alguno
+         lo hace, no toca nada y dice qué cierres reabrir; un cierre en
+         «Reabierto» sí permite continuar. Se comprueba TODO antes de empezar
+         para no quedarse a medias.
+      2. CANCELA los abonos sometidos (el match los somete solo, así que es el
+         caso normal). Cancelar revierte la partida contable y le devuelve el
+         saldo a la factura; el Payment Entry cancelado queda como rastro.
+      3. Suelta los pagos en BORRADOR que hubieran quedado colgando de esas
+         facturas con la referencia de estas guías, y desasigna el pago dentro
+         de la factura de FacEx (filas de «Pagos eFast» + check «Pagado»), para
+         que la factura no siga mostrando un pago que ya no existe.
+      4. Borra la liquidación. Su on_trash devuelve a «pendiente» cada guía que
+         había quedado liquidada.
+    """
+    from facex_multi.api.permissions import get_facex_can_upload_liquidaciones_transporte
+
+    name = (name or "").strip()
+    if not name:
+        frappe.throw("Liquidación no especificada.")
+
+    if not get_facex_can_upload_liquidaciones_transporte(get_effective_company()):
+        frappe.throw(
+            "No tiene permiso para eliminar Liquidaciones de Transportistas.",
+            frappe.PermissionError,
+        )
+
+    doc = frappe.get_doc("FacEx Liquidacion Transportista", name)
+    plan = _plan_anular_liquidacion(doc)
+    _assert_liquidacion_sin_bloqueos(plan)
+
+    guias_norm = {_norm_numero_guia(r.guia) for r in doc.detalle if r.guia}
+
+    cancelados = []
+    for abono in plan["abonos"]:
+        frappe.get_doc("Payment Entry", abono["payment_entry"]).cancel()
+        cancelados.append(abono["payment_entry"])
+
+    borradores = []
+    for borrador in plan["borradores"]:
+        frappe.delete_doc("Payment Entry", borrador["payment_entry"],
+                          ignore_permissions=True, force=True)
+        borradores.append(borrador["payment_entry"])
+
+    desasignados = []
+    for invoice_name in plan["facturas"]:
+        desasignados.extend(_desasignar_pago_facex(invoice_name, guias_norm))
+
+    frappe.delete_doc("FacEx Liquidacion Transportista", name, ignore_permissions=True)
+    frappe.db.commit()
+    return {
+        "success": True,
+        "pagos_revertidos": cancelados,
+        "borradores_liberados": borradores,
+        "pagos_desasignados": desasignados,
+        "facturas": plan["facturas"],
     }
 
 
