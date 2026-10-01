@@ -7854,6 +7854,10 @@ body.facex-fullscreen-mode .ef-main-layout {
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
     <span class="ef-btn-label">PDF</span>
   </button>
+  <button id="ef-btn-xml" class="ef-btn ef-btn-secondary" title="Descargar XML certificado" style="display:none">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><polyline points="10 12 8 15 10 18"/><polyline points="14 12 16 15 14 18"/></svg>
+    <span class="ef-btn-label">XML</span>
+  </button>
   <button id="ef-btn-new" class="ef-btn ef-btn-light" title="Nueva Factura (F9)">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
     <span class="ef-btn-label">Nueva Fac</span>
@@ -7879,6 +7883,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		$bar.find("#ef-btn-guia-transporte").on("click", () => this._action_guias_transporte());
 		$bar.find("#ef-btn-print").on("click", () => this._action_print());
 		$bar.find("#ef-btn-pdf").on("click", () => this._action_pdf());
+		$bar.find("#ef-btn-xml").on("click", () => this._action_xml());
 		$bar.find("#ef-btn-new").on("click", () => this._action_new());
 		$bar.find("#ef-btn-customer").on("click", () => this._action_customer());
 
@@ -7904,7 +7909,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		// Ocultar todo primero, luego mostrar solo lo necesario
 		["#ef-btn-save", "#ef-btn-cancel-changes", "#ef-btn-submit", "#ef-btn-delete-draft",
 		 "#ef-btn-certify", "#ef-btn-cancel-doc", "#ef-btn-cancel-fel", "#ef-btn-print", "#ef-btn-customer", "#ef-btn-pdf",
-		 "#ef-btn-duplicate", "#ef-btn-guia-transporte"].forEach(hide);
+		 "#ef-btn-xml", "#ef-btn-duplicate", "#ef-btn-guia-transporte"].forEach(hide);
 		btn("#ef-btn-save").removeClass("ef-btn-save-dirty");
 
 		// Siempre visibles: Nueva Fac
@@ -7998,6 +8003,15 @@ body.facex-fullscreen-mode .ef-main-layout {
 			}
 		} else {
 			hide("#ef-btn-pdf");
+		}
+
+		// Botón XML: el XML certificado solo existe si la factura se certificó.
+		// Gateado por permite_descargar_xml (deny-by-default) — el backend
+		// (download_fel_xml) lo vuelve a exigir.
+		if (d.bfel_uuid && this.perms && this.perms.permite_descargar_xml) {
+			show("#ef-btn-xml"); enable("#ef-btn-xml");
+		} else {
+			hide("#ef-btn-xml");
 		}
 
 		// Permisos FacEx Settings — prevalecen sobre estado del documento
@@ -8321,6 +8335,16 @@ body.facex-fullscreen-mode .ef-main-layout {
 			return;
 		}
 		const url = frappe.urllib.get_full_url(`/api/method/facex_multi.api.invoice.preview_fel_pdf?invoice_name=${encodeURIComponent(this.doc.name)}`);
+		window.open(url, "_blank");
+	}
+
+	_action_xml() {
+		if (!this.doc.name || this.doc.name === "new") return;
+		if (!this.doc.bfel_uuid) {
+			frappe.show_alert({ message: "El documento debe estar certificado para descargar su XML.", indicator: "orange" });
+			return;
+		}
+		const url = frappe.urllib.get_full_url(`/api/method/facex_multi.api.invoice.download_fel_xml?invoice_name=${encodeURIComponent(this.doc.name)}`);
 		window.open(url, "_blank");
 	}
 

@@ -180,6 +180,7 @@ PROFILE_PERM_FIELDS = [
     "puede_anular_facturas",
     "puede_emitir_nota_credito",
     "puede_emitir_nota_debito",
+    "permite_descargar_xml",
     "reporte_ventas_fecha",
     "reporte_ventas_producto",
     "reporte_facturas_canceladas",
@@ -842,6 +843,16 @@ def get_facex_can_cancel_invoices(company: str) -> bool:
 # ---------------------------------------------------------------------------
 # Deny-by-default: todos los usuarios nacen sin estos permisos (la emisión
 # de NC/ND desde FacEx aún no está habilitada). Ver api/series.py.
+
+# ---------------------------------------------------------------------------
+# Descargar el XML certificado de una factura (FacEx Clásico / FacEx Screen)
+# ---------------------------------------------------------------------------
+# Deny-by-default: el XML es el DTE completo que quedó ante la SAT (cliente,
+# NIT, líneas y precios), así que solo con el check marcado.
+
+def get_facex_can_download_xml(company: str) -> bool:
+    return _flag(company, "permite_descargar_xml")
+
 
 def get_facex_can_issue_credit_notes(company: str) -> bool:
     return _flag(company, "puede_emitir_nota_credito")

@@ -3653,6 +3653,9 @@ class EFastPOSScreen {
 		const alreadyProcessed = isCertified || isPrintOnlyLocked;
 		const canCancel = !!(this.perms || {}).puede_anular_facturas;
 		const canEditGuias = !!(this.perms || {}).puede_editar_guias_transporte;
+		// XML certificado: solo existe después de certificar, y gateado por
+		// permite_descargar_xml (deny-by-default; lo reexige download_fel_xml).
+		const canXml = !!(this.perms || {}).permite_descargar_xml;
 		// Fuente de verdad: this.doc.bfel_guias_transportista (lo que ya está
 		// guardado en la factura, incluyendo al recargarla desde Historial).
 		// this.doc._confirmGuias ya no se usa para el conteo — quedaba en 0 al
@@ -3684,6 +3687,7 @@ class EFastPOSScreen {
 					${isCertified ? "" : `<button class="efs-btn-secondary efs-btn-yellow" id="efs-confirm-print-only" ${skipCustomerGate ? "" : "disabled"}>Solo Imprimir (sin certificar)</button>`}
 					<button class="efs-btn-secondary" id="efs-confirm-preview" ${alreadyProcessed ? "" : "disabled"}>Vista Preliminar</button>
 					<button class="efs-btn-secondary" id="efs-confirm-email" ${alreadyProcessed ? "" : "disabled"}>Enviar x WhatsApp</button>
+					${canXml ? `<button class="efs-btn-secondary" id="efs-confirm-xml" ${isCertified ? "" : "disabled"}>Descargar XML</button>` : ""}
 					<button class="efs-btn-charge" id="efs-confirm-new" ${skipCustomerGate ? "" : "disabled"}>Nueva Venta</button>
 				</div>
 				${canCancel ? `
@@ -3702,7 +3706,7 @@ class EFastPOSScreen {
 				this._print_invoice();
 				if (this.doc._certified) {
 					$view.find("#efs-confirm-print-only").remove();
-					$view.find("#efs-confirm-preview, #efs-confirm-email, #efs-confirm-cancel").prop("disabled", false);
+					$view.find("#efs-confirm-preview, #efs-confirm-email, #efs-confirm-cancel, #efs-confirm-xml").prop("disabled", false);
 					if (canCancel) $view.find("#efs-confirm-cancel").text(__("Anular Factura FEL"));
 				}
 			});
@@ -3727,6 +3731,7 @@ class EFastPOSScreen {
 		});
 		$view.find("#efs-confirm-preview").on("click", () => this._show_ticket_preview());
 		$view.find("#efs-confirm-email").on("click", () => this._send_whatsapp());
+		$view.find("#efs-confirm-xml").on("click", () => this._download_xml());
 		$view.find("#efs-confirm-new").on("click", () => this._new_sale());
 		$view.find("#efs-confirm-cancel").on("click", () => this._show_cancel_invoice_dialog());
 		$view.find("#efs-confirm-guias-transporte").on("click", () => this._open_confirm_guias_dialog($view));
@@ -4546,6 +4551,13 @@ class EFastPOSScreen {
 	_print_invoice() {
 		const url = frappe.urllib.get_full_url(
 			`/api/method/facex_multi.api.invoice.preview_fel_pdf?invoice_name=${encodeURIComponent(this.doc.name)}`
+		);
+		window.open(url, "_blank");
+	}
+
+	_download_xml() {
+		const url = frappe.urllib.get_full_url(
+			`/api/method/facex_multi.api.invoice.download_fel_xml?invoice_name=${encodeURIComponent(this.doc.name)}`
 		);
 		window.open(url, "_blank");
 	}

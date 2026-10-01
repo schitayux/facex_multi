@@ -667,7 +667,7 @@ def get_defaults(company: str = None):
         get_facex_can_view_item_groups, get_facex_can_maintain_item_groups,
         get_facex_can_view_seguridad, get_facex_can_reset_password,
         get_facex_default_bfel_status, get_facex_is_gerencia,
-        get_facex_can_create_cierres,
+        get_facex_can_create_cierres, get_facex_can_download_xml,
     )
     permissions = get_facex_permissions_for_company(company)
     permissions["puede_crear_cierres"] = int(get_facex_can_create_cierres(company))
@@ -683,6 +683,7 @@ def get_defaults(company: str = None):
     permissions["puede_editar_precio"] = int(get_facex_can_edit_price(company))
     permissions["puede_eliminar_ventas_espera"] = int(get_facex_can_delete_held_sales(company))
     permissions["puede_anular_facturas"] = int(get_facex_can_cancel_invoices(company))
+    permissions["permite_descargar_xml"] = int(get_facex_can_download_xml(company))
     permissions["puede_ver_pos"] = int(get_facex_can_access_pos(company))
     permissions["puede_ver_menu_inventario"] = int(get_facex_can_access_inventory_menu(company))
     permissions["puede_editar_guias_transporte"] = int(get_facex_can_edit_guias_transporte(company))
@@ -3205,6 +3206,44 @@ def preview_fel_pdf(invoice_name: str):
     frappe.local.response.filecontent = pdf_data
     frappe.local.response.type = "pdf"
     frappe.local.response.display_content = "inline"
+
+
+@frappe.whitelist()
+def download_fel_xml(invoice_name: str):
+    """
+    Descarga el XML certificado de la factura — el DTE tal como quedó firmado y
+    registrado ante la SAT, no uno regenerado.
+
+    Requiere el permiso permite_descargar_xml (deny-by-default): el XML lleva el
+    detalle completo del documento (cliente, NIT, líneas, precios).
+    """
+    from facex_multi.api.permissions import get_facex_can_download_xml
+    from brainfel.services.fel_xml import get_certified_xml_for_download
+
+    invoice_name = (invoice_name or "").strip()
+    doc = frappe.get_doc("Sales Invoice", invoice_name)
+    doc.check_permission("read")
+
+    if not get_facex_can_download_xml(doc.company):
+        frappe.throw("No tiene permiso para descargar el XML de documentos FEL.",
+                     frappe.PermissionError)
+
+    if not doc.bfel_uuid:
+        frappe.throw("La factura no ha sido certificada en FEL — no existe XML certificado.")
+
+    xml = get_certified_xml_for_download(
+        "Sales Invoice", doc.name, doc.bfel_uuid, doc.company
+    )
+    if not xml:
+        frappe.throw(
+            "No se encontró el XML certificado de esta factura. "
+            "Se puede descargar desde el portal del certificador con el UUID "
+            f"{doc.bfel_uuid}."
+        )
+
+    frappe.local.response.filename = f"{doc.name}.xml"
+    frappe.local.response.filecontent = xml.encode("utf-8")
+    frappe.local.response.type = "download"
 
 
 
