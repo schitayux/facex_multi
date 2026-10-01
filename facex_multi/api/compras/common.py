@@ -286,8 +286,84 @@ def get_compras_defaults(company: str = None) -> dict:
         "tax_templates":        tax_templates,
         "default_tax_template": tax_templates[0]["name"] if tax_templates else "",
         "warehouses":           get_warehouses(company, "compra") if (company and perms["puede_compras"]) else [],
+        "payment_terms":        get_payment_terms_catalog(),
         "today":                today(),
     }
+
+
+# ---------------------------------------------------------------------------
+# Condición de pago / fecha de vencimiento
+# ---------------------------------------------------------------------------
+# Los documentos nativos con cronograma de pagos (Orden de Compra, Factura de
+# Compra) usan `payment_terms_template` de ERPNext: él arma el payment_schedule
+# y, en la factura, el `due_date`. La Entrada de Mercadería no tiene esos
+# campos, así que lleva los suyos (facex_payment_terms_template /
+# facex_due_date) con el mismo cálculo, para que la condición viaje
+# Orden → Entrada → Factura.
+
+# Campo de la condición de pago por doctype: nativo donde existe.
+TERMS_FIELD = {
+    "Purchase Order": "payment_terms_template",
+    "Purchase Invoice": "payment_terms_template",
+    "Purchase Receipt": "facex_payment_terms_template",
+}
+
+
+def get_payment_terms_catalog() -> list:
+    """Condiciones de pago con sus plazos, para que los formularios muestren el
+    vencimiento antes de grabar (mismo cálculo que
+    erpnext.controllers.accounts_controller.get_due_date)."""
+    out = []
+    for t in frappe.get_all("Payment Terms Template", fields=["name"], order_by="name asc"):
+        rows = frappe.get_all(
+            "Payment Terms Template Detail",
+            filters={"parent": t.name},
+            fields=["due_date_based_on", "credit_days", "credit_months"],
+            order_by="idx asc",
+        )
+        out.append({
+            "name": t.name,
+            "terms": [{
+                "based_on": r.due_date_based_on or "Day(s) after invoice date",
+                "credit_days": int(r.credit_days or 0),
+                "credit_months": int(r.credit_months or 0),
+            } for r in rows],
+        })
+    return out
+
+
+def compute_due_date(template: str, base_date) -> str:
+    """Vencimiento de `template` contado desde `base_date` (el mayor de sus
+    plazos, igual que ERPNext con el payment_schedule)."""
+    from frappe.utils import add_days, add_months, get_last_day, getdate
+
+    if not template or not base_date:
+        return ""
+    base = getdate(base_date)
+    dates = []
+    for r in frappe.get_all(
+        "Payment Terms Template Detail",
+        filters={"parent": template},
+        fields=["due_date_based_on", "credit_days", "credit_months"],
+    ):
+        based_on = r.due_date_based_on or "Day(s) after invoice date"
+        days = int(r.credit_days or 0)
+        months = int(r.credit_months or 0)
+        if based_on == "Day(s) after the end of the invoice month":
+            dates.append(add_days(get_last_day(base), days))
+        elif based_on == "Month(s) after the end of the invoice month":
+            dates.append(get_last_day(add_months(base, months)))
+        else:
+            dates.append(add_days(base, days))
+    return str(max(dates)) if dates else ""
+
+
+def get_supplier_payment_terms(supplier: str) -> str:
+    """Condición de pago de la ficha del proveedor (campo nativo
+    Supplier.payment_terms)."""
+    if not supplier:
+        return ""
+    return frappe.db.get_value("Supplier", supplier, "payment_terms") or ""
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +373,10 @@ def get_compras_defaults(company: str = None) -> dict:
 # Payment Entry: también el pago a proveedor (FacEx Pagos) muestra quién lo
 # validó; en los pagos de ventas el campo solo queda registrado.
 PURCHASE_DOCTYPES = ("Purchase Order", "Purchase Receipt", "Purchase Invoice", "Payment Entry")
+
+# Los cinco documentos del ciclo de compra viven en estos tres doctypes: son
+# los que llevan anexos, bitácora de anulación y la condición de pago propia.
+CICLO_DOCTYPES = ("Purchase Order", "Purchase Receipt", "Purchase Invoice")
 
 
 def ensure_compras_custom_fields():
@@ -329,9 +409,112 @@ def ensure_compras_custom_fields():
     ]
     create_custom_fields({dt: fields for dt in PURCHASE_DOCTYPES}, update=True)
 
+    # Anulación: igual que «Validado por», pero del momento en que se canceló.
+    # Es lo que deja evidencia de los documentos anulados en el mapa de
+    # relaciones y en la bitácora de cambios.
+    anulacion = [
+        {
+            "fieldname": "facex_cancelado_por",
+            "label": "Anulado por",
+            "fieldtype": "Link",
+            "options": "User",
+            "insert_after": "facex_validado_el",
+            "read_only": 1,
+            "no_copy": 1,
+            "allow_on_submit": 1,
+            "print_hide": 1,
+        },
+        {
+            "fieldname": "facex_cancelado_el",
+            "label": "Anulado el",
+            "fieldtype": "Datetime",
+            "insert_after": "facex_cancelado_por",
+            "read_only": 1,
+            "no_copy": 1,
+            "allow_on_submit": 1,
+            "print_hide": 1,
+        },
+    ]
+
+    # Anexos: pestaña propia al final del formulario del Desk. En FacEx Compras
+    # se administran desde la pestaña «Anexos» (api/compras/anexos.py).
+    # allow_on_submit: también se adjunta a documentos ya validados.
+    anexos = [
+        {
+            "fieldname": "facex_anexos_tab",
+            "label": "Anexos",
+            "fieldtype": "Tab Break",
+            "insert_after": "connections_tab",
+            "print_hide": 1,
+        },
+        {
+            "fieldname": "facex_anexos",
+            "label": "Anexos",
+            "fieldtype": "Table",
+            "options": "FacEx Anexo",
+            "insert_after": "facex_anexos_tab",
+            "allow_on_submit": 1,
+            "no_copy": 1,
+            "print_hide": 1,
+        },
+    ]
+
+    # Condición de pago de la Entrada de Mercadería / Devolución: el Purchase
+    # Receipt no tiene payment_terms_template ni due_date nativos, pero la
+    # condición tiene que viajar Orden → Entrada → Factura.
+    recepcion = [
+        {
+            "fieldname": "facex_payment_terms_template",
+            "label": "Condición de Pago",
+            "fieldtype": "Link",
+            "options": "Payment Terms Template",
+            "insert_after": "amended_from",
+            "print_hide": 1,
+        },
+        {
+            "fieldname": "facex_due_date",
+            "label": "Fecha de Vencimiento",
+            "fieldtype": "Date",
+            "insert_after": "facex_payment_terms_template",
+            "read_only": 1,
+            "print_hide": 1,
+        },
+    ]
+
+    # «Contado / sin condición» tiene que poder quedarse vacío: en
+    # set_missing_values ERPNext repone la condición por omisión del proveedor
+    # sobre cualquier campo vacío, salvo que este check esté marcado (así lo
+    # lee buying_controller). La Factura de Compra ya lo tiene nativo; la
+    # Orden de Compra no, y es el mismo nombre de campo a propósito, para que
+    # ERPNext lo respete sin tocar nada más.
+    ignorar_default = [
+        {
+            "fieldname": "ignore_default_payment_terms_template",
+            "label": "No usar la condición de pago por omisión del proveedor",
+            "fieldtype": "Check",
+            "insert_after": "payment_terms_template",
+            "print_hide": 1,
+        },
+    ]
+
+    create_custom_fields({dt: anulacion + anexos for dt in CICLO_DOCTYPES}, update=True)
+    create_custom_fields({"Purchase Receipt": recepcion}, update=True)
+    if not frappe.get_meta("Purchase Order").has_field("ignore_default_payment_terms_template"):
+        create_custom_fields({"Purchase Order": ignorar_default}, update=True)
+
 
 def set_validado_por(doc, method=None):
     """on_submit de Purchase Order / Receipt / Invoice (desde FacEx o el Desk)."""
     if doc.meta.has_field("facex_validado_por"):
         doc.db_set({"facex_validado_por": frappe.session.user,
                     "facex_validado_el": frappe.utils.now_datetime()}, update_modified=False)
+
+
+def set_cancelado_por(doc, method=None):
+    """on_cancel de Purchase Order / Receipt / Invoice (desde FacEx o el Desk).
+
+    Deja por escrito quién anuló el documento: el mapa de relaciones muestra
+    los anulados y la bitácora de cambios los lista como un evento más."""
+    if doc.meta.has_field("facex_cancelado_por"):
+        doc.db_set({"facex_cancelado_por": frappe.session.user,
+                    "facex_cancelado_el": frappe.utils.now_datetime()}, update_modified=False)

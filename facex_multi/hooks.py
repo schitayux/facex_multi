@@ -94,10 +94,20 @@ doc_events = {
         "before_cancel": "facex_multi.api.cierre.guard_payment_entry_cancel",
         "on_submit": "facex_multi.api.compras.common.set_validado_por",
     },
-    # FacEx Compras: «Validado por» para los formatos de impresión.
-    "Purchase Order": {"on_submit": "facex_multi.api.compras.common.set_validado_por"},
-    "Purchase Receipt": {"on_submit": "facex_multi.api.compras.common.set_validado_por"},
-    "Purchase Invoice": {"on_submit": "facex_multi.api.compras.common.set_validado_por"},
+    # FacEx Compras: «Validado por» para los formatos de impresión y
+    # «Anulado por» para el mapa de relaciones / la bitácora de cambios.
+    "Purchase Order": {
+        "on_submit": "facex_multi.api.compras.common.set_validado_por",
+        "on_cancel": "facex_multi.api.compras.common.set_cancelado_por",
+    },
+    "Purchase Receipt": {
+        "on_submit": "facex_multi.api.compras.common.set_validado_por",
+        "on_cancel": "facex_multi.api.compras.common.set_cancelado_por",
+    },
+    "Purchase Invoice": {
+        "on_submit": "facex_multi.api.compras.common.set_validado_por",
+        "on_cancel": "facex_multi.api.compras.common.set_cancelado_por",
+    },
 }
 
 after_migrate = [

@@ -1,0 +1,86 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-09-30 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-30 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FacEx Multi",
+ "name": "FacEx Anexo",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "field_order": [
+  "archivo",
+  "nombre_archivo",
+  "comentario",
+  "cb_anexo",
+  "copiar_a_destino",
+  "origen",
+  "subido_por",
+  "subido_el"
+ ],
+ "fields": [
+  {
+   "fieldname": "archivo",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Archivo",
+   "reqd": 1,
+   "options": "URL",
+   "read_only": 1,
+   "description": "Ruta del archivo. El archivo en sí queda adjunto al documento de compra (panel de adjuntos); se administra desde la pestaña Anexos de FacEx Compras."
+  },
+  {
+   "fieldname": "nombre_archivo",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Nombre",
+   "read_only": 1
+  },
+  {
+   "fieldname": "comentario",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Comentario",
+   "description": "Opcional: describa qué es el archivo."
+  },
+  {
+   "fieldname": "cb_anexo",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "copiar_a_destino",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Copiar hacia documentos destino"
+  },
+  {
+   "fieldname": "origen",
+   "fieldtype": "Data",
+   "label": "Copiado de",
+   "read_only": 1
+  },
+  {
+   "fieldname": "subido_por",
+   "fieldtype": "Link",
+   "label": "Subido por",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "subido_el",
+   "fieldtype": "Datetime",
+   "label": "Subido el",
+   "read_only": 1
+  }
+ ]
+}

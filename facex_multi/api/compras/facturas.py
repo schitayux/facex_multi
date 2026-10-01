@@ -63,7 +63,7 @@ def search_suppliers(txt: str = "", company: str = None) -> list:
     company = require_purchase(company, "puede_compras")
     results = frappe.db.sql(
         """
-        SELECT name, supplier_name, tax_id
+        SELECT name, supplier_name, tax_id, payment_terms
         FROM `tabSupplier`
         WHERE disabled = 0
           AND (supplier_name LIKE %(q)s OR name LIKE %(q)s OR tax_id LIKE %(q)s)
@@ -74,7 +74,10 @@ def search_suppliers(txt: str = "", company: str = None) -> list:
         {"q": f"%{txt}%", "company": company},
         as_dict=True,
     )
-    return [{"value": r.name, "label": r.supplier_name, "tax_id": r.tax_id or ""} for r in results]
+    # payment_terms: la condición de pago de la ficha, para que el documento
+    # nuevo la muestre en automático al elegir el proveedor.
+    return [{"value": r.name, "label": r.supplier_name, "tax_id": r.tax_id or "",
+             "payment_terms": r.payment_terms or ""} for r in results]
 
 
 # ---------------------------------------------------------------------------

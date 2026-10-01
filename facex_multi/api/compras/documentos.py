@@ -27,12 +27,15 @@ import frappe
 from frappe.utils import flt, getdate, today
 
 from facex_multi.api.compras.common import (
+    TERMS_FIELD,
     check_doc_access,
+    compute_due_date,
     default_uom,
     get_buying_price_list,
     get_conversion_rate,
     get_naming_series,
     get_payable_account,
+    get_supplier_payment_terms,
     get_tax_rows,
     is_own_scope,
     perm_field,
@@ -95,6 +98,67 @@ def _cfg(kind: str) -> frappe._dict:
     if kind not in KINDS:
         frappe.throw(f"Documento de compra no válido: {kind}")
     return KINDS[kind]
+
+
+# ---------------------------------------------------------------------------
+# Condición de pago / fecha de vencimiento
+# ---------------------------------------------------------------------------
+# Fecha desde la que se cuentan los días de crédito. Es la misma que usa
+# ERPNext en set_payment_schedule: bill_date o posting_date en la factura, la
+# fecha del documento en los demás.
+
+def _terms_base_date(kind: str, data: dict, doc_date: str) -> str:
+    if kind in ("fc", "nc"):
+        return data.get("bill_date") or doc_date
+    return doc_date
+
+
+def _get_terms(doc) -> str:
+    field = TERMS_FIELD.get(doc.doctype)
+    if field and doc.meta.has_field(field):
+        return doc.get(field) or ""
+    return ""
+
+
+def _get_vencimiento(doc) -> str:
+    """Vencimiento tal como quedó grabado: nativo en la factura, el mayor del
+    cronograma en la orden, propio en la entrada."""
+    if doc.doctype == "Purchase Invoice":
+        return str(doc.get("due_date") or "")
+    if doc.doctype == "Purchase Order":
+        fechas = [r.due_date for r in (doc.get("payment_schedule") or []) if r.get("due_date")]
+        return str(max(fechas)) if fechas else ""
+    if doc.meta.has_field("facex_due_date"):
+        return str(doc.get("facex_due_date") or "")
+    return ""
+
+
+def _apply_terms(doc, terms: str, base_date: str, due_date: str = None) -> None:
+    """Graba la condición de pago y el vencimiento que le corresponde.
+
+    Con condición elegida el vencimiento lo manda la condición (los mismos
+    días que cuenta ERPNext desde la fecha del documento); sin condición se
+    respeta la fecha que el usuario haya puesto a mano. El cronograma se
+    limpia siempre: ERPNext solo lo reconstruye cuando está vacío, así que si
+    no se borra, cambiar la condición o la fecha en un borrador no movería el
+    vencimiento."""
+    vencimiento = compute_due_date(terms, base_date) if terms else (due_date or "")
+
+    if doc.meta.has_field("payment_schedule"):
+        doc.set("payment_schedule", [])
+    # Sin condición elegida hay que decírselo a ERPNext: si no, en
+    # set_missing_values repone la condición por omisión del proveedor sobre el
+    # campo vacío y el documento saldría a crédito contra la voluntad del
+    # usuario (ver ensure_compras_custom_fields).
+    if doc.meta.has_field("ignore_default_payment_terms_template"):
+        doc.ignore_default_payment_terms_template = 0 if terms else 1
+    field = TERMS_FIELD.get(doc.doctype)
+    if field and doc.meta.has_field(field):
+        doc.set(field, terms or None)
+    if doc.meta.has_field("facex_due_date"):
+        doc.facex_due_date = vencimiento or None
+    if doc.meta.has_field("due_date"):
+        doc.due_date = vencimiento or base_date
 
 
 def _require(kind: str, company: str, action: str = None, msg: str = None) -> str:
@@ -231,9 +295,26 @@ def get_document(kind: str, name: str, company: str = None) -> dict:
     d["owner_fullname"] = frappe.utils.get_fullname(doc.owner)
     validado = doc.get("facex_validado_por")
     d["validado_por_fullname"] = frappe.utils.get_fullname(validado) if validado else ""
+    cancelado = doc.get("facex_cancelado_por")
+    d["cancelado_por_fullname"] = frappe.utils.get_fullname(cancelado) if cancelado else ""
     d["related"] = _related(kind, doc)
+
+    from facex_multi.api.compras.anexos import read_anexos
+    d["anexos"] = read_anexos(doc.doctype, doc.name)
+    d["payment_terms_template"] = _get_terms(doc)
+    d["vencimiento"] = _get_vencimiento(doc)
+
     if kind in RETURN_KINDS:
         _add_return_info(kind, doc, d)
+        # La nota de crédito no guarda condición de pago (ERPNext la limpia en
+        # las devoluciones): se muestra la del documento al que acredita.
+        if not d["payment_terms_template"] and d.get("return_source"):
+            src = d["return_source"]
+            if src.get("kind") and src.get("name"):
+                try:
+                    d["payment_terms_template"] = _get_terms(_get(src["kind"], src["name"]))
+                except frappe.DoesNotExistError:
+                    pass
     return d
 
 
@@ -274,6 +355,8 @@ def save_document(kind: str, data_json: str) -> dict:
     """
     Crea o actualiza el borrador. data_json:
       {name?, company, supplier, currency, tax_type, remarks,
+       payment_terms_template, due_date, anexos: [{file_url, comentario,
+                copiar_a_destino, origen}],
        oc: transaction_date, schedule_date
        en: posting_date, supplier_delivery_note
        fc: posting_date, bill_no, bill_date, bfel_multi_tipo
@@ -335,6 +418,9 @@ def save_document(kind: str, data_json: str) -> dict:
         doc.credit_to = get_payable_account(supplier, company, currency)
         if doc.meta.has_field("bfel_multi_tipo"):
             doc.bfel_multi_tipo = data.get("bfel_multi_tipo") or ""
+
+    _apply_terms(doc, (data.get("payment_terms_template") or "").strip(),
+                 _terms_base_date(kind, data, doc_date), data.get("due_date") or "")
 
     rows = [r for r in (data.get("items") or []) if (r.get("item_code") or "").strip()]
     if not rows:
@@ -440,8 +526,18 @@ def save_document(kind: str, data_json: str) -> dict:
     # nativas de ERPNext (cantidades contra la OC, proveedor/moneda del
     # documento de origen, series, lotes…) sí corren.
     doc.save(ignore_permissions=True)
+    _save_anexos(cfg.doctype, doc, data)
     frappe.db.commit()
     return {"success": True, "name": doc.name}
+
+
+def _save_anexos(doctype: str, doc, data: dict) -> None:
+    """Crea las filas de los anexos que traía el formulario: los que se
+    subieron antes de que el documento existiera y los heredados del
+    documento de origen (los marcados «Copiar hacia documentos destino»)."""
+    from facex_multi.api.compras.anexos import persist_pending
+
+    persist_pending(doctype, doc.name, doc.docstatus, data.get("anexos") or [])
 
 
 # ---------------------------------------------------------------------------
@@ -600,6 +696,29 @@ def make_from(source_kind: str, name: str, target_kind: str) -> dict:
         "tax_type": source.taxes_and_charges or "",
         "source": {"kind": source_kind, "name": source.name},
         "items": items,
+        **_inherited(source_kind, source),
+    }
+
+
+def _inherited(source_kind: str, source) -> dict:
+    """Lo que el documento destino hereda del origen:
+
+      date      la fecha de HOY — el documento se está creando ahora, no en la
+                fecha del origen (de ahí se recalcula su vencimiento).
+      payment_terms_template / vencimiento  la condición de pago del origen,
+                recontada desde hoy.
+      anexos    los anexos del origen marcados «Copiar hacia documentos
+                destino»; se graban con el destino.
+    """
+    from facex_multi.api.compras.anexos import copiables
+
+    hoy = today()
+    terms = _get_terms(source)
+    return {
+        "date": hoy,
+        "payment_terms_template": terms,
+        "vencimiento": compute_due_date(terms, hoy) if terms else "",
+        "anexos": copiables(KINDS[source_kind].doctype, source.name, KINDS[source_kind].label),
     }
 
 
@@ -676,6 +795,7 @@ def _return_payload(source_kind: str, source, target_kind: str, target) -> dict:
         "update_stock": int(target.get("update_stock") or 0) if target_kind == "nc" else 1,
         "source": {"kind": source_kind, "name": source.name},
         "items": items,
+        **_inherited(source_kind, source),
     }
 
 
@@ -753,6 +873,13 @@ def _save_return(kind: str, data: dict) -> dict:
     doc.set_posting_time = 1
     if doc.meta.has_field("remarks"):
         doc.remarks = data.get("remarks") or ""
+    # La devolución hereda la condición de pago de la entrada (la nota de
+    # crédito no la guarda: ERPNext limpia payment_terms_template en las
+    # devoluciones, así que se muestra la de la factura que acredita).
+    if kind == "dv" and doc.meta.has_field("facex_payment_terms_template"):
+        terms = _get_terms(source)
+        doc.facex_payment_terms_template = terms or None
+        doc.facex_due_date = compute_due_date(terms, doc.posting_date) if terms else None
     if kind == "nc":
         doc.bill_no = data.get("bill_no") or ""
         doc.bill_date = data.get("bill_date") or doc.posting_date
@@ -765,5 +892,6 @@ def _save_return(kind: str, data: dict) -> dict:
             doc.update_outstanding_for_self = 0
 
     doc.save(ignore_permissions=True)
+    _save_anexos(cfg.doctype, doc, data)
     frappe.db.commit()
     return {"success": True, "name": doc.name}

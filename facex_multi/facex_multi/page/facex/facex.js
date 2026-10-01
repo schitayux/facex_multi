@@ -1843,6 +1843,11 @@ class EFastSalePage {
               <label class="ef-label">Dirección</label>
               <input type="text" id="ef-maint-supp-address" class="ef-input" style="width:100%" placeholder="Dirección fiscal"/>
             </div>
+            <div style="grid-column:1/-1;">
+              <label class="ef-label">Condición de Pago</label>
+              <select id="ef-maint-supp-terms" class="ef-input" style="width:100%"><option value="">Sin condición (contado)</option></select>
+              <div style="font-size:11px; color:#64748b; margin-top:4px;">Los documentos de compra nuevos de este proveedor la traerán puesta y calcularán la fecha de vencimiento con sus días de crédito.</div>
+            </div>
           </div>
           <div style="margin-top:20px; text-align:right;">
             <button id="ef-maint-supp-btn-delete" class="ef-btn" style="background:#ef4444; color:white; padding:8px 24px; display:none; margin-right:8px;">Eliminar Proveedor</button>
@@ -15480,8 +15485,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const enable = mode !== "search";
 
 		this.$body.find(
-			"#ef-maint-supp-name, #ef-maint-supp-nit, #ef-maint-supp-phone, #ef-maint-supp-address"
+			"#ef-maint-supp-name, #ef-maint-supp-nit, #ef-maint-supp-phone, #ef-maint-supp-address, #ef-maint-supp-terms"
 		).prop("disabled", !enable);
+		this._load_maint_supp_terms();
 
 		const $save = this.$body.find("#ef-maint-supp-btn-save");
 		const $delete = this.$body.find("#ef-maint-supp-btn-delete");
@@ -15506,6 +15512,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-maint-supp-nit").val("");
 		this.$body.find("#ef-maint-supp-phone").val("");
 		this.$body.find("#ef-maint-supp-address").val("");
+		this.$body.find("#ef-maint-supp-terms").val("");
 		this.$body.find("#ef-maint-supp-btn-delete").hide();
 	}
 
@@ -15524,6 +15531,32 @@ body.facex-fullscreen-mode .ef-main-layout {
 				this.$body.find("#ef-maint-supp-nit").val(d.tax_id || "");
 				this.$body.find("#ef-maint-supp-phone").val(d.custom_telefono || "");
 				this.$body.find("#ef-maint-supp-address").val(d.custom_direccion || "");
+				this._load_maint_supp_terms(d.payment_terms || "");
+			},
+		});
+	}
+
+	// Condiciones de pago del catálogo (se piden una sola vez por sesión).
+	_load_maint_supp_terms(selected) {
+		const $sel = this.$body.find("#ef-maint-supp-terms");
+		if (!$sel.length) return;
+		const paint = (terms) => {
+			const value = selected !== undefined ? selected : ($sel.attr("data-value") || "");
+			$sel.html(
+				`<option value="">Sin condición (contado)</option>` +
+				terms.map((t) => `<option value="${_esc(t)}">${_esc(t)}</option>`).join("")
+			).val(value).attr("data-value", value);
+		};
+		if (this._maint_supp_terms) {
+			paint(this._maint_supp_terms);
+			return;
+		}
+		frappe.call({
+			method: "facex_multi.api.purchase.list_payment_terms",
+			args: { company: this.doc.company || this.defaults.company || "" },
+			callback: (r) => {
+				this._maint_supp_terms = r.message || [];
+				paint(this._maint_supp_terms);
 			},
 		});
 	}
@@ -15541,6 +15574,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			tax_id:           this.$body.find("#ef-maint-supp-nit").val().trim(),
 			custom_telefono:  this.$body.find("#ef-maint-supp-phone").val().trim(),
 			custom_direccion: this.$body.find("#ef-maint-supp-address").val().trim(),
+			payment_terms:    this.$body.find("#ef-maint-supp-terms").val() || "",
 		};
 		frappe.call({
 			method: "facex_multi.api.purchase.create_or_update_supplier",

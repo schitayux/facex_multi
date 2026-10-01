@@ -148,6 +148,10 @@ def get_supplier(name: str, company: str = None) -> dict:
         "tax_id":        doc.tax_id or "",
         "custom_direccion": doc.get("custom_direccion") or "",
         "custom_telefono":  doc.get("custom_telefono") or "",
+        # Condición de pago por omisión del proveedor (campo nativo
+        # Supplier.payment_terms): los documentos de compra nuevos la traen ya
+        # puesta y de ahí calculan la fecha de vencimiento.
+        "payment_terms":    doc.get("payment_terms") or "",
     }
 
 
@@ -176,7 +180,7 @@ def create_or_update_supplier(data_json: str, company: str = None) -> dict:
         if doc.meta.has_field("bfel_company"):
             doc.bfel_company = company
 
-    for field in ("supplier_name", "tax_id", "custom_direccion", "custom_telefono"):
+    for field in ("supplier_name", "tax_id", "custom_direccion", "custom_telefono", "payment_terms"):
         if field in data:
             try:
                 setattr(doc, field, data[field])
@@ -189,6 +193,14 @@ def create_or_update_supplier(data_json: str, company: str = None) -> dict:
     doc.save(ignore_permissions=False)
     frappe.db.commit()
     return {"name": doc.name, "supplier_name": doc.supplier_name}
+
+
+@frappe.whitelist()
+def list_payment_terms(company: str = None) -> list:
+    """Condiciones de pago disponibles para la ficha del proveedor."""
+    _require_purchase(company, "puede_compras",
+                      msg="No tiene permiso para consultar proveedores en FacEx.")
+    return frappe.get_all("Payment Terms Template", pluck="name", order_by="name asc")
 
 
 # ---------------------------------------------------------------------------

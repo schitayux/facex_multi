@@ -146,6 +146,37 @@ function cpStatusBadge(status, docstatus) {
 	return `<span class="cp-badge" style="color:${color};background:${bg};">${cpEsc(label)}</span>`;
 }
 
+// Vencimiento de una condición de pago contado desde `base`: el mayor de sus
+// plazos, el mismo cálculo que ERPNext hace con el payment_schedule (ver
+// erpnext.controllers.accounts_controller.get_due_date). Se resuelve aquí para
+// que el formulario muestre la fecha antes de grabar; al grabar la recalcula el
+// servidor con el mismo criterio.
+function cpDueDate(template, base, catalog) {
+	if (!template || !base) return "";
+	const t = (catalog || []).find((x) => x.name === template);
+	if (!t || !(t.terms || []).length) return "";
+	const fechas = t.terms.map((r) => {
+		const m = moment(base, "YYYY-MM-DD");
+		if (r.based_on === "Day(s) after the end of the invoice month") return m.endOf("month").add(r.credit_days, "days");
+		if (r.based_on === "Month(s) after the end of the invoice month") return m.add(r.credit_months, "months").endOf("month");
+		return m.add(r.credit_days, "days");
+	}).map((m) => m.format("YYYY-MM-DD")).sort();
+	return fechas[fechas.length - 1] || "";
+}
+
+function cpBytes(n) {
+	n = cpFlt(n);
+	if (!n) return "";
+	if (n < 1024) return `${n} B`;
+	if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+	return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function cpDateTime(d) {
+	// str_to_user distingue fecha de fecha-hora por el espacio de la cadena.
+	return d ? frappe.datetime.str_to_user(String(d).split(".")[0]) : "";
+}
+
 function cpTipoOptions(selected) {
 	return `<option value="">-</option>` + CP_TIPO_FEL.map(([v, l]) =>
 		`<option value="${v}"${selected === v ? " selected" : ""}>${cpEsc(l)}</option>`).join("");
@@ -532,25 +563,38 @@ class FacexCompras {
 
 	_empty_doc(kind, overrides) {
 		const d = this.defaults;
+		// La fecha se toma del día en curso (no de `defaults.today`, que se
+		// resolvió al abrir el page): un documento nuevo —y el que se genera
+		// desde otro— siempre sale con la fecha de hoy.
+		const hoy = frappe.datetime.get_today();
 		return Object.assign({
-			kind, name: null, docstatus: 0, status: "", owner_fullname: "", validado_por_fullname: "",
+			kind, name: null, docstatus: 0, status: "", owner_fullname: "",
+			validado_por_fullname: "", cancelado_por_fullname: "",
 			supplier: "", supplier_name: "",
-			date: d.today, schedule_date: d.today,
-			bill_no: "", bill_date: d.today, supplier_delivery_note: "", remarks: "",
+			date: hoy, schedule_date: hoy,
+			bill_no: "", bill_date: hoy, supplier_delivery_note: "", remarks: "",
 			currency: d.currency || "GTQ",
 			tax_type: d.default_tax_template || "",
 			bfel_multi_tipo: "",
+			payment_terms_template: "", vencimiento: "",
 			source: null, related: [], update_stock: 0,
-			items: [],
+			items: [], anexos: [],
 		}, overrides || {});
 	}
 
 	_render_form(arg) {
 		const kind = (this.kind = arg.kind);
+		this.tab = "doc";
+		this._tab_loaded = {};
 		if (!arg.name) {
 			this.doc = this._empty_doc(kind, arg.pending);
 			this._paint_form();
 			if (this.doc.items.length) this.dirty = true;
+			// Proveedor ya resuelto sin pasar por el buscador (carga de Excel):
+			// traer la condición de pago de su ficha.
+			if (this.doc.supplier && !this.doc.payment_terms_template && !CP_KINDS[kind].ret) {
+				this._fetch_supplier_terms();
+			}
 			return;
 		}
 		this.$body.html(`<div class="cp-empty">Cargando...</div>`);
@@ -563,6 +607,10 @@ class FacexCompras {
 				this.doc = this._empty_doc(kind, {
 					name: d.name, docstatus: d.docstatus, status: d.status,
 					owner_fullname: d.owner_fullname, validado_por_fullname: d.validado_por_fullname,
+					cancelado_por_fullname: d.cancelado_por_fullname || "",
+					payment_terms_template: d.payment_terms_template || "",
+					vencimiento: d.vencimiento || "",
+					anexos: d.anexos || [],
 					supplier: d.supplier, supplier_name: d.supplier_name || d.supplier,
 					date: kind === "oc" ? d.transaction_date : d.posting_date,
 					schedule_date: d.schedule_date || "",
@@ -592,6 +640,21 @@ class FacexCompras {
 				this._paint_form();
 			},
 			error: () => this._go("list", kind),
+		});
+	}
+
+	_fetch_supplier_terms() {
+		const supplier = this.doc.supplier;
+		frappe.call({
+			method: "facex_multi.api.purchase.get_supplier",
+			args: { name: supplier, company: this.company },
+			callback: (r) => {
+				const terms = (r.message || {}).payment_terms;
+				if (!terms || this.doc.supplier !== supplier || this.doc.payment_terms_template) return;
+				this.doc.payment_terms_template = terms;
+				this.$body.find("#cp-h-terms").val(terms);
+				this._apply_terms_ui();
+			},
 		});
 	}
 
@@ -633,6 +696,7 @@ class FacexCompras {
 		const meta = [
 			doc.owner_fullname && `Elaborado por <b>${cpEsc(doc.owner_fullname)}</b>`,
 			doc.validado_por_fullname && `Validado por <b>${cpEsc(doc.validado_por_fullname)}</b>`,
+			doc.cancelado_por_fullname && `Anulado por <b>${cpEsc(doc.cancelado_por_fullname)}</b>`,
 			doc.source && `${ret ? "Contra" : "Desde"} ${cpEsc(srcLabel)} <b>${cpEsc(doc.source.name)}</b>`,
 		].filter(Boolean).join(" · ");
 
@@ -672,6 +736,26 @@ class FacexCompras {
 			field("Tipo de Compra", `<select class="cp-input" id="cp-h-tax" ${ret ? "disabled" : dis}>${taxOptions}</select>`),
 		);
 		if (kind === "fc") header.push(field("Tipo FEL", `<select class="cp-input" id="cp-h-tipo" ${dis}>${cpTipoOptions(doc.bfel_multi_tipo)}</select>`));
+
+		// Condición de pago: los días de crédito corren desde la fecha del
+		// documento (en la factura, desde la fecha de la factura del
+		// proveedor, igual que ERPNext). Las devoluciones y notas de crédito
+		// la muestran heredada del documento de origen.
+		if (ret) {
+			header.push(field("Condición de Pago", `<input type="text" class="cp-input cp-ro" value="${cpEsc(doc.payment_terms_template || "—")}" disabled>`));
+		} else {
+			const terms = this.defaults.payment_terms || [];
+			const termsOptions = [`<option value="">Contado / sin condición</option>`].concat(
+				terms.map((t) => `<option value="${cpEsc(t.name)}"${t.name === doc.payment_terms_template ? " selected" : ""}>${cpEsc(t.name)}</option>`),
+				doc.payment_terms_template && !terms.some((t) => t.name === doc.payment_terms_template)
+					? [`<option selected>${cpEsc(doc.payment_terms_template)}</option>`] : []
+			).join("");
+			header.push(
+				field("Condición de Pago", `<select class="cp-input" id="cp-h-terms" ${dis}>${termsOptions}</select>`),
+				field("Fecha de Vencimiento", `<input type="date" class="cp-input${doc.payment_terms_template ? " cp-ro" : ""}" id="cp-h-due" value="${cpEsc(doc.vencimiento || "")}" ${dis} ${doc.payment_terms_template ? "readonly" : ""}>`),
+			);
+		}
+
 		if (kind !== "oc") header.push(field("Observaciones", `<input type="text" class="cp-input" id="cp-h-remarks" value="${cpEsc(doc.remarks)}" ${dis}>`, true));
 
 		this.$body.html(`
@@ -682,26 +766,72 @@ class FacexCompras {
 		${meta ? `<div class="cp-muted cp-head-meta">${meta}</div>` : ""}
 	</div>
 	${this._related_html()}
-	${ret && editable ? `<div class="cp-alert cp-alert-info">${this._return_hint()}</div>` : ""}
-	${kind === "fc" && this._from_receipt() && editable ? `<div class="cp-alert cp-alert-info">Factura desde Entrada de Mercadería: el inventario ya ingresó con la entrada; esta factura solo registra la cuenta por pagar.</div>` : ""}
+	${this._tabs_html()}
 
-	<div class="cp-card"><div class="cp-grid">${header.join("")}</div></div>
+	<div class="cp-tab-panel" data-panel="doc">
+		${ret && editable ? `<div class="cp-alert cp-alert-info">${this._return_hint()}</div>` : ""}
+		${kind === "fc" && this._from_receipt() && editable ? `<div class="cp-alert cp-alert-info">Factura desde Entrada de Mercadería: el inventario ya ingresó con la entrada; esta factura solo registra la cuenta por pagar.</div>` : ""}
 
-	<div class="cp-card">
-		<div class="cp-card-head">
-			<div class="cp-section-title" style="margin:0;">${ret ? "Productos a devolver" : "Productos"}</div>
-			${editable && !ret ? `<button type="button" class="cp-btn cp-btn-secondary" id="cp-add">+ Agregar producto</button>` : ""}
+		<div class="cp-card"><div class="cp-grid">${header.join("")}</div></div>
+
+		<div class="cp-card">
+			<div class="cp-card-head">
+				<div class="cp-section-title" style="margin:0;">${ret ? "Productos a devolver" : "Productos"}</div>
+				${editable && !ret ? `<button type="button" class="cp-btn cp-btn-secondary" id="cp-add">+ Agregar producto</button>` : ""}
+			</div>
+			<div id="cp-items"></div>
 		</div>
-		<div id="cp-items"></div>
+
+		<div class="cp-card cp-totals" id="cp-totals"></div>
 	</div>
 
-	<div class="cp-card cp-totals" id="cp-totals"></div>
+	<div class="cp-tab-panel" data-panel="anexos" hidden><div id="cp-anexos-root"></div></div>
+	<div class="cp-tab-panel" data-panel="flujo" hidden><div id="cp-flujo-root"></div></div>
+	<div class="cp-tab-panel" data-panel="log" hidden><div id="cp-log-root"></div></div>
 
 	<div class="cp-actionbar">${this._actions_html()}</div>
 </div>`);
 
 		this._render_items();
 		this._bind_form();
+		this._show_tab(this.tab || "doc");
+	}
+
+	// ──────────────────────────────────────────────
+	// Pestañas del formulario
+	// ──────────────────────────────────────────────
+	// Documento · Anexos · Relaciones · Cambios. Relaciones y Cambios solo
+	// existen cuando el documento ya está grabado (es lo que tienen que
+	// contar); se cargan la primera vez que se abren.
+
+	_tab_list() {
+		const doc = this.doc;
+		const tabs = [["doc", "Documento", ""]];
+		tabs.push(["anexos", "Anexos", (doc.anexos || []).length || ""]);
+		if (doc.name) {
+			tabs.push(["flujo", "Relaciones", ""]);
+			tabs.push(["log", "Cambios", ""]);
+		}
+		return tabs;
+	}
+
+	_tabs_html() {
+		return `<div class="cp-tabs">${this._tab_list().map(([k, label, count]) =>
+			`<button type="button" class="cp-tab${(this.tab || "doc") === k ? " is-active" : ""}" data-tab="${k}">
+				${cpEsc(label)}${count ? ` <span class="cp-tab-count">${count}</span>` : ""}</button>`).join("")}</div>`;
+	}
+
+	_show_tab(tab) {
+		this.tab = tab;
+		this.$body.find(".cp-tab").each((i, el) => $(el).toggleClass("is-active", $(el).data("tab") === tab));
+		this.$body.find(".cp-tab-panel").each((i, el) => { el.hidden = $(el).data("panel") !== tab; });
+		if (tab === "anexos") this._render_anexos();
+		if (tab === "flujo" && !this._tab_loaded.flujo) this._load_flujo();
+		if (tab === "log" && !this._tab_loaded.log) this._load_log();
+	}
+
+	_refresh_tab_bar() {
+		this.$body.find(".cp-tabs").replaceWith(this._tabs_html());
 	}
 
 	_return_hint() {
@@ -779,22 +909,45 @@ class FacexCompras {
 		$b.on("click", "#cp-make-dv", () => this._make_from("dv"));
 		$b.on("click", "#cp-make-nc", () => this._make_from("nc"));
 		$b.on("click", "#cp-print", () => this._print());
+		$b.on("click", ".cp-tab", (e) => this._show_tab($(e.currentTarget).data("tab")));
+		$b.on("click", "[data-goto-kind]", (e) => {
+			const $c = $(e.currentTarget);
+			this._open_related($c.data("goto-kind"), $c.data("goto-name"));
+		});
 		$b.on("click", ".cp-chip", (e) => {
 			const $c = $(e.currentTarget);
-			const go = () => this._go("form", { kind: $c.data("rel-kind"), name: $c.data("rel-name") });
-			if (this.dirty) frappe.confirm("Hay cambios sin guardar. ¿Desea salir de todos modos?", go);
-			else go();
+			this._open_related($c.data("rel-kind"), $c.data("rel-name"));
 		});
+		this._bind_anexos();
 
 		if (this.doc.docstatus !== 0) return;
 		this._bind_supplier_ac($b.find("#cp-h-supplier"), {
-			on_pick: (s) => { this.doc.supplier = s.value; this.doc.supplier_name = s.label; this.dirty = true; },
+			on_pick: (s) => {
+				this.doc.supplier = s.value;
+				this.doc.supplier_name = s.label;
+				this.dirty = true;
+				// La condición de pago de la ficha del proveedor entra sola en
+				// el documento nuevo (si la ficha no trae ninguna, se respeta
+				// la que ya estuviera elegida).
+				if (s.payment_terms && !CP_KINDS[this.doc.kind].ret) {
+					this.doc.payment_terms_template = s.payment_terms;
+					$b.find("#cp-h-terms").val(s.payment_terms);
+					this._apply_terms_ui();
+					frappe.show_alert({ message: `Condición de pago del proveedor: <b>${cpEsc(s.payment_terms)}</b>`, indicator: "blue" });
+				}
+			},
 		});
 		$b.on("change input", ".cp-grid .cp-input", (e) => {
 			if (e.target.id === "cp-h-supplier") return;
 			this._read_header();
 			this.dirty = true;
 			this._render_totals();
+		});
+		// Cambiar la condición de pago —o la fecha desde la que se cuentan los
+		// días de crédito— recalcula el vencimiento.
+		$b.on("change", "#cp-h-terms, #cp-h-date, #cp-h-bill-date", () => {
+			this._read_header();
+			this._apply_terms_ui();
 		});
 
 		// Líneas: delegación sobre el contenedor (sobrevive a los re-render).
@@ -846,8 +999,40 @@ class FacexCompras {
 		if (doc.kind === "fc") doc.bfel_multi_tipo = val("#cp-h-tipo");
 		if (doc.kind === "en") doc.supplier_delivery_note = val("#cp-h-dn");
 		if (doc.kind !== "oc") doc.remarks = val("#cp-h-remarks");
+		if (!CP_KINDS[doc.kind].ret) {
+			doc.payment_terms_template = val("#cp-h-terms");
+			doc.vencimiento = val("#cp-h-due");
+		}
 		doc.currency = val("#cp-h-currency") || doc.currency;
 		doc.tax_type = val("#cp-h-tax");
+	}
+
+	// Fecha desde la que corren los días de crédito: en la factura y la nota
+	// de crédito, la fecha del documento del proveedor; en los demás, la fecha
+	// del documento (mismo criterio que ERPNext en set_payment_schedule).
+	_terms_base_date() {
+		const doc = this.doc;
+		return (doc.kind === "fc" || doc.kind === "nc") ? (doc.bill_date || doc.date) : doc.date;
+	}
+
+	_apply_terms_ui() {
+		const doc = this.doc;
+		if (CP_KINDS[doc.kind].ret) return;
+		const $due = this.$body.find("#cp-h-due");
+		if (doc.payment_terms_template) {
+			doc.vencimiento = cpDueDate(doc.payment_terms_template, this._terms_base_date(), this.defaults.payment_terms);
+			$due.val(doc.vencimiento).prop("readonly", true).addClass("cp-ro");
+		} else {
+			// Sin condición el vencimiento queda a mano del usuario.
+			$due.prop("readonly", false).removeClass("cp-ro");
+		}
+		this.dirty = true;
+	}
+
+	_open_related(kind, name) {
+		const go = () => this._go("form", { kind, name });
+		if (this.dirty) frappe.confirm("Hay cambios sin guardar. ¿Desea salir de todos modos?", go);
+		else go();
 	}
 
 	_source_tag(it) {
@@ -1080,6 +1265,9 @@ class FacexCompras {
 			if (!doc.schedule_date) errors.push("Ingrese la fecha de entrega.");
 			else if (doc.date && doc.schedule_date < doc.date) errors.push("La fecha de entrega no puede ser anterior a la fecha de la orden.");
 		}
+		if (!doc.payment_terms_template && doc.vencimiento && doc.vencimiento < this._terms_base_date()) {
+			errors.push("La fecha de vencimiento no puede ser anterior a la fecha del documento.");
+		}
 		if (!doc.items.length) errors.push("Agregue al menos un producto.");
 		if (kind === "en" && doc.items.length && !doc.items.some((it) => it.is_stock_item)) {
 			errors.push("Una Entrada de Mercadería necesita al menos un producto de inventario.");
@@ -1099,16 +1287,27 @@ class FacexCompras {
 	_payload() {
 		const doc = this.doc;
 		const kind = doc.kind;
+		// Anexos que todavía no existen en la base (subidos antes de grabar o
+		// heredados del documento de origen): se crean al grabar.
+		const anexos = (doc.anexos || []).filter((a) => !a.name).map((a) => ({
+			file_url: a.file_url || a.archivo, nombre_archivo: a.nombre_archivo || "",
+			comentario: a.comentario || "", copiar_a_destino: a.copiar_a_destino ? 1 : 0,
+			origen: a.origen || "",
+		}));
 		if (CP_KINDS[kind].ret) {
 			return {
 				name: doc.name, company: this.company, source: doc.source,
 				posting_date: doc.date, remarks: doc.remarks, bill_no: doc.bill_no, bill_date: doc.bill_date,
+				anexos,
 				items: doc.items.filter((it) => cpFlt(it.qty) > 0).map((it) => ({ detail: it.detail, qty: it.qty, serial_no: it.serial_no })),
 			};
 		}
 		const p = {
 			name: doc.name, company: this.company, supplier: doc.supplier,
 			currency: doc.currency, tax_type: doc.tax_type, remarks: doc.remarks,
+			payment_terms_template: doc.payment_terms_template || "",
+			due_date: doc.vencimiento || "",
+			anexos,
 		};
 		if (kind === "oc") Object.assign(p, { transaction_date: doc.date, schedule_date: doc.schedule_date });
 		if (kind === "en") Object.assign(p, { posting_date: doc.date, supplier_delivery_note: doc.supplier_delivery_note });
@@ -1241,6 +1440,7 @@ class FacexCompras {
 			callback: (r) => {
 				if (!r.message) return;
 				const m = r.message;
+				const hoy = m.date || frappe.datetime.get_today();
 				this._go("form", {
 					kind: target,
 					pending: {
@@ -1248,14 +1448,334 @@ class FacexCompras {
 						tax_type: m.tax_type || this.defaults.default_tax_template || "",
 						source: m.source, related: [{ kind: source.kind, name: source.name, docstatus: 1, status: source.status }],
 						update_stock: m.update_stock || 0,
+						// El destino se crea hoy: su fecha —y por lo tanto su
+						// vencimiento— son de hoy, no del documento de origen.
+						date: hoy, schedule_date: hoy, bill_date: hoy,
+						payment_terms_template: m.payment_terms_template || "",
+						vencimiento: m.vencimiento || "",
+						anexos: m.anexos || [],
 						items: m.items,
 					},
 				});
 				this.dirty = true;
+				const copiados = (m.anexos || []).length;
 				const what = { fc: " y datos de la factura", nc: " y el número de la nota de crédito" }[target] || "";
-				frappe.show_alert({ message: `Revise cantidades${what} y grabe.`, indicator: "blue" });
+				frappe.show_alert({
+					message: `Revise cantidades${what} y grabe.${copiados ? ` Se copiaron ${copiados} anexo(s).` : ""}`,
+					indicator: "blue",
+				});
 			},
 		});
+	}
+
+	// ──────────────────────────────────────────────
+	// Pestaña Anexos
+	// ──────────────────────────────────────────────
+	// Cada anexo es un archivo + un comentario opcional + el check «Copiar
+	// hacia documentos destino» (marcado por omisión): al generar la Entrada,
+	// la Factura, una Devolución o una Nota de Crédito desde este documento,
+	// los marcados viajan al documento nuevo.
+	//
+	// Con el documento ya grabado cada cambio se guarda de inmediato (también
+	// en documentos validados). En un documento nuevo los archivos quedan
+	// pendientes y se registran al grabar el borrador.
+
+	_anexo_limit_mb() { return 10; }
+
+	// La descarga va por el endpoint de FacEx: el enlace directo a
+	// /private/files/… lo resuelve Frappe contra el permiso de ERPNext sobre el
+	// doctype, que estos usuarios no tienen.
+	_anexo_url(a) {
+		const base = "/api/method/facex_multi.api.compras.anexos.download_anexo";
+		const q = a.name
+			? `kind=${encodeURIComponent(this.doc.kind)}&name=${encodeURIComponent(this.doc.name)}&row=${encodeURIComponent(a.name)}`
+			: `kind=${encodeURIComponent(this.doc.kind)}&file_url=${encodeURIComponent(a.file_url || a.archivo || "")}`;
+		return `${base}?${q}`;
+	}
+
+	_render_anexos() {
+		const doc = this.doc;
+		const anexos = doc.anexos || [];
+		const puede = this._can(doc.kind, "draft") && doc.docstatus !== 2;
+		const rows = anexos.map((a, idx) => {
+			const url = a.file_url || a.archivo || "";
+			const pend = !a.name;
+			return `
+		<tr data-anexo="${idx}">
+			<td data-label="Archivo" class="cp-cell-product">
+				<div class="cp-strong"><a href="${cpEsc(this._anexo_url(a))}" target="_blank" rel="noopener">${cpEsc(a.nombre_archivo || url.split("/").pop())}</a></div>
+				<div class="cp-muted">${cpEsc(cpBytes(a.file_size))}${a.file_size && (a.subido_por_fullname || pend) ? " · " : ""}${pend ? "Se registra al grabar" : cpEsc(a.subido_por_fullname || "")}${a.subido_el ? ` · ${cpEsc(cpDateTime(a.subido_el))}` : ""}</div>
+				${a.origen ? `<div class="cp-muted">Copiado de <b>${cpEsc(a.origen)}</b></div>` : ""}
+			</td>
+			<td data-label="Comentario">
+				<input type="text" class="cp-input cp-anexo-com" value="${cpEsc(a.comentario || "")}" placeholder="¿Qué es este archivo?" ${puede ? "" : "disabled"}>
+			</td>
+			<td data-label="Copiar a destino" class="cp-anexo-copy">
+				<label class="cp-check"><input type="checkbox" class="cp-anexo-cp"${a.copiar_a_destino ? " checked" : ""} ${puede ? "" : "disabled"}>
+					<span>Copiar hacia documentos destino</span></label>
+			</td>
+			<td class="cp-cell-del">${puede ? `<button type="button" class="cp-del cp-anexo-del" title="Quitar anexo">×</button>` : ""}</td>
+		</tr>`;
+		}).join("");
+
+		this.$body.find("#cp-anexos-root").html(`
+<div class="cp-card">
+	<div class="cp-card-head">
+		<div class="cp-section-title" style="margin:0;">Anexos del documento</div>
+		${puede ? `<div><input type="file" id="cp-anexo-file" multiple style="display:none;">
+			<button type="button" class="cp-btn cp-btn-secondary" id="cp-anexo-add">+ Subir archivo</button></div>` : ""}
+	</div>
+	<div class="cp-help">Adjunte cotizaciones, fotos, guías o cualquier respaldo (hasta ${this._anexo_limit_mb()} MB por archivo).
+		Los anexos marcados <b>Copiar hacia documentos destino</b> se copian solos a los documentos que genere desde este.</div>
+	${anexos.length ? `<table class="cp-table cp-cards cp-lines">
+		<thead><tr><th>Archivo</th><th style="width:34%;">Comentario</th><th style="width:270px;">Copiar</th><th style="width:36px;"></th></tr></thead>
+		<tbody>${rows}</tbody></table>` : `<div class="cp-empty">Sin anexos.${puede ? " Use <b>+ Subir archivo</b>." : ""}</div>`}
+</div>`);
+	}
+
+	_bind_anexos() {
+		const $b = this.$body;
+		const at = (e) => this.doc.anexos[parseInt($(e.target).closest("[data-anexo]").data("anexo"))];
+		$b.on("click", "#cp-anexo-add", () => $b.find("#cp-anexo-file").val("").trigger("click"));
+		$b.on("change", "#cp-anexo-file", (e) => this._upload_anexos(Array.from(e.target.files || [])));
+		$b.on("change", ".cp-anexo-cp", (e) => {
+			const a = at(e);
+			if (!a) return;
+			a.copiar_a_destino = e.target.checked ? 1 : 0;
+			this._persist_anexo(a, { copiar_a_destino: a.copiar_a_destino });
+		});
+		$b.on("change", ".cp-anexo-com", (e) => {
+			const a = at(e);
+			if (!a) return;
+			a.comentario = e.target.value;
+			this._persist_anexo(a, { comentario: a.comentario });
+		});
+		$b.on("click", ".cp-anexo-del", (e) => {
+			const idx = parseInt($(e.currentTarget).closest("[data-anexo]").data("anexo"));
+			const a = this.doc.anexos[idx];
+			if (!a) return;
+			const quitar = () => {
+				if (!a.name) {
+					this.doc.anexos.splice(idx, 1);
+					this.dirty = true;
+					this._render_anexos();
+					this._refresh_tab_bar();
+					return;
+				}
+				frappe.call({
+					method: "facex_multi.api.compras.anexos.delete_anexo",
+					args: { kind: this.doc.kind, name: this.doc.name, row: a.name },
+					freeze: true,
+					callback: (r) => {
+						if (!r.message) return;
+						this.doc.anexos.splice(idx, 1);
+						this._render_anexos();
+						this._refresh_tab_bar();
+						frappe.show_alert({ message: "Anexo eliminado.", indicator: "blue" });
+					},
+				});
+			};
+			frappe.confirm(`¿Quitar el anexo <b>${cpEsc(a.nombre_archivo || "")}</b>?`, quitar);
+		});
+	}
+
+	// Un cambio sobre un anexo ya registrado se guarda solo; sobre uno
+	// pendiente viaja con el borrador al grabarlo.
+	_persist_anexo(a, values) {
+		if (!a.name) {
+			this.dirty = true;
+			return;
+		}
+		frappe.call({
+			method: "facex_multi.api.compras.anexos.update_anexo",
+			args: Object.assign({ kind: this.doc.kind, name: this.doc.name, row: a.name }, values),
+		});
+	}
+
+	_upload_anexos(files) {
+		if (!files.length) return;
+		const max = this._anexo_limit_mb() * 1024 * 1024;
+		const grandes = files.filter((f) => f.size > max);
+		if (grandes.length) {
+			frappe.msgprint({
+				title: "Archivo demasiado grande",
+				message: grandes.map((f) => `• ${cpEsc(f.name)} (${cpBytes(f.size)})`).join("<br>")
+					+ `<br>Máximo ${this._anexo_limit_mb()} MB por anexo.`,
+				indicator: "orange",
+			});
+			files = files.filter((f) => f.size <= max);
+			if (!files.length) return;
+		}
+		frappe.dom.freeze("Subiendo anexo(s)...");
+		frappe.run_serially(files.map((f) => () => this._upload_one(f)))
+			.finally(() => {
+				frappe.dom.unfreeze();
+				this._render_anexos();
+				this._refresh_tab_bar();
+			});
+	}
+
+	_upload_one(file) {
+		return new Promise((resolve) => {
+			const reader = new FileReader();
+			reader.onerror = () => {
+				frappe.show_alert({ message: `No se pudo leer ${cpEsc(file.name)}.`, indicator: "red" });
+				resolve();
+			};
+			reader.onload = () => {
+				const b64 = String(reader.result).split(",")[1] || "";
+				frappe.call({
+					method: "facex_multi.api.compras.anexos.upload_anexo",
+					args: {
+						kind: this.doc.kind, name: this.doc.name || "", company: this.company,
+						filename: file.name, content_b64: b64,
+					},
+					callback: (r) => {
+						if (r.message) {
+							this.doc.anexos.push({
+								name: r.message.row || null,
+								file_url: r.message.file_url,
+								archivo: r.message.file_url,
+								nombre_archivo: r.message.nombre_archivo,
+								comentario: "",
+								copiar_a_destino: 1,
+								origen: "",
+								file_size: file.size,
+								subido_por_fullname: frappe.session.user_fullname,
+								subido_el: r.message.row ? frappe.datetime.now_datetime() : "",
+							});
+							if (!r.message.row) this.dirty = true;
+						}
+						resolve();
+					},
+					error: () => resolve(),
+				});
+			};
+			reader.readAsDataURL(file);
+		});
+	}
+
+	// ──────────────────────────────────────────────
+	// Pestaña Relaciones (mapa del flujo)
+	// ──────────────────────────────────────────────
+
+	_load_flujo() {
+		this._tab_loaded.flujo = true;
+		const $root = this.$body.find("#cp-flujo-root").html(`<div class="cp-empty">Cargando...</div>`);
+		frappe.call({
+			method: "facex_multi.api.compras.trazabilidad.get_document_map",
+			args: { kind: this.doc.kind, name: this.doc.name, company: this.company },
+			callback: (r) => {
+				if (!r.message) {
+					$root.html(`<div class="cp-card cp-empty">No se pudo cargar el mapa de relaciones.</div>`);
+					return;
+				}
+				$root.html(this._flujo_html(r.message));
+			},
+			error: () => $root.html(`<div class="cp-card cp-empty">No se pudo cargar el mapa de relaciones.</div>`),
+		});
+	}
+
+	_flujo_html(map) {
+		const nodes = map.nodes || [];
+		const edges = map.edges || [];
+		const padres = {};
+		edges.forEach((e) => { (padres[e.to] = padres[e.to] || []).push(e); });
+
+		const card = (n) => {
+			const actual = n.name === map.current;
+			const anulado = n.docstatus === 2;
+			const origen = (padres[n.name] || []).map((e) =>
+				`<div class="cp-flow-from">← ${cpEsc(e.rel)} de <b>${cpEsc(e.from)}</b></div>`).join("");
+			return `
+	<div class="cp-flow-node${actual ? " is-current" : ""}${anulado ? " is-void" : ""}">
+		<div class="cp-flow-head">
+			<span class="cp-chip-kind">${cpEsc(CP_KINDS[n.kind].short)}</span>
+			${actual ? `<span class="cp-strong">${cpEsc(n.name)}</span>` : `<button type="button" class="cp-flow-link" data-goto-kind="${n.kind}" data-goto-name="${cpEsc(n.name)}">${cpEsc(n.name)}</button>`}
+			${cpStatusBadge(n.status, n.docstatus)}
+		</div>
+		<div class="cp-muted">${cpDate(n.fecha)} · ${cpMoney(n.total, n.currency)}</div>
+		${n.owner_fullname ? `<div class="cp-muted">Elaborado por ${cpEsc(n.owner_fullname)}</div>` : ""}
+		${anulado ? `<div class="cp-text-bad cp-small">Anulado${n.anulado_por_fullname ? ` por ${cpEsc(n.anulado_por_fullname)}` : ""}</div>` : ""}
+		${n.rectifica ? `<div class="cp-muted cp-small">Rectifica a ${cpEsc(n.rectifica)}</div>` : ""}
+		${origen}
+	</div>`;
+		};
+
+		const columnas = CP_ORDER.map((k) => {
+			const propios = nodes.filter((n) => n.kind === k);
+			if (!propios.length) return "";
+			return `<div class="cp-flow-col">
+				<div class="cp-flow-col-title">${cpEsc(CP_KINDS[k].many)}</div>
+				${propios.map(card).join("")}
+			</div>`;
+		}).filter(Boolean).join("");
+
+		const anulados = nodes.filter((n) => n.docstatus === 2).length;
+		return `
+<div class="cp-card">
+	<div class="cp-section-title" style="margin-top:0;">Flujo del documento</div>
+	<div class="cp-help">Todo el ciclo al que pertenece <b>${cpEsc(map.current)}</b>, en el orden Orden → Entrada → Devolución → Factura → Nota de Crédito.
+		${anulados ? `Incluye <b>${anulados}</b> documento(s) anulado(s), que quedan a la vista como evidencia.` : "Los documentos anulados también aparecen aquí."}</div>
+	${columnas ? `<div class="cp-flow">${columnas}</div>` : `<div class="cp-empty">Este documento no tiene relaciones con otros.</div>`}
+</div>`;
+	}
+
+	// ──────────────────────────────────────────────
+	// Pestaña Cambios (bitácora por usuario)
+	// ──────────────────────────────────────────────
+
+	_load_log() {
+		this._tab_loaded.log = true;
+		const $root = this.$body.find("#cp-log-root").html(`<div class="cp-empty">Cargando...</div>`);
+		frappe.call({
+			method: "facex_multi.api.compras.trazabilidad.get_document_log",
+			args: { kind: this.doc.kind, name: this.doc.name, company: this.company },
+			callback: (r) => {
+				if (!r.message) {
+					$root.html(`<div class="cp-card cp-empty">No se pudo cargar la bitácora.</div>`);
+					return;
+				}
+				$root.html(this._log_html(r.message));
+			},
+			error: () => $root.html(`<div class="cp-card cp-empty">No se pudo cargar la bitácora.</div>`),
+		});
+	}
+
+	_log_html(log) {
+		const colores = {
+			Creado: ["#1d4ed8", "#dbeafe"], Modificado: ["#b45309", "#fef3c7"],
+			Validado: ["#047857", "#d1fae5"], Anulado: ["#b91c1c", "#fee2e2"],
+			Comentario: ["#475569", "#e2e8f0"],
+			"Anexo agregado": ["#0f766e", "#ccfbf1"], "Anexo eliminado": ["#9f1239", "#ffe4e6"],
+		};
+		const eventos = (log.eventos || []).slice().reverse();
+		const item = (e) => {
+			const [color, bg] = colores[e.tipo] || ["#475569", "#e2e8f0"];
+			const cambios = (e.cambios || []).map((c) => `
+				<li><b>${cpEsc(c.campo)}</b>: ${c.antes ? `${cpEsc(c.antes)} → ` : ""}${cpEsc(c.despues)}</li>`).join("");
+			return `
+	<div class="cp-log-item">
+		<div class="cp-log-head">
+			<span class="cp-badge" style="color:${color};background:${bg};">${cpEsc(e.tipo)}</span>
+			<span class="cp-strong">${cpEsc(e.fullname || e.user || "—")}</span>
+			<span class="cp-muted">${cpEsc(cpDateTime(e.cuando))}</span>
+		</div>
+		${e.detalle ? `<div class="cp-muted">${cpEsc(e.detalle)}</div>` : ""}
+		${cambios ? `<ul class="cp-log-changes">${cambios}</ul>` : ""}
+	</div>`;
+		};
+		const resumen = (log.por_usuario || []).map((u) =>
+			`<span class="cp-tag">${cpEsc(u.usuario)}: ${u.eventos}</span>`).join(" ");
+		return `
+<div class="cp-card">
+	<div class="cp-card-head">
+		<div class="cp-section-title" style="margin:0;">Bitácora de cambios</div>
+		<div>${resumen}</div>
+	</div>
+	<div class="cp-help">Quién creó, modificó, validó o anuló el documento, qué anexos agregó o quitó y qué campos cambió en cada paso (lo más reciente primero).</div>
+	${eventos.length ? eventos.map(item).join("") : `<div class="cp-empty">Sin movimientos registrados.</div>`}
+</div>`;
 	}
 
 	_print() {
@@ -1602,6 +2122,34 @@ input.cp-num { max-width:120px;margin-left:auto;display:block; }
 .cp-chip:hover { border-color:#153375;background:#f5f8ff; }
 .cp-chip-kind { font-size:10.5px;font-weight:700;color:#6c757d;text-transform:uppercase; }
 
+/* ── Pestañas del formulario ───────────────────────────── */
+.cp-tabs { display:flex;gap:4px;border-bottom:1px solid #d1d8dd;margin-bottom:14px;overflow-x:auto; }
+.cp-tab { background:none;border:none;border-bottom:2px solid transparent;padding:8px 14px;font-size:13.5px;font-weight:600;color:#6c757d;cursor:pointer;white-space:nowrap; }
+.cp-tab:hover { color:#153375; }
+.cp-tab.is-active { color:#153375;border-bottom-color:#153375; }
+.cp-tab-count { display:inline-block;min-width:18px;padding:0 5px;border-radius:9px;background:#eef2f7;color:#475569;font-size:11px;font-weight:700; }
+.cp-tab.is-active .cp-tab-count { background:#dbeafe;color:#1d4ed8; }
+.cp-check { display:flex;align-items:center;gap:7px;font-size:12.5px;color:#334155;font-weight:500;cursor:pointer;margin:0; }
+.cp-check input { width:16px;height:16px;margin:0;flex-shrink:0; }
+.cp-anexo-copy { white-space:normal; }
+
+/* ── Mapa de relaciones ────────────────────────────────── */
+.cp-flow { display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:12px;align-items:start; }
+.cp-flow-col-title { font-size:11px;font-weight:700;color:#6c757d;text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px; }
+.cp-flow-node { background:#fff;border:1px solid #d1d8dd;border-radius:8px;padding:10px 12px;margin-bottom:10px; }
+.cp-flow-node.is-current { border-color:#153375;box-shadow:0 0 0 2px rgba(21,51,117,.12); }
+.cp-flow-node.is-void { background:#fff7f7;border-color:#fca5a5; }
+.cp-flow-head { display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:4px; }
+.cp-flow-link { background:none;border:none;padding:0;font-size:13px;font-weight:700;color:#153375;cursor:pointer;text-decoration:underline; }
+.cp-flow-from { font-size:11.5px;color:#475569;margin-top:4px; }
+
+/* ── Bitácora de cambios ───────────────────────────────── */
+.cp-log-item { border-left:2px solid #e2e8f0;padding:0 0 12px 12px;margin-left:4px; }
+.cp-log-item:last-child { padding-bottom:0; }
+.cp-log-head { display:flex;align-items:center;gap:8px;flex-wrap:wrap; }
+.cp-log-changes { margin:6px 0 0;padding-left:18px;font-size:12.5px;color:#334155; }
+.cp-log-changes li { margin-bottom:2px; }
+
 /* ── Móvil ─────────────────────────────────────────────── */
 @media (max-width: 720px) {
   .cp-topbar { padding:8px 12px; }
@@ -1630,6 +2178,9 @@ input.cp-num { max-width:120px;margin-left:auto;display:block; }
   .cp-cards td.cp-cell-del { position:absolute;top:6px;right:4px;width:auto;padding:0; }
   .cp-cards td.cp-cell-del::before { display:none; }
   .cp-cards td[data-label="#"] { display:none; }
+  .cp-cards td.cp-anexo-copy { display:block;text-align:left; }
+  .cp-cards td.cp-anexo-copy::before { display:none; }
+  .cp-flow { grid-template-columns:1fr; }
   .cp-cards td select.cp-input { max-width:60%; }
   .cp-cards td input.cp-num { max-width:140px; }
   .cp-uom { display:inline;margin-left:6px; }
