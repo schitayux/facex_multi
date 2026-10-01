@@ -20,9 +20,36 @@ Diseño:
     FacEx Settings (registro de la compañía). El Grand Total que paga el
     cliente no cambia; lo que cambia es que el ítem se factura a precio neto
     y el recargo/flete no toca la cuenta de Ingresos.
-  * `recargo_flete_con_iva` (FacEx Settings): si está ON cada cargo se parte
-    en neto (cuenta pasivo) + IVA (cuenta del IVA de la plantilla). Pendiente
-    de definición del contador; por defecto OFF (fila sin IVA).
+  * `recargo_flete_con_iva` (FacEx Settings): si está ON cada cargo pasarela se
+    parte en neto (cuenta pasivo) + IVA (cuenta del IVA de la plantilla). Por
+    defecto OFF (fila sin IVA).
+
+Pasarela vs. parte de la venta (2026-09-30)
+-------------------------------------------
+Cada cargo tiene un MODO por compañía (`recargo_es_venta` / `flete_es_venta`
+en Configuración Compañía):
+
+  * PASARELA (por defecto, el caso de Neko) — el cliente paga un extra por usar
+    el servicio de entrega; el transportista lo cobra, lo deposita a la empresa
+    y lo descuenta en su liquidación. NO es ingreso: no suma en ningún informe
+    de venta ni en el tablero, y la certificación FEL documenta solo el neto.
+  * PARTE DE LA VENTA — el cargo es ingreso propio: suma como venta, lleva IVA
+    (siempre, porque es ingreso gravado) y al certificar se prorratea entre las
+    líneas del documento en proporción al total de cada línea.
+
+El modo se CONGELA por fila en `Sales Taxes and Charges.facex_cargo_es_venta`
+al grabar la factura. Es deliberado: si se leyera en vivo de la configuración,
+mover el interruptor reescribiría la historia de los informes y descuadraría
+cierres ya congelados. Las filas emitidas antes de que existiera el campo
+quedan en 0 = pasarela, que es exactamente lo que son (fueron contabilizadas
+contra cuentas de pasivo), así que no hace falta parchear nada.
+
+Una devolución / nota de crédito HEREDA el modo de la factura original
+(`_modo_heredado`), para revertir el cargo tal como se emitió aunque la
+compañía haya cambiado de modo después.
+
+Quien consume esto: `cargos_facex_por_factura` (Cierre Diario, por documento) y
+los helpers SQL `pasarela_sql` / `venta_neta_sql` (informes, KPIs y tablero).
 
 Las filas se reconstruyen en `before_validate` porque ERPNext calcula los
 totales dentro de su propio `validate` (accounts_controller.validate →
@@ -87,6 +114,19 @@ def ensure_recargo_flete_fields():
                     "read_only": 1,
                     "hidden": 1,
                     "description": "Recargo / Flete / IVA Recargo / IVA Flete — fila generada por FacEx.",
+                },
+                {
+                    "fieldname": "facex_cargo_es_venta",
+                    "label": "El cargo es parte de la venta",
+                    "fieldtype": "Check",
+                    "insert_after": "facex_tipo_cargo",
+                    "default": "0",
+                    "read_only": 1,
+                    "hidden": 1,
+                    "description": "Congela el modo de la compañía al grabar la factura. 0 = pasarela "
+                                   "(no es venta); 1 = ingreso propio. Las filas anteriores a este campo "
+                                   "quedan en 0, que es exactamente lo que son: fueron contabilizadas "
+                                   "contra cuentas de pasivo.",
                 },
             ],
             "Sales Invoice Item": [
@@ -221,7 +261,37 @@ def _cargo_accounts(company: str) -> dict:
         "recargo": cfg.get("cuenta_recargo_entrega") or "",
         "flete": cfg.get("cuenta_flete") or "",
         "con_iva": cint(cfg.get("recargo_flete_con_iva")),
+        "recargo_es_venta": cint(cfg.get("recargo_es_venta")),
+        "flete_es_venta": cint(cfg.get("flete_es_venta")),
     }
+
+
+def _modo_heredado(doc) -> dict | None:
+    """Para una devolución / nota de crédito: el modo (pasarela o venta) que
+    tenían los cargos de la factura ORIGINAL, por tipo de cargo.
+
+    Una NC debe revertir el cargo tal como se emitió: si la venta original fue
+    pasarela, su reverso también es pasarela aunque la compañía haya cambiado
+    de modo después. Si no hay factura original o no traía cargos, devuelve
+    None y se usa el modo actual de la compañía."""
+    if not cint(doc.get("is_return")) or not doc.get("return_against"):
+        return None
+    if not frappe.get_meta("Sales Taxes and Charges").has_field("facex_cargo_es_venta"):
+        return None
+    rows = frappe.get_all(
+        "Sales Taxes and Charges",
+        filters={"parenttype": "Sales Invoice", "parent": doc.return_against,
+                 "facex_tipo_cargo": ["in", list(TIPOS_CARGO)]},
+        fields=["facex_tipo_cargo", "facex_cargo_es_venta"],
+    )
+    if not rows:
+        return None
+    out = {}
+    for r in rows:
+        key = "flete" if r.facex_tipo_cargo in (TIPO_FLETE, TIPO_IVA_FLETE) else "recargo"
+        # Cualquier fila del grupo basta: recargo y su IVA comparten el modo.
+        out[key] = cint(r.facex_cargo_es_venta)
+    return out or None
 
 
 def _iva_row(doc):
@@ -301,10 +371,18 @@ def apply_recargo_y_flete(doc, method=None):
             title="Recargo / Flete sin cuenta contable",
         )
 
-    iva = _iva_row(doc) if accts["con_iva"] else None
+    # Modo de cada cargo: el de la compañía hoy, salvo en una devolución, que
+    # hereda el de la factura original para revertirla tal como se emitió.
+    heredado = _modo_heredado(doc) or {}
+    es_venta = {
+        "recargo": heredado.get("recargo", accts["recargo_es_venta"]),
+        "flete": heredado.get("flete", accts["flete_es_venta"]),
+    }
+
+    iva_tpl = _iva_row(doc)
     cost_center = frappe.get_cached_value("Company", doc.company, "cost_center")
 
-    def _add(tipo, desc, account, amount):
+    def _add(tipo, desc, account, amount, venta):
         if abs(amount) < 0.005:
             return
         doc.append("taxes", {
@@ -316,24 +394,31 @@ def apply_recargo_y_flete(doc, method=None):
             "included_in_print_rate": 0,
             "cost_center": cost_center,
             "facex_tipo_cargo": tipo,
+            "facex_cargo_es_venta": cint(venta),
         })
 
-    def _split(gross):
-        """(neto, iva) — el monto que ve el cliente es `gross`."""
-        if not iva:
-            return gross, 0.0
+    def _split(gross, venta):
+        """(neto, iva) — el monto que ve el cliente es siempre `gross`.
+
+        Un cargo "parte de la venta" es ingreso gravado, así que SIEMPRE se
+        parte en neto + IVA: es lo único que cuadra con el prorrateo por línea
+        de la certificación FEL. Un cargo pasarela respeta
+        `recargo_flete_con_iva` (apagado por defecto: no grava)."""
+        iva = iva_tpl if (venta or accts["con_iva"]) else None
+        if not iva or flt(iva.rate) <= 0:
+            return gross, 0.0, None
         neto = flt(gross / (1 + flt(iva.rate) / 100.0), 2)
-        return neto, flt(gross - neto, 2)
+        return neto, flt(gross - neto, 2), iva
 
-    neto, imp = _split(flt(total_recargo, 2))
-    _add(TIPO_RECARGO, DESC_RECARGO, accts["recargo"], neto)
+    neto, imp, iva = _split(flt(total_recargo, 2), es_venta["recargo"])
+    _add(TIPO_RECARGO, DESC_RECARGO, accts["recargo"], neto, es_venta["recargo"])
     if iva:
-        _add(TIPO_IVA_RECARGO, "IVA " + DESC_RECARGO, iva.account_head, imp)
+        _add(TIPO_IVA_RECARGO, "IVA " + DESC_RECARGO, iva.account_head, imp, es_venta["recargo"])
 
-    neto, imp = _split(flt(flete, 2))
-    _add(TIPO_FLETE, DESC_FLETE, accts["flete"], neto)
+    neto, imp, iva = _split(flt(flete, 2), es_venta["flete"])
+    _add(TIPO_FLETE, DESC_FLETE, accts["flete"], neto, es_venta["flete"])
     if iva:
-        _add(TIPO_IVA_FLETE, "IVA " + DESC_FLETE, iva.account_head, imp)
+        _add(TIPO_IVA_FLETE, "IVA " + DESC_FLETE, iva.account_head, imp, es_venta["flete"])
 
 
 def set_totales_con_recargo(doc, method=None):
@@ -411,23 +496,193 @@ def get_recargo_context(company: str = None, price_list: str = None) -> dict:
         "con_iva": cint(cfg.get("recargo_flete_con_iva")),
         "cuenta_recargo": cfg.get("cuenta_recargo_entrega") or "",
         "cuenta_flete": cfg.get("cuenta_flete") or "",
+        # Modo de cada cargo: 0 = pasarela (no es venta), 1 = ingreso propio.
+        # El page lo usa para rotular los totales de la factura en pantalla.
+        "recargo_es_venta": cint(cfg.get("recargo_es_venta")),
+        "flete_es_venta": cint(cfg.get("flete_es_venta")),
     }
 
 
+_CARGO_KEYS = ("recargo", "flete", "pasarela", "venta",
+               "recargo_pasarela", "recargo_venta", "flete_pasarela", "flete_venta")
+
+
 def cargos_facex_por_factura(invoice_names: list) -> dict:
-    """{invoice: {"recargo": x, "flete": y}} desde las filas de cargos FacEx
-    (bruto: neto + IVA cuando aplica). Para Cierre Diario y reportes."""
+    """{invoice: {...}} con los cargos FacEx del documento (bruto: neto + IVA
+    cuando aplica), desglosados por tipo y por modo:
+
+      recargo / flete                  total por tipo (lo que paga el cliente)
+      pasarela / venta                 el mismo dinero partido por MODO
+      <tipo>_pasarela / <tipo>_venta   el cruce de ambos
+
+    `pasarela` es la parte que NO es venta de la empresa. Para Cierre Diario,
+    liquidaciones y reportes.
+    """
     out = {}
-    if not invoice_names or not frappe.get_meta("Sales Taxes and Charges").has_field("facex_tipo_cargo"):
+    meta = frappe.get_meta("Sales Taxes and Charges")
+    if not invoice_names or not meta.has_field("facex_tipo_cargo"):
         return out
+    fields = ["parent", "facex_tipo_cargo", "tax_amount"]
+    has_modo = meta.has_field("facex_cargo_es_venta")
+    if has_modo:
+        fields.append("facex_cargo_es_venta")
     rows = frappe.get_all(
         "Sales Taxes and Charges",
         filters={"parenttype": "Sales Invoice", "parent": ["in", invoice_names],
                  "facex_tipo_cargo": ["in", list(TIPOS_CARGO)]},
-        fields=["parent", "facex_tipo_cargo", "tax_amount"],
+        fields=fields,
     )
     for r in rows:
-        d = out.setdefault(r.parent, {"recargo": 0.0, "flete": 0.0})
-        key = "flete" if r.facex_tipo_cargo in (TIPO_FLETE, TIPO_IVA_FLETE) else "recargo"
-        d[key] += flt(r.tax_amount)
+        d = out.setdefault(r.parent, {k: 0.0 for k in _CARGO_KEYS})
+        tipo = "flete" if r.facex_tipo_cargo in (TIPO_FLETE, TIPO_IVA_FLETE) else "recargo"
+        modo = "venta" if (has_modo and cint(r.facex_cargo_es_venta)) else "pasarela"
+        amount = flt(r.tax_amount)
+        d[tipo] += amount
+        d[modo] += amount
+        d[f"{tipo}_{modo}"] += amount
     return out
+
+
+# ---------------------------------------------------------------------------
+# Helpers SQL — "venta neta" para informes, KPIs y tablero
+# ---------------------------------------------------------------------------
+# Los informes de venta se construían sobre `grand_total`, que incluye las filas
+# de cargos. Con el recargo/flete en modo pasarela eso infla la venta con dinero
+# que no es de la empresa. En vez de parchear cada consulta con su propia resta,
+# la regla vive aquí y cada informe la usa como expresión SQL: así no hay dos
+# definiciones de "venta" que puedan divergir.
+#
+# Un cargo pasarela se reconoce por `facex_cargo_es_venta = 0` en una fila con
+# `facex_tipo_cargo`. Las filas anteriores al campo quedan en 0 = pasarela, que
+# es lo que son.
+
+def _cargos_meta_ok() -> bool:
+    """Entre desplegar el código y correr `bench migrate` los campos pueden no
+    existir; en ese caso los helpers devuelven '0' y los informes siguen
+    funcionando con el total completo (comportamiento anterior)."""
+    try:
+        meta = frappe.get_meta("Sales Taxes and Charges")
+        return meta.has_field("facex_tipo_cargo") and meta.has_field("facex_cargo_es_venta")
+    except Exception:
+        return False
+
+
+def pasarela_sql(alias: str = "si") -> str:
+    """Expresión SQL con el total de cargos PASARELA de la factura `alias`
+    (0 si todavía no se migraron los campos). Sin parámetros: no interpola nada
+    del usuario, solo el alias que pone el caller."""
+    if not _cargos_meta_ok():
+        return "0"
+    return (
+        "COALESCE((SELECT SUM(_fxc.tax_amount) FROM `tabSales Taxes and Charges` _fxc "
+        f"WHERE _fxc.parent = `{alias}`.name AND _fxc.parenttype = 'Sales Invoice' "
+        "AND IFNULL(_fxc.facex_tipo_cargo, '') != '' "
+        "AND IFNULL(_fxc.facex_cargo_es_venta, 0) = 0), 0)"
+    )
+
+
+def total_cobrable_sql(alias: str = "si") -> str:
+    """Total que paga el cliente: `rounded_total` salvo que esté deshabilitado
+    (mismo criterio que `cierre._inv_total`). Es la base de cobranza —
+    estados de cuenta, antigüedad de saldos, pagos — y NO se le resta nada."""
+    return (
+        f"(CASE WHEN IFNULL(`{alias}`.disable_rounded_total, 0) = 0 AND `{alias}`.rounded_total != 0 "
+        f"THEN `{alias}`.rounded_total ELSE `{alias}`.grand_total END)"
+    )
+
+
+def venta_neta_sql(alias: str = "si") -> str:
+    """Venta de la empresa: total cobrable menos los cargos pasarela. Es lo que
+    deben sumar los informes de venta, los KPIs y el tablero."""
+    return f"({total_cobrable_sql(alias)} - {pasarela_sql(alias)})"
+
+
+def recargo_estimado_por_factura(invoice_names: list) -> dict:
+    """{invoice: {"recargo", "flete", "origen"}} — el recargo y el flete que se le
+    COBRARON AL CLIENTE, para analizar contra la comisión real del transportista.
+
+    No es lo mismo que `cargos_facex_por_factura`, y la diferencia importa:
+
+      * Las facturas emitidas desde el 2026-09-21 traen el recargo y el flete como
+        filas de cargo; ahí se leen de ahí («origen»: cargos).
+      * Las ANTERIORES llevaban el recargo EMBEBIDO en el precio de la lista
+        (Q1 por pieza dentro del rate) y el flete como una línea del ítem de
+        flete, así que no tienen ninguna fila de cargo. Para esas se reconstruye
+        con la misma fórmula que las habría generado: qty × piezas físicas de la
+        UdM × Q/pieza de la lista, saltando la línea del ítem de flete
+        («origen»: reconstruido). Ver ACC-SINV-2026-00041 (2026-09-17): dos
+        líneas de 0.5 Docena en LP-COD = Q12 de recargo, más Q35 de flete en
+        línea, que sin esto salían en cero en el Análisis COD del Cierre.
+
+    OJO: esto NO sirve para el asiento contable. En una factura vieja el recargo
+    se contabilizó como INGRESO (iba en el precio), no como pasivo, así que no
+    hay nada que cancelar en la cuenta de recargos por pagar. Para el pasivo hay
+    que seguir usando `cargos_facex_por_factura(...)["recargo_pasarela"]`.
+    """
+    out = {}
+    if not invoice_names:
+        return out
+
+    invoices = frappe.get_all(
+        "Sales Invoice", filters={"name": ["in", list(invoice_names)]},
+        fields=["name", "company", "selling_price_list"])
+    if not invoices:
+        return out
+
+    cargos = cargos_facex_por_factura([i.name for i in invoices])
+    items = frappe.get_all(
+        "Sales Invoice Item", filters={"parent": ["in", [i.name for i in invoices]],
+                                       "parenttype": "Sales Invoice"},
+        fields=["parent", "item_code", "qty", "uom", "stock_uom", "amount"])
+    por_factura = {}
+    for it in items:
+        por_factura.setdefault(it.parent, []).append(it)
+
+    piezas = get_piezas_map()
+    rpp_cache, flete_cache = {}, {}
+    from facex_multi.api.permissions import get_facex_flete_item
+
+    for inv in invoices:
+        pl = inv.selling_price_list
+        if pl not in rpp_cache:
+            rpp_cache[pl] = get_recargo_por_pieza(pl)
+        if inv.company not in flete_cache:
+            flete_cache[inv.company] = (get_facex_flete_item(inv.company) or "").strip()
+        rpp = rpp_cache[pl]
+        flete_item = flete_cache[inv.company]
+        lineas = por_factura.get(inv.name, [])
+
+        # El flete en línea de producto existe en ambos casos y siempre suma.
+        flete_lineas = sum(flt(it.amount) for it in lineas
+                           if flete_item and it.item_code == flete_item)
+
+        c = cargos.get(inv.name)
+        if c:
+            out[inv.name] = {
+                "recargo": flt(c.get("recargo")),
+                "flete": flt(c.get("flete")) + flete_lineas,
+                "origen": "cargos",
+            }
+            continue
+
+        # Sin filas de cargo: se reconstruye con la fórmula original, saltando la
+        # línea del ítem de flete (que nunca llevó recargo).
+        recargo = 0.0
+        for it in lineas:
+            if flete_item and it.item_code == flete_item:
+                continue
+            uom = it.uom or it.stock_uom
+            recargo += flt(it.qty) * cint(piezas.get(uom, 0)) * rpp
+        if recargo or flete_lineas:
+            out[inv.name] = {
+                "recargo": flt(recargo, 2),
+                "flete": flt(flete_lineas, 2),
+                "origen": "reconstruido",
+            }
+    return out
+
+
+def pasarela_por_factura(invoice_names: list) -> dict:
+    """{invoice: monto pasarela} — versión Python de `pasarela_sql` para los
+    informes que ya traen las facturas en memoria."""
+    return {k: v["pasarela"] for k, v in cargos_facex_por_factura(invoice_names).items() if v["pasarela"]}

@@ -280,9 +280,12 @@ _COMPANY_CONFIG_FIELDS = [
     "item_flete", "mayusculas_items", "mayusculas_clientes",
     "sin_sufijo_compania_items",
     "cuenta_recargo_entrega", "cuenta_flete", "recargo_flete_con_iva",
+    "recargo_es_venta", "flete_es_venta",
+    "cuenta_dif_comision_ganancia", "cuenta_dif_comision_perdida",
 ]
 # Campos texto (Select/Data/Link) — no convertir a int
-_CONFIG_TEXT_FIELDS = {"tipo_x_defecto", "item_flete", "cuenta_recargo_entrega", "cuenta_flete"}
+_CONFIG_TEXT_FIELDS = {"tipo_x_defecto", "item_flete", "cuenta_recargo_entrega", "cuenta_flete",
+                       "cuenta_dif_comision_ganancia", "cuenta_dif_comision_perdida"}
 # Check fields que están ON por defecto cuando no hay config
 _CONFIG_DEFAULT_ON = {"mostrar_almacen", "mostrar_desc_pct", "mostrar_adenda", "mostrar_tipo"}
 
@@ -536,17 +539,48 @@ def assert_facex_invoice_in_sales_scope(doc) -> None:
 
 def sales_invoice_query_conditions(user: str = None) -> str:
     """Hook permission_query_conditions para Sales Invoice (escritorio, report
-    view, links). Un usuario limitado a un socio de ventas solo ve las facturas
-    de ese socio."""
+    view, links). Dos recortes, que se acumulan:
+    - Socio de ventas: un usuario limitado a un socio solo ve sus facturas.
+    - Corte por inicio de operación: nada anterior a la fecha de arranque de la
+      compañía (ver api.corte). Cubre listas, report view y búsquedas de link
+      del escritorio de un solo golpe; las consultas crudas de FacEx llevan el
+      corte explícito."""
+    partes = []
     sp = get_facex_user_sales_partner(user=user)
-    if not sp:
+    if sp:
+        partes.append(f"`tabSales Invoice`.sales_partner = {frappe.db.escape(sp)}")
+    partes.append(_corte_sql_literal(user))
+    return " AND ".join(p for p in partes if p)
+
+
+def _corte_sql_literal(user: str = None) -> str:
+    """El corte como SQL literal — `permission_query_conditions` devuelve una
+    cadena, sin hueco para parámetros."""
+    from facex_multi.api.corte import get_corte
+
+    conf = get_corte()
+    if not conf["fecha"] or (user or frappe.session.user) in conf["sin_restriccion"]:
         return ""
-    return f"`tabSales Invoice`.sales_partner = {frappe.db.escape(sp)}"
+    partes = [f"`tabSales Invoice`.posting_date >= {frappe.db.escape(str(conf['fecha']))}"]
+    if conf["visibles"]:
+        lista = ", ".join(frappe.db.escape(u) for u in conf["visibles"])
+        partes.append(f"`tabSales Invoice`.owner IN ({lista})")
+    if frappe.get_meta("Sales Invoice").has_field("custom_es_saldo_inicial"):
+        partes.append("COALESCE(`tabSales Invoice`.custom_es_saldo_inicial, 0) = 1")
+    return "(" + " OR ".join(partes) + ")"
 
 
 def sales_invoice_has_permission(doc, user: str = None, ptype: str = None) -> bool:
     if ptype in ("create", "select"):
         return True
+    from facex_multi.api.corte import invoice_visible
+
+    # Corte por inicio de operación: una factura de las pruebas previas al
+    # arranque no se abre ni se imprime ni se referencia. Es el mismo criterio
+    # que oculta la lista, aplicado al documento puntual (get_invoice, el
+    # formulario del escritorio, los enlaces viejos).
+    if not invoice_visible(doc=doc, user=user):
+        return False
     sp = get_facex_user_sales_partner(user=user)
     if not sp:
         return True

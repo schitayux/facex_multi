@@ -55,6 +55,19 @@ def _build_company_condition_alias(company: str, alias: str = "p") -> tuple:
     return cond, vals
 
 
+def _corte_condition(company: str = None, alias: str = None,
+                     param_prefix: str = "facex_corte") -> tuple:
+    """Corte por «Fecha de inicio de operación» para una consulta de Sales
+    Invoice: ("1=1", {}) si la compañía no tiene corte configurado o el usuario
+    está exento. Va en TODAS las consultas de este módulo porque son SQL crudo
+    y no pasan por los hooks de permisos (ver facex_multi.api.corte)."""
+    from facex_multi.api.corte import invoice_corte_sql
+
+    cond, params = invoice_corte_sql(get_effective_company(company), alias=alias,
+                                     param_prefix=param_prefix)
+    return (cond or "1=1"), params
+
+
 def _sales_partner_condition(alias: str = None, company: str = None) -> tuple:
     """Condición por cliente según el Alcance en Ventas del usuario.
 
@@ -260,8 +273,9 @@ def get_sales_by_date(start_date: str, end_date: str, customer: str = None, ware
     company_cond, company_vals = _build_company_condition(company)
     sp_cond, sp_vals = _sales_partner_condition(company=company)
     owner_cond, owner_vals = _resolve_owner_filter(company, owners)
-    conditions = ["docstatus = 1", "COALESCE(bfel_documento_anulado, 0) != 1", company_cond, sp_cond, owner_cond]
-    values = {"start": start_date, "end": end_date, **company_vals, **sp_vals, **owner_vals}
+    corte_cond, corte_vals = _corte_condition(company)
+    conditions = ["docstatus = 1", "COALESCE(bfel_documento_anulado, 0) != 1", company_cond, sp_cond, owner_cond, corte_cond]
+    values = {"start": start_date, "end": end_date, **company_vals, **sp_vals, **owner_vals, **corte_vals}
 
     if customer:
         conditions.append("customer = %(customer)s")
@@ -282,8 +296,19 @@ def get_sales_by_date(start_date: str, end_date: str, customer: str = None, ware
     # por FacEx pero con PE en borrador seguía apareciendo "Pendiente" por su
     # total completo. Se recalcula el saldo real desde custom_efast_payments,
     # igual que ya hacen Estados de Cuenta y Antigüedad de Saldos.
+    #
+    # `cargos_pasarela` / `venta_neta`: el recargo y el flete en modo pasarela no
+    # son venta de la empresa (ver facex_multi.api.recargo). El SALDO se sigue
+    # calculando sobre el total completo, que es lo que el cliente debe.
+    from facex_multi.api.recargo import pasarela_sql, total_cobrable_sql, venta_neta_sql
+    pas = pasarela_sql("tabSales Invoice")
+    neta = venta_neta_sql("tabSales Invoice")
+    cobrable = total_cobrable_sql("tabSales Invoice")
     query = f"""
         SELECT name, posting_date, customer, customer_name, total, total_taxes_and_charges, grand_total,
+            {pas} AS cargos_pasarela,
+            {neta} AS venta_neta,
+            {cobrable} AS total_cobrable,
             GREATEST(grand_total - COALESCE((
                 SELECT SUM(amount)
                 FROM `tabeFast Invoice Payment`
@@ -293,18 +318,27 @@ def get_sales_by_date(start_date: str, end_date: str, customer: str = None, ware
         WHERE posting_date BETWEEN %(start)s AND %(end)s AND { " AND ".join(conditions) }
         ORDER BY posting_date DESC, name DESC
     """
-    
+
     invoices = frappe.db.sql(query, values, as_dict=True)
-    
+
     # Calcular agregados
-    total_sales = sum(float(inv.grand_total or 0) for inv in invoices)
-    total_tax = sum(float(inv.total_taxes_and_charges or 0) for inv in invoices)
+    total_sales = sum(float(inv.venta_neta or 0) for inv in invoices)
+    total_pasarela = sum(float(inv.cargos_pasarela or 0) for inv in invoices)
+    # Lo que el cliente paga es el total redondeado, no `grand_total` (mismo
+    # criterio que el Cierre Diario): si se mezclan, los totales no cuadran por
+    # los centavos del redondeo.
+    total_cobrado_cliente = sum(float(inv.total_cobrable or 0) for inv in invoices)
+    # `total_taxes_and_charges` de ERPNext incluye las filas de cargos FacEx, así
+    # que el impuesto real es ese total menos los cargos pasarela.
+    total_tax = sum(float(inv.total_taxes_and_charges or 0) for inv in invoices) - total_pasarela
     avg_sale = total_sales / len(invoices) if invoices else 0.0
-    
+
     return {
         "invoices": invoices,
         "summary": {
             "total_sales": total_sales,
+            "total_pasarela": total_pasarela,
+            "total_cobrado_cliente": total_cobrado_cliente,
             "total_tax": total_tax,
             "avg_sale": avg_sale,
             "count": len(invoices)
@@ -325,8 +359,9 @@ def get_sales_by_product(start_date: str, end_date: str, item_code: str = None,
     company_cond, company_vals = _build_company_condition_alias(company, "p")
     sp_cond, sp_vals = _sales_partner_condition("p", company=company)
     owner_cond, owner_vals = _resolve_owner_filter(company, owners, "p")
-    conditions = ["p.docstatus = 1", "COALESCE(p.bfel_documento_anulado, 0) != 1", "p.posting_date BETWEEN %(start)s AND %(end)s", company_cond, sp_cond, owner_cond]
-    values = {"start": start_date, "end": end_date, **company_vals, **sp_vals, **owner_vals}
+    corte_cond, corte_vals = _corte_condition(company, "p")
+    conditions = ["p.docstatus = 1", "COALESCE(p.bfel_documento_anulado, 0) != 1", "p.posting_date BETWEEN %(start)s AND %(end)s", company_cond, sp_cond, owner_cond, corte_cond]
+    values = {"start": start_date, "end": end_date, **company_vals, **sp_vals, **owner_vals, **corte_vals}
 
     if item_code:
         conditions.append("i.item_code = %(item_code)s")
@@ -385,8 +420,9 @@ def get_cancelled_invoices(start_date: str, end_date: str, customer: str = None,
     company_cond, company_vals = _build_company_condition(company)
     sp_cond, sp_vals = _sales_partner_condition(company=company)
     owner_cond, owner_vals = _resolve_owner_filter(company, owners)
-    conditions = ["(docstatus = 2 OR COALESCE(bfel_documento_anulado, 0) = 1)", "posting_date BETWEEN %(start)s AND %(end)s", company_cond, sp_cond, owner_cond]
-    values = {"start": start_date, "end": end_date, **company_vals, **sp_vals, **owner_vals}
+    corte_cond, corte_vals = _corte_condition(company)
+    conditions = ["(docstatus = 2 OR COALESCE(bfel_documento_anulado, 0) = 1)", "posting_date BETWEEN %(start)s AND %(end)s", company_cond, sp_cond, owner_cond, corte_cond]
+    values = {"start": start_date, "end": end_date, **company_vals, **sp_vals, **owner_vals, **corte_vals}
     
     if customer:
         conditions.append("customer = %(customer)s")
@@ -429,8 +465,9 @@ def get_customer_statement(customer: str, start_date: str = None, end_date: str 
     company_cond, company_vals = _build_company_condition(company)
     sp_cond, sp_vals = _sales_partner_condition(company=company)
     owner_cond, owner_vals = _resolve_owner_filter(company, owners, customer_level=True)
-    values = {"customer": customer, **company_vals, **sp_vals, **owner_vals}
-    conditions = ["customer = %(customer)s", "docstatus = 1", "COALESCE(bfel_documento_anulado, 0) != 1", company_cond, sp_cond, owner_cond]
+    corte_cond, corte_vals = _corte_condition(company)
+    values = {"customer": customer, **company_vals, **sp_vals, **owner_vals, **corte_vals}
+    conditions = ["customer = %(customer)s", "docstatus = 1", "COALESCE(bfel_documento_anulado, 0) != 1", company_cond, sp_cond, owner_cond, corte_cond]
     
     if start_date and end_date:
         conditions.append("posting_date BETWEEN %(start)s AND %(end)s")
@@ -535,8 +572,9 @@ def get_aging_receivables(customer: str = None, owners=None, company: str = None
     company_cond, company_vals = _build_company_condition(company)
     sp_cond, sp_vals = _sales_partner_condition(company=company)
     owner_cond, owner_vals = _resolve_owner_filter(company, owners, customer_level=True)
-    conditions = ["docstatus = 1", "is_return = 0", "COALESCE(bfel_documento_anulado, 0) != 1", company_cond, sp_cond, owner_cond]
-    values = {**company_vals, **sp_vals, **owner_vals}
+    corte_cond, corte_vals = _corte_condition(company)
+    conditions = ["docstatus = 1", "is_return = 0", "COALESCE(bfel_documento_anulado, 0) != 1", company_cond, sp_cond, owner_cond, corte_cond]
+    values = {**company_vals, **sp_vals, **owner_vals, **corte_vals}
     
     if customer:
         conditions.append("customer = %(customer)s")
@@ -658,8 +696,9 @@ def get_quotations_report(start_date: str = None, end_date: str = None, customer
     company_cond, company_vals = _build_company_condition(company)
     sp_cond, sp_vals = _sales_partner_condition(company=company)
     owner_cond, owner_vals = _resolve_owner_filter(company, owners)
-    conditions = ["docstatus = 0", "is_return = 0", "is_debit_note = 0", "COALESCE(bfel_documento_anulado, 0) != 1", company_cond, sp_cond, owner_cond]
-    values = {**company_vals, **sp_vals, **owner_vals}
+    corte_cond, corte_vals = _corte_condition(company)
+    conditions = ["docstatus = 0", "is_return = 0", "is_debit_note = 0", "COALESCE(bfel_documento_anulado, 0) != 1", company_cond, sp_cond, owner_cond, corte_cond]
+    values = {**company_vals, **sp_vals, **owner_vals, **corte_vals}
     
     if start_date and end_date:
         conditions.append("posting_date BETWEEN %(start)s AND %(end)s")
@@ -704,8 +743,9 @@ def get_payments_report(start_date: str, end_date: str, payment_method: str = No
     company_cond, company_vals = _build_company_condition_alias(company, "p")
     sp_cond, sp_vals = _sales_partner_condition("p", company=company)
     owner_cond, owner_vals = _resolve_owner_filter(company, owners, "ip")
-    conditions = ["p.docstatus = 1", "COALESCE(p.bfel_documento_anulado, 0) != 1", "ip.payment_date BETWEEN %(start)s AND %(end)s", company_cond, sp_cond, owner_cond]
-    values = {"start": start_date, "end": end_date, **company_vals, **sp_vals, **owner_vals}
+    corte_cond, corte_vals = _corte_condition(company, "p")
+    conditions = ["p.docstatus = 1", "COALESCE(p.bfel_documento_anulado, 0) != 1", "ip.payment_date BETWEEN %(start)s AND %(end)s", company_cond, sp_cond, owner_cond, corte_cond]
+    values = {"start": start_date, "end": end_date, **company_vals, **sp_vals, **owner_vals, **corte_vals}
     
     if payment_method:
         conditions.append("ip.payment_method = %(method)s")
@@ -758,15 +798,17 @@ def get_uncertified_invoices(owners=None, company: str = None, establecimiento: 
     company_cond, company_vals = _build_company_condition(company)
     sp_cond, sp_vals = _sales_partner_condition(company=company)
     owner_cond, owner_vals = _resolve_owner_filter(company, owners)
+    corte_cond, corte_vals = _corte_condition(company)
     conditions = [
         "docstatus = 1",
         company_cond,
         sp_cond,
         owner_cond,
+        corte_cond,
         "bfel_status = '01 Enviar'",
         "(bfel_uuid IS NULL OR bfel_uuid = '')"
     ]
-    values = {**company_vals, **sp_vals, **owner_vals}
+    values = {**company_vals, **sp_vals, **owner_vals, **corte_vals}
     
     if establecimiento:
         conditions.append("bfel_establecimiento = %(establecimiento)s")
@@ -814,11 +856,12 @@ def get_sales_growth_analysis(year: str = None, month: str = None, owners=None,
         prev_year = current_year
 
     # Ventas diarias año actual/mes seleccionado
-    curr_conditions = ["docstatus = 1", "YEAR(posting_date) = %(year)s", "MONTH(posting_date) = %(month)s", company_cond, sp_cond, owner_cond, "COALESCE(bfel_documento_anulado, 0) != 1"]
-    curr_values = {"year": current_year, "month": current_month, **company_vals, **sp_vals, **owner_vals}
+    corte_cond, corte_vals = _corte_condition(company)
+    curr_conditions = ["docstatus = 1", "YEAR(posting_date) = %(year)s", "MONTH(posting_date) = %(month)s", company_cond, sp_cond, owner_cond, corte_cond, "COALESCE(bfel_documento_anulado, 0) != 1"]
+    curr_values = {"year": current_year, "month": current_month, **company_vals, **sp_vals, **owner_vals, **corte_vals}
 
-    prev_conditions = ["docstatus = 1", "YEAR(posting_date) = %(year)s", "MONTH(posting_date) = %(month)s", company_cond, sp_cond, owner_cond, "COALESCE(bfel_documento_anulado, 0) != 1"]
-    prev_values = {"year": prev_year, "month": prev_month, **company_vals, **sp_vals, **owner_vals}
+    prev_conditions = ["docstatus = 1", "YEAR(posting_date) = %(year)s", "MONTH(posting_date) = %(month)s", company_cond, sp_cond, owner_cond, corte_cond, "COALESCE(bfel_documento_anulado, 0) != 1"]
+    prev_values = {"year": prev_year, "month": prev_month, **company_vals, **sp_vals, **owner_vals, **corte_vals}
     
     if establecimiento:
         curr_conditions.append("bfel_establecimiento = %(establecimiento)s")
@@ -826,16 +869,21 @@ def get_sales_growth_analysis(year: str = None, month: str = None, owners=None,
         prev_conditions.append("bfel_establecimiento = %(establecimiento)s")
         prev_values["establecimiento"] = establecimiento
         
+    # Venta neta: sin el recargo/flete en modo pasarela, que no es ingreso de la
+    # empresa (ver facex_multi.api.recargo).
+    from facex_multi.api.recargo import venta_neta_sql
+    neta = venta_neta_sql("tabSales Invoice")
+
     curr_data = frappe.db.sql(f"""
-        SELECT DAY(posting_date) AS day, SUM(grand_total) AS total
+        SELECT DAY(posting_date) AS day, SUM({neta}) AS total
         FROM `tabSales Invoice`
         WHERE {" AND ".join(curr_conditions)}
         GROUP BY DAY(posting_date)
     """, curr_values, as_dict=True)
-    
+
     # Ventas diarias año anterior/mes anterior
     prev_data = frappe.db.sql(f"""
-        SELECT DAY(posting_date) AS day, SUM(grand_total) AS total
+        SELECT DAY(posting_date) AS day, SUM({neta}) AS total
         FROM `tabSales Invoice`
         WHERE {" AND ".join(prev_conditions)}
         GROUP BY DAY(posting_date)
@@ -952,8 +1000,9 @@ _CLASES = ("contado", "credito", "contra_entrega")
 
 def _sales_by_seller_conditions(company, establecimiento, sales_partners) -> tuple:
     company_cond, company_vals = _build_company_condition(company)
-    conditions = ["docstatus = 1", "COALESCE(bfel_documento_anulado, 0) != 1", company_cond]
-    values = {**company_vals}
+    corte_cond, corte_vals = _corte_condition(company)
+    conditions = ["docstatus = 1", "COALESCE(bfel_documento_anulado, 0) != 1", company_cond, corte_cond]
+    values = {**company_vals, **corte_vals}
 
     wh_mode, wh_val = _resolve_warehouse_filter(company, None)
     if wh_mode == "in":
@@ -989,6 +1038,7 @@ def get_sales_by_seller(start_date: str, end_date: str, sales_partners=None,
     _require_report(company, "reporte_ventas_vendedor")
 
     from facex_multi.api.cierre import _clasificar_por_pagos, _inv_total
+    from facex_multi.api.recargo import pasarela_por_factura, venta_neta_sql
 
     conditions, values = _sales_by_seller_conditions(company, establecimiento, sales_partners)
     where = " AND ".join(conditions)
@@ -1011,6 +1061,7 @@ def get_sales_by_seller(start_date: str, end_date: str, sales_partners=None,
     )
 
     payments_by_inv = {}
+    pasarela = {}
     if invoices:
         for p in frappe.db.sql(
             """
@@ -1023,6 +1074,9 @@ def get_sales_by_seller(start_date: str, end_date: str, sales_partners=None,
             as_dict=True,
         ):
             payments_by_inv.setdefault(p.parent, []).append(p)
+        # Recargo/flete pasarela por factura: no es venta del vendedor, pero sí
+        # es parte de lo que el cliente paga (y por tanto de su saldo).
+        pasarela = pasarela_por_factura([i.name for i in invoices])
 
     def _bucket():
         return {"monto": 0.0, "facturas": 0, "clientes": set()}
@@ -1033,43 +1087,52 @@ def get_sales_by_seller(start_date: str, end_date: str, sales_partners=None,
     customers = set()
     cobrado = 0.0
     saldo = 0.0
+    cobrable = 0.0
     impuestos = 0.0
+    total_pasarela = 0.0
     rows = []
 
     for inv in invoices:
+        # `gt` = lo que el cliente paga (base de cobranza: pagado y saldo).
+        # `venta` = lo que vendió el vendedor, sin los cargos pasarela.
         gt = _inv_total(inv)
+        pas = flt(pasarela.get(inv.name, 0.0))
+        venta = gt - pas
         pays = payments_by_inv.get(inv.name, [])
         pagado = sum(flt(p.amount) for p in pays)
         pendiente = max(gt - pagado, 0.0) if not inv.is_return else 0.0
         seller = inv.sales_partner or SIN_VENDEDOR
         s = sellers.setdefault(seller, {
             "vendedor": seller, "facturas": 0, "clientes": set(), "venta_bruta": 0.0,
-            "devoluciones": 0.0, "saldo": 0.0, **{c: 0.0 for c in _CLASES},
+            "devoluciones": 0.0, "saldo": 0.0, "cargos_pasarela": 0.0, **{c: 0.0 for c in _CLASES},
         })
-        impuestos += flt(inv.total_taxes_and_charges)
+        impuestos += flt(inv.total_taxes_and_charges) - pas
+        total_pasarela += pas
+        s["cargos_pasarela"] += pas
 
         if inv.is_return:
             clase = "devolucion"
-            devoluciones["monto"] += abs(gt)
+            devoluciones["monto"] += abs(venta)
             devoluciones["facturas"] += 1
             devoluciones["clientes"].add(inv.customer)
-            s["devoluciones"] += abs(gt)
+            s["devoluciones"] += abs(venta)
         else:
             clase, _ce, _cred = _clasificar_por_pagos(
                 gt, pays, getdate(inv.posting_date), inv.get("bfel_pago_contra_entrega"), inv.due_date,
             )
             b = clases[clase]
-            b["monto"] += gt
+            b["monto"] += venta
             b["facturas"] += 1
             b["clientes"].add(inv.customer)
-            s[clase] += gt
-            s["venta_bruta"] += gt
+            s[clase] += venta
+            s["venta_bruta"] += venta
             s["facturas"] += 1
             s["clientes"].add(inv.customer)
             s["saldo"] += pendiente
             customers.add(inv.customer)
             cobrado += min(pagado, gt)
             saldo += pendiente
+            cobrable += gt
 
         rows.append({
             "name": inv.name,
@@ -1082,7 +1145,9 @@ def get_sales_by_seller(start_date: str, end_date: str, sales_partners=None,
             "condicion": clase,
             "plantilla": inv.get("payment_terms_template") or "",
             "bfel_status": inv.get("bfel_status") or "",
-            "grand_total": gt,
+            "grand_total": venta,
+            "total_cobrable": gt,
+            "cargos_pasarela": pas,
             "pagado": pagado,
             "saldo": pendiente,
             "owner": inv.owner,
@@ -1110,8 +1175,7 @@ def get_sales_by_seller(start_date: str, end_date: str, sales_partners=None,
     prev_start, prev_end = add_days(d0, -days), add_days(d0, -1)
     prev = frappe.db.sql(
         f"""
-        SELECT COALESCE(SUM(CASE WHEN IFNULL(disable_rounded_total, 0) = 0 AND rounded_total != 0
-                                 THEN rounded_total ELSE grand_total END), 0) AS neto
+        SELECT COALESCE(SUM({venta_neta_sql("tabSales Invoice")}), 0) AS neto
         FROM `tabSales Invoice`
         WHERE posting_date BETWEEN %(start)s AND %(end)s AND {where}
         """,
@@ -1125,16 +1189,19 @@ def get_sales_by_seller(start_date: str, end_date: str, sales_partners=None,
     clientes_nuevos = 0
     if customers:
         company_cond, company_vals = _build_company_condition(company)
+        corte_cond, corte_vals = _corte_condition(company)
         clientes_nuevos = frappe.db.sql(
             f"""
             SELECT COUNT(*) FROM (
                 SELECT customer, MIN(posting_date) AS primera
                 FROM `tabSales Invoice`
-                WHERE docstatus = 1 AND is_return = 0 AND customer IN %(customers)s AND {company_cond}
+                WHERE docstatus = 1 AND is_return = 0 AND customer IN %(customers)s
+                  AND {company_cond} AND {corte_cond}
                 GROUP BY customer
             ) t WHERE t.primera BETWEEN %(start)s AND %(end)s
             """,
-            {"customers": tuple(customers), "start": start_date, "end": end_date, **company_vals},
+            {"customers": tuple(customers), "start": start_date, "end": end_date,
+             **company_vals, **corte_vals},
         )[0][0]
 
     def _clase_summary(b):
@@ -1159,7 +1226,11 @@ def get_sales_by_seller(start_date: str, end_date: str, sales_partners=None,
             "ticket_promedio": venta_bruta / num_facturas if num_facturas else 0.0,
             "cobrado": cobrado,
             "saldo": saldo,
-            "pct_cobrado": (cobrado / venta_bruta * 100.0) if venta_bruta else 0.0,
+            # El % cobrado se mide contra lo COBRABLE (venta + cargos pasarela),
+            # no contra la venta: si no, un documento con flete pasa del 100 %.
+            "cobrable": cobrable,
+            "cargos_pasarela": total_pasarela,
+            "pct_cobrado": (cobrado / cobrable * 100.0) if cobrable else 0.0,
             "vendedores": len([r for r in seller_rows if r["vendedor"] != SIN_VENDEDOR]),
             "sin_vendedor": next((r["venta_neta"] for r in seller_rows if r["vendedor"] == SIN_VENDEDOR), 0.0),
             "top_vendedor": top["vendedor"] if top else "",
@@ -1197,7 +1268,8 @@ def get_invoice_peek(name: str, company: str = None) -> dict:
     company_cond, company_vals = _build_company_condition(company)
     sp_cond, sp_vals = _sales_partner_condition(company=company)
     owner_cond, owner_vals = _resolve_owner_filter(company, None)
-    values = {"name": name, **company_vals, **sp_vals, **owner_vals}
+    corte_cond, corte_vals = _corte_condition(company)
+    values = {"name": name, **company_vals, **sp_vals, **owner_vals, **corte_vals}
 
     rows = frappe.db.sql(
         f"""
@@ -1207,7 +1279,7 @@ def get_invoice_peek(name: str, company: str = None) -> dict:
             bfel_docto_no, bfel_establecimiento, owner,
             COALESCE(bfel_documento_anulado, 0) AS anulado
         FROM `tabSales Invoice`
-        WHERE name = %(name)s AND {company_cond} AND {sp_cond} AND {owner_cond}
+        WHERE name = %(name)s AND {company_cond} AND {sp_cond} AND {owner_cond} AND {corte_cond}
         """,
         values,
         as_dict=True,

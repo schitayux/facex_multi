@@ -24,9 +24,13 @@
   "venta_con_descuento",
   "ajuste_impuestos",
   "cb_ventas",
+  "venta_neta",
+  "cargos_pasarela",
+  "recargo_pasarela",
+  "flete_pasarela",
+  "total_venta",
   "flete_facturado",
   "recargo_facturado",
-  "total_venta",
   "flete_pagado_transportista",
   "sb_cobros",
   "cobro_efectivo",
@@ -44,6 +48,7 @@
   "total_egresos",
   "cb_egresos",
   "total_a_depositar",
+  "deposito_cargos_terceros",
   "observaciones",
   "sb_detalle",
   "detalle_familias",
@@ -184,24 +189,52 @@
    "fieldtype": "Column Break"
   },
   {
-   "description": "Fletes del día: filas \"Flete\" en cargos de las facturas (FacEx) más, en facturas antiguas, las líneas del Ítem de Flete.",
-   "fieldname": "flete_facturado",
+   "bold": 1,
+   "description": "INGRESO de la empresa: el total facturado menos los cargos por cuenta de terceros. Es la cifra que cuadra con los informes de venta, el tablero y la cuenta de ingresos.",
+   "fieldname": "venta_neta",
    "fieldtype": "Currency",
-   "label": "Fletes facturados",
+   "label": "VENTA DEL DÍA (ingreso propio)",
    "read_only": 1
   },
   {
-   "description": "Suma de las filas \"Recargo por entrega\" (cargos) de las facturas del día: recargo por pieza de las listas Contra Entrega, se paga al repartidor.",
-   "fieldname": "recargo_facturado",
+   "description": "Recargo por entrega y flete en modo PASARELA: el cliente los paga por usar el servicio de entrega y el transportista los descuenta en su liquidación. No son ingreso de la empresa y no suman en ningún informe de venta.",
+   "fieldname": "cargos_pasarela",
    "fieldtype": "Currency",
-   "label": "Recargo por entrega facturado",
+   "label": "Cargos por cuenta de terceros",
+   "read_only": 1
+  },
+  {
+   "fieldname": "recargo_pasarela",
+   "fieldtype": "Currency",
+   "label": "— del cual Recargo por entrega",
+   "read_only": 1
+  },
+  {
+   "fieldname": "flete_pasarela",
+   "fieldtype": "Currency",
+   "label": "— del cual Flete",
    "read_only": 1
   },
   {
    "bold": 1,
+   "description": "VENTA DEL DÍA + Cargos por cuenta de terceros: lo que los clientes pagaron en total. Es la base de la cobranza, no del ingreso.",
    "fieldname": "total_venta",
    "fieldtype": "Currency",
-   "label": "TOTAL VENTA DEL DÍA",
+   "label": "TOTAL FACTURADO (cobrado al cliente)",
+   "read_only": 1
+  },
+  {
+   "description": "Fletes del día: filas \"Flete\" en cargos de las facturas (FacEx) más, en facturas antiguas, las líneas del Ítem de Flete. Informativo — su parte pasarela ya está arriba.",
+   "fieldname": "flete_facturado",
+   "fieldtype": "Currency",
+   "label": "Fletes facturados (total)",
+   "read_only": 1
+  },
+  {
+   "description": "Suma de las filas \"Recargo por entrega\" (cargos) de las facturas del día: recargo por pieza de las listas Contra Entrega. Informativo — su parte pasarela ya está arriba.",
+   "fieldname": "recargo_facturado",
+   "fieldtype": "Currency",
+   "label": "Recargo por entrega facturado (total)",
    "read_only": 1
   },
   {
@@ -300,10 +333,17 @@
   },
   {
    "bold": 1,
-   "description": "Total Venta del Día − Total Egresos.",
+   "description": "Efectivo de la venta del día + efectivo recuperado de facturas anteriores − Total Egresos. Es el efectivo FÍSICO que el cajero entrega, así que incluye los cargos de terceros cobrados en efectivo (ver el renglón siguiente): si se restaran, el arqueo de caja marcaría un sobrante todos los días.",
    "fieldname": "total_a_depositar",
    "fieldtype": "Currency",
    "label": "TOTAL A DEPOSITAR",
+   "read_only": 1
+  },
+  {
+   "description": "De lo que se deposita, cuánto son cargos por cuenta de terceros cobrados en efectivo: dinero que hay que rendirle al transportista, no ingreso de la empresa. Informativo: NO se resta del Total a Depositar.",
+   "fieldname": "deposito_cargos_terceros",
+   "fieldtype": "Currency",
+   "label": "— de lo cual cargos de terceros (por rendir)",
    "read_only": 1
   },
   {

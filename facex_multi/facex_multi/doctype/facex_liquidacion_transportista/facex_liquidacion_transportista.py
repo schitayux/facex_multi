@@ -68,8 +68,92 @@ class FacExLiquidacionTransportista(Document):
 		self.unmatch_removed_guias()
 		self.match_guias()
 		self.total_depositado = sum(flt(row.monto_liquidado) for row in self.detalle)
+		self.calcular_diferencia_comision()
+
+	def _resolver_asiento_al_borrar(self):
+		asiento = getattr(self, "journal_entry", None)
+		if not asiento or not frappe.db.exists("Journal Entry", asiento):
+			return
+		docstatus = frappe.db.get_value("Journal Entry", asiento, "docstatus")
+		if docstatus == 1:
+			frappe.throw(
+				f"No se puede eliminar: la liquidación tiene el asiento "
+				f"<b>{frappe.utils.escape_html(asiento)}</b> ya sometido en Contabilidad. "
+				"Cancélelo allá primero.",
+				title="Asiento sometido",
+			)
+		if docstatus == 0:
+			frappe.delete_doc("Journal Entry", asiento, ignore_permissions=True, force=True)
+
+	def calcular_diferencia_comision(self):
+		"""Cierre real de la pasarela: recargo cobrado al cliente vs. comisión real.
+
+		El RECARGO por pieza (Q1/pieza de las listas Contra Entrega) es la
+		ESTIMACIÓN de la comisión que el transportista cobra por recaudar el COD.
+		Lo que retiene de verdad es un porcentaje que solo se conoce AQUÍ, en la
+		liquidación, donde cada guía trae su Valor Comisión. Por eso la
+		comparación es recargo ↔ comisión:
+
+		  * diferencia positiva → ganancia: el cliente cubrió más de lo que costó
+		    la recaudación.
+		  * diferencia negativa → pérdida: el recargo por pieza quedó por debajo
+		    de la comisión real. Es lo excepcional; si aparece seguido hay que
+		    subir el Q por pieza de la lista.
+
+		El FLETE queda FUERA de esta diferencia a propósito: paga el servicio de
+		envío, no la comisión de cobro. Mezclarlos haría que toda guía pareciera
+		una ganancia enorme (el flete es un orden de magnitud mayor que la
+		comisión) y escondería justo las pérdidas que hay que detectar.
+
+		El recargo sale de `recargo_estimado_por_factura`, que también lo
+		reconstruye en las facturas anteriores al 2026-09-21 (lo llevaban dentro
+		del precio de la lista, sin fila de cargo). Es lo correcto AQUÍ, que es
+		análisis. El ASIENTO, en cambio, usa solo las filas de cargo reales
+		(`liquidacion_asiento._resumen`): en una factura vieja el recargo se
+		contabilizó como ingreso, así que no hay pasivo que cancelar.
+		"""
+		from facex_multi.api.recargo import recargo_estimado_por_factura
+
+		facturas = [r.sales_invoice for r in self.detalle if r.sales_invoice]
+		cargos = recargo_estimado_por_factura(facturas) if facturas else {}
+
+		recargo = flete = comision = ganancia = perdida = 0.0
+		for row in self.detalle:
+			c = cargos.get(row.sales_invoice) or {}
+			row.recargo_cobrado = flt(c.get("recargo"))
+			row.flete_cobrado = flt(c.get("flete"))
+			# Sin match no hay factura contra la que comparar: la fila se deja en
+			# cero en vez de inventar una diferencia que sería toda la comisión.
+			if not row.match_encontrado:
+				row.diferencia_comision = 0.0
+				row.resultado_comision = "Sin match"
+				continue
+			row.diferencia_comision = flt(row.recargo_cobrado) - flt(row.valor_comision)
+			if row.diferencia_comision > 0.005:
+				row.resultado_comision = "Ganancia"
+				ganancia += row.diferencia_comision
+			elif row.diferencia_comision < -0.005:
+				row.resultado_comision = "Pérdida"
+				perdida += -row.diferencia_comision
+			else:
+				row.resultado_comision = "Exacto"
+			recargo += flt(row.recargo_cobrado)
+			flete += flt(row.flete_cobrado)
+			comision += flt(row.valor_comision)
+
+		self.total_recargo_cobrado = recargo
+		self.total_flete_cobrado = flete
+		self.total_comision_real = comision
+		self.total_diferencia = recargo - comision
+		self.total_ganancia = ganancia
+		self.total_perdida = perdida
 
 	def on_trash(self):
+		# El asiento de cierre de pasarela, si ya se sometió, quedaría huérfano:
+		# un movimiento contable sin la liquidación que lo respalda. En borrador
+		# sí se descarta aquí (lo regenera quien vuelva a cargar la liquidación).
+		self._resolver_asiento_al_borrar()
+
 		# Al eliminar la liquidación completa, toda guía que había quedado
 		# liquidado=1 por su culpa debe volver a quedar pendiente — si no, el
 		# KPI de COD pendiente de liquidar (y la columna "Liquidado" en

@@ -8,6 +8,8 @@
   "sales_invoice",
   "customer_name",
   "grand_total",
+  "venta_neta",
+  "cargos_pasarela",
   "pagado",
   "contra_entrega",
   "credito",
@@ -36,7 +38,24 @@
    "fieldname": "grand_total",
    "fieldtype": "Currency",
    "in_list_view": 1,
-   "label": "Total"
+   "label": "Total Facturado",
+   "description": "Lo que paga el cliente: venta + cargos por cuenta de terceros."
+  },
+  {
+   "fieldname": "cargos_pasarela",
+   "fieldtype": "Currency",
+   "label": "Cargos de terceros",
+   "read_only": 1,
+   "in_list_view": 0,
+   "description": "Recargo/flete en modo pasarela de esta factura: no es ingreso de la empresa."
+  },
+  {
+   "fieldname": "venta_neta",
+   "fieldtype": "Currency",
+   "label": "Venta (ingreso)",
+   "read_only": 1,
+   "in_list_view": 1,
+   "description": "Total facturado menos los cargos por cuenta de terceros."
   },
   {
    "fieldname": "pagado",

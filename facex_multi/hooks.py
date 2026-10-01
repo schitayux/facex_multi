@@ -47,12 +47,14 @@ permission_query_conditions = {
     "Customer": "facex_multi.api.permissions.customer_query_conditions",
     "Sales Invoice": "facex_multi.api.permissions.sales_invoice_query_conditions",
     "FacEx Cierre Diario": "facex_multi.api.cierre.cierre_query_conditions",
+    "FacEx Liquidacion Transportista": "facex_multi.api.corte.liquidacion_query_conditions",
 }
 
 has_permission = {
     "Customer": "facex_multi.api.permissions.customer_has_permission",
     "Sales Invoice": "facex_multi.api.permissions.sales_invoice_has_permission",
     "FacEx Cierre Diario": "facex_multi.api.cierre.cierre_has_permission",
+    "FacEx Liquidacion Transportista": "facex_multi.api.corte.liquidacion_has_permission",
 }
 
 doc_events = {
@@ -124,6 +126,7 @@ after_migrate = [
     "facex_multi.api.series.ensure_payment_entry_naming_series",
     "facex_multi.api.compras.common.ensure_compras_custom_fields",
     "facex_multi.api.compras.pagos.ensure_pagos_setup",
+    "facex_multi.api.corte.ensure_corte_fields",
 ]
 
 fixtures = [

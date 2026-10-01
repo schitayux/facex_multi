@@ -23,7 +23,14 @@ def get_columns():
 		{"label": _("Sales Invoice"), "fieldtype": "Link", "fieldname": "sales_invoice", "options": "Sales Invoice", "width": 130},
 		{"label": _("Monto COD"), "fieldtype": "Currency", "fieldname": "monto_cod", "width": 110},
 		{"label": _("Monto Liquidado"), "fieldtype": "Currency", "fieldname": "monto_liquidado", "width": 110},
+		# Cierre de la pasarela: lo que el cliente pagó de más por el servicio de
+		# entrega (cargo cobrado) contra lo que el transportista retuvo de verdad
+		# (valor comisión). La diferencia es ganancia o pérdida de la pasarela.
+		{"label": _("Recargo Cobrado"), "fieldtype": "Currency", "fieldname": "recargo_cobrado", "width": 110},
 		{"label": _("Valor Comisión"), "fieldtype": "Currency", "fieldname": "valor_comision", "width": 110},
+		{"label": _("Diferencia"), "fieldtype": "Currency", "fieldname": "diferencia_comision", "width": 110},
+		{"label": _("Flete Cobrado"), "fieldtype": "Currency", "fieldname": "flete_cobrado", "width": 110},
+		{"label": _("Resultado"), "fieldtype": "Data", "fieldname": "resultado_comision", "width": 90},
 		{"label": _("Estado"), "fieldtype": "Data", "fieldname": "estado_liquidacion", "width": 100},
 		{"label": _("Fecha de Pago"), "fieldtype": "Date", "fieldname": "fecha_pago", "width": 100},
 		{"label": _("Liquidación"), "fieldtype": "Link", "fieldname": "liquidacion", "options": "FacEx Liquidacion Transportista", "width": 160},
@@ -51,6 +58,13 @@ def get_data(filters):
 		conditions.append(sc_cond)
 		values.update(sc_params)
 
+	# Corte por inicio de operación, por compañía (ver api.corte).
+	from facex_multi.api.corte import invoice_corte_companies_sql
+	co_cond, co_params = invoice_corte_companies_sql(companies, "si")
+	if co_cond:
+		conditions.append(co_cond)
+		values.update(co_params)
+
 	if filters.transportista:
 		conditions.append("g.transportista = %(transportista)s")
 		values["transportista"] = filters.transportista
@@ -71,8 +85,15 @@ def get_data(filters):
 		conditions.append("g.owner in %(owners)s")
 		values["owners"] = tuple(owners)
 
+	if filters.resultado_comision:
+		conditions.append("d.resultado_comision = %(resultado_comision)s")
+		values["resultado_comision"] = filters.resultado_comision
+
 	where_clause = " and ".join(conditions)
 
+	# El recargo cobrado (estimación de la comisión) y el flete se leen de la
+	# fila de la liquidación, que es donde `calcular_diferencia_comision` los
+	# dejó cruzados contra la factura conciliada. Ver facex_multi.api.recargo.
 	rows = frappe.db.sql(
 		f"""
 		select
@@ -83,6 +104,10 @@ def get_data(filters):
 			g.monto_cod as monto_cod,
 			d.monto_liquidado as monto_liquidado,
 			d.valor_comision as valor_comision,
+			d.recargo_cobrado as recargo_cobrado,
+			d.flete_cobrado as flete_cobrado,
+			d.diferencia_comision as diferencia_comision,
+			d.resultado_comision as resultado_comision,
 			g.liquidado as liquidado,
 			liq.fecha as fecha_pago,
 			liq.name as liquidacion

@@ -12,6 +12,15 @@
   "cliente",
   "column_break_cabecera",
   "total_depositado",
+  "sb_comision",
+  "total_recargo_cobrado",
+  "total_flete_cobrado",
+  "total_comision_real",
+  "cb_comision",
+  "total_diferencia",
+  "total_ganancia",
+  "total_perdida",
+  "journal_entry",
   "section_break_detalle",
   "detalle"
  ],
@@ -61,6 +70,67 @@
    "in_list_view": 1,
    "label": "Total Depositado",
    "read_only": 1
+  },
+  {
+   "fieldname": "sb_comision",
+   "fieldtype": "Section Break",
+   "label": "Comisión real vs. recargo cobrado"
+  },
+  {
+   "fieldname": "total_recargo_cobrado",
+   "fieldtype": "Currency",
+   "label": "Total recargo cobrado al cliente",
+   "read_only": 1,
+   "description": "Suma del recargo por entrega (pasarela) de las facturas conciliadas: la estimación de la comisión que se le cobró al cliente."
+  },
+  {
+   "fieldname": "total_flete_cobrado",
+   "fieldtype": "Currency",
+   "label": "Total flete cobrado al cliente",
+   "read_only": 1,
+   "description": "Suma del flete (pasarela) de las facturas conciliadas. Traspaso aparte: paga el servicio de envío, no la comisión de cobro, así que no entra en la diferencia."
+  },
+  {
+   "fieldname": "total_comision_real",
+   "fieldtype": "Currency",
+   "label": "Total comisión real del transportista",
+   "read_only": 1,
+   "description": "Suma del Valor Comisión que el transportista retuvo de verdad, según esta liquidación."
+  },
+  {
+   "fieldname": "cb_comision",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "total_diferencia",
+   "fieldtype": "Currency",
+   "label": "DIFERENCIA (recargo − comisión)",
+   "read_only": 1,
+   "bold": 1,
+   "description": "Recargo cobrado menos comisión real. Positiva = ganancia de pasarela; negativa = pérdida. El flete NO entra aquí: paga el envío, no la comisión de cobro."
+  },
+  {
+   "fieldname": "total_ganancia",
+   "fieldtype": "Currency",
+   "label": "— de lo cual ganancia",
+   "read_only": 1,
+   "description": "Suma de las guías donde el cargo cobrado al cliente superó la comisión real."
+  },
+  {
+   "fieldname": "total_perdida",
+   "fieldtype": "Currency",
+   "label": "— de lo cual pérdida",
+   "read_only": 1,
+   "description": "Suma de las guías donde la comisión real superó el cargo cobrado: el cliente no cubrió el costo del envío. Debería ser excepcional; si crece, hay que revisar el recargo por pieza o el flete de la lista."
+  },
+  {
+   "fieldname": "journal_entry",
+   "fieldtype": "Link",
+   "label": "Asiento de cierre de pasarela",
+   "options": "Journal Entry",
+   "read_only": 1,
+   "no_copy": 1,
+   "description": "Journal Entry que cancela el recargo por pagar, corrige el banco por la comisión retenida y reconoce la diferencia. Se genera en BORRADOR con el botón «Generar asiento»; lo revisa y lo somete Contabilidad."
   },
   {
    "fieldname": "section_break_detalle",

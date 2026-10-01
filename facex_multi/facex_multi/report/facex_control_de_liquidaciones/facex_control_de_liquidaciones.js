@@ -19,6 +19,14 @@ frappe.query_reports["FacEx Control de Liquidaciones"] = {
 			options: "\nPendiente\nLiquidado",
 		},
 		{
+			// Cierre de la pasarela: aisla las guías donde lo que el cliente pagó
+			// por el envío no coincidió con la comisión real del transportista.
+			fieldname: "resultado_comision",
+			label: __("Resultado Comisión"),
+			fieldtype: "Select",
+			options: "\nGanancia\nPérdida\nExacto\nSin match",
+		},
+		{
 			fieldname: "owners",
 			label: __("Usuario Creador"),
 			fieldtype: "MultiSelectList",
@@ -31,6 +39,15 @@ frappe.query_reports["FacEx Control de Liquidaciones"] = {
 		value = default_formatter(value, row, column, data);
 		if (column.fieldname === "numero_guia" && data && data.sales_invoice) {
 			value = `<a href="/app/sales-invoice/${encodeURIComponent(data.sales_invoice)}">${value}</a>`;
+		}
+		// Una pérdida (la comisión real superó lo que cobró el cliente) debe
+		// saltar a la vista: es la señal de que el recargo por pieza o el flete
+		// de la lista quedaron por debajo del costo real del envío.
+		if (data && data.resultado_comision === "Pérdida"
+			&& ["diferencia_comision", "resultado_comision"].includes(column.fieldname)) {
+			value = `<span style="color:#b91c1c;font-weight:600;">${value}</span>`;
+		} else if (data && data.resultado_comision === "Ganancia" && column.fieldname === "diferencia_comision") {
+			value = `<span style="color:#15803d;">${value}</span>`;
 		}
 		return value;
 	},

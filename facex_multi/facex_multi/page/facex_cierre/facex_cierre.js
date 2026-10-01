@@ -277,7 +277,7 @@ class FacexCierreDiario {
 				$t.html(`
 <table class="cd-table">
 	<thead><tr>
-		<th>Fecha</th><th>Usuario</th><th>Estado</th><th class="r">Facturas</th><th class="r">Venta</th>
+		<th>Fecha</th><th>Usuario</th><th>Estado</th><th class="r">Facturas</th><th class="r">Venta</th><th class="r">Terceros</th>
 		<th class="r">Efectivo</th><th class="r">Crédito</th><th class="r">Egresos</th><th class="r">A depositar</th><th>Cerrado</th>
 	</tr></thead>
 	<tbody>${rows.map((c) => `
@@ -286,7 +286,8 @@ class FacexCierreDiario {
 			<td>${_cd_esc(c.usuario_nombre || c.usuario)}</td>
 			<td>${this.badge(c.estado)}</td>
 			<td class="r">${c.num_facturas || 0}</td>
-			<td class="r">${this.fmt(c.total_venta)}</td>
+			<td class="r">${this.fmt(c.venta_neta)}</td>
+			<td class="r">${this.fmt(c.cargos_pasarela)}</td>
 			<td class="r">${this.fmt(c.cobro_efectivo)}</td>
 			<td class="r">${this.fmt(c.al_credito)}</td>
 			<td class="r">${this.fmt(c.total_egresos)}</td>
@@ -399,6 +400,10 @@ class FacexCierreDiario {
 		}
 		const recibido_venta = ["cobro_efectivo", "cobro_transferencia", "cobro_cheque", "cobro_tarjeta", "cobro_otros"]
 			.reduce((a, k) => a + _cd_flt(s[k]), 0);
+		// Lo recuperado NETO de la comisión que el transportista ya retuvo. Un
+		// snapshot anterior a esta versión no lo trae: ahí vale el bruto.
+		const neto_recuperado = s.recuperado_neto === undefined
+			? _cd_flt(s.abonos_anteriores) : _cd_flt(s.recuperado_neto);
 		const tipo_labels = { credito: "Recuperación de Crédito", cod: "Cobros de Contra Entrega (COD)", contado: "Saldos de Contado" };
 		return `
 	<div class="cd-card cd-card-recup">
@@ -408,24 +413,38 @@ class FacexCierreDiario {
 				<div class="cd-block-title">POR TIPO DE FACTURA</div>
 				${Object.keys(tipo_labels).map((k) => `<div class="cd-line"><span>${tipo_labels[k]}</span><b>${this.fmt(tipos[k])}</b></div>`).join("")}
 				<div class="cd-line cd-line-total"><span>TOTAL RECUPERADO</span><b>${this.fmt(s.abonos_anteriores)}</b></div>
+				${_cd_flt(s.recuperado_pasarela) ? `
+				<div class="cd-line"><span>— del cual venta recuperada</span><b>${this.fmt(s.recuperado_venta)}</b></div>
+				<div class="cd-line"><span>— del cual cargos de terceros</span><b>${this.fmt(s.recuperado_pasarela)}</b></div>
+				<div class="cd-hint">Un cobro de una factura Contra Entrega anterior recupera venta y cargos de terceros a la vez (el cliente pagó todo junto al repartidor); se separan en proporción al total de la factura.</div>` : ""}
 				<div class="cd-hint">${s.recuperado_facturas || 0} factura(s) · ${s.recuperado_liquidadas || 0} quedaron liquidadas</div>
 			</div>
 			<div class="cd-block">
 				<div class="cd-block-title">POR FORMA DE PAGO</div>
 				${Object.entries(formas).map(([f, v]) => `<div class="cd-line"><span>${_cd_esc(f)}</span><b>${this.fmt(v)}</b></div>`).join("")}
-				<div class="cd-line cd-line-total"><span>TOTAL</span><b>${this.fmt(s.abonos_anteriores)}</b></div>
+				<div class="cd-line cd-line-total"><span>TOTAL</span><b>${this.fmt(neto_recuperado)}</b></div>
+				${_cd_flt(s.cod_comision) ? `<div class="cd-hint">Los cobros COD se muestran por el <b>monto liquidado</b>: el transportista retuvo ${this.fmt(s.cod_comision)} de comisión antes de depositar, así que eso nunca entró. El cargo a la factura sí fue el total (${this.fmt(s.abonos_anteriores)}).</div>` : ""}
 				${_cd_flt(s.recuperado_efectivo) ? `<div class="cd-hint">El efectivo recuperado (${this.fmt(s.recuperado_efectivo)}) se suma al Total a Depositar.</div>` : ""}
 			</div>
 			<div class="cd-block">
 				<div class="cd-block-title">TOTAL RECIBIDO HOY</div>
 				<div class="cd-line"><span>Cobrado de la venta del día <span class="cd-muted">(sin CE ni crédito)</span></span><b>${this.fmt(recibido_venta)}</b></div>
-				<div class="cd-line"><span>Recuperación de cartera</span><b>${this.fmt(s.abonos_anteriores)}</b></div>
-				<div class="cd-line cd-line-total"><span>TOTAL RECIBIDO</span><b>${this.fmt(recibido_venta + _cd_flt(s.abonos_anteriores))}</b></div>
+				<div class="cd-line"><span>Recuperación de cartera <span class="cd-muted">(neto de comisión)</span></span><b>${this.fmt(neto_recuperado)}</b></div>
+				<div class="cd-line cd-line-total"><span>TOTAL RECIBIDO</span><b>${this.fmt(recibido_venta + neto_recuperado)}</b></div>
 			</div>
+			${_cd_flt(s.cod_ejecutado_recargo) || _cd_flt(s.cod_proyectado_recargo) ? `
+			<div class="cd-block">
+				<div class="cd-block-title">ANÁLISIS COD</div>
+				<div class="cd-line"><span>Recuperado sin comisión ni flete</span><b>${this.fmt(s.cod_neto)}</b></div>
+				<div class="cd-line"><span>Proyectado recargo <span class="cd-muted">(cobrado al cliente)</span></span><b>${this.fmt(s.cod_proyectado_recargo)}</b></div>
+				<div class="cd-line"><span>Ejecutado recargo <span class="cd-muted">(comisión real)</span></span><b>${this.fmt(s.cod_ejecutado_recargo)}</b></div>
+				<div class="cd-line cd-line-total"><span>Diferencia</span><b class="${_cd_flt(s.cod_diferencia) < 0 ? "cd-devol-label" : ""}">${this.fmt(s.cod_diferencia)}</b></div>
+				<div class="cd-hint">El recargo por pieza es la ESTIMACIÓN de la comisión que el transportista retiene. Diferencia positiva = el cliente cubrió de más; negativa = el recargo no alcanzó. Sobre ${s.cod_facturas || 0} factura(s) liquidada(s) cobrada(s) hoy.</div>
+			</div>` : ""}
 		</div>
 		<div class="cd-table-wrap">
 		<table class="cd-table cd-table-sm">
-			<thead><tr><th>Factura</th><th>Cliente</th><th>Fecha factura</th><th class="r">Días</th><th>Tipo</th><th>Forma</th><th>Ref.</th><th class="r">Monto</th><th>Estado</th></tr></thead>
+			<thead><tr><th>Factura</th><th>Cliente</th><th>Fecha factura</th><th class="r">Días</th><th>Tipo</th><th>Forma</th><th>Ref.</th><th class="r">Cargado a factura</th><th class="r">Comisión</th><th class="r">Entró</th><th>Estado</th></tr></thead>
 			<tbody>${rows.map((a) => `<tr>
 				<td><a href="/app/facex?invoice=${encodeURIComponent(a.sales_invoice)}" target="_blank">${_cd_esc(a.sales_invoice)}</a></td>
 				<td>${_cd_esc(a.customer_name)}</td>
@@ -435,6 +454,8 @@ class FacexCierreDiario {
 				<td>${_cd_esc(a.forma)}</td>
 				<td>${_cd_esc(a.reference)}</td>
 				<td class="r">${this.fmt(a.amount)}</td>
+				<td class="r">${_cd_flt(a.valor_comision) ? this.fmt(a.valor_comision) : "—"}</td>
+				<td class="r"><b>${this.fmt(a.monto_neto === undefined ? a.amount : a.monto_neto)}</b></td>
 				<td>${a.estado === "Liquidada" ? `<span class="cd-ok">✓ Liquidada</span>` : `Abono <span class="cd-muted">· saldo ${this.fmt(a.saldo_restante)}</span>`}</td>
 			</tr>`).join("")}</tbody>
 		</table>
@@ -547,20 +568,23 @@ class FacexCierreDiario {
 		<div class="cd-card-title">RESUMEN TOTAL VENTA DEL DÍA <span class="cd-muted">${this.short_date(this.form.fecha)}</span></div>
 		<div class="cd-grid-3">
 			<div class="cd-block">
-				<div class="cd-block-title">VENTAS</div>
+				<div class="cd-block-title">VENTA (ingreso propio)</div>
 				<div class="cd-line"><span>Ventas sin descuento</span><b>${this.fmt(s.venta_sin_descuento)}</b></div>
 				<div class="cd-line"><span>Piezas en oferta (con descuento)</span><b>${this.fmt(s.venta_con_descuento)}</b></div>
-				<div class="cd-line"><span>Fletes facturados</span><b>${this.fmt(s.flete_facturado)}</b></div>
-				${_cd_flt(s.recargo_facturado) ? `<div class="cd-line"><span>Recargo por entrega facturado</span><b>${this.fmt(s.recargo_facturado)}</b></div>` : ""}
+				${_cd_flt(s.cargos_venta) ? `<div class="cd-line"><span>Cargos que sí son venta <span class="cd-muted">(flete/recargo propio)</span></span><b>${this.fmt(s.cargos_venta)}</b></div>` : ""}
 				${Math.abs(_cd_flt(s.ajuste_impuestos)) >= 0.01 ? `<div class="cd-line"><span>Ajustes (descuento global / redondeo)</span><b>${this.fmt(s.ajuste_impuestos)}</b></div>` : ""}
 				<div class="cd-line"><span class="cd-devol-label">Devoluciones <span class="cd-muted">(facturas de otra fecha anuladas hoy)</span></span><b class="cd-devol-label">− ${this.fmt(s.total_devoluciones)}</b></div>
-				<div class="cd-line cd-line-total"><span>TOTAL VENTA</span><b>${this.fmt(_cd_flt(s.total_venta) - _cd_flt(s.total_devoluciones))}</b></div>
+				<div class="cd-line cd-line-total"><span>VENTA DEL DÍA</span><b>${this.fmt(_cd_flt(s.venta_neta) - _cd_flt(s.total_devoluciones))}</b></div>
+				<div class="cd-hint">Esta es la cifra de ingresos del día: la misma que suman los informes de venta y el tablero.</div>
 			</div>
 			<div class="cd-block">
-				<div class="cd-block-title">CARGOS</div>
-				<div class="cd-line"><span>Fletes facturados${s.flete_item ? ` <span class="cd-muted">(${_cd_esc(s.flete_item)})</span>` : ""}</span><b>${this.fmt(s.flete_facturado)}</b></div>
-				<div class="cd-line"><span>Recargo por entrega facturado <span class="cd-muted">(listas Contra Entrega)</span></span><b>${this.fmt(s.recargo_facturado)}</b></div>
-				<div class="cd-line cd-line-total"><span>TOTAL CARGOS</span><b>${this.fmt(_cd_flt(s.flete_facturado) + _cd_flt(s.recargo_facturado))}</b></div>
+				<div class="cd-block-title">CARGOS POR CUENTA DE TERCEROS</div>
+				<div class="cd-line"><span>Flete <span class="cd-muted">(servicio de entrega)</span></span><b>${this.fmt(s.flete_pasarela)}</b></div>
+				<div class="cd-line"><span>Recargo por entrega <span class="cd-muted">(listas Contra Entrega)</span></span><b>${this.fmt(s.recargo_pasarela)}</b></div>
+				<div class="cd-line cd-line-total"><span>TOTAL DE TERCEROS</span><b>${this.fmt(s.cargos_pasarela)}</b></div>
+				<div class="cd-hint">NO es ingreso: el cliente lo paga por usar el servicio de entrega y el transportista lo descuenta en su liquidación. Por eso no suma en la venta del día ni en los informes.</div>
+				${s.snapshot_reconstruido ? `<div class="cd-hint">Este cierre se cerró antes de separar los cargos de terceros, así que el desglose se reconstruyó del recargo y el flete que guardó (entonces todos eran pasarela). El total a depositar es el que se congeló y no cambió.</div>` : ""}
+				<div class="cd-line cd-line-total"><span>TOTAL FACTURADO <span class="cd-muted">(cobrado al cliente)</span></span><b>${this.fmt(_cd_flt(s.total_venta) - _cd_flt(s.total_devoluciones))}</b></div>
 				${!s.flete_item ? `<div class="cd-hint">Sin Ítem de Flete configurado en FacEx Settings — los fletes se contarán como venta.</div>` : ""}
 			</div>
 			<div class="cd-block">
@@ -605,6 +629,12 @@ class FacexCierreDiario {
 			<div class="cd-deposit-label">TOTAL A DEPOSITAR</div>
 			<div class="cd-deposit-value" id="cd-total-depositar">${this.fmt(t.a_depositar)}</div>
 			<div class="cd-deposit-formula">Efectivo venta del día ${this.fmt(t.cobro_efectivo)}${t.recuperado_efectivo ? ` + Efectivo recuperado ${this.fmt(t.recuperado_efectivo)}` : ""} − Egresos <span id="cd-dep-egresos">${this.fmt(t.egresos)}</span></div>
+			${_cd_flt(s.deposito_cargos_terceros) ? `
+			<div class="cd-deposit-split">
+				<div class="cd-line"><span>— venta propia</span><b>${this.fmt(t.a_depositar - _cd_flt(s.deposito_cargos_terceros))}</b></div>
+				<div class="cd-line"><span>— cargos de terceros <span class="cd-muted">(por rendir al transportista)</span></span><b>${this.fmt(s.deposito_cargos_terceros)}</b></div>
+			</div>
+			<div class="cd-hint">Se deposita el efectivo completo, porque es el que está físicamente en la caja. El renglón de terceros solo identifica cuánto de ese depósito hay que rendirle al transportista.</div>` : ""}
 			<div class="cd-field" style="margin-top:14px;"><label>Observaciones</label>
 				<textarea id="cd-observaciones" class="cd-input" rows="3" ${editable ? "" : "disabled"}>${_cd_esc(this.form.observaciones)}</textarea></div>
 		</div>
@@ -960,19 +990,19 @@ class FacexCierreDiario {
 <tbody>${fams.map((f, i) => `<tr class="${f.es_oferta ? "oferta" : ""}"><td>${f.es_oferta ? 0 : i}</td><td>${_cd_esc(f.familia)}${f.descripcion && f.descripcion !== f.familia ? ` <span class="muted">${_cd_esc(f.descripcion)}</span>` : ""}</td><td class="r">${this.fmt_qty(f.cantidad)}</td><td class="r">${money(f.precio_unidad)}</td><td class="r">${money(f.total)}</td></tr>`).join("")}
 <tr class="tot"><td colspan="2">TOTAL (sin fletes)</td><td class="r">${this.fmt_qty(fams.reduce((a, f) => a + _cd_flt(f.cantidad), 0))}</td><td></td><td class="r">${money(_cd_flt(s.venta_sin_descuento) + _cd_flt(s.venta_con_descuento))}</td></tr></tbody></table>
 
-<table><tr><td colspan="2" class="sec">RESUMEN TOTAL VENTA DEL DÍA ${this.short_date(this.form.fecha)}</td></tr>
-<tr><td colspan="2" class="sec" style="background:#3b82c4;">VENTAS</td></tr>
+<table><tr><td colspan="2" class="sec">RESUMEN DEL DÍA ${this.short_date(this.form.fecha)}</td></tr>
+<tr><td colspan="2" class="sec" style="background:#3b82c4;">VENTA (ingreso propio)</td></tr>
 <tr><td>Ventas sin descuento (sin flete)</td><td class="r">${money(s.venta_sin_descuento)}</td></tr>
 <tr><td>Piezas en oferta (líneas con descuento)</td><td class="r">${money(s.venta_con_descuento)}</td></tr>
-<tr><td>Fletes facturados</td><td class="r">${money(s.flete_facturado)}</td></tr>
-${_cd_flt(s.recargo_facturado) ? `<tr><td>Recargo por entrega facturado</td><td class="r">${money(s.recargo_facturado)}</td></tr>` : ""}
+${_cd_flt(s.cargos_venta) ? `<tr><td>Cargos que sí son venta (flete/recargo propio)</td><td class="r">${money(s.cargos_venta)}</td></tr>` : ""}
 ${Math.abs(_cd_flt(s.ajuste_impuestos)) >= 0.01 ? `<tr><td>Ajustes (descuento global / redondeo)</td><td class="r">${money(s.ajuste_impuestos)}</td></tr>` : ""}
 <tr><td>Devoluciones (facturas de otra fecha anuladas hoy)</td><td class="r">− ${money(s.total_devoluciones)}</td></tr>
-<tr class="tot"><td>TOTAL VENTA</td><td class="r">${money(_cd_flt(s.total_venta) - _cd_flt(s.total_devoluciones))}</td></tr>
-<tr><td colspan="2" class="sec" style="background:#3b82c4;">CARGOS</td></tr>
-<tr><td>Fletes facturados</td><td class="r">${money(s.flete_facturado)}</td></tr>
-<tr><td>Recargo por entrega facturado</td><td class="r">${money(s.recargo_facturado)}</td></tr>
-<tr class="tot"><td>TOTAL CARGOS</td><td class="r">${money(_cd_flt(s.flete_facturado) + _cd_flt(s.recargo_facturado))}</td></tr>
+<tr class="tot"><td>VENTA DEL DÍA</td><td class="r">${money(_cd_flt(s.venta_neta) - _cd_flt(s.total_devoluciones))}</td></tr>
+<tr><td colspan="2" class="sec" style="background:#3b82c4;">CARGOS POR CUENTA DE TERCEROS (no es ingreso)</td></tr>
+<tr><td>Flete (servicio de entrega)</td><td class="r">${money(s.flete_pasarela)}</td></tr>
+<tr><td>Recargo por entrega (listas Contra Entrega)</td><td class="r">${money(s.recargo_pasarela)}</td></tr>
+<tr class="tot"><td>TOTAL DE TERCEROS</td><td class="r">${money(s.cargos_pasarela)}</td></tr>
+<tr class="tot"><td>TOTAL FACTURADO (cobrado al cliente)</td><td class="r">${money(_cd_flt(s.total_venta) - _cd_flt(s.total_devoluciones))}</td></tr>
 <tr><td colspan="2" class="sec" style="background:#3b82c4;">COBROS Y CRÉDITOS</td></tr>
 <tr><td>Transferencia</td><td class="r">${money(s.cobro_transferencia)}</td></tr>
 <tr><td>Cheques</td><td class="r">${money(s.cobro_cheque)}</td></tr>
@@ -987,7 +1017,14 @@ ${s.recuperado_por_tipo ? `<tr><td>Recuperación de Crédito</td><td class="r">$
 <tr><td>Cobros de Contra Entrega (COD)</td><td class="r">${money(s.recuperado_por_tipo.cod)}</td></tr>
 <tr><td>Saldos de Contado</td><td class="r">${money(s.recuperado_por_tipo.contado)}</td></tr>
 ${Object.entries(s.recuperado_por_forma || {}).map(([f, v]) => `<tr><td class="muted">&nbsp;&nbsp;${_cd_esc(f)}</td><td class="r muted">${money(v)}</td></tr>`).join("")}` : ""}
-<tr class="tot"><td>TOTAL RECUPERADO ${s.recuperado_facturas ? `<span class="muted">(${s.recuperado_facturas} factura(s), ${s.recuperado_liquidadas || 0} liquidadas)</span>` : ""}</td><td class="r">${money(s.abonos_anteriores)}</td></tr>` : ""}
+<tr class="tot"><td>TOTAL RECUPERADO (cargado a facturas) ${s.recuperado_facturas ? `<span class="muted">(${s.recuperado_facturas} factura(s), ${s.recuperado_liquidadas || 0} liquidadas)</span>` : ""}</td><td class="r">${money(s.abonos_anteriores)}</td></tr>
+${_cd_flt(s.cod_comision) ? `<tr><td class="muted">&nbsp;&nbsp;− comisión retenida por el transportista</td><td class="r muted">${money(s.cod_comision)}</td></tr>
+<tr class="tot"><td>RECUPERADO NETO (lo que entró)</td><td class="r">${money(s.recuperado_neto)}</td></tr>` : ""}
+${_cd_flt(s.cod_ejecutado_recargo) || _cd_flt(s.cod_proyectado_recargo) ? `<tr><td colspan="2" class="sec" style="background:#0f766e;">ANÁLISIS COD (${s.cod_facturas || 0} factura(s) liquidada(s) cobrada(s) hoy)</td></tr>
+<tr><td>Recuperado sin comisión ni flete</td><td class="r">${money(s.cod_neto)}</td></tr>
+<tr><td>Proyectado recargo (cobrado al cliente)</td><td class="r">${money(s.cod_proyectado_recargo)}</td></tr>
+<tr><td>Ejecutado recargo (comisión real)</td><td class="r">${money(s.cod_ejecutado_recargo)}</td></tr>
+<tr class="tot"><td>Diferencia</td><td class="r">${money(s.cod_diferencia)}</td></tr>` : ""}` : ""}
 <tr><td colspan="2" class="sec" style="background:#dc2626;">DEVOLUCIONES</td></tr>
 <tr><td>Contra Entrega</td><td class="r">${money(s.devoluciones_contra_entrega)}</td></tr>
 <tr><td>Al Crédito</td><td class="r">${money(s.devoluciones_credito)}</td></tr>
@@ -997,6 +1034,8 @@ ${Object.entries(s.recuperado_por_forma || {}).map(([f, v]) => `<tr><td class="m
 ${this.form.egresos.map((e) => `<tr><td>${_cd_esc(e.concepto)}${e.referencia ? ` <span class="muted">(${_cd_esc(e.referencia)})</span>` : ""}${e.observaciones ? ` <span class="muted">${_cd_esc(e.observaciones)}</span>` : ""}</td><td class="r">${money(e.monto)}</td></tr>`).join("")}
 <tr class="tot"><td>TOTAL EGRESOS</td><td class="r">${money(t.egresos)}</td></tr>
 <tr class="tot big"><td>TOTAL A DEPOSITAR <span class="muted">(efectivo venta ${money(t.cobro_efectivo)}${t.recuperado_efectivo ? ` + efectivo recuperado ${money(t.recuperado_efectivo)}` : ""} − egresos)</span></td><td class="r">${money(t.a_depositar)}</td></tr>
+${_cd_flt(s.deposito_cargos_terceros) ? `<tr><td class="muted">&nbsp;&nbsp;— venta propia</td><td class="r muted">${money(t.a_depositar - _cd_flt(s.deposito_cargos_terceros))}</td></tr>
+<tr><td class="muted">&nbsp;&nbsp;— cargos de terceros (por rendir al transportista)</td><td class="r muted">${money(s.deposito_cargos_terceros)}</td></tr>` : ""}
 </table>
 ${this.form.observaciones ? `<p><b>Observaciones:</b> ${_cd_esc(this.form.observaciones)}</p>` : ""}
 <div class="grid" style="margin-top:40px;"><div style="border-top:1px solid #333;text-align:center;padding-top:4px;">Entregado por</div><div style="border-top:1px solid #333;text-align:center;padding-top:4px;">Recibido por</div><div style="border-top:1px solid #333;text-align:center;padding-top:4px;">Gerencia</div></div>
@@ -1131,6 +1170,11 @@ body.facex-fullscreen-mode .layout-container, body.facex-fullscreen-mode #space-
 .cd-deposit-label { font-size:12px;font-weight:800;letter-spacing:1px;opacity:.9; }
 .cd-deposit-value { font-size:34px;font-weight:900;margin:6px 0 2px;letter-spacing:-.5px; }
 .cd-deposit-formula { font-size:12px;opacity:.85; }
+/* Desglose del depósito: cuánto del efectivo es venta y cuánto hay que rendirle
+   al transportista. El depósito NO se reduce; esto solo lo identifica. */
+.cd-deposit-split { margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,255,255,.3); }
+.cd-deposit-split .cd-line { border:none;padding:2px 0;font-size:12px; }
+.cd-card-deposit .cd-hint { color:#dbeafe;opacity:.85; }
 .cd-card-deposit .cd-field label { color:#dbeafe; }
 .cd-card-deposit textarea.cd-input { color:#0f172a; }
 

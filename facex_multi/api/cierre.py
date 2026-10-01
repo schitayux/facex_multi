@@ -135,20 +135,65 @@ def _assert_can_view(doc) -> None:
     frappe.throw(_("No tiene permiso para ver este cierre."), frappe.PermissionError)
 
 
+def _corte_si(company: str, alias: str = "si") -> tuple:
+    """Corte por inicio de operación para una consulta de Sales Invoice de este
+    módulo. Devuelve ("1=1", {}) si no hay corte."""
+    from facex_multi.api.corte import invoice_corte_sql
+
+    cond, params = invoice_corte_sql(company, alias=alias)
+    return (cond or "1=1"), params
+
+
+def _corte_cierre_literal(user: str = None) -> str:
+    """El corte por inicio de operación como SQL literal, para los hooks de
+    permisos (que devuelven cadena, sin hueco para parámetros). En este doctype
+    `owner` y `usuario` son el mismo usuario, así que el historial visible se
+    reconoce por `usuario`."""
+    from facex_multi.api.corte import get_corte
+
+    conf = get_corte()
+    if not conf["fecha"] or (user or frappe.session.user) in conf["sin_restriccion"]:
+        return ""
+    partes = [f"`tab{DOCTYPE}`.fecha >= {frappe.db.escape(str(conf['fecha']))}"]
+    if conf["visibles"]:
+        lista = ", ".join(frappe.db.escape(u) for u in conf["visibles"])
+        partes.append(f"`tab{DOCTYPE}`.usuario IN ({lista})")
+    return "(" + " OR ".join(partes) + ")"
+
+
+def _cierre_visible_en_corte(doc, user: str = None) -> bool:
+    from facex_multi.api.corte import get_corte
+
+    conf = get_corte(getattr(doc, "company", None))
+    if not conf["fecha"] or (user or frappe.session.user) in conf["sin_restriccion"]:
+        return True
+    if getattr(doc, "usuario", None) in conf["visibles"]:
+        return True
+    fecha = getattr(doc, "fecha", None)
+    return bool(fecha) and getdate(fecha) >= conf["fecha"]
+
+
 def cierre_query_conditions(user: str = None) -> str:
     """permission_query_conditions (vista Desk): Gerencia / System Manager ven
-    todo; el resto solo los cierres de su propia caja."""
+    todo; el resto solo los cierres de su propia caja. En ambos casos se aplica
+    el corte por inicio de operación (los cierres de las pruebas previas al
+    arranque no se listan)."""
     user = user or frappe.session.user
-    if "System Manager" in frappe.get_roles(user):
-        return ""
-    company = get_effective_company()
-    if company and get_user_can_supervise_cierres(user, company):
-        return ""
-    return f"`tab{DOCTYPE}`.usuario = {frappe.db.escape(user)}"
+    corte = _corte_cierre_literal(user)
+    partes = []
+    if "System Manager" not in frappe.get_roles(user):
+        company = get_effective_company()
+        if not (company and get_user_can_supervise_cierres(user, company)):
+            partes.append(f"`tab{DOCTYPE}`.usuario = {frappe.db.escape(user)}")
+    if corte:
+        partes.append(corte)
+    return " AND ".join(partes)
 
 
 def cierre_has_permission(doc, ptype: str = "read", user: str = None) -> bool:
     user = user or frappe.session.user
+    if not _cierre_visible_en_corte(doc, user):
+        return False
     if "System Manager" in frappe.get_roles(user):
         return True
     if doc.usuario == user:
@@ -349,6 +394,17 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
     escribe nada. Devuelve un dict serializable listo para el page y para
     volcarse en el documento."""
     fecha = getdate(fecha)
+    # Corte por inicio de operación: un día anterior al arranque ya no se
+    # calcula ni se cierra — sus facturas dejaron de ser consultables.
+    from facex_multi.api.corte import get_corte_fecha
+    corte = get_corte_fecha(company)
+    if corte and fecha < corte:
+        frappe.throw(
+            _("El {0} es anterior al inicio de operación ({1}): ese día ya no se puede cerrar.").format(
+                formatdate(fecha), formatdate(corte)
+            ),
+            frappe.PermissionError,
+        )
     flete_item = (get_facex_company_config(company).get("item_flete") or "").strip()
 
     invoices = frappe.get_all(
@@ -395,11 +451,19 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
 
     # ---- Ventas + detalle por familia -------------------------------------
     venta_sin_desc = venta_con_desc = flete_fact = recargo_fact = 0.0
+    recargo_pasarela = flete_pasarela = cargos_venta = 0.0
     inv_flete = Counter()
     inv_recargo = Counter()
+    inv_pasarela = Counter()
     # Flete y Recargo Contra Entrega como filas de cargos del documento (ver
     # facex_multi.api.recargo). Las facturas viejas siguen trayendo el flete
     # como línea del Ítem de Flete: ambas fuentes se suman.
+    #
+    # Cada cargo tiene un MODO congelado en la factura: «pasarela» (el cliente lo
+    # paga por el servicio de entrega y el transportista lo descuenta en su
+    # liquidación — no es ingreso de la empresa) o «parte de la venta». El cierre
+    # los presenta en bloques separados para no confundir el ingreso del día con
+    # dinero que solo pasa por la caja.
     from facex_multi.api.recargo import cargos_facex_por_factura
     for inv_name, c in cargos_facex_por_factura(names).items():
         if c.get("flete"):
@@ -408,6 +472,11 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
         if c.get("recargo"):
             recargo_fact += flt(c["recargo"])
             inv_recargo[inv_name] += flt(c["recargo"])
+        if c.get("pasarela"):
+            inv_pasarela[inv_name] += flt(c["pasarela"])
+        recargo_pasarela += flt(c.get("recargo_pasarela") or 0.0)
+        flete_pasarela += flt(c.get("flete_pasarela") or 0.0)
+        cargos_venta += flt(c.get("venta") or 0.0)
     inv_has_desc = set()
     groups = OrderedDict()
 
@@ -427,7 +496,11 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
             or "OFERTA" in (it.item_code or "").upper()
         )
         if is_flete:
+            # Flete de las facturas VIEJAS, cuando era una línea de producto: fue
+            # contabilizado como ingreso, así que cuenta como venta (nunca fue
+            # pasarela) y se suma a `cargos_venta` para que no caiga en el ajuste.
             flete_fact += amount
+            cargos_venta += amount
             inv_flete[it.parent] += amount
             continue
         if has_disc:
@@ -475,11 +548,18 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
     contado_pendiente = 0.0
     facturas = []
     total_venta = 0.0
-    sum_lineas = venta_sin_desc + venta_con_desc + flete_fact + recargo_fact
+    cargos_pasarela = 0.0
+    # Parte de los cargos de terceros que entró en EFECTIVO a la caja (y que por
+    # tanto va dentro del depósito del día, aunque no sea venta). Se atribuye en
+    # proporción a lo que se pagó en efectivo sobre el total del documento.
+    pasarela_en_efectivo = 0.0
+    sum_lineas = venta_sin_desc + venta_con_desc + cargos_venta
 
     for inv in invoices:
         gt = _inv_total(inv)
         total_venta += gt
+        pas_inv = flt(inv_pasarela.get(inv.name, 0.0))
+        cargos_pasarela += pas_inv
         paid_non_ce = 0.0
         ce_rows = 0.0
         by_method = Counter()
@@ -524,6 +604,12 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
         elif clasificacion == "contado":
             contado_pendiente += credito
 
+        # Cargos de terceros cobrados en efectivo: están físicamente en la caja y
+        # se depositan igual (el arqueo debe cuadrar con el efectivo real), pero
+        # el cierre los identifica como «por rendir al transportista».
+        if pas_inv and gt:
+            pasarela_en_efectivo += pas_inv * min(flt(by_method.get("Efectivo")), gt) / gt
+
         formas = ", ".join(f"{m} {flt(a):,.2f}" for m, a in by_method.items())
         if ce:
             formas = (formas + ", " if formas else "") + f"{CONTRA_ENTREGA} {ce:,.2f}"
@@ -543,6 +629,8 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
             "credito": credito,
             "flete": inv_flete.get(inv.name, 0.0),
             "recargo": inv_recargo.get(inv.name, 0.0),
+            "cargos_pasarela": pas_inv,
+            "venta_neta": round(gt - pas_inv, 2),
             "formas_pago": formas,
             "tiene_descuento": 1 if inv.name in inv_has_desc else 0,
             "es_devolucion": cint(inv.get("is_return")),
@@ -554,7 +642,15 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
             "certificada": 1 if _is_certified(inv) else 0,
         })
 
-    ajuste = total_venta - sum_lineas
+    # Tres cifras distintas, que antes venían mezcladas en una sola:
+    #   venta_neta_dia  — INGRESO de la empresa (lo que debe cuadrar con todos
+    #                     los informes de venta y con la cuenta de ingresos).
+    #   cargos_pasarela — dinero de terceros que el cliente paga por el servicio
+    #                     de entrega; el transportista lo descuenta al liquidar.
+    #   total_venta     — TOTAL FACTURADO: la suma de las dos, o sea lo que el
+    #                     cliente pagó. Es la base de la cobranza.
+    venta_neta_dia = total_venta - cargos_pasarela
+    ajuste = venta_neta_dia - sum_lineas
     total_cobros = sum(cobros.values()) + cobro_otros + contado_pendiente
 
     recup = _recuperacion_cartera(company, fecha, usuario)
@@ -630,6 +726,15 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
         "flete_facturado": round(flete_fact, 2),
         "recargo_facturado": round(recargo_fact, 2),
         "ajuste_impuestos": round(ajuste, 2),
+        # Bloque 1 — VENTA (ingreso propio) y bloque 2 — CARGOS DE TERCEROS.
+        "venta_neta": round(venta_neta_dia, 2),
+        "cargos_venta": round(cargos_venta, 2),
+        "cargos_pasarela": round(cargos_pasarela, 2),
+        "recargo_pasarela": round(recargo_pasarela, 2),
+        "flete_pasarela": round(flete_pasarela, 2),
+        # Total facturado = venta neta + cargos de terceros (lo que pagó el
+        # cliente). Se conserva el nombre `total_venta` por compatibilidad con
+        # los cierres ya guardados.
         "total_venta": round(total_venta, 2),
         "cobro_efectivo": round(cobros["cobro_efectivo"], 2),
         "cobro_transferencia": round(cobros["cobro_transferencia"], 2),
@@ -641,6 +746,12 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
         "cobro_otros": round(cobro_otros, 2),
         "total_cobros": round(total_cobros, 2),
         **recup,
+        # Parte del depósito del día que son cargos de terceros: el efectivo está
+        # en la caja y se deposita completo (si no, el arqueo nunca cuadraría),
+        # pero hay que rendirlo al transportista. Es informativo: NO se resta del
+        # Total a Depositar.
+        "deposito_cargos_terceros": round(
+            pasarela_en_efectivo + flt(recup.get("recuperado_pasarela_efectivo")), 2),
         "total_devoluciones": round(total_devoluciones, 2),
         "devoluciones_contado": round(dev_clasif["contado"], 2),
         "devoluciones_contra_entrega": round(dev_clasif["contra_entrega"], 2),
@@ -676,11 +787,17 @@ def _recuperacion_cartera(company: str, fecha, usuario: str) -> dict:
         "abonos_anteriores": 0.0, "recuperado_efectivo": 0.0, "abonos_detalle": [],
         "recuperado_por_tipo": {k: 0.0 for k in _RECUP_TIPOS}, "recuperado_por_forma": {},
         "recuperado_facturas": 0, "recuperado_liquidadas": 0,
+        "recuperado_pasarela": 0.0, "recuperado_venta": 0.0,
+        "recuperado_pasarela_efectivo": 0.0,
+        "recuperado_neto": 0.0, "cod_comision": 0.0, "cod_flete": 0.0,
+        "cod_neto": 0.0, "cod_proyectado_recargo": 0.0, "cod_ejecutado_recargo": 0.0,
+        "cod_diferencia": 0.0, "cod_facturas": 0,
     }
     if not frappe.db.table_exists("eFast Invoice Payment"):
         return empty
     meta = frappe.get_meta("Sales Invoice")
     ce_col = "si.bfel_pago_contra_entrega" if meta.has_field("bfel_pago_contra_entrega") else "0"
+    corte_cond, corte_vals = _corte_si(company)
     rows = frappe.db.sql(
         f"""
         SELECT p.parent AS sales_invoice, si.customer_name, si.posting_date, si.due_date,
@@ -692,9 +809,11 @@ def _recuperacion_cartera(company: str, fecha, usuario: str) -> dict:
         WHERE si.company = %(company)s AND si.owner = %(usuario)s AND si.docstatus = 1
           AND si.posting_date < %(fecha)s AND p.payment_date = %(fecha)s
           AND p.parenttype = 'Sales Invoice' AND p.payment_method != %(ce)s
+          AND {corte_cond}
         ORDER BY si.posting_date, p.parent, p.idx
         """,
-        {"company": company, "usuario": usuario, "fecha": fecha, "ce": CONTRA_ENTREGA},
+        {"company": company, "usuario": usuario, "fecha": fecha, "ce": CONTRA_ENTREGA,
+         **corte_vals},
         as_dict=True,
     )
     if not rows:
@@ -713,13 +832,65 @@ def _recuperacion_cartera(company: str, fecha, usuario: str) -> dict:
         elif not p.payment_date or getdate(p.payment_date) <= fecha:
             pagado[p.parent] += flt(p.amount)
 
+    # Datos de la liquidación de transporte para los cobros COD. El pago que se
+    # registra en la factura es el COD COMPLETO, pero a la empresa solo le entró
+    # `monto_liquidado`: el transportista retuvo su comisión antes de depositar.
+    # Se enlaza por (factura, guía) — la fila de pago guarda el número de guía en
+    # `reference`, ver api.invoice._sync_pago_facex.
+    liq_rows = {}
+    if frappe.db.table_exists("FacEx Liquidacion Transportista Detalle"):
+        from facex_multi.api.invoice import _norm_numero_guia
+        for d in frappe.db.sql(
+            """
+            SELECT d.sales_invoice, d.guia, d.monto_cod, d.valor_comision, d.monto_liquidado
+            FROM `tabFacEx Liquidacion Transportista Detalle` d
+            WHERE d.parenttype = 'FacEx Liquidacion Transportista'
+              AND d.match_encontrado = 1 AND d.sales_invoice IN %(names)s
+            """,
+            {"names": tuple(names)},
+            as_dict=True,
+        ):
+            liq_rows[(d.sales_invoice, _norm_numero_guia(d.guia))] = d
+            # Respaldo por factura, por si la referencia del pago no trae la guía.
+            liq_rows.setdefault((d.sales_invoice, None), d)
+
+    def _liquidacion_de(sales_invoice, reference):
+        from facex_multi.api.invoice import _norm_numero_guia
+        return (liq_rows.get((sales_invoice, _norm_numero_guia(reference or "")))
+                or liq_rows.get((sales_invoice, None)))
+
+    # Un cobro de una factura Contra Entrega anterior recupera a la vez venta y
+    # cargos de terceros (el cliente pagó todo junto al repartidor). Se parte en
+    # proporción al total del documento para que la tarjeta de recuperación no
+    # presente como ingreso dinero que hay que rendirle al transportista.
+    from facex_multi.api.recargo import pasarela_por_factura, recargo_estimado_por_factura
+    pasarela_inv = pasarela_por_factura(names)
+    # Para el Análisis COD interesa lo que se le COBRÓ AL CLIENTE, que en las
+    # facturas anteriores al 2026-09-21 iba embebido en el precio y no como fila
+    # de cargo; `recargo_estimado_por_factura` lo reconstruye.
+    cargos_inv = recargo_estimado_por_factura(names)
+
     por_tipo = {k: 0.0 for k in _RECUP_TIPOS}
     por_forma = OrderedDict()
     efectivo = 0.0
+    pasarela_total = 0.0
+    pasarela_efectivo = 0.0
+    neto_total = 0.0
+    cod_comision = cod_flete = cod_neto = 0.0
+    cod_proyectado = cod_ejecutado = 0.0
+    cod_facturas = set()
     liquidadas = set()
     for r in rows:
         amt = flt(r.amount)
         metodo = r.payment_method or "Efectivo"
+        cobrable_inv = _inv_total(r)
+        pas_pago = (
+            flt(pasarela_inv.get(r.sales_invoice, 0.0)) * amt / cobrable_inv
+            if cobrable_inv else 0.0
+        )
+        pasarela_total += pas_pago
+        if metodo == "Efectivo":
+            pasarela_efectivo += pas_pago
         if cint(r.bfel_pago_contra_entrega) or r.sales_invoice in tiene_ce:
             tipo, forma = "cod", f"{metodo} COD"
         elif r.due_date and getdate(r.due_date) > getdate(r.posting_date):
@@ -727,6 +898,30 @@ def _recuperacion_cartera(company: str, fecha, usuario: str) -> dict:
         else:
             tipo, forma = "contado", metodo
         saldo = _inv_total(r) - pagado[r.sales_invoice]
+
+        # Lo que de verdad entró. En un cobro COD el pago registrado es el COD
+        # completo, pero el transportista ya retuvo su comisión: lo que llegó es
+        # `monto_liquidado`. Si el pago no cubre toda la guía se prorratea.
+        liq = _liquidacion_de(r.sales_invoice, r.get("reference")) if tipo == "cod" else None
+        comision = flete_liq = 0.0
+        neto = amt
+        if liq:
+            cod_total = flt(liq.monto_cod) or cobrable_inv
+            factor = min(amt / cod_total, 1.0) if cod_total else 1.0
+            comision = flt(liq.valor_comision) * factor
+            # El monto liquidado de la fila ya es COD − comisión; se recalcula
+            # con el factor para que un abono parcial sea coherente.
+            neto = flt(liq.monto_liquidado) * factor if flt(liq.monto_liquidado) else amt - comision
+            c = cargos_inv.get(r.sales_invoice) or {}
+            flete_liq = flt(c.get("flete")) * factor
+            cod_comision += comision
+            cod_flete += flete_liq
+            cod_neto += neto - flete_liq
+            cod_proyectado += flt(c.get("recargo")) * factor
+            cod_ejecutado += comision
+            cod_facturas.add(r.sales_invoice)
+        neto_total += neto
+
         r.update({
             "posting_date": str(r.posting_date),
             "tipo": tipo,
@@ -735,24 +930,50 @@ def _recuperacion_cartera(company: str, fecha, usuario: str) -> dict:
             "saldo_restante": round(max(saldo, 0.0), 2),
             "estado": "Liquidada" if saldo <= 0.004 else "Abono",
             "dias": (fecha - getdate(r.posting_date)).days,
+            "cargos_pasarela": round(pas_pago, 2),
+            "venta_neta": round(amt - pas_pago, 2),
+            # Cifras de la liquidación (0 cuando el cobro no viene de una).
+            "valor_comision": round(comision, 2),
+            "flete_liquidado": round(flete_liq, 2),
+            "monto_neto": round(neto, 2),
         })
         for k in ("due_date", "grand_total", "rounded_total", "disable_rounded_total", "bfel_pago_contra_entrega"):
             r.pop(k, None)
         por_tipo[tipo] += amt
-        por_forma[forma] = por_forma.get(forma, 0.0) + amt
+        # Por forma de pago se muestra lo que ENTRÓ (neto de comisión): es el
+        # dinero que la empresa puede cuadrar contra el banco.
+        por_forma[forma] = por_forma.get(forma, 0.0) + neto
         if metodo == "Efectivo":
             efectivo += amt
         if saldo <= 0.004:
             liquidadas.add(r.sales_invoice)
 
+    recuperado = sum(por_tipo.values())
     return {
-        "abonos_anteriores": round(sum(por_tipo.values()), 2),
+        "abonos_anteriores": round(recuperado, 2),
         "recuperado_efectivo": round(efectivo, 2),
         "abonos_detalle": rows,
         "recuperado_por_tipo": {k: round(v, 2) for k, v in por_tipo.items()},
         "recuperado_por_forma": {k: round(v, 2) for k, v in por_forma.items()},
         "recuperado_facturas": len(names),
         "recuperado_liquidadas": len(liquidadas),
+        # De lo recuperado, cuánto es venta de la empresa y cuánto cargo de
+        # terceros (ver el comentario del prorrateo más arriba).
+        "recuperado_pasarela": round(pasarela_total, 2),
+        "recuperado_venta": round(recuperado - pasarela_total, 2),
+        "recuperado_pasarela_efectivo": round(pasarela_efectivo, 2),
+        # Recuperado NETO: lo que de verdad entró. En los cobros COD el pago
+        # registrado es el COD completo, pero el transportista ya había retenido
+        # su comisión. = factura − comisión.
+        "recuperado_neto": round(neto_total, 2),
+        # Análisis COD de las guías liquidadas que se cobraron hoy.
+        "cod_comision": round(cod_comision, 2),
+        "cod_flete": round(cod_flete, 2),
+        "cod_neto": round(cod_neto, 2),
+        "cod_proyectado_recargo": round(cod_proyectado, 2),
+        "cod_ejecutado_recargo": round(cod_ejecutado, 2),
+        "cod_diferencia": round(cod_proyectado - cod_ejecutado, 2),
+        "cod_facturas": len(cod_facturas),
     }
 
 
@@ -794,7 +1015,8 @@ def _pending_days(company: str, usuario: str | None) -> list:
         return []
     desde = add_days(today(), -PENDING_LOOKBACK_DAYS)
     cond = ""
-    vals = {"company": company, "desde": desde, "hoy": today()}
+    corte_cond, corte_vals = _corte_si(company)
+    vals = {"company": company, "desde": desde, "hoy": today(), **corte_vals}
     if usuario:
         cond = "AND si.owner = %(usuario)s"
         vals["usuario"] = usuario
@@ -813,6 +1035,7 @@ def _pending_days(company: str, usuario: str | None) -> list:
         LEFT JOIN `tabUser` u ON u.name = si.owner
         WHERE si.company = %(company)s AND si.docstatus = 1
           AND si.posting_date >= %(desde)s AND si.posting_date < %(hoy)s
+          AND {corte_cond}
           {cond}
         GROUP BY si.posting_date, si.owner
         HAVING IFNULL(estado, '') != 'Cerrado'
@@ -849,18 +1072,21 @@ def get_context(company: str = None) -> dict:
 
     users = []
     if gerencia:
+        # Subconsulta sin alias de tabla: el corte va con columnas sin calificar.
+        corte_cond, corte_vals = _corte_si(company, alias=None)
         # Usuarios con ventas en la compañía + usuarios con FacEx Settings en ella
         users = frappe.db.sql(
-            """
+            f"""
             SELECT DISTINCT x.name, u.full_name FROM (
-                SELECT owner AS name FROM `tabSales Invoice` WHERE company = %(c)s AND docstatus = 1
+                SELECT owner AS name FROM `tabSales Invoice`
+                 WHERE company = %(c)s AND docstatus = 1 AND {corte_cond}
                 UNION
                 SELECT user AS name FROM `tabFacEx Settings` WHERE bfel_company = %(c)s AND IFNULL(user, '') != ''
             ) x JOIN `tabUser` u ON u.name = x.name
             WHERE u.enabled = 1
             ORDER BY u.full_name
             """,
-            {"c": company},
+            {"c": company, **corte_vals},
             as_dict=True,
         )
     me = frappe.session.user
@@ -925,20 +1151,64 @@ def list_cierres(company: str = None, from_date: str = None, to_date: str = None
         filters["fecha"] = ["<=", to_date]
     if estado:
         filters["estado"] = estado
+    # `get_all` ignora los hooks de permisos (cierre_query_conditions), así que
+    # el corte por inicio de operación va explícito en los filtros.
+    from facex_multi.api.corte import get_corte
+    conf = get_corte(company)
+    or_filters = None
+    if conf["fecha"] and frappe.session.user not in conf["sin_restriccion"]:
+        or_filters = [["fecha", ">=", conf["fecha"]]]
+        if conf["visibles"]:
+            or_filters.append(["usuario", "in", list(conf["visibles"])])
     return frappe.get_all(
         DOCTYPE,
         filters=filters,
+        or_filters=or_filters,
         fields=["name", "fecha", "usuario", "usuario_nombre", "almacen", "estado", "num_facturas",
-                "total_venta", "total_cobros", "total_egresos", "total_a_depositar", "al_credito",
+                "total_venta", "venta_neta", "cargos_pasarela",
+                "total_cobros", "total_egresos", "total_a_depositar", "al_credito",
                 "cobro_efectivo", "cerrado_por", "cerrado_en", "reabierto_por", "reabierto_en", "modified"],
         order_by="fecha desc, usuario asc",
         limit_page_length=500,
     )
 
 
+def upgrade_snapshot(snap: dict) -> dict:
+    """Completa un snapshot guardado ANTES del rediseño de cargos (2026-09-30).
+
+    Esos snapshots no traen `venta_neta` ni el desglose de cargos de terceros, así
+    que el bloque «CARGOS POR CUENTA DE TERCEROS» salía en cero y parecía roto.
+
+    La reconstrucción es fiel: antes del rediseño TODO cargo de recargo/flete era
+    pasarela (se contabilizaba contra cuentas de pasivo; el campo que marca el
+    modo no existía y su ausencia significa pasarela). Así que el recargo y el
+    flete facturados del snapshot SON los cargos de terceros.
+
+    No toca `total_a_depositar` ni ninguna cifra ya congelada: solo deriva las
+    que faltaban. Si el snapshot ya es nuevo, lo devuelve intacto.
+    """
+    if not snap or "cargos_pasarela" in snap:
+        return snap
+    recargo = flt(snap.get("recargo_facturado"))
+    flete = flt(snap.get("flete_facturado"))
+    pasarela = recargo + flete
+    snap["recargo_pasarela"] = round(recargo, 2)
+    snap["flete_pasarela"] = round(flete, 2)
+    snap["cargos_pasarela"] = round(pasarela, 2)
+    snap["cargos_venta"] = 0.0
+    snap["venta_neta"] = round(flt(snap.get("total_venta")) - pasarela, 2)
+    # No se puede saber cuánto de esos cargos entró en efectivo (el snapshot
+    # viejo no guarda el desglose por forma de pago por factura), así que el
+    # renglón del depósito se omite en vez de inventarlo.
+    snap.setdefault("deposito_cargos_terceros", 0.0)
+    snap["snapshot_reconstruido"] = 1
+    return snap
+
+
 def _doc_to_dict(doc) -> dict:
     d = doc.as_dict()
-    d["snapshot"] = json.loads(doc.snapshot_json) if doc.snapshot_json else None
+    d["snapshot"] = upgrade_snapshot(
+        json.loads(doc.snapshot_json)) if doc.snapshot_json else None
     d["puede_reabrir"] = int(_can_reopen(doc.company))
     d["puede_gestionar"] = int(
         _is_gerencia(doc.company) or (_can_create(doc.company) and doc.usuario == frappe.session.user)
@@ -961,6 +1231,8 @@ def get_cierre(name: str) -> dict:
 
 def _apply_snapshot(doc, snap: dict) -> None:
     for k in ("venta_sin_descuento", "venta_con_descuento", "flete_facturado", "recargo_facturado", "ajuste_impuestos",
+              "venta_neta", "cargos_pasarela", "recargo_pasarela", "flete_pasarela",
+              "deposito_cargos_terceros",
               "total_venta", "cobro_efectivo", "cobro_transferencia", "cobro_cheque", "cobro_tarjeta",
               "cobro_contra_entrega", "contado_pendiente", "al_credito", "total_cobros", "abonos_anteriores", "num_facturas"):
         doc.set(k, snap.get(k) or 0)

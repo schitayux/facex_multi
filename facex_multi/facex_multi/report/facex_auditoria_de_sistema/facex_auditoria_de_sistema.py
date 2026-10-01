@@ -4,7 +4,12 @@
 import frappe
 from frappe import _
 
-from facex_multi.api.reports import _build_company_condition, _build_company_condition_alias, _resolve_owner_filter
+from facex_multi.api.reports import (
+	_build_company_condition,
+	_build_company_condition_alias,
+	_corte_condition,
+	_resolve_owner_filter,
+)
 
 
 def execute(filters=None):
@@ -48,6 +53,17 @@ def get_columns():
 def get_data(filters):
 	company_cond, company_vals = _build_company_condition(filters.get("company"))
 	owners_cond, owners_vals = _owners_condition(filters)
+	# Corte por inicio de operación: la auditoría no destapa por la puerta de
+	# atrás lo que los demás informes ya no muestran (ver api.corte).
+	corte_cond, corte_vals = _corte_condition(filters.get("company"))
+	corte_cond_p, corte_vals_p = _corte_condition(filters.get("company"), "p")
+	corte_cond_si, corte_vals_si = _corte_condition(filters.get("company"), "si")
+
+	# Los montos de venta por usuario son VENTA NETA: sin el recargo/flete en
+	# modo pasarela, que el cliente paga por el servicio de entrega y no es
+	# ingreso de la empresa (ver facex_multi.api.recargo).
+	from facex_multi.api.recargo import venta_neta_sql
+	neta = venta_neta_sql("tabSales Invoice")
 
 	users = {}
 
@@ -64,14 +80,16 @@ def get_data(filters):
 		"COALESCE(bfel_documento_anulado, 0) != 1",
 		"posting_date BETWEEN %(from_date)s AND %(to_date)s",
 		company_cond,
+		corte_cond,
 	]
-	values = {"from_date": filters.from_date, "to_date": filters.to_date, **company_vals}
+	values = {"from_date": filters.from_date, "to_date": filters.to_date,
+		**company_vals, **corte_vals}
 	if owners_cond:
 		conditions.append(owners_cond)
 		values.update(owners_vals)
 	rows = frappe.db.sql(
 		f"""
-		SELECT owner, COUNT(*) AS cnt, COALESCE(SUM(grand_total), 0) AS total
+		SELECT owner, COUNT(*) AS cnt, COALESCE(SUM({neta}), 0) AS total
 		FROM `tabSales Invoice`
 		WHERE {" AND ".join(conditions)}
 		GROUP BY owner
@@ -91,17 +109,18 @@ def get_data(filters):
 			"COALESCE(bfel_documento_anulado, 0) != 1",
 			"posting_date BETWEEN %(from_date)s AND %(to_date)s",
 			company_cond,
+			corte_cond,
 		]
 		values = {
 			"status": status, "from_date": filters.from_date, "to_date": filters.to_date,
-			**company_vals,
+			**company_vals, **corte_vals,
 		}
 		if owners_cond:
 			conditions.append(owners_cond)
 			values.update(owners_vals)
 		rows = frappe.db.sql(
 			f"""
-			SELECT owner, COUNT(*) AS cnt, COALESCE(SUM(grand_total), 0) AS total
+			SELECT owner, COUNT(*) AS cnt, COALESCE(SUM({neta}), 0) AS total
 			FROM `tabSales Invoice`
 			WHERE {" AND ".join(conditions)}
 			GROUP BY owner
@@ -118,8 +137,10 @@ def get_data(filters):
 		"p.docstatus = 1", "COALESCE(p.bfel_documento_anulado, 0) != 1",
 		"ip.payment_date BETWEEN %(from_date)s AND %(to_date)s",
 		company_cond_p,
+		corte_cond_p,
 	]
-	values = {"from_date": filters.from_date, "to_date": filters.to_date, **company_vals_p}
+	values = {"from_date": filters.from_date, "to_date": filters.to_date,
+		**company_vals_p, **corte_vals_p}
 	if owners_cond_p:
 		conditions.append(owners_cond_p)
 		values.update(owners_vals_p)
@@ -145,8 +166,10 @@ def get_data(filters):
 		"si.docstatus = 1",
 		"pend.fecha_envio BETWEEN %(from_date)s AND %(to_date)s",
 		company_cond_si,
+		corte_cond_si,
 	]
-	values = {"from_date": filters.from_date, "to_date": filters.to_date, **company_vals_si}
+	values = {"from_date": filters.from_date, "to_date": filters.to_date,
+		**company_vals_si, **corte_vals_si}
 	if owners_cond_g:
 		conditions.append(owners_cond_g)
 		values.update(owners_vals_g)

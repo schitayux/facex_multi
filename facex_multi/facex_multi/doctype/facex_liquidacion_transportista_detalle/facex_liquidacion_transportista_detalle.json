@@ -12,6 +12,10 @@
   "efectivo",
   "comision",
   "valor_comision",
+  "recargo_cobrado",
+  "flete_cobrado",
+  "diferencia_comision",
+  "resultado_comision",
   "monto_liquidado",
   "operacion",
   "autorizacion",
@@ -72,6 +76,34 @@
    "in_list_view": 1,
    "label": "Valor Comisión",
    "columns": 2
+  },
+  {
+   "fieldname": "recargo_cobrado",
+   "fieldtype": "Currency",
+   "label": "Recargo cobrado al cliente",
+   "read_only": 1,
+   "description": "Recargo por entrega (modo pasarela) que el cliente pagó en la factura conciliada. Es la ESTIMACIÓN de la comisión del transportista —el Q por pieza de la lista— y es lo único comparable contra el Valor Comisión real."
+  },
+  {
+   "fieldname": "flete_cobrado",
+   "fieldtype": "Currency",
+   "label": "Flete cobrado al cliente",
+   "read_only": 1,
+   "description": "Flete (modo pasarela) que el cliente pagó por el envío. Es un traspaso APARTE: paga el servicio de transporte, no la comisión de cobro, así que NO entra en la diferencia de comisión."
+  },
+  {
+   "fieldname": "diferencia_comision",
+   "fieldtype": "Currency",
+   "label": "Diferencia (recargo − comisión)",
+   "read_only": 1,
+   "description": "Recargo cobrado al cliente menos la comisión real que el transportista retuvo. Positiva = ganancia de pasarela (el cliente cubrió de más); negativa = pérdida (el recargo por pieza quedó por debajo de la comisión real)."
+  },
+  {
+   "fieldname": "resultado_comision",
+   "fieldtype": "Data",
+   "label": "Resultado",
+   "read_only": 1,
+   "description": "Ganancia / Pérdida / Exacto, según la diferencia."
   },
   {
    "fieldname": "monto_liquidado",

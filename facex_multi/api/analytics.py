@@ -41,39 +41,52 @@ def get_customer_analytics(customer: str, company: str = None):
 
     since = add_months(today(), -6)
 
+    # Las estadísticas de VENTA van netas: el recargo por entrega y el flete en
+    # modo pasarela los paga el cliente por el servicio de entrega y no son
+    # ingreso de la empresa (ver facex_multi.api.recargo). El saldo pendiente, en
+    # cambio, se calcula sobre el total completo: es lo que el cliente debe.
+    from facex_multi.api.recargo import venta_neta_sql
+    neta = venta_neta_sql("tabSales Invoice")
+
+    # Corte por inicio de operación: el historial del cliente tampoco puede
+    # mostrar las facturas de las pruebas previas al arranque (ver api.corte).
+    from facex_multi.api.corte import invoice_corte_sql
+    corte_cond, corte_vals = invoice_corte_sql(company)
+    corte_cond = corte_cond or "1=1"
+
     stats = frappe.db.sql(
-        """
+        f"""
         SELECT
             COUNT(*)               AS count,
-            COALESCE(SUM(grand_total), 0)  AS total,
-            COALESCE(MAX(grand_total), 0)  AS max_invoice,
-            COALESCE(AVG(grand_total), 0)  AS avg_invoice
+            COALESCE(SUM({neta}), 0)  AS total,
+            COALESCE(MAX({neta}), 0)  AS max_invoice,
+            COALESCE(AVG({neta}), 0)  AS avg_invoice
         FROM `tabSales Invoice`
         WHERE customer = %(c)s AND docstatus = 1 AND company = %(company)s
-          AND posting_date >= %(since)s
+          AND posting_date >= %(since)s AND {corte_cond}
         """,
-        {"c": customer, "since": since, "company": company},
+        {"c": customer, "since": since, "company": company, **corte_vals},
         as_dict=True,
     )
 
     monthly = frappe.db.sql(
-        """
+        f"""
         SELECT
             DATE_FORMAT(posting_date, '%%Y-%%m') AS month,
-            COALESCE(SUM(grand_total), 0)        AS total,
+            COALESCE(SUM({neta}), 0)             AS total,
             COUNT(*)                              AS count
         FROM `tabSales Invoice`
         WHERE customer = %(c)s AND docstatus = 1 AND company = %(company)s
-          AND posting_date >= %(since)s
+          AND posting_date >= %(since)s AND {corte_cond}
         GROUP BY DATE_FORMAT(posting_date, '%%Y-%%m')
         ORDER BY month ASC
         """,
-        {"c": customer, "since": since, "company": company},
+        {"c": customer, "since": since, "company": company, **corte_vals},
         as_dict=True,
     )
 
     last_invoices = frappe.db.sql(
-        """
+        f"""
         SELECT 
             name, 
             posting_date, 
@@ -87,15 +100,16 @@ def get_customer_analytics(customer: str, company: str = None):
             ), 0) AS total_payments
         FROM `tabSales Invoice`
         WHERE customer = %(c)s AND docstatus IN (0, 1) AND company = %(company)s
+          AND {corte_cond}
         ORDER BY posting_date DESC, creation DESC
         LIMIT 5
         """,
-        {"c": customer, "company": company},
+        {"c": customer, "company": company, **corte_vals},
         as_dict=True,
     )
 
     outstanding_raw = frappe.db.sql(
-        """
+        f"""
         SELECT 
             name, 
             posting_date, 
@@ -107,9 +121,10 @@ def get_customer_analytics(customer: str, company: str = None):
             ), 0) AS total_payments
         FROM `tabSales Invoice`
         WHERE customer = %(c)s AND docstatus = 1 AND company = %(company)s
+          AND {corte_cond}
         ORDER BY posting_date ASC
         """,
-        {"c": customer, "company": company},
+        {"c": customer, "company": company, **corte_vals},
         as_dict=True,
     )
 

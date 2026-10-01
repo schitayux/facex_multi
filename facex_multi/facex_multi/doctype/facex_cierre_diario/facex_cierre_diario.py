@@ -48,10 +48,19 @@ class FacExCierreDiario(Document):
 
 	def calcular_totales(self):
 		self.total_egresos = sum(flt(r.monto) for r in (self.egresos or []))
-		self.total_venta = (
+		# Tres cifras distintas (ver facex_multi.api.cierre.compute_snapshot):
+		#   venta_neta      — ingreso propio (líneas + cargos que SÍ son venta).
+		#   cargos_pasarela — recargo/flete que el cliente paga por el servicio de
+		#                     entrega y el transportista descuenta al liquidar.
+		#   total_venta     — TOTAL FACTURADO: la suma de las dos.
+		# Antes esto era un solo "TOTAL VENTA DEL DÍA" que además omitía el
+		# recargo, así que no cuadraba con el snapshot.
+		self.venta_neta = (
 			flt(self.venta_sin_descuento) + flt(self.venta_con_descuento)
-			+ flt(self.flete_facturado) + flt(self.ajuste_impuestos)
+			+ self._snap("cargos_venta") + flt(self.ajuste_impuestos)
 		)
+		self.cargos_pasarela = flt(self.recargo_pasarela) + flt(self.flete_pasarela)
+		self.total_venta = flt(self.venta_neta) + flt(self.cargos_pasarela)
 		self.total_cobros = (
 			flt(self.cobro_efectivo) + flt(self.cobro_transferencia) + flt(self.cobro_cheque)
 			+ flt(self.cobro_tarjeta) + flt(self.cobro_contra_entrega) + flt(self.al_credito)
@@ -62,13 +71,19 @@ class FacExCierreDiario(Document):
 		# el efectivo recuperado hoy de facturas anteriores (sección Recuperación
 		# de cartera del snapshot).
 		self.total_a_depositar = (
-			flt(self.cobro_efectivo) + self._recuperado_efectivo() - flt(self.total_egresos)
+			flt(self.cobro_efectivo) + self._snap("recuperado_efectivo") - flt(self.total_egresos)
 		)
+		# Parte del depósito que son cargos de terceros cobrados en efectivo. Es
+		# informativo y NO se resta: el cajero entrega el efectivo que tiene, y
+		# restarlo haría que el arqueo marcara un sobrante todos los días.
+		self.deposito_cargos_terceros = self._snap("deposito_cargos_terceros")
 		self.num_facturas = len(self.facturas or [])
 
-	def _recuperado_efectivo(self) -> float:
+	def _snap(self, key: str) -> float:
+		"""Cifra del snapshot que no tiene campo propio en el documento (se lee de
+		`snapshot_json` para no migrar el DocType por cada dato informativo)."""
 		try:
-			return flt((frappe.parse_json(self.snapshot_json or "{}") or {}).get("recuperado_efectivo"))
+			return flt((frappe.parse_json(self.snapshot_json or "{}") or {}).get(key))
 		except Exception:
 			return 0.0
 

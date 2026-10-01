@@ -18,6 +18,7 @@ from facex_multi.api.invoice import get_effective_company
 from facex_multi.api.reports import (
     _build_company_condition,
     _build_company_condition_alias,
+    _corte_condition,
     _resolve_owner_filter,
     _sales_partner_condition,
     has_reports_permission,
@@ -32,18 +33,28 @@ def _scope(company: str, alias: str = None) -> tuple:
         company_cond, company_vals = _build_company_condition(company)
     sp_cond, sp_vals = _sales_partner_condition(alias, company=company)
     owner_cond, owner_vals = _resolve_owner_filter(company, None, alias)
+    # Corte por inicio de operación: un KPI no puede sumar lo que su reporte
+    # equivalente ya no muestra.
+    corte_cond, corte_vals = _corte_condition(company, alias)
     return (
-        [company_cond, sp_cond, owner_cond],
-        {**company_vals, **sp_vals, **owner_vals},
+        [company_cond, sp_cond, owner_cond, corte_cond],
+        {**company_vals, **sp_vals, **owner_vals, **corte_vals},
     )
 
 
 def _kpi_ventas_hoy(company: str) -> dict:
     conds, values = _scope(company)
     values["today"] = today()
+    # Venta NETA: el recargo por entrega y el flete en modo pasarela los paga el
+    # cliente por el servicio de entrega y el transportista los descuenta en su
+    # liquidación, así que no son ingreso de la empresa y no deben inflar el KPI
+    # (ver facex_multi.api.recargo). Se informan aparte en el subtítulo.
+    from facex_multi.api.recargo import pasarela_sql, venta_neta_sql
     row = frappe.db.sql(
         f"""
-        SELECT COUNT(*) AS cnt, COALESCE(SUM(grand_total), 0) AS total
+        SELECT COUNT(*) AS cnt,
+            COALESCE(SUM({venta_neta_sql("tabSales Invoice")}), 0) AS total,
+            COALESCE(SUM({pasarela_sql("tabSales Invoice")}), 0) AS pasarela
         FROM `tabSales Invoice`
         WHERE docstatus = 1 AND COALESCE(bfel_documento_anulado, 0) != 1
             AND posting_date = %(today)s AND { " AND ".join(conds) }
@@ -51,12 +62,16 @@ def _kpi_ventas_hoy(company: str) -> dict:
         values,
         as_dict=True,
     )[0]
+    pasarela = float(row.pasarela or 0)
+    sub = f"{row.cnt} factura(s)"
+    if pasarela > 0.009:
+        sub += f" · + Q {pasarela:,.2f} de cargos de terceros"
     return {
         "key": "ventas_hoy",
         "label": "Ventas de hoy",
         "value": float(row.total or 0),
         "format": "currency",
-        "sub": f"{row.cnt} factura(s)",
+        "sub": sub,
         "report": "sales_by_date",
         "tone": "primary",
     }
@@ -95,9 +110,10 @@ def _kpi_por_cobrar(company: str) -> dict:
 
 def _kpi_cotizaciones(company: str) -> dict:
     conds, values = _scope(company)
+    from facex_multi.api.recargo import venta_neta_sql
     row = frappe.db.sql(
         f"""
-        SELECT COUNT(*) AS cnt, COALESCE(SUM(grand_total), 0) AS total
+        SELECT COUNT(*) AS cnt, COALESCE(SUM({venta_neta_sql("tabSales Invoice")}), 0) AS total
         FROM `tabSales Invoice`
         WHERE docstatus = 0 AND is_return = 0 AND is_debit_note = 0
             AND COALESCE(bfel_documento_anulado, 0) != 1
@@ -119,9 +135,12 @@ def _kpi_cotizaciones(company: str) -> dict:
 
 def _kpi_sin_certificar(company: str) -> dict:
     conds, values = _scope(company)
+    # Monto pendiente ante SAT = venta neta: un cargo pasarela no se documenta en
+    # el FEL (ver la vista de certificación en facex_multi.api.fel_view).
+    from facex_multi.api.recargo import venta_neta_sql
     row = frappe.db.sql(
         f"""
-        SELECT COUNT(*) AS cnt, COALESCE(SUM(grand_total), 0) AS total
+        SELECT COUNT(*) AS cnt, COALESCE(SUM({venta_neta_sql("tabSales Invoice")}), 0) AS total
         FROM `tabSales Invoice`
         WHERE docstatus = 1 AND bfel_status = '01 Enviar'
             AND (bfel_uuid IS NULL OR bfel_uuid = '')
@@ -150,7 +169,8 @@ def _kpi_pagos_hoy(company: str) -> dict:
     company_cond, company_vals = _build_company_condition_alias(company, "p")
     sp_cond, sp_vals = _sales_partner_condition("p", company=company)
     owner_cond, owner_vals = _resolve_owner_filter(company, None, "ip")
-    values = {"today": today(), **company_vals, **sp_vals, **owner_vals}
+    corte_cond, corte_vals = _corte_condition(company, "p")
+    values = {"today": today(), **company_vals, **sp_vals, **owner_vals, **corte_vals}
     row = frappe.db.sql(
         f"""
         SELECT COUNT(*) AS cnt, COALESCE(SUM(ip.amount), 0) AS total
@@ -160,7 +180,7 @@ def _kpi_pagos_hoy(company: str) -> dict:
             AND ip.parentfield = 'custom_efast_payments'
         WHERE p.docstatus = 1 AND COALESCE(p.bfel_documento_anulado, 0) != 1
             AND ip.payment_date = %(today)s
-            AND {company_cond} AND {sp_cond} AND {owner_cond}
+            AND {company_cond} AND {sp_cond} AND {owner_cond} AND {corte_cond}
         """,
         values,
         as_dict=True,

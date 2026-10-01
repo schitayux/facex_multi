@@ -763,9 +763,13 @@ def get_invoice_history(company: str = None, from_date: str = None, to_date: str
     if _sp:
         _si_filters["sales_partner"] = _sp
 
+    # OJO: `get_all` ignora los hooks de permisos, así que el corte por inicio
+    # de operación va explícito en los filtros (ver api.corte).
+    from facex_multi.api.corte import invoice_corte_filters
     rows = frappe.get_all(
         "Sales Invoice",
         filters=_si_filters,
+        or_filters=invoice_corte_filters(company) or None,
         fields=["name", "customer_name", "posting_date", "grand_total", "docstatus", "bfel_status", "bfel_uuid", "custom_pagado"],
         order_by="posting_date desc, creation desc",
         limit_page_length=500,
@@ -833,9 +837,12 @@ def get_held_sales(company: str = None):
     if _sp:
         _held_filters["sales_partner"] = _sp
 
+    # `get_all` ignora los hooks de permisos: el corte va en los filtros.
+    from facex_multi.api.corte import invoice_corte_filters
     rows = frappe.get_all(
         "Sales Invoice",
         filters=_held_filters,
+        or_filters=invoice_corte_filters(company) or None,
         fields=["name", "customer_name", "posting_date", "grand_total", "sales_partner", "owner"],
         order_by="modified desc",
         limit_page_length=200,
@@ -932,6 +939,12 @@ def get_pending_guias(company: str = None):
     if sc_cond:
         sp_filter += f" and {sc_cond}"
         sp_params = {**sp_params, **sc_params}
+    # Corte por inicio de operación (ver api.corte).
+    from facex_multi.api.corte import invoice_corte_sql
+    co_cond, co_params = invoice_corte_sql(company, alias="si")
+    if co_cond:
+        sp_filter += f" and {co_cond}"
+        sp_params = {**sp_params, **co_params}
 
     return frappe.db.sql(
         f"""
@@ -1003,7 +1016,10 @@ def get_guias_transporte(company: str = None, estado_entrega: str = None, transp
     values = {"company": company, "limit": int(limit or 200)}
 
     from facex_multi.api.permissions import get_facex_invoice_partner_sql, get_facex_sales_scope_sql
-    for cond, params in (get_facex_invoice_partner_sql(company, alias="si"), get_facex_sales_scope_sql(company, "si")):
+    from facex_multi.api.corte import invoice_corte_sql
+    for cond, params in (get_facex_invoice_partner_sql(company, alias="si"),
+                         get_facex_sales_scope_sql(company, "si"),
+                         invoice_corte_sql(company, alias="si")):
         if cond:
             conditions.append(cond)
             values.update(params)
@@ -1079,6 +1095,12 @@ def get_transporte_kpis(company: str = None, days: int = 14):
     if sc_cond:
         sp_and += f" and {sc_cond}"
         sp_params = {**sp_params, **sc_params}
+    # Corte por inicio de operación (ver api.corte).
+    from facex_multi.api.corte import invoice_corte_sql
+    co_cond, co_params = invoice_corte_sql(company, alias="si")
+    if co_cond:
+        sp_and += f" and {co_cond}"
+        sp_params = {**sp_params, **co_params}
 
     por_estado = frappe.db.sql(
         f"""
@@ -2962,10 +2984,15 @@ def get_dashboard_stats(start_date=None, end_date=None, customer=None, item_code
         filters["sales_partner"] = _sp
 
     # Cargar facturas
+    # `get_all` ignora los hooks de permisos: el corte va en los filtros.
+    from facex_multi.api.corte import invoice_corte_filters
     raw_invoices = frappe.db.get_all(
         "Sales Invoice",
         filters=filters,
-        fields=["name", "customer", "customer_name", "posting_date", "grand_total", "bfel_status", "bfel_uuid", "docstatus", "bfel_documento_anulado"],
+        or_filters=invoice_corte_filters(company) or None,
+        fields=["name", "customer", "customer_name", "posting_date", "grand_total",
+                "rounded_total", "disable_rounded_total",
+                "bfel_status", "bfel_uuid", "docstatus", "bfel_documento_anulado"],
         order_by="posting_date desc, creation desc"
     )
 
@@ -2975,21 +3002,38 @@ def get_dashboard_stats(start_date=None, end_date=None, customer=None, item_code
         if inv.docstatus != 2 or (inv.bfel_uuid or inv.bfel_documento_anulado == 1)
     ]
 
+    # El recargo por entrega y el flete en modo PASARELA los paga el cliente por
+    # el servicio de entrega y el transportista los descuenta en su liquidación:
+    # no son ingreso de la empresa, así que el tablero los excluye de todos los
+    # totales de venta y los informa aparte (ver facex_multi.api.recargo).
+    from facex_multi.api.recargo import pasarela_por_factura
+    from facex_multi.api.cierre import _inv_total
+    pasarela = pasarela_por_factura([inv.name for inv in invoices])
+
+    def _venta(inv):
+        # El total que paga el cliente es el redondeado (mismo criterio que el
+        # Cierre Diario y los informes); usar `grand_total` descuadra el tablero
+        # contra Reportes por los centavos del redondeo.
+        return float(_inv_total(inv)) - float(pasarela.get(inv.name, 0.0))
+
+    def _pasarela(rows):
+        return sum(float(pasarela.get(inv.name, 0.0)) for inv in rows)
+
     # 2. Ventas del día (hoy) - Solo facturas vigentes y validadas (docstatus=1,
     # sin anular), no borradores (0) ni canceladas (2).
     today_date = getdate(today())
     today_invoices = [inv for inv in invoices if getdate(inv.posting_date) == today_date and inv.docstatus == 1 and inv.bfel_documento_anulado != 1]
-    today_total = sum(float(inv.grand_total or 0) for inv in today_invoices)
+    today_total = sum(_venta(inv) for inv in today_invoices)
 
     # 3. Ventas del mes (mes actual) - mismo criterio: solo vigentes y validadas.
     month_start_date = getdate(today()[:7] + "-01")
     month_invoices = [inv for inv in invoices if getdate(inv.posting_date) >= month_start_date and inv.docstatus == 1 and inv.bfel_documento_anulado != 1]
-    month_total = sum(float(inv.grand_total or 0) for inv in month_invoices)
+    month_total = sum(_venta(inv) for inv in month_invoices)
 
     # 3b. Ventas Borrador/Cotización - facturas aún no validadas (docstatus=0)
     # dentro del mismo rango de fechas/filtros ya aplicado arriba.
     draft_invoices = [inv for inv in invoices if inv.docstatus == 0]
-    draft_total = sum(float(inv.grand_total or 0) for inv in draft_invoices)
+    draft_total = sum(_venta(inv) for inv in draft_invoices)
 
     # 4. Detalle de items vendidos (excluyendo canceladas y anuladas)
     invoice_names = [inv.name for inv in invoices if inv.docstatus != 2 and inv.bfel_documento_anulado != 1]
@@ -3035,7 +3079,7 @@ def get_dashboard_stats(start_date=None, end_date=None, customer=None, item_code
     customer_stats = {}
     if customer:
         cust_invoices = [inv for inv in invoices if inv.customer == customer]
-        total_sales = sum(float(inv.grand_total or 0) for inv in cust_invoices)
+        total_sales = sum(_venta(inv) for inv in cust_invoices)
         
         # Obtener datos rápidos del límite de crédito y saldo pendiente
         cust_doc = frappe.get_cached_doc("Customer", customer)
@@ -3044,14 +3088,17 @@ def get_dashboard_stats(start_date=None, end_date=None, customer=None, item_code
             credit_limit = float(cust_doc.credit_limits[0].credit_limit or 0)
             
         _ob_sp = get_facex_user_sales_partner(company)
+        from facex_multi.api.corte import invoice_corte_sql
+        _co_cond, _co_params = invoice_corte_sql(company)
         outstanding_balance_res = frappe.db.sql(
-            """
+            f"""
             select sum(outstanding_amount)
             from `tabSales Invoice`
-            where customer = %s and docstatus = 1 and company = %s
-              and (%s = '' or sales_partner = %s)
+            where customer = %(cust)s and docstatus = 1 and company = %(co)s
+              and (%(sp)s = '' or sales_partner = %(sp)s)
+              and {_co_cond or "1=1"}
             """,
-            (customer, company, _ob_sp or "", _ob_sp or ""),
+            {"cust": customer, "co": company, "sp": _ob_sp or "", **_co_params},
         )
         outstanding_balance = float((outstanding_balance_res and outstanding_balance_res[0][0]) or 0.0)
 
@@ -3063,16 +3110,29 @@ def get_dashboard_stats(start_date=None, end_date=None, customer=None, item_code
             "outstanding_balance": float(outstanding_balance),
         }
 
+    # Las filas de "Ventas Recientes" muestran la venta de cada documento, no el
+    # total cobrado: `grand_total` se reemplaza por la venta neta y el cargo de
+    # terceros viaja aparte para que el page lo pueda rotular.
+    invoices_out = []
+    for inv in invoices[:50]:
+        row = dict(inv)
+        row["total_cobrable"] = float(_inv_total(inv))
+        row["cargos_pasarela"] = float(pasarela.get(inv.name, 0.0))
+        row["grand_total"] = _venta(inv)
+        invoices_out.append(row)
+
     return {
         "today_total": today_total,
         "today_count": len(today_invoices),
+        "today_pasarela": _pasarela(today_invoices),
         "month_total": month_total,
         "month_count": len(month_invoices),
+        "month_pasarela": _pasarela(month_invoices),
         "draft_total": draft_total,
         "draft_count": len(draft_invoices),
         "fel_processed": fel_processed,
         "fel_pending": fel_pending,
-        "invoices": invoices[:50],  # Limitar a las últimas 50 facturas en lista rápida
+        "invoices": invoices_out,  # Limitar a las últimas 50 facturas en lista rápida
         "items_summary": items_summary_list[:30],  # Top 30 productos para mostrar top 15 en frontend
         "customer_stats": customer_stats
     }

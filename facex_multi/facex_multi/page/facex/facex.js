@@ -3620,11 +3620,21 @@ class EFastSalePage {
 				if (!r.exc && r.message) {
 					const data = r.message;
 					
-					// KPIs
+					// KPIs — las ventas son NETAS: el recargo por entrega y el flete en
+					// modo pasarela los paga el cliente por el servicio de entrega y el
+					// transportista los descuenta en su liquidación, así que no son
+					// ingreso de la empresa. Se rotulan aparte para que el usuario vea
+					// de dónde sale la diferencia contra lo que cobró.
+					const _cargos_sub = (count, pasarela) => {
+						const txt = `${count} facturas`;
+						return pasarela > 0.009
+							? `${txt} · + ${format_currency(pasarela, "GTQ")} cargos de terceros`
+							: txt;
+					};
 					this.$body.find("#ef-kpi-today-total").text(format_currency(data.today_total, "GTQ"));
-					this.$body.find("#ef-kpi-today-count").text(`${data.today_count} facturas`);
+					this.$body.find("#ef-kpi-today-count").text(_cargos_sub(data.today_count, data.today_pasarela));
 					this.$body.find("#ef-kpi-month-total").text(format_currency(data.month_total, "GTQ"));
-					this.$body.find("#ef-kpi-month-count").text(`${data.month_count} facturas`);
+					this.$body.find("#ef-kpi-month-count").text(_cargos_sub(data.month_count, data.month_pasarela));
 					this.$body.find("#ef-kpi-draft-total").text(format_currency(data.draft_total, "GTQ"));
 					this.$body.find("#ef-kpi-draft-count").text(`${data.draft_count} facturas`);
 					this.$body.find("#ef-kpi-fel-processed").text(data.fel_processed);

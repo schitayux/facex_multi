@@ -25,8 +25,12 @@
   "permite_pago_contra_entrega",
   "sec_flete",
   "item_flete",
+  "recargo_es_venta",
   "cuenta_recargo_entrega",
+  "flete_es_venta",
   "cuenta_flete",
+  "cuenta_dif_comision_ganancia",
+  "cuenta_dif_comision_perdida",
   "recargo_flete_con_iva",
   "sec_politicas",
   "mayusculas_items",
@@ -41,7 +45,12 @@
   "pago_cuenta_retencion_iva",
   "pago_cuenta_cargos_bancarios",
   "sb_series_documentos",
-  "series_documentos"
+  "series_documentos",
+  "sb_corte_operacion",
+  "fecha_inicio_operacion",
+  "corte_usuarios_historial_visible",
+  "cb_corte_operacion",
+  "corte_usuarios_sin_restriccion"
  ],
  "fields": [
   {
@@ -162,25 +171,53 @@
    "options": "Item"
   },
   {
+   "fieldname": "recargo_es_venta",
+   "fieldtype": "Check",
+   "label": "El Recargo por entrega es parte de la venta",
+   "default": "0",
+   "description": "APAGADO (recomendado para pasarela): el recargo NO es ingreso de la empresa — el cliente lo paga por el servicio de entrega y el transportista lo descuenta en su liquidación. No suma en ningún informe de ventas ni en el tablero, y no se incluye en la certificación FEL. ENCENDIDO: el recargo es ingreso propio, suma como venta y se prorratea entre las líneas al certificar. El modo se CONGELA en cada factura al grabarla: cambiarlo no reescribe las facturas ya emitidas."
+  },
+  {
    "fieldname": "cuenta_recargo_entrega",
    "fieldtype": "Link",
    "label": "Cuenta Recargo por Entrega",
    "options": "Account",
-   "description": "Se lee del registro de la COMPAÑÍA. Cuenta de pasivo (p. ej. \"Recargos por Pagar a Transportista\") a la que va la fila \"Recargo por entrega\" cuando la lista de precios de la factura tiene Recargo por pieza > 0. No es ingreso: ese dinero se le paga al repartidor."
+   "description": "Se lee del registro de la COMPAÑÍA. Cuenta a la que va la fila \"Recargo por entrega\". Si el recargo es pasarela debe ser una cuenta de PASIVO (p. ej. \"Recargos por Pagar a Transportista\"): ese dinero se le paga al repartidor. Si marcó \"es parte de la venta\" debe ser una cuenta de INGRESO."
+  },
+  {
+   "fieldname": "flete_es_venta",
+   "fieldtype": "Check",
+   "label": "El Flete es parte de la venta",
+   "default": "0",
+   "description": "APAGADO (recomendado para pasarela): el flete NO es ingreso de la empresa — el cliente lo paga por usar el servicio de entrega y el transportista lo descuenta en su liquidación. No suma en ningún informe de ventas ni en el tablero, y no se incluye en la certificación FEL. ENCENDIDO: el flete es ingreso propio, suma como venta y se prorratea entre las líneas al certificar. El modo se CONGELA en cada factura al grabarla."
   },
   {
    "fieldname": "cuenta_flete",
    "fieldtype": "Link",
    "label": "Cuenta de Flete",
    "options": "Account",
-   "description": "Se lee del registro de la COMPAÑÍA. Cuenta de pasivo a la que va la fila \"Flete\" cuando el cajero marca \"Incluir Flete\". El monto se toma del precio del Ítem de Flete en la lista de precios de la factura; ya no se agrega como línea de producto."
+   "description": "Se lee del registro de la COMPAÑÍA. Cuenta a la que va la fila \"Flete\" cuando el cajero marca \"Incluir Flete\". Cuenta de PASIVO si el flete es pasarela, de INGRESO si marcó \"es parte de la venta\". El monto se toma del precio del Ítem de Flete en la lista de precios de la factura; ya no se agrega como línea de producto."
+  },
+  {
+   "fieldname": "cuenta_dif_comision_ganancia",
+   "fieldtype": "Link",
+   "label": "Cuenta Diferencia favorable de comisión",
+   "options": "Account",
+   "description": "Cuenta de INGRESO donde se reconoce la ganancia de la pasarela: cuando el recargo que el cliente pagó superó la comisión real que el transportista retuvo. Se usa en el asiento de la liquidación. Déjela vacía y use «Configurar cuentas de diferencia de comisión» para crearla con el valor recomendado."
+  },
+  {
+   "fieldname": "cuenta_dif_comision_perdida",
+   "fieldtype": "Link",
+   "label": "Cuenta Comisión de transporte no cubierta",
+   "options": "Account",
+   "description": "Cuenta de GASTO donde se reconoce la parte de la comisión del transportista que el recargo cobrado al cliente NO alcanzó a cubrir (incluye el caso de una guía sin recargo, donde la comisión completa es gasto de la empresa)."
   },
   {
    "fieldname": "recargo_flete_con_iva",
    "fieldtype": "Check",
    "label": "Recargo y Flete llevan IVA",
    "default": "0",
-   "description": "Apagado: la fila de recargo/flete se suma después del IVA (no grava). Encendido: cada cargo se parte en neto (cuenta de pasivo) + IVA (cuenta de IVA de la plantilla). Definir con el contador."
+   "description": "Solo aplica a los cargos en modo PASARELA. Apagado: la fila se suma después del IVA (no grava). Encendido: el cargo se parte en neto (cuenta configurada) + IVA (cuenta de IVA de la plantilla). Definir con el contador. Un cargo marcado \"es parte de la venta\" SIEMPRE lleva IVA, porque es ingreso gravado y así cuadra con lo que se prorratea en la certificación FEL."
   },
   {
    "fieldname": "sec_politicas",
@@ -271,11 +308,40 @@
    "options": "Account",
    "label": "Cuenta de Cargos Bancarios",
    "description": "Comisiones del banco registradas en el pago."
+  },
+  {
+   "fieldname": "sb_corte_operacion",
+   "fieldtype": "Section Break",
+   "label": "Inicio de Operación (corte de datos de prueba)"
+  },
+  {
+   "fieldname": "fecha_inicio_operacion",
+   "fieldtype": "Date",
+   "label": "Fecha de inicio de operación",
+   "description": "Vacío = sin corte (se ve todo). Con fecha, FacEx oculta las ventas, cobros, cierres y liquidaciones ANTERIORES a ese día: no se borra nada, solo deja de mostrarse. El inventario (movimientos y existencias) NO se ve afectado nunca."
+  },
+  {
+   "fieldname": "corte_usuarios_historial_visible",
+   "fieldtype": "Small Text",
+   "label": "Usuarios cuyo historial anterior sigue visible",
+   "depends_on": "fecha_inicio_operacion",
+   "description": "Un usuario por línea. Lo que ellos registraron antes del corte se sigue viendo para todos — p. ej. un vendedor que ya operaba de verdad y cuya cartera sigue viva."
+  },
+  {
+   "fieldname": "cb_corte_operacion",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "corte_usuarios_sin_restriccion",
+   "fieldtype": "Small Text",
+   "label": "Usuarios sin corte (ven todo)",
+   "depends_on": "fecha_inicio_operacion",
+   "description": "Un usuario por línea. Para ellos el corte no aplica: siguen viendo el histórico completo. Reservado a soporte y administración del sistema."
   }
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-09-29 18:00:00.000000",
+ "modified": "2026-10-01 02:10:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Configuracion Compania",

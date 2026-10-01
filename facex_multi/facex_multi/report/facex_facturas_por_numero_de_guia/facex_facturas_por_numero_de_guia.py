@@ -51,6 +51,13 @@ def get_data(filters):
 		conditions.append(sc_cond)
 		values.update(sc_params)
 
+	# Corte por inicio de operación, por compañía (ver api.corte).
+	from facex_multi.api.corte import invoice_corte_companies_sql
+	co_cond, co_params = invoice_corte_companies_sql(companies, "si")
+	if co_cond:
+		conditions.append(co_cond)
+		values.update(co_params)
+
 	if filters.transportista:
 		conditions.append("g.transportista = %(transportista)s")
 		values["transportista"] = filters.transportista
