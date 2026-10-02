@@ -42,7 +42,7 @@ def search_suppliers_maint(txt: str = "", company: str = None) -> list:
 @frappe.whitelist()
 def search_suppliers_maintenance(company: str = None, start: int = 0, page_length: int = 15,
                                    nombre: str = None, codigo: str = None, nit: str = None,
-                                   telefono: str = None):
+                                   telefono: str = None, texto: str = None, filtro: str = None):
     """Búsqueda/paginación de proveedores para el Mantenimiento de Proveedores (modo
     búsqueda-primero, igual que search_customers_maintenance en customer.py). Cada
     parámetro filtra una columna distinta y se combinan con AND. Sin filtros, lista
@@ -75,6 +75,21 @@ def search_suppliers_maintenance(company: str = None, start: int = 0, page_lengt
     if telefono:
         conditions.append("custom_telefono LIKE %(telefono)s")
         params["telefono"] = f"%{telefono}%"
+
+    # Búsqueda libre del panel de Mantenimiento (cada palabra en alguno de estos campos)
+    for i, t in enumerate([t for t in (texto or "").strip().split() if t][:6]):
+        params[f"tx{i}"] = f"%{t}%"
+        conditions.append(
+            f"(supplier_name LIKE %(tx{i})s OR name LIKE %(tx{i})s OR tax_id LIKE %(tx{i})s "
+            f"OR custom_telefono LIKE %(tx{i})s)"
+        )
+
+    if filtro == "activos":
+        conditions.append("disabled = 0")
+    elif filtro == "inactivos":
+        conditions.append("disabled = 1")
+    elif filtro == "sin_nit":
+        conditions.append("IFNULL(tax_id, '') = ''")
 
     company_filter = "(bfel_company = %(company)s OR (bfel_company IS NULL OR bfel_company = ''))"
     where = " AND ".join([company_filter] + conditions)

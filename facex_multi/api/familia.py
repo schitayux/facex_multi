@@ -314,6 +314,35 @@ def _familia_members(familia: str, company: str) -> list:
 
 
 @frappe.whitelist()
+def list_familia_items(familia: str, company: str = None):
+    """Los ítems (hijos) asignados a una familia, para verlos desde la pestaña
+    Familias del Mantenimiento: código, nombre, UdM, grupo y si están deshabilitados."""
+    if not has_efast_permission():
+        frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
+    _require_feature()
+    company = get_effective_company(company)
+    _require_view(company)
+
+    fam_company = frappe.db.get_value("FacEx Familia de Precio", familia, "bfel_company")
+    if fam_company is None and not frappe.db.exists("FacEx Familia de Precio", familia):
+        frappe.throw(f"La familia «{familia}» no existe.")
+    if fam_company and fam_company != company:
+        frappe.throw("La familia pertenece a otra compañía.")
+
+    rows = frappe.db.sql(
+        f"""
+        SELECT name AS item_code, item_name, stock_uom, item_group, disabled
+        FROM `tabItem`
+        WHERE custom_facex_familia = %(familia)s AND {_company_item_where()}
+        ORDER BY item_name ASC, name ASC
+        """,
+        {"familia": familia, "company": company},
+        as_dict=True,
+    )
+    return {"familia": familia, "rows": rows, "total": len(rows)}
+
+
+@frappe.whitelist()
 def get_familia_members(familia: str, company: str = None, price_list: str = None):
     """Resumen para el diálogo de confirmación de "Aplicar a la familia":
     cuántos ítems, cuántos deshabilitados, y (si se pasa price_list) cuántos ya

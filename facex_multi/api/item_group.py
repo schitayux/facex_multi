@@ -38,20 +38,81 @@ def _require_edit(company: str) -> str:
     return company
 
 
+_ITEM_COMPANY_WHERE = """(
+    bfel_company = %(company)s
+    OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
+)"""
+
+
 @frappe.whitelist()
 def list_item_groups_maintenance(company: str = None):
-    """Lista plana de Item Group con su jerarquía (parent_item_group)."""
-    _require_view(company)
+    """Lista plana de Item Group en orden de árbol (lft), con su profundidad,
+    cuántos subgrupos directos tiene y cuántos ítems de la compañía tiene por sí
+    solo (`item_count`) y contando sus descendientes (`item_count_total`)."""
+    company = _require_view(company)
 
     groups = frappe.get_all(
         "Item Group",
-        fields=["name", "item_group_name", "parent_item_group", "is_group", "disabled"],
+        fields=["name", "item_group_name", "parent_item_group", "is_group", "disabled", "lft", "rgt"],
         order_by="lft asc",
     )
+    counts = dict(frappe.db.sql(
+        f"SELECT item_group, COUNT(*) FROM `tabItem` WHERE {_ITEM_COMPANY_WHERE} GROUP BY item_group",
+        {"company": company},
+    ))
+
+    stack = []  # rgt de los ancestros abiertos → profundidad
     for g in groups:
-        g["item_count"] = frappe.db.count("Item", {"item_group": g["name"]})
+        while stack and g["lft"] > stack[-1]:
+            stack.pop()
+        g["depth"] = len(stack)
+        stack.append(g["rgt"])
+        g["item_count"] = int(counts.get(g["name"], 0))
+
+    children = {}
+    for g in groups:
+        children[g["parent_item_group"]] = children.get(g["parent_item_group"], 0) + 1
+    for g in groups:
+        g["child_count"] = children.get(g["name"], 0)
+        g["item_count_total"] = sum(
+            int(counts.get(o["name"], 0)) for o in groups if o["lft"] >= g["lft"] and o["rgt"] <= g["rgt"]
+        )
+
+    for g in groups:
+        g.pop("lft", None)
+        g.pop("rgt", None)
 
     return {"item_groups": groups}
+
+
+@frappe.whitelist()
+def list_group_items(group: str, company: str = None, include_children: int = 1):
+    """Ítems de la compañía de un grupo (y, opcionalmente, de sus subgrupos)
+    para verlos desde la pestaña Grupo de Ítems del Mantenimiento."""
+    company = _require_view(company)
+    row = frappe.db.get_value("Item Group", group, ["lft", "rgt"], as_dict=True)
+    if not row:
+        frappe.throw(f"El grupo de ítems '{group}' no existe.")
+
+    if int(include_children or 0):
+        names = frappe.get_all(
+            "Item Group", filters={"lft": [">=", row.lft], "rgt": ["<=", row.rgt]}, pluck="name"
+        )
+    else:
+        names = [group]
+
+    rows = frappe.db.sql(
+        f"""
+        SELECT name AS item_code, item_name, stock_uom, item_group, disabled
+        FROM `tabItem`
+        WHERE {_ITEM_COMPANY_WHERE} AND item_group IN %(groups)s
+        ORDER BY item_name ASC, name ASC
+        LIMIT 1000
+        """,
+        {"company": company, "groups": tuple(names)},
+        as_dict=True,
+    )
+    return {"group": group, "rows": rows, "total": len(rows)}
 
 
 @frappe.whitelist()

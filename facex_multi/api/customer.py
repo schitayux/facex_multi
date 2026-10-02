@@ -186,7 +186,8 @@ def search_customer(txt: str, company: str = None):
 @frappe.whitelist()
 def search_customers_maintenance(company: str = None, start: int = 0, page_length: int = 15,
                                    nombre: str = None, codigo: str = None, nit: str = None,
-                                   grupo: str = None, celular: str = None, vendedor: str = None):
+                                   grupo: str = None, celular: str = None, vendedor: str = None,
+                                   texto: str = None, filtro: str = None):
     """Búsqueda/paginación de clientes para el Mantenimiento de Clientes (modo
     búsqueda-primero). Cada parámetro filtra una columna distinta y se combinan
     con AND, para soportar tanto el buscador rápido del panel izquierdo (un solo
@@ -220,6 +221,22 @@ def search_customers_maintenance(company: str = None, start: int = 0, page_lengt
     if grupo:
         conditions.append("customer_group LIKE %(grupo)s")
         params["grupo"] = f"%{grupo}%"
+
+    # Búsqueda libre del panel de Mantenimiento: cada palabra debe aparecer en
+    # alguno de estos campos (en cualquier orden).
+    for i, t in enumerate([t for t in (texto or "").strip().split() if t][:6]):
+        params[f"tx{i}"] = f"%{t}%"
+        conditions.append(
+            f"(customer_name LIKE %(tx{i})s OR name LIKE %(tx{i})s OR tax_id LIKE %(tx{i})s "
+            f"OR bfel_id_receptor LIKE %(tx{i})s OR mobile_no LIKE %(tx{i})s OR customer_group LIKE %(tx{i})s)"
+        )
+
+    if filtro == "activos":
+        conditions.append("disabled = 0")
+    elif filtro == "inactivos":
+        conditions.append("disabled = 1")
+    elif filtro == "sin_nit":
+        conditions.append("(IFNULL(bfel_id_receptor, '') = '' AND IFNULL(tax_id, '') = '')")
 
     celular = (celular or "").strip()
     if celular:

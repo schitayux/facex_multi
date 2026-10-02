@@ -67,3 +67,23 @@ facex_multi.setup_back_guard = function ({ to = "/app", is_dirty = () => false, 
 			if (e.originalEvent && e.originalEvent.persisted) push_guard_state();
 		});
 };
+
+// "Recargar" del menú de usuario de las pantallas FacEx: lo mismo que
+// "Recargar" del escritorio de Frappe (borra la caché local y la de la sesión
+// en el servidor y recarga la página con la última versión). Si hay trabajo
+// sin guardar pide confirmación primero.
+facex_multi.reload_app = function (dirty) {
+	const go = () => {
+		if (frappe.ui.toolbar && frappe.ui.toolbar.clear_cache) {
+			frappe.ui.toolbar.clear_cache();
+		} else {
+			try { frappe.assets.clear_local_storage(); } catch (e) { /* sin assets */ }
+			frappe.xcall("frappe.sessions.clear").then(() => location.reload(true)).catch(() => location.reload(true));
+		}
+	};
+	if (dirty) {
+		frappe.confirm("Hay cambios sin guardar que se perderán al recargar. ¿Recargar de todos modos?", go);
+	} else {
+		go();
+	}
+};

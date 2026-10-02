@@ -139,6 +139,7 @@ class FacexCierreDiario {
 				<div class="cd-user-menu-label">Usuario Conectado</div>
 				<div class="cd-user-fullname" id="cd-active-user-fullname"></div>
 				<div class="cd-user-email" id="cd-active-user-email"></div>
+				<button type="button" class="cd-btn cd-user-menu-btn" id="cd-btn-reload" title="Limpia la caché y recarga con la última versión"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>Recargar</button>
 				<button type="button" class="cd-btn cd-btn-danger cd-user-menu-btn" id="cd-btn-logout">Cerrar Sesión</button>
 			</div>
 		</div>
@@ -156,6 +157,7 @@ class FacexCierreDiario {
 		$(document).off(".cdUserMenu").on("click.cdUserMenu", (e) => {
 			if (!$(e.target).closest(".cd-user-dropdown").length) this.$root.find("#cd-user-menu").fadeOut(150);
 		});
+		this.$root.find("#cd-btn-reload").on("click", () => facex_multi.reload_app(this.is_dirty()));
 		this.$root.find("#cd-btn-logout").on("click", () => frappe.app.logout());
 	}
 
@@ -1078,7 +1080,8 @@ body.facex-fullscreen-mode .layout-container, body.facex-fullscreen-mode #space-
 .cd-user-menu-label { font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#6c757d;margin-bottom:4px; }
 .cd-user-fullname { font-size:14px;font-weight:700;color:#0f172a; }
 .cd-user-email { font-size:12px;color:#6c757d;margin-bottom:14px;word-break:break-all; }
-.cd-user-menu-btn { width:100%; }
+.cd-user-menu-btn { width:100%; margin-bottom:8px; }
+.cd-user-menu-btn:last-child { margin-bottom:0; }
 
 .cd-wrap { max-width:1280px;margin:0 auto;padding:18px 16px 40px; }
 .cd-head { display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:14px; }

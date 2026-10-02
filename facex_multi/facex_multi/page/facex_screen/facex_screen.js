@@ -355,6 +355,7 @@ class EFastPOSScreen {
 									<button type="button" class="btn btn-sm btn-default efs-user-menu-btn" id="efs-btn-switch-company">Aplicar Compañía</button>
 									<hr />
 								</div>
+								<button type="button" class="btn btn-sm btn-default efs-user-menu-btn" id="efs-btn-reload" title="Limpia la caché y recarga con la última versión"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>Recargar</button>
 								<button type="button" class="btn btn-sm btn-default efs-user-menu-btn" id="efs-btn-change-password">Cambiar Contraseña</button>
 								<button type="button" class="btn btn-sm btn-danger efs-user-menu-btn" id="efs-btn-logout">Cerrar Sesión</button>
 							</div>
@@ -594,6 +595,7 @@ class EFastPOSScreen {
 			});
 		});
 
+		this.$body.find("#efs-btn-reload").on("click", () => facex_multi.reload_app((this.doc.items || []).length > 0));
 		this.$body.find("#efs-btn-logout").on("click", () => frappe.app.logout());
 
 		this.$body.find("#efs-btn-change-password").on("click", (e) => {

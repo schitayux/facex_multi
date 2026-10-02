@@ -138,6 +138,7 @@ class FacexInventario {
 		// completo en cada navegación — por eso this.$body queda apuntando al
 		// contenedor interno, no al body completo de la página.
 		this._render_topbar();
+		this._bind_gms();
 		this.$body = this.$page_root.find("#inv-content-root");
 		this._init();
 	}
@@ -183,12 +184,14 @@ class FacexInventario {
 					<button type="button" class="inv-btn inv-btn-secondary inv-user-menu-btn" id="inv-btn-switch-company">Aplicar Compañía</button>
 					<hr />
 				</div>
+				<button type="button" class="inv-btn inv-btn-secondary inv-user-menu-btn" id="inv-btn-reload" title="Limpia la caché y recarga con la última versión"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>Recargar</button>
 				<button type="button" class="inv-btn inv-btn-secondary inv-user-menu-btn" id="inv-btn-change-password">Cambiar Contraseña</button>
 				<button type="button" class="inv-btn inv-btn-danger inv-user-menu-btn" id="inv-btn-logout">Cerrar Sesión</button>
 			</div>
 		</div>
 	</div>
 </div>
+<div id="inv-nav-bar" style="display:none;"></div>
 <div id="inv-content-root"></div>
 		`);
 
@@ -262,6 +265,7 @@ class FacexInventario {
 			});
 		});
 
+		this.$page_root.find("#inv-btn-reload").on("click", () => facex_multi.reload_app((this.entry_rows || []).length > 0));
 		this.$page_root.find("#inv-btn-logout").on("click", () => frappe.app.logout());
 
 		this.$page_root.find("#inv-btn-change-password").on("click", (e) => {
@@ -376,8 +380,167 @@ class FacexInventario {
 	}
 
 	_init() {
+		this._install_nav();
 		this._render_loading();
 		this._load_defaults();
+	}
+
+	// ──────────────────────────────────────────────
+	// Ruta de navegación: al pasar de una ventana a otra se guarda la anterior
+	// (con sus filtros, pestaña y líneas sin grabar) y aparece el botón
+	// «Volver a …» para regresar exactamente a ella.
+	// ──────────────────────────────────────────────
+
+	_install_nav() {
+		this._nav_stack = [];
+		this._cur_view = null;
+		this._nav_restoring = false;
+
+		const named = {
+			_open_kardex: "Kardex de Movimientos",
+			_open_existencias: "Existencias",
+			_open_trazabilidad: "Trazabilidad",
+			_open_kardex_producto: "Kardex por Producto",
+			_open_valuacion: "Valuación",
+			_open_vencimientos: "Vencimientos",
+			_open_rotacion_abc: "Rotación ABC",
+			_open_entradas_proveedor: "Entradas por Proveedor",
+			_open_rep_transformaciones: "Informe de Transformaciones",
+			_open_maestro_items: "Maestro de Ítems",
+			_open_costos_items: "Costos a Ítems",
+			_open_almacenes: "Almacenes",
+			_open_recepcion_traslados: "Recepción de Traslados",
+			_open_lista_materiales: "Listas de Materiales",
+			_open_transformacion: "Transformación",
+			_open_transformar: "Transformar",
+			_open_movement: (mode) => (INV_MOVEMENTS.find((m) => m.mode === mode) || {}).title || "Movimientos",
+			_render_movement_result: (doc) => `${doc.name}`,
+		};
+		Object.entries(named).forEach(([fn, label]) => {
+			const orig = this[fn].bind(this);
+			this[fn] = (...args) => {
+				this._nav_enter({
+					label: typeof label === "function" ? label(...args) : label,
+					reopen: () => orig(...args),
+					is_movement: fn === "_open_movement",
+				});
+				return orig(...args);
+			};
+		});
+
+		const shell = this._render_shell.bind(this);
+		this._render_shell = (...args) => {
+			this._nav_enter(null);
+			return shell(...args);
+		};
+	}
+
+	// Foto de la ventana actual: valores de filtros/campos por id, pestaña,
+	// scroll y (en Entradas/Salidas/Transferencias) las líneas aún sin grabar.
+	_nav_capture(view) {
+		const fields = {};
+		this.$body.find("input[id],select[id],textarea[id]").each((i, el) => {
+			if (["file", "password", "button", "submit"].includes(el.type)) return;
+			fields[el.id] = (el.type === "checkbox" || el.type === "radio") ? { c: el.checked } : { v: $(el).val() };
+		});
+		const snap = {
+			view,
+			fields,
+			wh: this._movement_wh_selected ? this._movement_wh_selected() : [],
+			st: [...(this._mov_st_sel || [])],
+			gms: this.$body.find(".inv-gms").map((i, el) => [[el.id, $(el).find(".inv-gms-chk:checked").map((j, c) => c.value).get()]]).get(),
+			xwh: this.$body.find(".inv-x-wh-chk:checked").map((i, el) => el.value).get(),
+			xgrp: this.$body.find(".inv-x-group-cb:checked").map((i, el) => el.value).get(),
+			tab: this.$body.find(".inv-tab-active").data("tab") || null,
+			scroll: window.scrollY || 0,
+		};
+		if (view.is_movement && (this.entry_rows || []).length) snap.rows = this.entry_rows.map((r) => ({ ...r }));
+		return snap;
+	}
+
+	_nav_enter(view) {
+		const cur = this._cur_view;
+		if (!this._nav_restoring && cur && (!view || view.label !== cur.label)) {
+			const snap = this._nav_capture(cur);
+			this._nav_stack = this._nav_stack.filter((x) => x.view.label !== cur.label);
+			this._nav_stack.push(snap);
+			if (this._nav_stack.length > 10) this._nav_stack.shift();
+		}
+		this._cur_view = view;
+		this._nav_update_bar();
+	}
+
+	_nav_update_bar() {
+		const $bar = this.$page_root.find("#inv-nav-bar");
+		// Si la pila apunta a la ventana actual no tiene sentido ofrecer volver a ella.
+		const top = [...this._nav_stack].reverse().find((x) => !this._cur_view || x.view.label !== this._cur_view.label);
+		if (!top) { $bar.hide().empty(); return; }
+		const esc = frappe.utils.escape_html;
+		$bar.html(`
+<div style="display:flex;align-items:center;gap:10px;padding:8px 16px;background:#fff7ed;border-bottom:1px solid #fdba74;">
+  <button type="button" id="inv-nav-back" style="background:#f97316;color:#fff;border:0;border-radius:20px;padding:6px 18px;font-weight:700;font-size:13px;cursor:pointer;box-shadow:0 2px 6px rgba(249,115,22,.4);">&#8617; Volver a ${esc(top.view.label)}</button>
+  <span style="font-size:12px;color:#9a5b1f;">Se conservan sus filtros</span>
+  <button type="button" id="inv-nav-clear" title="Descartar" style="margin-left:auto;background:none;border:0;color:#9a5b1f;font-size:16px;cursor:pointer;">&times;</button>
+</div>`).show();
+		$bar.find("#inv-nav-back").on("click", () => this._nav_back(top));
+		$bar.find("#inv-nav-clear").on("click", () => { this._nav_stack = []; this._nav_update_bar(); });
+	}
+
+	_nav_back(snap) {
+		this._nav_stack = this._nav_stack.filter((x) => x !== snap);
+		this._nav_restoring = true;
+		try { snap.view.reopen(); } finally { this._nav_restoring = false; }
+		this._cur_view = snap.view;
+		this._nav_update_bar();
+		this._nav_apply(snap, 0);
+	}
+
+	// La ventana puede terminar de dibujarse después de una llamada al servidor:
+	// se reintenta unos instantes hasta que existan los campos guardados.
+	_nav_apply(snap, tries) {
+		const ids = Object.keys(snap.fields);
+		const missing = ids.filter((id) => !this.$body.find(`[id="${id}"]`).length);
+		if (missing.length && ids.length && tries < 15) {
+			setTimeout(() => this._nav_apply(snap, tries + 1), 150);
+			return;
+		}
+		ids.forEach((id) => {
+			const $el = this.$body.find(`[id="${id}"]`);
+			if (!$el.length) return;
+			const f = snap.fields[id];
+			if ("c" in f) $el.prop("checked", f.c); else $el.val(f.v);
+		});
+		const wh = new Set(snap.wh || []);
+		if (wh.size) {
+			this.$body.find(".inv-m-wh-chk").each((i, el) => { el.checked = wh.has(el.value); });
+			this.$body.find("#inv-m-wh-all").prop("checked", false);
+			this._wh_sync_groups();
+			this._movement_wh_label();
+		}
+		(snap.gms || []).forEach(([id, vals]) => { if (vals.length) this._ms_set(id, vals); });
+		if ((snap.xwh || []).length || (snap.xgrp || []).length) {
+			const xs = new Set(snap.xwh || []), gs = new Set(snap.xgrp || []);
+			this.$body.find(".inv-x-wh-chk").each((i, el) => { el.checked = xs.has(el.value); });
+			this.$body.find(".inv-x-group-cb").each((i, el) => { el.checked = gs.has(el.value); });
+			this.$body.find("#inv-x-wh-all").prop("checked", !xs.size);
+			this.$body.find("#inv-x-grp-all").prop("checked", !gs.size);
+			this._wh_sync_groups("x");
+			this._exist_ms_labels();
+		}
+		if (snap.st && snap.st.length) this._mov_st_sel = new Set(snap.st);
+		if (snap.rows && snap.rows.length) {
+			this.entry_rows = snap.rows;
+			this._entry_uid = Math.max(this._entry_uid || 0, ...snap.rows.map((r) => r.uid || 0));
+			this._render_entry_rows();
+		}
+		if (snap.tab === "movs" && snap.view.is_movement) {
+			this._switch_movement_tab("movs");
+		} else {
+			// Vuelve a ejecutar la consulta con los filtros restaurados.
+			const $btn = this.$body.find('button[id$="-refresh"], button#inv-mi-search, button#inv-ci-search').filter(":visible").first();
+			if ($btn.length) $btn.trigger("click");
+		}
+		if (snap.scroll) setTimeout(() => window.scrollTo(0, snap.scroll), 400);
 	}
 
 	_render_loading() {
@@ -394,6 +557,9 @@ class FacexInventario {
 				this.defaults = r.message || {};
 				this._can_costs = !!((this.defaults.permissions || {}).puede_ver_costos);
 				this._render_transporte_menu();
+				// Cambio de compañía: lo guardado pertenecía a otra compañía.
+				this._nav_stack = [];
+				this._cur_view = null;
 				this._render_shell();
 				this._bind_trn_realtime();
 				this._check_url_transformar();
@@ -589,6 +755,8 @@ class FacexInventario {
 		this._entry_uid = 0;
 		this._saving = false;
 		this._client_token = frappe.utils.get_random(20);
+		this._mov_st_sel = new Set();
+		this._mov_rows = [];
 
 		this._entry_prefill_source = (prefill && (prefill.source_warehouse || prefill.s_warehouse)) || "";
 		this._entry_prefill_target = (prefill && (prefill.target_warehouse || prefill.t_warehouse)) || "";
@@ -743,17 +911,24 @@ class FacexInventario {
 
   <div id="inv-e-tab-movs" style="display:none;">
 
-    <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 20px;margin-bottom:16px;display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;">
-      <div>
-        <label class="inv-label">Desde</label>
-        <input type="date" id="inv-m-from" class="inv-select" value="${first_day}">
+    ${this._filter_panel_html(`
+      <div><label class="inv-label">Desde</label><input type="date" id="inv-m-from" class="inv-select" value="${first_day}"></div>
+      <div><label class="inv-label">Hasta</label><input type="date" id="inv-m-to" class="inv-select" value="${last_day}"></div>
+      <div class="inv-wh-ms" style="position:relative;">
+        <label class="inv-label">Almacén</label>
+        <button type="button" id="inv-m-wh-btn" class="inv-select inv-ms-btn">Todos los almacenes ▾</button>
+        <div id="inv-m-wh-panel" class="inv-ms-panel" style="min-width:300px;">
+          <input type="text" id="inv-m-wh-q" class="inv-select" placeholder="Buscar almacén..." autocomplete="off" style="width:calc(100% - 16px);margin:2px 8px 6px;">
+          <label class="inv-ms-row" style="font-weight:600;"><input type="checkbox" id="inv-m-wh-all" checked> Todos</label>
+          ${this._wh_tree_html()}
+        </div>
       </div>
-      <div>
-        <label class="inv-label">Hasta</label>
-        <input type="date" id="inv-m-to" class="inv-select" value="${last_day}">
+      <div class="inv-st-ms" style="position:relative;">
+        <label class="inv-label">Estado</label>
+        <button type="button" id="inv-m-st-btn" class="inv-select inv-ms-btn">Todos los estados ▾</button>
+        <div id="inv-m-st-panel" class="inv-ms-panel" style="min-width:300px;"></div>
       </div>
-      <button type="button" id="inv-m-refresh" class="inv-btn inv-btn-secondary">Actualizar</button>
-    </div>
+    `, `<button type="button" id="inv-m-refresh" class="inv-btn inv-btn-primary">Filtrar</button>`)}
 
     <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;overflow-x:auto;">
       <table class="inv-table" style="width:100%;">
@@ -792,6 +967,71 @@ class FacexInventario {
 		if (tab === "movs") this._load_movement_list();
 	}
 
+	// Almacenes marcados en el filtro de Movimientos del Mes ([] = todos).
+	_movement_wh_selected() {
+		return this.$body.find(".inv-m-wh-chk:checked").map((i, el) => el.value).get();
+	}
+
+	_movement_wh_label() {
+		const sel = this._movement_wh_selected();
+		const txt = !sel.length ? "Todos los almacenes" : (sel.length === 1 ? sel[0] : `${sel.length} almacenes`);
+		this.$body.find("#inv-m-wh-btn").text(txt + " ▾");
+	}
+
+	// Datos de auditoría del documento ya creado: quién, cuándo y qué cambió.
+	_movement_audit_html(doc) {
+		const esc = frappe.utils.escape_html;
+		const fmt = (d) => (d ? frappe.datetime.str_to_user(d) : "");
+		const changed = doc.modified && doc.modified !== doc.creation;
+		const changes = (doc.changes || []).map((c) =>
+			`<div style="margin-top:2px;">${esc(fmt(c.when))} · ${esc(c.user)} — <span style="color:#6c757d;">${esc((c.fields || []).join(", "))}</span></div>`).join("");
+		return `
+<div class="inv-audit" style="font-size:12.5px;color:#495057;border:1px solid #e9ecef;background:#f8f9fa;border-radius:6px;padding:8px 12px;margin-bottom:12px;line-height:1.5;">
+  <div><span style="color:#6c757d;">Creado por</span> <strong>${esc(doc.owner_name || doc.owner || "")}</strong> · ${esc(fmt(doc.creation))}</div>
+  ${changed ? `<div><span style="color:#6c757d;">Última modificación</span> <strong>${esc(doc.modified_by_name || "")}</strong> · ${esc(fmt(doc.modified))}</div>` : ""}
+  ${changes ? `<div style="margin-top:4px;"><span style="color:#6c757d;">Cambios</span>${changes}</div>` : ""}
+</div>`;
+	}
+
+	// Ventana emergente con el movimiento; solo el enlace del documento abre
+	// el Stock Entry (en pestaña nueva).
+	_show_movement_popup(doc) {
+		const esc = frappe.utils.escape_html;
+		const cfg = this._movement_cfg();
+		const STATUS = { 0: ["Borrador", "#6c757d"], 1: ["Sometido", "#28a745"], 2: ["Anulado", "#e03e2d"] };
+		const [label, color] = STATUS[cint(doc.docstatus)] || STATUS[0];
+		const link = `/app/stock-entry/${encodeURIComponent(doc.name)}`;
+		const d = new frappe.ui.Dialog({
+			title: `${cfg.label} de Inventario`,
+			size: "large",
+			primary_action_label: "Abrir con acciones",
+			primary_action: () => { d.hide(); this._render_movement_result(doc); },
+			secondary_action_label: "Cerrar",
+			secondary_action: () => d.hide(),
+		});
+		const rows = (doc.items || []).map((r) => `<tr>
+  <td><strong>${esc(r.item_code)}</strong><br><span style="color:#6c757d;">${esc(r.item_name || "")}</span></td>
+  <td>${esc(String(r.qty))} ${esc(r.uom || "")}</td>
+  ${cfg.show_cost ? `<td>${r.rate === null || r.rate === undefined ? "—" : frappe.format(flt(r.rate), { fieldtype: "Currency" })}</td>` : ""}
+</tr>`).join("");
+		d.$body.html(`
+<div style="margin-bottom:10px;">
+  <a href="${link}" target="_blank" rel="noopener" style="font-size:16px;font-weight:700;">${esc(doc.name)} ↗</a>
+  <span style="color:${color};font-weight:600;margin-left:8px;">${label}</span>
+  <div style="font-size:12.5px;color:#6c757d;">${esc(this._movement_warehouse_display(doc))} · ${esc(doc.posting_date || "")}</div>
+</div>
+${this._movement_audit_html(doc)}
+<div style="margin-bottom:12px;">
+  <div style="font-size:11.5px;color:#6c757d;text-transform:uppercase;letter-spacing:.4px;">Comentario</div>
+  <div style="white-space:pre-wrap;">${doc.remarks ? esc(doc.remarks) : `<span style="color:#adb5bd;">Sin comentario</span>`}</div>
+</div>
+<table class="inv-table" style="width:100%;">
+  <thead><tr><th>Producto</th><th style="width:130px;">Cantidad</th>${cfg.show_cost ? `<th style="width:110px;">Costo Unit.</th>` : ""}</tr></thead>
+  <tbody>${rows}</tbody>
+</table>`);
+		d.show();
+	}
+
 	_load_movement_list() {
 		const cfg = this._movement_cfg();
 		const from_date = this.$body.find("#inv-m-from").val();
@@ -801,11 +1041,145 @@ class FacexInventario {
 
 		frappe.call({
 			method: cfg.api_list,
-			args: { company: this.defaults.company, from_date, to_date },
+			args: { company: this.defaults.company, from_date, to_date, warehouses: this._movement_wh_selected() },
 			callback: (r) => {
-				const rows = (r.message && r.message.rows) || [];
+				this._mov_rows = (r.message && r.message.rows) || [];
+				this._render_movement_estado_options();
+				this._paint_movement_rows();
+			},
+		});
+	}
+
+	// Estados que existen en las filas cargadas: el de documento (Borrador /
+	// Sometido / Anulado) y, en traslados, el de recepción.
+	_mov_estado_keys(row) {
+		// Transferencias: solo Borrador / Sometido y las dos pendientes de «Recepción de transferencia».
+		if (this.mode === "transfer") {
+			const k = [];
+			if (row.docstatus === 0) k.push("Borrador");
+			if (row.docstatus === 1) k.push("Sometido");
+			if (row.docstatus === 1 && (row.recepcion_tono === "pending" || row.recepcion_tono === "partial")) k.push("Pendientes de recepción");
+			if (row.docstatus === 1 && row.recepcion_tono === "return") k.push("Pendientes de devolución");
+			return k;
+		}
+		const keys = [({ 0: "Borrador", 1: "Sometido", 2: "Anulado" })[row.docstatus] || "Borrador"];
+		if (row.recepcion_estado) keys.push(row.recepcion_estado.replace(/^(Ingreso de recepción)\s*\(.*\)$/, "$1"));
+		return keys;
+	}
+
+	_render_movement_estado_options() {
+		if (this.mode === "transfer") {
+			const sel = this._mov_st_sel || (this._mov_st_sel = new Set());
+			const esc = frappe.utils.escape_html;
+			const opt = (k, pad) => `<label class="inv-ms-row" style="padding-left:${pad}px;"><input type="checkbox" class="inv-m-st-chk" value="${k}" ${sel.has(k) ? "checked" : ""}> ${esc(k)}</label>`;
+			this.$body.find("#inv-m-st-panel").html(`
+<label class="inv-ms-row" style="font-weight:600;"><input type="checkbox" id="inv-m-st-all" ${sel.size ? "" : "checked"}> Todas</label>
+${opt("Borrador", 10)}
+${opt("Sometido", 10)}
+<div style="padding:6px 10px 2px;font-size:11px;color:#6c757d;text-transform:uppercase;letter-spacing:.4px;">Recepción de transferencia</div>
+${opt("Pendientes de recepción", 22)}
+${opt("Pendientes de devolución", 22)}`);
+			this._movement_st_label();
+			return;
+		}
+		const found = new Set();
+		(this._mov_rows || []).forEach((r) => this._mov_estado_keys(r).forEach((k) => found.add(k)));
+		const base = ["Borrador", "Sometido", "Anulado"].filter((k) => found.has(k));
+		const extra = [...found].filter((k) => !base.includes(k)).sort();
+		const sel = this._mov_st_sel || (this._mov_st_sel = new Set());
+		// Una selección previa que ya no existe en los datos no debe ocultar todo.
+		[...sel].forEach((k) => { if (!found.has(k)) sel.delete(k); });
+		const esc = frappe.utils.escape_html;
+		this.$body.find("#inv-m-st-panel").html(`
+<label class="inv-ms-row" style="font-weight:600;"><input type="checkbox" id="inv-m-st-all" ${sel.size ? "" : "checked"}> Todos</label>
+${[...base, ...extra].map((k) => `<label class="inv-ms-row"><input type="checkbox" class="inv-m-st-chk" value="${esc(k)}" ${sel.has(k) ? "checked" : ""}> ${esc(k)}</label>`).join("")}`);
+		this._movement_st_label();
+	}
+
+	_movement_st_label() {
+		const n = (this._mov_st_sel || new Set()).size;
+		this.$body.find("#inv-m-st-btn").text((!n ? (this.mode === "transfer" ? "Todas" : "Todos los estados") : (n === 1 ? [...this._mov_st_sel][0] : `${n} estados`)) + " ▾");
+	}
+
+	// <option>s de almacenes agrupados (<optgroup>) por su almacén padre, para los
+	// selectores de los informes. Los que no tienen padre quedan sueltos al inicio.
+	_wh_options_html() {
+		const esc = frappe.utils.escape_html;
+		const parent = {};
+		(this.defaults.warehouses_meta || []).forEach((m) => { parent[m.name] = m.parent_warehouse || ""; });
+		const by = {};
+		(this.defaults.warehouses || []).forEach((w) => { (by[parent[w] || ""] = by[parent[w] || ""] || []).push(w); });
+		const opt = (w) => `<option value="${esc(w)}">${esc(w)}</option>`;
+		const keys = Object.keys(by).filter((k) => k).sort((a, b) => a.localeCompare(b));
+		return (by[""] || []).map(opt).join("")
+			+ keys.map((k) => `<optgroup label="${esc(k)}">${by[k].map(opt).join("")}</optgroup>`).join("");
+	}
+
+	// Árbol de almacenes agrupado por grupo de bodegas (Warehouse is_group).
+	_wh_tree_html(ns = "m") {
+		const esc = frappe.utils.escape_html;
+		const leaves = this.defaults.warehouses || [];
+		const meta = {};
+		(this.defaults.warehouses_meta || []).forEach((m) => { meta[m.name] = m.parent_warehouse || ""; });
+		const groups = {};
+		(this.defaults.warehouse_groups || []).forEach((g) => { groups[g.name] = g.parent_warehouse || ""; });
+		const node = (name) => ({ name, groups: {}, leaves: [] });
+		const root = node("");
+		const ensure = (g) => {
+			if (!g || !(g in groups)) return root;
+			const chain = [];
+			for (let cur = g, n = 0; cur && cur in groups && n < 12; cur = groups[cur], n++) chain.unshift(cur);
+			let at = root;
+			chain.forEach((c) => { at = at.groups[c] || (at.groups[c] = node(c)); });
+			return at;
+		};
+		leaves.forEach((w) => ensure(meta[w]).leaves.push(w));
+		const render = (n, depth) => {
+			const lv = n.leaves.map((w) => `<label class="inv-ms-row inv-wh-leaf" data-q="${esc(w.toLowerCase())}" style="padding-left:${10 + depth * 16}px;"><input type="checkbox" class="inv-${ns}-wh-chk" value="${esc(w)}"> ${esc(w)}</label>`).join("");
+			const gr = Object.values(n.groups).map((g) => `
+<div class="inv-wh-group" data-gname="${esc(g.name.toLowerCase())}">
+  <label class="inv-ms-row inv-wh-ghead" style="padding-left:${10 + depth * 16}px;font-weight:600;">
+    <span class="inv-wh-toggle" style="cursor:pointer;width:12px;display:inline-block;">▾</span>
+    <input type="checkbox" class="inv-${ns}-wh-grp"> ${esc(g.name)}
+  </label>
+  <div class="inv-wh-children">${render(g, depth + 1)}</div>
+</div>`).join("");
+			return gr + lv;
+		};
+		return `<div id="inv-${ns}-wh-tree">${render(root, 0)}</div>`;
+	}
+
+	// Busca en el árbol: muestra solo almacenes que coinciden (o cuyo grupo coincide).
+	_wh_tree_filter(q, ns = "m") {
+		q = (q || "").trim().toLowerCase();
+		const $t = this.$body.find(`#inv-${ns}-wh-tree`);
+		$t.find(".inv-wh-leaf").each((i, el) => { $(el).toggle(!q || String($(el).data("q")).includes(q)); });
+		$($t.find(".inv-wh-group").get().reverse()).each((i, el) => {
+			const $g = $(el);
+			const hit = !q || String($g.data("gname")).includes(q);
+			if (hit) $g.find(".inv-wh-leaf").show();
+			$g.toggle(hit || $g.find(".inv-wh-leaf:visible").length > 0);
+		});
+	}
+
+	// Estado de las casillas de grupo según sus hijos (marcado / mixto / vacío).
+	_wh_sync_groups(ns = "m") {
+		this.$body.find(`#inv-${ns}-wh-tree .inv-wh-group`).each((i, el) => {
+			const $c = $(el).find(`.inv-${ns}-wh-chk`);
+			const on = $c.filter(":checked").length;
+			const $g = $(el).children(".inv-wh-ghead").find(`.inv-${ns}-wh-grp`);
+			$g.prop("checked", $c.length > 0 && on === $c.length).prop("indeterminate", on > 0 && on < $c.length);
+		});
+	}
+
+	_paint_movement_rows() {
+		const $tbody = this.$body.find("#inv-m-tbody");
+		const sel = this._mov_st_sel || new Set();
+		const rows = (this._mov_rows || []).filter((r) => !sel.size || this._mov_estado_keys(r).some((k) => sel.has(k)));
+		{
+			{
 				if (!rows.length) {
-					$tbody.html(`<tr><td colspan="8" style="text-align:center;color:#adb5bd;padding:20px;">Sin movimientos en este rango.</td></tr>`);
+					$tbody.html(`<tr><td colspan="8" style="text-align:center;color:#adb5bd;padding:20px;">Sin movimientos con estos filtros.</td></tr>`);
 					return;
 				}
 				const STATUS = { 0: ["Borrador", "#6c757d"], 1: ["Sometido", "#28a745"], 2: ["Anulado", "#e03e2d"] };
@@ -830,8 +1204,8 @@ class FacexInventario {
   <td>${frappe.utils.escape_html(row.remarks || "")}</td>
 </tr>`;
 				}).join(""));
-			},
-		});
+			}
+		}
 	}
 
 	// Traslados: estado del lado del receptor (lo calcula
@@ -954,7 +1328,50 @@ class FacexInventario {
 
 		// Pestañas Nueva Entrada/Salida / Movimientos del Mes
 		$body.on("click", ".inv-tab", (e) => this._switch_movement_tab($(e.currentTarget).data("tab")));
-		$body.on("click", "#inv-m-refresh", () => this._load_movement_list());
+		$body.on("click", "#inv-m-refresh", () => { $body.find(".inv-ms-panel").hide(); this._load_movement_list(); });
+		$body.on("click", "#inv-m-wh-btn", (e) => { e.stopPropagation(); $body.find("#inv-m-st-panel").hide(); $body.find("#inv-m-wh-panel").toggle(); });
+		$body.on("click", "#inv-m-st-btn", (e) => { e.stopPropagation(); $body.find("#inv-m-wh-panel").hide(); $body.find("#inv-m-st-panel").toggle(); });
+		$body.on("click", ".inv-ms-panel", (e) => e.stopPropagation());
+		// Almacenes (árbol por grupo)
+		$body.on("change", "#inv-m-wh-all", (e) => {
+			if (e.target.checked) { $body.find(".inv-m-wh-chk").prop("checked", false); this._wh_sync_groups(); }
+			else e.target.checked = true; // «Todos» no se desmarca solo: se elige un almacén
+			this._movement_wh_label();
+		});
+		$body.on("change", ".inv-m-wh-chk", () => {
+			$body.find("#inv-m-wh-all").prop("checked", !this._movement_wh_selected().length);
+			this._wh_sync_groups();
+			this._movement_wh_label();
+		});
+		$body.on("change", ".inv-m-wh-grp", (e) => {
+			// Un grupo marca/desmarca solo los almacenes visibles de su rama (respeta la búsqueda).
+			$(e.target).closest(".inv-wh-group").find(".inv-wh-leaf:visible .inv-m-wh-chk").prop("checked", e.target.checked);
+			$body.find("#inv-m-wh-all").prop("checked", !this._movement_wh_selected().length);
+			this._wh_sync_groups();
+			this._movement_wh_label();
+		});
+		$body.on("click", ".inv-wh-toggle", (e) => {
+			e.preventDefault(); e.stopPropagation();
+			const $g = $(e.currentTarget).closest(".inv-wh-group");
+			const $c = $g.children(".inv-wh-children").toggle();
+			$(e.currentTarget).text($c.is(":visible") ? "▾" : "▸");
+		});
+		$body.on("input", "#inv-m-wh-q", (e) => this._wh_tree_filter(e.target.value));
+		// Estado (filtra sobre lo ya cargado, sin volver al servidor)
+		$body.on("change", "#inv-m-st-all", (e) => {
+			if (e.target.checked) { this._mov_st_sel = new Set(); $body.find(".inv-m-st-chk").prop("checked", false); }
+			else e.target.checked = true;
+			this._movement_st_label(); this._paint_movement_rows();
+		});
+		$body.on("change", ".inv-m-st-chk", () => {
+			this._mov_st_sel = new Set($body.find(".inv-m-st-chk:checked").map((i, el) => el.value).get());
+			$body.find("#inv-m-st-all").prop("checked", !this._mov_st_sel.size);
+			this._movement_st_label(); this._paint_movement_rows();
+		});
+		$(document).on("click.facexInv", (e) => {
+			if (!$(e.target).closest(".inv-wh-ms, .inv-st-ms").length) $body.find(".inv-ms-panel").hide();
+		});
+		this._bind_filter_toggle();
 		$body.on("click", ".inv-mov-row", (e) => {
 			const name = $(e.currentTarget).data("view");
 			frappe.call({
@@ -963,7 +1380,7 @@ class FacexInventario {
 				freeze: true,
 				callback: (r) => {
 					if (!r.message) return;
-					this._render_movement_result(r.message);
+					this._show_movement_popup(r.message);
 				},
 			});
 		});
@@ -1526,6 +1943,8 @@ class FacexInventario {
     <div style="font-size:12.5px;color:#6c757d;">${frappe.utils.escape_html(this._movement_warehouse_display(doc))} · ${frappe.utils.escape_html(doc.posting_date || "")}</div>
   </div>
 
+  ${doc.creation ? this._movement_audit_html(doc) : ""}
+
   <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;margin-bottom:16px;overflow-x:auto;">
     <table class="inv-table" style="width:100%;">
       <thead>
@@ -1719,6 +2138,99 @@ class FacexInventario {
 		return val === "__unassigned__" ? "" : val;
 	}
 
+	// Desplegable de selección múltiple genérico (casillas + búsqueda, con
+	// encabezados de grupo opcionales). items: [{value, label, group}].
+	// Los eventos viven en $page_root (ver _bind_gms), así que valen en cualquier
+	// informe sin volver a enlazarlos. Vacío = todos.
+	_ms_html(id, label, items, allLabel) {
+		const esc = frappe.utils.escape_html;
+		const grouped = {};
+		const order = [];
+		items.forEach((it) => {
+			const g = it.group || "";
+			if (!(g in grouped)) { grouped[g] = []; order.push(g); }
+			grouped[g].push(it);
+		});
+		order.sort((a, b) => (a === "" ? -1 : b === "" ? 1 : a.localeCompare(b)));
+		const row = (it, pad) => `<label class="inv-ms-row inv-gms-item" data-q="${esc((it.label + " " + (it.group || "")).toLowerCase())}" style="padding-left:${pad}px;"><input type="checkbox" class="inv-gms-chk" value="${esc(it.value)}" data-label="${esc(it.label)}"> ${esc(it.label)}</label>`;
+		const body = order.map((g) => g === ""
+			? grouped[g].map((it) => row(it, 10)).join("")
+			: `<div class="inv-gms-group" data-q="${esc(g.toLowerCase())}">
+  <label class="inv-ms-row" style="font-weight:600;"><input type="checkbox" class="inv-gms-grp"> ${esc(g)}</label>
+  ${grouped[g].map((it) => row(it, 24)).join("")}
+</div>`).join("");
+		return `
+<div class="inv-gms" id="${id}" data-all="${esc(allLabel)}" style="position:relative;">
+  <label class="inv-label">${esc(label)}</label>
+  <button type="button" class="inv-select inv-ms-btn inv-gms-btn">${esc(allLabel)} ▾</button>
+  <div class="inv-ms-panel inv-gms-panel" style="min-width:280px;">
+    <input type="text" class="inv-select inv-gms-q" placeholder="Buscar..." autocomplete="off" style="width:calc(100% - 16px);margin:2px 8px 6px;">
+    <label class="inv-ms-row" style="font-weight:600;"><input type="checkbox" class="inv-gms-all" checked> Todos</label>
+    ${body}
+  </div>
+</div>`;
+	}
+
+	_wh_ms_html(id, label = "Almacén") {
+		const parent = {};
+		(this.defaults.warehouses_meta || []).forEach((m) => { parent[m.name] = m.parent_warehouse || ""; });
+		return this._ms_html(id, label, (this.defaults.warehouses || []).map((w) => ({ value: w, label: w, group: parent[w] || "" })), "Todos los almacenes");
+	}
+
+	// Valores marcados ([] = todos).
+	_ms_values(id) {
+		return this.$body.find(`#${id} .inv-gms-chk:checked`).map((i, el) => el.value).get();
+	}
+
+	_ms_set(id, values) {
+		const set = new Set(values || []);
+		const $r = this.$body.find(`#${id}`);
+		$r.find(".inv-gms-chk").each((i, el) => { el.checked = set.has(el.value); });
+		this._gms_refresh($r);
+	}
+
+	_gms_refresh($r) {
+		const $c = $r.find(".inv-gms-chk");
+		const on = $c.filter(":checked");
+		$r.find(".inv-gms-all").prop("checked", !on.length);
+		$r.find(".inv-gms-group").each((i, g) => {
+			const $cc = $(g).find(".inv-gms-chk");
+			const n = $cc.filter(":checked").length;
+			$(g).find(".inv-gms-grp").prop("checked", $cc.length > 0 && n === $cc.length).prop("indeterminate", n > 0 && n < $cc.length);
+		});
+		const all = $r.data("all");
+		$r.find(".inv-gms-btn").text((!on.length ? all : (on.length === 1 ? on.first().data("label") : `${on.length} seleccionados`)) + " ▾");
+	}
+
+	_bind_gms() {
+		const $root = this.$page_root;
+		$root.on("click", ".inv-gms-btn", (e) => {
+			e.stopPropagation();
+			const $p = $(e.currentTarget).siblings(".inv-gms-panel");
+			$root.find(".inv-gms-panel").not($p).hide();
+			$p.toggle();
+		});
+		$root.on("click", ".inv-gms-panel", (e) => e.stopPropagation());
+		$(document).off("click.invGms").on("click.invGms", () => $root.find(".inv-gms-panel").hide());
+		const changed = ($r) => { this._gms_refresh($r); $r.trigger("gms-change"); };
+		$root.on("change", ".inv-gms-all", (e) => {
+			const $r = $(e.target).closest(".inv-gms");
+			if (e.target.checked) $r.find(".inv-gms-chk, .inv-gms-grp").prop("checked", false); else e.target.checked = true;
+			changed($r);
+		});
+		$root.on("change", ".inv-gms-chk", (e) => changed($(e.target).closest(".inv-gms")));
+		$root.on("change", ".inv-gms-grp", (e) => {
+			$(e.target).closest(".inv-gms-group").find(".inv-gms-item:visible .inv-gms-chk").prop("checked", e.target.checked);
+			changed($(e.target).closest(".inv-gms"));
+		});
+		$root.on("input", ".inv-gms-q", (e) => {
+			const q = e.target.value.trim().toLowerCase();
+			const $r = $(e.target).closest(".inv-gms");
+			$r.find(".inv-gms-item").each((i, el) => { $(el).toggle(!q || String($(el).data("q")).includes(q)); });
+			$r.find(".inv-gms-group").each((i, g) => { $(g).toggle(!q || $(g).find(".inv-gms-item:visible").length > 0); });
+		});
+	}
+
 	// Filtro "Usuario Creador" (selección múltiple) — misma fuente
 	// (this.defaults.report_users) reutilizada en todos los reportes de
 	// inventario que la soportan. Con alcance «Solo lo creado por mí» no se
@@ -1727,18 +2239,12 @@ class FacexInventario {
 		const p = this.defaults.permissions || {};
 		if (p[`alcance_${dominio}`] === "Solo lo creado por mí") return "";
 		const users = this.defaults.report_users || [];
-		return `
-<div>
-  <label class="inv-label">Usuario Creador</label>
-  <select id="${selectId}" class="inv-select" multiple size="1">
-    ${users.map(u => `<option value="${frappe.utils.escape_html(u.name)}">${frappe.utils.escape_html(u.full_name || u.name)}</option>`).join("")}
-  </select>
-</div>`;
+		return this._ms_html(selectId, "Usuario Creador", users.map((u) => ({ value: u.name, label: u.full_name || u.name })), "Todos los usuarios");
 	}
 
 	// Devuelve un array (posiblemente vacío) de usuarios seleccionados.
 	_owner_param(selectId) {
-		return this.$body.find(`#${selectId}`).val() || [];
+		return this._ms_values(selectId);
 	}
 
 	// Panel de filtros colapsable, reutilizado en Kardex / Existencias / Trazabilidad.
@@ -1790,21 +2296,10 @@ class FacexInventario {
   ${this._filter_panel_html(`
     <div><label class="inv-label">Desde</label><input type="date" id="inv-k-from" class="inv-select" value="${frappe.datetime.month_start()}"></div>
     <div><label class="inv-label">Hasta</label><input type="date" id="inv-k-to" class="inv-select" value="${frappe.datetime.month_end()}"></div>
-    <div>
-      <label class="inv-label">Tipo</label>
-      <select id="inv-k-type" class="inv-select">
-        <option value="">Todos</option>
-        <option value="in">Entradas</option>
-        <option value="out">Salidas</option>
-        <option value="transfer">Transferencias</option>
-      </select>
-    </div>
-    <div>
-      <label class="inv-label">Almacén</label>
-      <select id="inv-k-warehouse" class="inv-select" multiple size="1">
-        ${warehouses.map(w => `<option value="${frappe.utils.escape_html(w)}">${frappe.utils.escape_html(w)}</option>`).join("")}
-      </select>
-    </div>
+    ${this._ms_html("inv-k-type", "Tipo", [], "Todos los tipos")}
+    ${cc ? `<div style="display:flex;align-items:flex-end;"><label class="inv-ms-row" style="padding:7px 0;font-weight:600;cursor:pointer;"><input type="checkbox" id="inv-k-vals"> Mostrar Valores QTZ</label></div>` : ""}
+    <div style="display:flex;align-items:flex-end;"><label class="inv-ms-row" style="padding:7px 0;font-weight:600;cursor:pointer;"><input type="checkbox" id="inv-k-kpi"> Mostrar KPI y gráfica</label></div>
+    ${this._wh_ms_html("inv-k-warehouse")}
     ${this._sucursal_filter_html("inv-k-establecimiento")}
     ${this._owner_filter_html("inv-k-owner")}
     <div style="position:relative;">
@@ -1815,30 +2310,32 @@ class FacexInventario {
     </div>
   `, `<button type="button" id="inv-k-refresh" class="inv-btn inv-btn-primary">Filtrar</button>`)}
 
+  <div id="inv-k-summary" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;"></div>
+
   ${cc ? `
-  <div class="inv-chart-card">
-    <div class="inv-chart-title">Valor Acumulado en el tiempo</div>
+  <div class="inv-chart-card" id="inv-k-chart-card" style="display:none;">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+      <div class="inv-chart-title">Valor del inventario en el tiempo</div>
+      <button type="button" class="inv-chart-expand inv-btn inv-btn-secondary" style="padding:2px 10px;font-size:12px;">⤢ Ampliar</button>
+    </div>
     <div id="inv-k-chart"></div>
   </div>` : ""}
 
   <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;overflow-x:auto;">
-    <table class="inv-table" style="width:100%;">
-      <thead>
-        <tr>
-          <th>Documento</th><th style="width:95px;">Fecha</th><th style="width:100px;">Tipo</th><th>Producto</th>
-          <th style="width:90px;">Cantidad</th><th>Almacén</th><th>Establecimiento</th><th>Compañía</th>
-          <th style="width:160px;">Cuenta Contable</th>
-          ${cc ? `<th style="width:100px;">Costo</th><th style="width:110px;">Valor</th><th style="width:120px;">Valor Acumulado</th>` : ""}
-          <th style="width:90px;">Estado</th>
-        </tr>
-      </thead>
-      <tbody id="inv-k-tbody"><tr><td colspan="${NCOLS}" style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr></tbody>
-    </table>
+    <table class="inv-table inv-k-compact" style="width:100%;" id="inv-k-table"></table>
+    <div id="inv-k-pager" style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px;font-size:12.5px;color:#6c757d;"></div>
   </div>
 
 </div>
 <style>${INV_STYLES}</style>
 		`);
+		this._k_rows = [];
+		this._k_tipos_key = null;
+		this._k_expanded = new Set();   // todo comprimido al abrir; el usuario despliega bajo demanda
+		this._k_cf = {};
+		this._k_page = 0;
+		this._k_sort = { by: null, dir: "asc" };
+		this._paint_kardex();
 		this._bind_kardex_events();
 		this._load_kardex();
 	}
@@ -1851,6 +2348,46 @@ class FacexInventario {
 
 		$body.on("click", "#inv-back", () => this._render_shell());
 		$body.on("click", "#inv-k-refresh", () => this._load_kardex());
+		let _cf_t = null;
+		$body.on("input", ".inv-k-cf", (e) => {
+			this._k_cf = this._k_cf || {};
+			this._k_cf[$(e.target).data("k")] = e.target.value;
+			this._k_page = 0;
+			clearTimeout(_cf_t);
+			_cf_t = setTimeout(() => this._paint_kardex(), 200);
+		});
+		$body.on("click", "#inv-k-table th[data-sortk]", (e) => {
+			const k = $(e.currentTarget).data("sortk");
+			const s = this._k_sort || (this._k_sort = { by: null, dir: "asc" });
+			if (s.by === k) s.dir = s.dir === "asc" ? "desc" : "asc"; else { s.by = k; s.dir = "asc"; }
+			this._k_sig = null;
+			this._paint_kardex();
+		});
+		$body.on("click", ".inv-k-tog", (e) => {
+			const k = String($(e.currentTarget).data("ck"));
+			const set = this._k_expanded || (this._k_expanded = new Set());
+			if (set.has(k)) set.delete(k); else set.add(k);
+			this._paint_kardex();
+		});
+		$body.on("click", ".inv-k-allgrp", (e) => {
+			e.preventDefault();
+			const set = this._k_expanded = new Set();
+			if ($(e.currentTarget).data("a") === "open") {
+				(this._k_groups || []).forEach((g) => { set.add(`wh:${g.warehouse}`); set.add(`item:${g.group_key}`); });
+			}
+			this._k_page = 0;
+			this._paint_kardex();
+		});
+		$body.on("click", ".inv-k-pg", (e) => { this._k_page += cint($(e.currentTarget).data("d")); this._paint_kardex(); });
+		// Cualquier cambio de los filtros vuelve a consultar solo.
+		let _k_auto = null;
+		const kauto = () => { clearTimeout(_k_auto); _k_auto = setTimeout(() => this._load_kardex(), 350); };
+		$body.on("change", "#inv-k-from, #inv-k-to, #inv-k-establecimiento", kauto);
+		$body.on("change", "#inv-k-vals", () => this._paint_kardex());
+		$body.on("change", "#inv-k-kpi", () => this._kardex_refresh_values());
+		this.$page_root.off("gms-change.invK").on("gms-change.invK", "#inv-k-warehouse, #inv-k-owner, #inv-k-type", kauto);
+		$body.on("click", "#inv-k-item-results div[data-code]", () => setTimeout(kauto, 0));
+		this._bind_chart_expand();
 
 		let _item_timer = null;
 		$body.on("input", "#inv-k-item", (e) => {
@@ -1882,84 +2419,355 @@ class FacexInventario {
 		});
 
 		$body.on("click", ".inv-kardex-row", (e) => {
-			const voucher_type = $(e.currentTarget).data("vtype");
-			const voucher_no = $(e.currentTarget).data("vname");
-			if (voucher_type === "Stock Entry") {
-				frappe.call({
-					method: "facex_multi.api.stock.get_stock_entry_detail",
-					args: { name: voucher_no },
-					freeze: true,
-					callback: (r) => { if (r.message) this._render_movement_result(r.message); },
+			this._show_voucher_popup($(e.currentTarget).data("vtype"), $(e.currentTarget).data("vname"));
+		});
+	}
+
+	// Columnas del detalle del Kardex. Producto y Almacén van en los encabezados
+	// de grupo; los valores en dinero solo con «Mostrar Valores QTZ» y permiso.
+	// «Bodega Central (BC-CEN) - NEKO» -> «BC-CEN» (si no hay paréntesis, quita el sufijo « - EMPRESA»).
+	_wh_code(name) {
+		if (!name) return "";
+		const m = String(name).match(/\(([^)]+)\)/);
+		return m ? m[1] : String(name).replace(/\s+-\s+[^-]+$/, "");
+	}
+
+	// KPIs (saldos y E/S) y gráfica: casilla propia. Los montos en dinero y la
+	// gráfica además exigen permiso de costos.
+	_kardex_show_kpi() {
+		return this.$body.find("#inv-k-kpi").is(":checked");
+	}
+
+	_kardex_show_values() {
+		return !!this._can_costs && this.$body.find("#inv-k-vals").is(":checked");
+	}
+
+	_kardex_cols() {
+		const esc = frappe.utils.escape_html;
+		const qty = (v) => (v ? String(Math.round(flt(v) * 1000) / 1000) : "");
+		const q3 = (v) => String(Math.round(flt(v) * 1000) / 1000);
+		const money = (v) => (v === null || v === undefined) ? "—" : frappe.format(v, { fieldtype: "Currency" });
+		const cols = [
+			{ k: "voucher_no", label: "Documento", text: (r) => r.voucher_no, html: (r) => `<strong>${esc(r.voucher_no)}</strong>` },
+			{ k: "posting_date", label: "Fecha", w: 90, text: (r) => r.posting_date || "" },
+			{ k: "movement_type_label", label: "Tipo", w: 150, text: (r) => r.movement_type_label,
+				html: (r) => `<span style="color:${r.is_transfer ? "#5e64ff" : (r.qty_in && !r.qty_out ? "#28a745" : "#e03e2d")};font-weight:600;${r.is_cancelled ? "text-decoration:line-through;" : ""}">${esc(r.movement_type_label)}</span>` },
+			{ k: "opening_qty", label: "Saldo Inicial", w: 95, num: true, none: true, text: () => "", html: () => "" },
+			{ k: "qty_in", label: "Cant. Ingreso", w: 95, num: true, text: (r) => qty(r.qty_in), html: (r) => r.qty_in ? `<span style="color:#28a745;font-weight:600;">${esc(qty(r.qty_in))}</span>` : "" },
+			{ k: "qty_out", label: "Cant. Salida", w: 95, num: true, text: (r) => qty(r.qty_out), html: (r) => r.qty_out ? `<span style="color:#e03e2d;font-weight:600;">${esc(qty(r.qty_out))}</span>` : "" },
+			{ k: "balance_qty", label: "Acum. Cant.", w: 95, num: true, text: (r) => q3(r.balance_qty), html: (r) => `<strong>${esc(q3(r.balance_qty))}</strong>` },
+			{ k: "counterpart", label: "Contraparte", text: (r) => `${r.counterpart || ""} ${this._wh_code(r.counterpart)}`,
+				html: (r) => r.counterpart ? `<span style="color:#6c757d;">${r.qty_in ? "desde" : "hacia"}</span> <span title="${esc(r.counterpart)}">${esc(this._wh_code(r.counterpart))}</span>` : "" },
+		];
+		if (this._kardex_show_values()) {
+			cols.push(
+				{ k: "opening_value", label: "Saldo Inicial Q", w: 105, num: true, none: true, text: () => "", html: () => "" },
+				{ k: "valuation_rate", label: "Costo", w: 90, num: true, text: (r) => String(r.valuation_rate ?? ""), html: (r) => money(r.valuation_rate) },
+				{ k: "value_moved", label: "Valor", w: 100, num: true, text: (r) => String(r.value_moved ?? ""), html: (r) => money(r.value_moved) },
+				{ k: "balance_value", label: "Acum. Saldo", w: 110, num: true, text: (r) => String(r.balance_value ?? ""), html: (r) => `<strong>${money(r.balance_value)}</strong>` },
+			);
+		}
+		return cols;
+	}
+
+	// El filtro Tipo ofrece solo los que existen en los datos; se reconstruye
+	// únicamente si cambió el conjunto (así no se cierra mientras el usuario marca).
+	_kardex_set_tipos(tipos) {
+		const key = tipos.join("|");
+		if (key === this._k_tipos_key) return;
+		this._k_tipos_key = key;
+		const sel = this._ms_values("inv-k-type").filter((t) => tipos.includes(t));
+		const items = tipos.map((t) => ({ value: t, label: t }));
+		this.$body.find("#inv-k-type").replaceWith(this._ms_html("inv-k-type", "Tipo", items, "Todos los tipos"));
+		if (sel.length) this._ms_set("inv-k-type", sel);
+	}
+
+	_kardex_summary_html(sm) {
+		if (!sm) return "";
+		if (!this._kardex_show_kpi()) return "";
+		const sv = !!this._can_costs;
+		if (!sv && !sm.has_item) return "";
+		const money = (v) => frappe.format(v, { fieldtype: "Currency" });
+		const num = (v) => (v === null || v === undefined) ? "—" : String(Math.round(flt(v) * 1000) / 1000);
+		const card = (title, val, qtyv, color) => `
+<div style="flex:1 1 170px;background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:8px 14px;border-top:3px solid ${color};">
+  <div style="font-size:11px;color:#6c757d;text-transform:uppercase;letter-spacing:.4px;">${title}</div>
+  ${sv ? `<div style="font-size:17px;font-weight:700;color:#333;">${money(val)}</div>` : ""}
+  ${sm.has_item ? `<div style="font-size:12px;color:#6c757d;">${num(qtyv)} unidades</div>` : ""}
+</div>`;
+		return card("Saldo inicial", sm.opening_value, sm.opening_qty, "#6c757d")
+			+ card("Entradas", sm.in_value, sm.in_qty, "#28a745")
+			+ card("Salidas", sm.out_value, sm.out_qty, "#e03e2d")
+			+ card("Saldo final", sm.closing_value, sm.closing_qty, "#5e64ff")
+			+ (sm.has_item ? "" : `<div style="flex:1 1 100%;font-size:11.5px;color:#6c757d;">Los saldos son por almacén y producto (según el filtro de almacén). Elija un producto para ver también los totales en unidades.</div>`);
+	}
+
+	// Pop-up de solo lectura de cualquier documento del Kardex; «Abrir en FacEx»
+	// lo carga completo (Movimiento de inventario / Factura en FacEx; el resto en
+	// su pantalla estándar, pestaña nueva).
+	_show_voucher_popup(voucher_type, voucher_no) {
+		frappe.call({
+			method: "facex_multi.api.stock_reports.get_voucher_preview",
+			args: { voucher_type, voucher_no, company: this.defaults.company },
+			freeze: true,
+			callback: (r) => {
+				const doc = r.message;
+				if (!doc) return;
+				const esc = frappe.utils.escape_html;
+				const STATUS = { 0: ["Borrador", "#6c757d"], 1: ["Sometido", "#28a745"], 2: ["Anulado", "#e03e2d"] };
+				const [label, color] = STATUS[cint(doc.docstatus)] || STATUS[0];
+				const money = (v) => (v === null || v === undefined) ? "—" : frappe.format(flt(v), { fieldtype: "Currency" });
+				const TIPOS = { "Stock Entry": "Movimiento de inventario", "Sales Invoice": "Factura de venta", "Delivery Note": "Nota de entrega", "Purchase Receipt": "Recepción de compra", "Purchase Invoice": "Factura de compra", "Stock Reconciliation": "Conciliación de inventario" };
+				const in_facex = voucher_type === "Stock Entry" || voucher_type === "Sales Invoice";
+				const d = new frappe.ui.Dialog({
+					title: TIPOS[voucher_type] || voucher_type,
+					size: "large",
+					primary_action_label: in_facex ? "Abrir en FacEx" : "Abrir documento",
+					primary_action: () => {
+						d.hide();
+						if (voucher_type === "Sales Invoice") {
+							window.open(`/app/facex?invoice=${encodeURIComponent(voucher_no)}`, "_blank");
+						} else if (voucher_type === "Stock Entry") {
+							frappe.call({
+								method: "facex_multi.api.stock.get_stock_entry_detail",
+								args: { name: voucher_no },
+								freeze: true,
+								callback: (r2) => { if (r2.message) this._render_movement_result(r2.message); },
+							});
+						} else {
+							window.open(`/app/${encodeURIComponent(frappe.router.slug(voucher_type))}/${encodeURIComponent(voucher_no)}`, "_blank");
+						}
+					},
+					secondary_action_label: "Cerrar",
+					secondary_action: () => d.hide(),
 				});
-			} else {
-				window.open(`/app/${encodeURIComponent(frappe.router.slug(voucher_type))}/${encodeURIComponent(voucher_no)}`, "_blank");
-			}
+				const rows = (doc.items || []).map((it) => `<tr>
+  <td><strong>${esc(it.item_code)}</strong><br><span style="color:#6c757d;">${esc(it.item_name || "")}</span></td>
+  <td>${esc(String(it.qty ?? ""))} ${esc(it.uom || "")}</td>
+  <td>${esc(it.warehouse || "")}</td>
+  ${doc.can_view_costs ? `<td>${money(it.rate)}</td>` : ""}
+</tr>`).join("");
+				d.$body.html(`
+<div style="margin-bottom:10px;">
+  <span style="font-size:16px;font-weight:700;">${esc(doc.name)}</span>
+  <span style="color:${color};font-weight:600;margin-left:8px;">${label}</span>
+  <div style="font-size:12.5px;color:#6c757d;">${esc(doc.posting_date)}${doc.party ? ` · ${esc(doc.party)}` : ""}</div>
+</div>
+${this._movement_audit_html(doc)}
+<div style="margin-bottom:12px;">
+  <div style="font-size:11.5px;color:#6c757d;text-transform:uppercase;letter-spacing:.4px;">Comentario</div>
+  <div style="white-space:pre-wrap;">${doc.remarks ? esc(doc.remarks) : `<span style="color:#adb5bd;">Sin comentario</span>`}</div>
+</div>
+<table class="inv-table" style="width:100%;">
+  <thead><tr><th>Producto</th><th style="width:120px;">Cantidad</th><th>Almacén</th>${doc.can_view_costs ? `<th style="width:110px;">${voucher_type === "Stock Entry" || voucher_type === "Stock Reconciliation" ? "Costo Unit." : "Precio"}</th>` : ""}</tr></thead>
+  <tbody>${rows}</tbody>
+</table>`);
+				d.show();
+			},
 		});
 	}
 
 	_load_kardex() {
-		const $tbody = this.$body.find("#inv-k-tbody");
-		const cc = this._can_costs;
-		const NCOLS = cc ? 13 : 10;
-		$tbody.html(`<tr><td colspan="${NCOLS}" style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr>`);
-
+		const $table = this.$body.find("#inv-k-table");
+		$table.html(`<tr><td style="text-align:center;color:#adb5bd;padding:20px;">Cargando...</td></tr>`);
+		const whs = this._ms_values("inv-k-warehouse");
 		frappe.call({
 			method: "facex_multi.api.stock_reports.get_kardex",
 			args: {
 				company: this.defaults.company,
 				from_date: this.$body.find("#inv-k-from").val(),
 				to_date: this.$body.find("#inv-k-to").val(),
-				movement_type: this.$body.find("#inv-k-type").val(),
-				warehouse: this.$body.find("#inv-k-warehouse").val(),
+				movement_types: this._ms_values("inv-k-type"),
+				warehouse: whs,
 				item_code: this.$body.find("#inv-k-item-code").val(),
 				establecimiento: this._establecimiento_param("inv-k-establecimiento"),
 				owners: this._owner_param("inv-k-owner"),
 			},
 			callback: (r) => {
-				const rows = (r.message && r.message.rows) || [];
-				if (cc) this._render_kardex_chart(rows);
-				if (!rows.length) {
-					$tbody.html(`<tr><td colspan="${NCOLS}" style="text-align:center;color:#adb5bd;padding:20px;">Sin movimientos en este rango.</td></tr>`);
-					return;
-				}
-				const STATUS_COLOR = { Activo: "#28a745", Anulado: "#e03e2d" };
-				const TYPE_COLOR = { Entrada: "#28a745", Salida: "#e03e2d", Transferencia: "#5e64ff" };
-				$tbody.html(rows.map((row) => `
-<tr class="inv-kardex-row" data-vtype="${frappe.utils.escape_html(row.voucher_type)}" data-vname="${frappe.utils.escape_html(row.voucher_no)}">
-  <td><strong>${frappe.utils.escape_html(row.voucher_no)}</strong><br><span style="color:#6c757d;font-size:11px;">${frappe.utils.escape_html(row.voucher_type)}</span></td>
-  <td>${frappe.utils.escape_html(row.posting_date || "")}</td>
-  <td><span style="color:${TYPE_COLOR[row.movement_type_label] || "#333"};font-weight:600;">${frappe.utils.escape_html(row.movement_type_label)}</span></td>
-  <td>${frappe.utils.escape_html(row.item_code)}<br><span style="color:#6c757d;">${frappe.utils.escape_html(row.item_name || "")}</span></td>
-  <td>${frappe.utils.escape_html(String(row.actual_qty))} ${frappe.utils.escape_html(row.stock_uom || "")}</td>
-  <td>${frappe.utils.escape_html(row.warehouse || "")}</td>
-  <td>${frappe.utils.escape_html(row.establecimiento_nombre || "")}</td>
-  <td>${frappe.utils.escape_html(row.company || "")}</td>
-  <td>${row.expense_account ? frappe.utils.escape_html(row.expense_account) : `<span style="color:#adb5bd;">—</span>`}</td>
-  ${cc ? `<td>${frappe.format(row.valuation_rate, { fieldtype: "Currency" })}</td>
-  <td>${frappe.format(row.stock_value_difference, { fieldtype: "Currency" })}</td>
-  <td>${frappe.format(row.accumulated_value, { fieldtype: "Currency" })}</td>` : ""}
-  <td><span style="color:${STATUS_COLOR[row.status_label] || "#333"};font-weight:600;">${frappe.utils.escape_html(row.status_label)}</span></td>
-</tr>`).join(""));
+				const m = r.message || {};
+				this._kardex_set_tipos(m.tipos || []);
+				this._k_rows = m.rows || [];
+				this._k_groups = m.groups || [];
+				this._k_summary = m.summary;
+				this._k_timeline = m.timeline || [];
+				this._k_by_wh = whs.length !== 1;   // varias (o todas) las bodegas: primero por bodega
+				this._k_truncated = !!m.truncated;
+				this._k_page = 0;
+				this._kardex_refresh_values();
+				this._paint_kardex();
 			},
 		});
 	}
 
-	_render_kardex_chart(rows) {
-		const $el = this.$body.find("#inv-k-chart");
-		if (!rows.length) { $el.html(`<div style="color:#adb5bd;font-size:12.5px;padding:20px;text-align:center;">Sin datos para graficar.</div>`); return; }
+	// KPIs y gráfica dependen de «Mostrar KPI y gráfica» (y del permiso de costos para montos/gráfica).
+	_kardex_refresh_values() {
+		const sv = !!this._can_costs && this._kardex_show_kpi();
+		this.$body.find("#inv-k-summary").html(this._kardex_summary_html(this._k_summary));
+		this.$body.find("#inv-k-chart-card").toggle(sv);
+		if (sv) this._render_kardex_chart(this._k_timeline || []);
+	}
 
-		// Un punto por día: último valor acumulado de ese día (las filas ya
-		// vienen ordenadas cronológicamente ascendente desde el servidor).
-		const by_date = new Map();
-		rows.forEach((r) => by_date.set(r.posting_date, r.accumulated_value));
-		const labels = Array.from(by_date.keys());
-		const values = Array.from(by_date.values());
+	// Detalle agrupado: Almacén (si hay varios) > Producto > movimientos, con
+	// saldo inicial al abrir el grupo y saldo final al cerrarlo.
+	_kardex_entries() {
+		const cols = this._kardex_cols();
+		const cf = this._k_cf || {};
+		const s = this._k_sort || {};
+		const scol = cols.find((c) => c.k === s.by);
+		const byKey = {};
+		(this._k_rows || []).forEach((r) => { (byKey[r.group_key] = byKey[r.group_key] || []).push(r); });
+		const entries = [];
+		const open = this._k_expanded || (this._k_expanded = new Set());
+		let lastWh = null;
+		(this._k_groups || []).forEach((g) => {
+			let rows = (byKey[g.group_key] || []).filter((r) => cols.every((c) => {
+				const q = (cf[c.k] || "").trim().toLowerCase();
+				return !q || String(c.text(r) ?? "").toLowerCase().includes(q);
+			}));
+			if (!rows.length) return;
+			if (scol) {
+				const dir = s.dir === "desc" ? -1 : 1;
+				rows = [...rows].sort((a, b) => scol.num
+					? (flt(a[scol.k]) - flt(b[scol.k])) * dir
+					: String(scol.text(a) ?? "").toLowerCase().localeCompare(String(scol.text(b) ?? "").toLowerCase()) * dir);
+			}
+			if (this._k_by_wh && g.warehouse !== lastWh) {
+				const mine = (this._k_groups || []).filter((x) => x.warehouse === g.warehouse);
+				entries.push({ t: "wh", wh: g.warehouse, closed: !open.has(`wh:${g.warehouse}`),
+					open_v: mine.reduce((a, x) => a + flt(x.opening_value), 0), close_v: mine.reduce((a, x) => a + flt(x.closing_value), 0) });
+				lastWh = g.warehouse;
+			}
+			if (this._k_by_wh && !open.has(`wh:${g.warehouse}`)) return;   // bodega comprimida
+			const closed = !open.has(`item:${g.group_key}`);
+			entries.push({ t: "item", g, closed });
+			if (closed) return;
+			rows.forEach((r) => entries.push({ t: "row", r, g }));
+			entries.push({ t: "foot", g });
+		});
+		return entries;
+	}
+
+	// Pinta encabezado + fila de filtros por columna (se reconstruye solo si cambian
+	// las columnas, para no perder el foco al teclear) y la página actual (50 filas).
+	_paint_kardex() {
+		const PAGE = 50;
+		const esc = frappe.utils.escape_html;
+		const sv = this._kardex_show_values();
+		const money = (v) => (v === null || v === undefined) ? "—" : frappe.format(v, { fieldtype: "Currency" });
+		const q3 = (v) => String(Math.round(flt(v) * 1000) / 1000);
+		const cols = this._kardex_cols();
+		const $table = this.$body.find("#inv-k-table");
+		const sig = cols.map((c) => c.k).join(",");
+		if (!$table.find("thead").length || this._k_sig !== sig) {
+			this._k_sig = sig;
+			const s = this._k_sort || {};
+			$table.html(`
+<thead>
+  <tr>${cols.map((c) => c.none
+    ? `<th style="${c.w ? `width:${c.w}px;` : ""}white-space:nowrap;">${esc(c.label)}</th>`
+    : `<th data-sortk="${c.k}" style="${c.w ? `width:${c.w}px;` : ""}cursor:pointer;white-space:nowrap;">${esc(c.label)}${s.by === c.k ? (s.dir === "desc" ? " ▼" : " ▲") : ""}</th>`).join("")}</tr>
+  <tr class="inv-k-cfrow">${cols.map((c) => c.none ? "<th></th>" : `<th style="padding:3px 4px;"><input type="text" class="inv-k-cf" data-k="${c.k}" placeholder="Filtrar..." value="${esc((this._k_cf || {})[c.k] || "")}" style="width:100%;min-width:60px;padding:3px 6px;border:1px solid #d1d8dd;border-radius:3px;font-size:11.5px;font-weight:400;text-transform:none;"></th>`).join("")}</tr>
+</thead>
+<tbody id="inv-k-tbody"></tbody>`);
+		}
+
+		const entries = this._kardex_entries();
+		// Páginas de 50 líneas visibles (encabezados de grupo incluidos): así, con todo
+		// comprimido, también se pagina.
+		const nLines = entries.length;
+		const n = entries.filter((e) => e.t === "row").length;
+		const pages = Math.max(1, Math.ceil(nLines / PAGE));
+		this._k_page = Math.min(Math.max(this._k_page || 0, 0), pages - 1);
+		let slice = entries.slice(this._k_page * PAGE, (this._k_page + 1) * PAGE);
+		// Página que arranca a mitad de un grupo: repite sus encabezados (continúa).
+		if (slice.length && slice[0].t === "row") {
+			const g = slice[0].g;
+			const head = [{ t: "item", g, cont: true }];
+			if (this._k_by_wh) {
+				const mine = (this._k_groups || []).filter((x) => x.warehouse === g.warehouse);
+				head.unshift({ t: "wh", wh: g.warehouse, cont: true, closed: false,
+					open_v: mine.reduce((acc, x) => acc + flt(x.opening_value), 0), close_v: mine.reduce((acc, x) => acc + flt(x.closing_value), 0) });
+			}
+			slice = head.concat(slice);
+		}
+
+		const colspan = cols.length;
+		const html = slice.map((e) => {
+			if (e.t === "wh") {
+				const cells = cols.slice(3).map((c) => (c.k === "opening_value" ? `<td><strong>${money(e.open_v)}</strong></td>`
+					: c.k === "balance_value" ? `<td><strong>${money(e.close_v)}</strong></td>` : "<td></td>")).join("");
+				return `<tr class="inv-k-wh"><td colspan="3" style="background:#e9ecff;font-weight:700;color:#2d3190;"><span class="inv-k-tog" data-ck="${esc(`wh:${e.wh}`)}" title="Comprimir / desplegar">${e.closed ? "▸" : "▾"}</span> 🏬 ${esc(e.wh || "")}${e.cont ? " <span style='font-weight:400;'>(continúa)</span>" : ""}</td>${cells.replace(/<td>/g, '<td style="background:#e9ecff;">').replace(/<td><strong>/g, '<td style="background:#e9ecff;"><strong>')}</tr>`;
+			}
+			if (e.t === "row") {
+				const r = e.r;
+				return `<tr class="inv-kardex-row" data-vtype="${esc(r.voucher_type)}" data-vname="${esc(r.voucher_no)}">${cols.map((c) => `<td>${c.html ? c.html(r) : esc(String(c.text(r) ?? ""))}</td>`).join("")}</tr>`;
+			}
+			const g = e.g;
+			const isItem = e.t === "item";
+			const showTotals = !isItem || e.closed;   // pie del grupo, o encabezado comprimido
+			const cells = cols.slice(3).map((c) => {
+				if (c.k === "opening_qty") return `<td>${isItem ? `<strong>${q3(g.opening_qty)}</strong>` : ""}</td>`;
+				if (c.k === "qty_in") return `<td>${showTotals ? `<span style="color:#28a745;font-weight:600;">${q3(g.in_qty)}</span>` : ""}</td>`;
+				if (c.k === "qty_out") return `<td>${showTotals ? `<span style="color:#e03e2d;font-weight:600;">${q3(g.out_qty)}</span>` : ""}</td>`;
+				if (c.k === "balance_qty") return `<td>${showTotals ? `<strong>${q3(g.closing_qty)}</strong>` : ""}</td>`;
+				if (c.k === "opening_value") return `<td>${isItem ? `<strong>${money(g.opening_value)}</strong>` : ""}</td>`;
+				if (c.k === "balance_value") return `<td>${showTotals ? `<strong>${money(g.closing_value)}</strong>` : ""}</td>`;
+				return "<td></td>";
+			}).join("");
+			const tog = isItem ? `<span class="inv-k-tog" data-ck="${esc(`item:${g.group_key}`)}" title="Comprimir / desplegar">${e.closed ? "▸" : "▾"}</span> ` : "";
+			const label = isItem
+				? `${tog}<span style="font-weight:700;">${esc(g.item_code)}</span> <span style="color:#6c757d;">${esc(g.item_name || "")}</span> · ${esc(g.uom || "")}${e.cont ? ' <span style="color:#6c757d;">(continúa)</span>' : ""}`
+				: `<span style="color:#6c757d;">Total · ${esc(g.item_code)}</span>`;
+			return `<tr class="inv-k-${isItem ? "item" : "foot"}"><td colspan="3" style="${isItem ? "background:#f4f6fb;" : "background:#fafbfc;border-bottom:2px solid #dee2e6;"}">${label}</td>${cells}</tr>`;
+		}).join("");
+		this.$body.find("#inv-k-tbody").html(html || `<tr><td colspan="${colspan}" style="text-align:center;color:#adb5bd;padding:20px;">${(this._k_rows || []).length ? "Sin resultados con estos filtros de columna." : "Sin movimientos en este rango."}</td></tr>`);
+
+		const from = nLines ? this._k_page * PAGE + 1 : 0;
+		const to = Math.min(nLines, (this._k_page + 1) * PAGE);
+		this.$body.find("#inv-k-pager").html(`
+<div>${from}–${to} de ${nLines} línea(s) · ${n} movimiento(s) desplegado(s)${this._k_truncated ? " · se muestran los primeros 5,000, acote el rango" : ""}
+  &nbsp;<a href="#" class="inv-k-allgrp" data-a="close">Comprimir todo</a> · <a href="#" class="inv-k-allgrp" data-a="open">Desplegar todo</a></div>
+<div style="display:flex;gap:6px;align-items:center;">
+  <button type="button" class="inv-btn inv-btn-secondary inv-k-pg" data-d="-1" ${this._k_page <= 0 ? "disabled" : ""}>&lsaquo; Anterior</button>
+  <span>Página ${this._k_page + 1} de ${pages}</span>
+  <button type="button" class="inv-btn inv-btn-secondary inv-k-pg" data-d="1" ${this._k_page >= pages - 1 ? "disabled" : ""}>Siguiente &rsaquo;</button>
+</div>`);
+	}
+
+	_chart_height() {
+		return this.$body.find(".inv-chart-full").length ? Math.max(320, window.innerHeight - 160) : 220;
+	}
+
+	// Ampliar / reducir la gráfica (pantalla completa sobre el informe; Esc o el
+	// mismo botón la devuelven a su lugar).
+	_bind_chart_expand() {
+		const toggle = ($card) => {
+			const on = !$card.hasClass("inv-chart-full");
+			$card.toggleClass("inv-chart-full", on);
+			$card.find(".inv-chart-expand").text(on ? "✕ Cerrar" : "⤢ Ampliar");
+			setTimeout(() => {
+				if ($card.find("#inv-k-chart").length) this._render_kardex_chart(this._k_chart_rows || []);
+				else this._render_exist_chart(this._x_chart_spec);
+			}, 60);
+		};
+		this.$body.on("click", ".inv-chart-expand", (e) => toggle($(e.currentTarget).closest(".inv-chart-card")));
+		$(document).on("keydown.facexInv", (e) => {
+			if (e.key === "Escape") { const $c = this.$body.find(".inv-chart-full"); if ($c.length) toggle($c); }
+		});
+	}
+
+	_render_kardex_chart(timeline) {
+		this._k_chart_rows = timeline;
+		const $el = this.$body.find("#inv-k-chart");
+		if (!timeline.length) { $el.html(`<div style="color:#adb5bd;font-size:12.5px;padding:20px;text-align:center;">Sin datos para graficar.</div>`); return; }
+		const labels = timeline.map((t) => t[0]);
+		const values = timeline.map((t) => t[1]);
 
 		$el.empty();
 		new frappe.Chart($el.get(0), {
-			data: { labels, datasets: [{ name: "Valor Acumulado", values }] },
+			data: { labels, datasets: [{ name: "Valor del inventario", values }] },
 			type: "line",
-			height: 220,
+			height: this._chart_height(),
 			colors: ["#5e64ff"],
 			lineOptions: { regionFill: 1 },
 			axisOptions: { xIsSeries: 1, shortenYAxisNumbers: 1 },
@@ -1974,6 +2782,7 @@ class FacexInventario {
 		this._exist_tab = "status";
 		this._exist_sort = { by: null, dir: "asc" };
 		this._exist_rows = [];
+		this._exist_f = null;
 		this._render_existencias();
 	}
 
@@ -1997,12 +2806,14 @@ class FacexInventario {
   </div>
 
   ${this._filter_panel_html(`
-    <div>
+    <div class="inv-wh-ms" style="position:relative;">
       <label class="inv-label">Almacén</label>
-      <select id="inv-x-warehouse" class="inv-select">
-        <option value="">Todos</option>
-        ${warehouses.map(w => `<option value="${frappe.utils.escape_html(w)}">${frappe.utils.escape_html(w)}</option>`).join("")}
-      </select>
+      <button type="button" id="inv-x-wh-btn" class="inv-select inv-ms-btn">Todos los almacenes ▾</button>
+      <div id="inv-x-wh-panel" class="inv-ms-panel" style="min-width:300px;">
+        <input type="text" id="inv-x-wh-q" class="inv-select" placeholder="Buscar almacén..." autocomplete="off" style="width:calc(100% - 16px);margin:2px 8px 6px;">
+        <label class="inv-ms-row" style="font-weight:600;"><input type="checkbox" id="inv-x-wh-all" checked> Todos</label>
+        ${this._wh_tree_html("x")}
+      </div>
     </div>
     ${this._sucursal_filter_html("inv-x-establecimiento")}
     <div style="position:relative;">
@@ -2017,10 +2828,13 @@ class FacexInventario {
       <input type="number" id="inv-x-days" class="inv-select" value="60" min="0" style="width:100px;">
     </div>` : ""}
     ${groups.length ? `
-    <div style="grid-column:1/-1;">
-      <label class="inv-label">Grupos de artículo <span style="color:#6c757d;font-weight:400;">(ninguno = todos)</span></label>
-      <div id="inv-x-groups" style="display:flex;flex-wrap:wrap;gap:4px 16px;max-height:110px;overflow-y:auto;border:1px solid #d1d8dd;border-radius:4px;padding:8px 10px;background:#fff;">
-        ${groups.map(g => `<label style="font-size:12.5px;display:flex;align-items:center;gap:5px;white-space:nowrap;cursor:pointer;"><input type="checkbox" class="inv-x-group-cb" value="${frappe.utils.escape_html(g)}"> ${frappe.utils.escape_html(g)}</label>`).join("")}
+    <div class="inv-grp-ms" style="position:relative;">
+      <label class="inv-label">Grupo de artículos</label>
+      <button type="button" id="inv-x-grp-btn" class="inv-select inv-ms-btn">Todos los grupos ▾</button>
+      <div id="inv-x-grp-panel" class="inv-ms-panel" style="min-width:280px;">
+        <input type="text" id="inv-x-grp-q" class="inv-select" placeholder="Buscar grupo..." autocomplete="off" style="width:calc(100% - 16px);margin:2px 8px 6px;">
+        <label class="inv-ms-row" style="font-weight:600;"><input type="checkbox" id="inv-x-grp-all" checked> Todos</label>
+        ${groups.map(g => `<label class="inv-ms-row inv-x-grp-row" data-q="${frappe.utils.escape_html(g.toLowerCase())}"><input type="checkbox" class="inv-x-group-cb" value="${frappe.utils.escape_html(g)}"> ${frappe.utils.escape_html(g)}</label>`).join("")}
       </div>
     </div>` : ""}
   `, `
@@ -2030,7 +2844,10 @@ class FacexInventario {
   `)}
 
   <div class="inv-chart-card">
-    <div class="inv-chart-title" id="inv-x-chart-title"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+      <div class="inv-chart-title" id="inv-x-chart-title"></div>
+      <button type="button" class="inv-chart-expand inv-btn inv-btn-secondary" style="padding:2px 10px;font-size:12px;">⤢ Ampliar</button>
+    </div>
     <div id="inv-x-chart"></div>
   </div>
 
@@ -2042,6 +2859,19 @@ class FacexInventario {
 <style>${INV_STYLES}</style>
 		`);
 		this._bind_existencias_events();
+		const f = this._exist_f;
+		if (f) {
+			(f.wh || []).forEach((w) => this.$body.find(".inv-x-wh-chk").filter((i, el) => el.value === w).prop("checked", true));
+			this.$body.find("#inv-x-wh-all").prop("checked", !(f.wh || []).length);
+			this.$body.find("#inv-x-grp-all").prop("checked", !(f.groups || []).length);
+			this.$body.find("#inv-x-establecimiento").val(f.est || "");
+			this.$body.find("#inv-x-item").val(f.item || "");
+			this.$body.find("#inv-x-item-code").val(f.item_code || "");
+			if (f.days) this.$body.find("#inv-x-days").val(f.days);
+			(f.groups || []).forEach((g) => this.$body.find(".inv-x-group-cb").filter((i, el) => el.value === g).prop("checked", true));
+			this._wh_sync_groups("x");
+			this._exist_ms_labels();
+		}
 		this._load_existencias();
 	}
 
@@ -2053,11 +2883,23 @@ class FacexInventario {
 
 		$body.on("click", "#inv-back", () => this._render_shell());
 		$body.on("click", ".inv-tab", (e) => {
+			// Los filtros (almacén, sucursal, producto, grupos, días) valen para
+			// las tres pestañas: se guardan y se vuelven a aplicar al cambiar.
+			this._exist_f = {
+				wh: this._exist_wh_selected(),
+				est: $body.find("#inv-x-establecimiento").val(),
+				item: $body.find("#inv-x-item").val(),
+				item_code: $body.find("#inv-x-item-code").val(),
+				days: $body.find("#inv-x-days").val(),
+				groups: this._exist_group_filter(),
+			};
 			this._exist_tab = $(e.currentTarget).data("etab");
 			this._exist_sort = { by: null, dir: "asc" };
 			this._render_existencias();
 		});
 		$body.on("click", "#inv-x-refresh", () => this._load_existencias());
+		this._bind_chart_expand();
+		this._bind_existencias_filters();
 		$body.on("click", "#inv-x-excel", () => this._export_existencias("xlsx"));
 		$body.on("click", "#inv-x-pdf", () => this._export_existencias("pdf"));
 
@@ -2099,6 +2941,73 @@ class FacexInventario {
 		});
 	}
 
+	_exist_wh_selected() {
+		return this.$body.find(".inv-x-wh-chk:checked").map((_, el) => el.value).get();
+	}
+
+	_exist_ms_labels() {
+		const w = this._exist_wh_selected();
+		this.$body.find("#inv-x-wh-btn").text((!w.length ? "Todos los almacenes" : (w.length === 1 ? w[0] : `${w.length} almacenes`)) + " ▾");
+		const g = this._exist_group_filter();
+		this.$body.find("#inv-x-grp-btn").text((!g.length ? "Todos los grupos" : (g.length === 1 ? g[0] : `${g.length} grupos`)) + " ▾");
+	}
+
+	// Desplegables de selección múltiple (almacén en árbol, grupo de artículos) y
+	// auto-actualización: cualquier cambio de filtro vuelve a consultar solo.
+	_bind_existencias_filters() {
+		const $body = this.$body;
+		const auto = () => {
+			this._exist_ms_labels();
+			clearTimeout(this._x_timer);
+			this._x_timer = setTimeout(() => this._load_existencias(), 350);
+		};
+		$body.on("click", "#inv-x-wh-btn", (e) => { e.stopPropagation(); $body.find("#inv-x-grp-panel").hide(); $body.find("#inv-x-wh-panel").toggle(); });
+		$body.on("click", "#inv-x-grp-btn", (e) => { e.stopPropagation(); $body.find("#inv-x-wh-panel").hide(); $body.find("#inv-x-grp-panel").toggle(); });
+		$body.on("click", ".inv-ms-panel", (e) => e.stopPropagation());
+		$(document).on("click.facexInv", (e) => {
+			if (!$(e.target).closest(".inv-wh-ms, .inv-grp-ms").length) $body.find(".inv-ms-panel").hide();
+		});
+		// Almacén
+		$body.on("change", "#inv-x-wh-all", (e) => {
+			if (e.target.checked) { $body.find(".inv-x-wh-chk").prop("checked", false); this._wh_sync_groups("x"); }
+			else e.target.checked = true;
+			auto();
+		});
+		$body.on("change", ".inv-x-wh-chk", () => {
+			$body.find("#inv-x-wh-all").prop("checked", !this._exist_wh_selected().length);
+			this._wh_sync_groups("x"); auto();
+		});
+		$body.on("change", ".inv-x-wh-grp", (e) => {
+			$(e.target).closest(".inv-wh-group").find(".inv-wh-leaf:visible .inv-x-wh-chk").prop("checked", e.target.checked);
+			$body.find("#inv-x-wh-all").prop("checked", !this._exist_wh_selected().length);
+			this._wh_sync_groups("x"); auto();
+		});
+		$body.on("click", "#inv-x-wh-panel .inv-wh-toggle", (e) => {
+			e.preventDefault(); e.stopPropagation();
+			const $c = $(e.currentTarget).closest(".inv-wh-group").children(".inv-wh-children").toggle();
+			$(e.currentTarget).text($c.is(":visible") ? "▾" : "▸");
+		});
+		$body.on("input", "#inv-x-wh-q", (e) => this._wh_tree_filter(e.target.value, "x"));
+		// Grupo de artículos
+		$body.on("change", "#inv-x-grp-all", (e) => {
+			if (e.target.checked) $body.find(".inv-x-group-cb").prop("checked", false); else e.target.checked = true;
+			auto();
+		});
+		$body.on("change", ".inv-x-group-cb", () => {
+			$body.find("#inv-x-grp-all").prop("checked", !this._exist_group_filter().length);
+			auto();
+		});
+		$body.on("input", "#inv-x-grp-q", (e) => {
+			const q = e.target.value.trim().toLowerCase();
+			$body.find(".inv-x-grp-row").each((i, el) => { $(el).toggle(!q || String($(el).data("q")).includes(q)); });
+		});
+		// Resto de filtros
+		$body.on("change", "#inv-x-establecimiento, #inv-x-days", auto);
+		$body.on("input", "#inv-x-days", auto);
+		$body.on("input", "#inv-x-item", (e) => { if (!e.target.value.trim()) auto(); });
+		$body.on("click", "#inv-x-item-results div[data-code]", () => setTimeout(auto, 0));
+	}
+
 	_exist_group_filter() {
 		return this.$body.find(".inv-x-group-cb:checked").map((_, el) => el.value).get();
 	}
@@ -2107,7 +3016,7 @@ class FacexInventario {
 		const groups = this._exist_group_filter();
 		return {
 			company: this.defaults.company,
-			warehouse: this.$body.find("#inv-x-warehouse").val(),
+			warehouse: this._exist_wh_selected().length ? JSON.stringify(this._exist_wh_selected()) : undefined,
 			item_code: this.$body.find("#inv-x-item-code").val(),
 			establecimiento: this._establecimiento_param("inv-x-establecimiento"),
 			item_groups: groups.length ? JSON.stringify(groups) : undefined,
@@ -2253,6 +3162,7 @@ class FacexInventario {
 	}
 
 	_render_exist_chart(spec) {
+		this._x_chart_spec = spec;
 		const $el = this.$body.find("#inv-x-chart");
 		const $title = this.$body.find("#inv-x-chart-title");
 		if (!spec || !spec.labels.length) {
@@ -2265,7 +3175,7 @@ class FacexInventario {
 		new frappe.Chart($el.get(0), {
 			data: { labels: spec.labels, datasets: [{ name: spec.title, values: spec.values }] },
 			type: "bar",
-			height: 220,
+			height: this._chart_height(),
 			colors: [spec.color],
 			axisOptions: { shortenYAxisNumbers: 1 },
 		});
@@ -2308,12 +3218,7 @@ class FacexInventario {
       <div id="inv-t-item-results" class="inv-autocomplete"></div>
       <input type="hidden" id="inv-t-item-code">
     </div>
-    <div>
-      <label class="inv-label">Almacén</label>
-      <select id="inv-t-warehouse" class="inv-select" multiple size="1">
-        ${warehouses.map(w => `<option value="${frappe.utils.escape_html(w)}">${frappe.utils.escape_html(w)}</option>`).join("")}
-      </select>
-    </div>
+    ${this._wh_ms_html("inv-t-warehouse")}
     ${this._sucursal_filter_html("inv-t-establecimiento")}
     ${this._owner_filter_html("inv-t-owner")}
   `, `<button type="button" id="inv-t-refresh" class="inv-btn inv-btn-primary">Buscar</button>`)}
@@ -2375,7 +3280,7 @@ class FacexInventario {
 	_load_trazabilidad() {
 		const search = this.$body.find("#inv-t-search").val();
 		const item_code = this.$body.find("#inv-t-item-code").val();
-		const warehouse = this.$body.find("#inv-t-warehouse").val();
+		const warehouse = this._ms_values("inv-t-warehouse");
 		const establecimiento = this._establecimiento_param("inv-t-establecimiento");
 		const owners = this._owner_param("inv-t-owner");
 		const $table = this.$body.find("#inv-t-table");
@@ -2506,7 +3411,7 @@ ${rows.map(r => `<tr>
 	_export_url(method, params) {
 		const qs = Object.keys(params)
 			.filter((k) => params[k] !== undefined && params[k] !== null && params[k] !== "")
-			.map((k) => `${k}=${encodeURIComponent(params[k])}`)
+			.map((k) => `${k}=${encodeURIComponent(Array.isArray(params[k]) ? JSON.stringify(params[k]) : params[k])}`)
 			.join("&");
 		return `/api/method/${method}?${qs}`;
 	}
@@ -2524,7 +3429,7 @@ ${rows.map(r => `<tr>
 		const filters = `
       <div><label class="inv-label">Desde</label><input type="date" id="inv-kp-from" class="inv-select" value="${frappe.datetime.month_start()}"></div>
       <div><label class="inv-label">Hasta</label><input type="date" id="inv-kp-to" class="inv-select" value="${frappe.datetime.month_end()}"></div>
-      <div><label class="inv-label">Almacén</label><select id="inv-kp-warehouse" class="inv-select" multiple size="1">${warehouses.map(w => `<option value="${frappe.utils.escape_html(w)}">${frappe.utils.escape_html(w)}</option>`).join("")}</select></div>
+      ${this._wh_ms_html("inv-kp-warehouse")}
       ${this._sucursal_filter_html("inv-kp-establecimiento")}
       ${this._owner_filter_html("inv-kp-owner")}
       ${this._report_item_filter("inv-kp-item", "inv-kp-item-code")}
@@ -2563,7 +3468,7 @@ ${rows.map(r => `<tr>
 			item_code: this.$body.find("#inv-kp-item-code").val(),
 			from_date: this.$body.find("#inv-kp-from").val(),
 			to_date: this.$body.find("#inv-kp-to").val(),
-			warehouse: this.$body.find("#inv-kp-warehouse").val(),
+			warehouse: this._ms_values("inv-kp-warehouse"),
 			establecimiento: this._establecimiento_param("inv-kp-establecimiento"),
 			cost_basis: this.$body.find("#inv-kp-basis").val() || "estandar",
 			owners: this._owner_param("inv-kp-owner"),
@@ -2612,7 +3517,7 @@ ${rows.map(r => `<tr>
 		const cc = this._can_costs;
 		const warehouses = this.defaults.warehouses || [];
 		const filters = `
-      <div><label class="inv-label">Almacén</label><select id="inv-val-warehouse" class="inv-select"><option value="">Todos</option>${warehouses.map(w => `<option value="${frappe.utils.escape_html(w)}">${frappe.utils.escape_html(w)}</option>`).join("")}</select></div>
+      <div><label class="inv-label">Almacén</label><select id="inv-val-warehouse" class="inv-select"><option value="">Todos</option>${this._wh_options_html()}</select></div>
       <div style="position:relative;"><label class="inv-label">Grupo de artículo</label><input type="text" id="inv-val-group" class="inv-select" placeholder="Grupo..."></div>
       ${this._sucursal_filter_html("inv-val-establecimiento")}
       ${cc ? this._cost_basis_select("inv-val-basis") : ""}`;
@@ -2685,7 +3590,7 @@ ${rows.map(r => `<tr>
 		const cc = this._can_costs;
 		const warehouses = this.defaults.warehouses || [];
 		const filters = `
-      <div><label class="inv-label">Almacén</label><select id="inv-ven-warehouse" class="inv-select"><option value="">Todos</option>${warehouses.map(w => `<option value="${frappe.utils.escape_html(w)}">${frappe.utils.escape_html(w)}</option>`).join("")}</select></div>
+      <div><label class="inv-label">Almacén</label><select id="inv-ven-warehouse" class="inv-select"><option value="">Todos</option>${this._wh_options_html()}</select></div>
       ${this._sucursal_filter_html("inv-ven-establecimiento")}
       ${this._report_item_filter("inv-ven-item", "inv-ven-item-code")}
       <div><label class="inv-label">Días hacia adelante</label><input type="number" id="inv-ven-days" class="inv-select" value="30" min="0" style="width:120px;"></div>
@@ -2754,7 +3659,7 @@ ${rows.map(r => `<tr>
 		const filters = `
       <div><label class="inv-label">Desde</label><input type="date" id="inv-abc-from" class="inv-select" value="${frappe.datetime.add_days(frappe.datetime.get_today(), -90)}"></div>
       <div><label class="inv-label">Hasta</label><input type="date" id="inv-abc-to" class="inv-select" value="${frappe.datetime.get_today()}"></div>
-      <div><label class="inv-label">Almacén</label><select id="inv-abc-warehouse" class="inv-select" multiple size="1">${warehouses.map(w => `<option value="${frappe.utils.escape_html(w)}">${frappe.utils.escape_html(w)}</option>`).join("")}</select></div>
+      ${this._wh_ms_html("inv-abc-warehouse")}
       <div><label class="inv-label">Grupo de artículo</label><input type="text" id="inv-abc-group" class="inv-select" placeholder="Grupo..."></div>
       ${this._sucursal_filter_html("inv-abc-establecimiento")}
       ${this._owner_filter_html("inv-abc-owner")}
@@ -2784,7 +3689,7 @@ ${rows.map(r => `<tr>
 			company: this.defaults.company,
 			from_date: this.$body.find("#inv-abc-from").val(),
 			to_date: this.$body.find("#inv-abc-to").val(),
-			warehouse: this.$body.find("#inv-abc-warehouse").val(),
+			warehouse: this._ms_values("inv-abc-warehouse"),
 			item_group: this.$body.find("#inv-abc-group").val(),
 			establecimiento: this._establecimiento_param("inv-abc-establecimiento"),
 			cost_basis: this.$body.find("#inv-abc-basis").val() || "estandar",
@@ -5176,7 +6081,7 @@ ${actions.length ? `<div style="display:flex;justify-content:flex-end;gap:8px;fl
       <div><label class="inv-label">Estado</label>
         <select id="inv-rt-estado" class="inv-select"><option value="">Todos</option><option>Borrador</option><option>Autorizado</option><option>Rechazado</option><option>Anulado</option></select></div>
       <div><label class="inv-label">Almacén</label>
-        <select id="inv-rt-wh" class="inv-select"><option value="">Todos</option>${(this.defaults.warehouses || []).map((w) => `<option value="${esc(w)}">${esc(w)}</option>`).join("")}</select></div>
+        <select id="inv-rt-wh" class="inv-select"><option value="">Todos</option>${this._wh_options_html()}</select></div>
       ${this._report_item_filter("inv-rt-item", "inv-rt-item-code")}
       ${scope_all ? user_select("inv-rt-creadores", "Usuario Creador") + user_select("inv-rt-autorizadores", "Usuario Autorizador") : ""}`;
 		const actions = `<button type="button" id="inv-rt-refresh" class="inv-btn inv-btn-primary">Filtrar</button>
@@ -5317,13 +6222,25 @@ body.facex-fullscreen-mode .main-section {
 `;
 
 const INV_STYLES = `
-.inv-filter-panel { background:#fff;border:1px solid #d1d8dd;border-radius:6px;margin-bottom:16px;overflow:hidden; }
+.inv-filter-panel { background:#fff;border:1px solid #d1d8dd;border-radius:6px;margin-bottom:16px;overflow:visible; }
 .inv-filter-header { display:flex;align-items:center;justify-content:space-between;padding:12px 20px;cursor:pointer;user-select:none; }
 .inv-filter-header:hover { background:#fafbff; }
 .inv-filter-title { font-size:13px;font-weight:600;color:#333; }
 .inv-filter-chevron { color:#6c757d;font-size:12px;transition:transform .15s; }
 .inv-filter-collapsed .inv-filter-chevron { transform:rotate(-90deg); }
 .inv-filter-body { padding:4px 20px 18px; }
+#inv-e-tab-movs .inv-filter-panel { overflow:visible; }
+.inv-ms-btn { text-align:left;background:#fff;cursor:pointer;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.inv-ms-panel { display:none;position:absolute;z-index:30;top:100%;left:0;max-height:320px;overflow:auto;background:#fff;border:1px solid #d1d8dd;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.12);padding:6px 0; }
+.inv-ms-row { display:flex;gap:8px;align-items:center;padding:4px 10px;cursor:pointer;margin:0;font-weight:400;font-size:12.5px; }
+.inv-ms-row:hover { background:#f0f4ff; }
+.inv-ms-row input { width:auto;margin:0; }
+.inv-k-compact td { padding:2px 8px !important;line-height:1.25 !important;white-space:nowrap;font-size:12px; }
+.inv-k-tog { cursor:pointer;display:inline-block;width:14px;color:#5e64ff;user-select:none; }
+.inv-k-compact th { padding:5px 8px;white-space:nowrap; }
+.inv-filter-grid > div { min-width:0; }
+.inv-filter-grid .inv-select { width:100%;box-sizing:border-box;min-width:0; }
+.inv-chart-full { position:fixed;top:0;left:0;right:0;bottom:0;z-index:1040;margin:0;border-radius:0;overflow:auto;padding:24px 32px;background:#fff; }
 .inv-filter-grid { display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:14px;text-align:left;align-items:end; }
 .inv-filter-actions { margin-top:14px;text-align:left; }
 .inv-chart-card { background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:18px 20px;margin-bottom:16px; }

@@ -142,6 +142,7 @@ class EFastSalePage {
 				this._setup_invoice_search();
 				this._setup_collapse_btn();
 				this._setup_section_accordion();
+				this._setup_header_stickiness();
 				this._setup_section_rail();
 				this._setup_invoice_peek();
 				this._setup_cmdk();
@@ -400,6 +401,10 @@ class EFastSalePage {
               </button>
               <hr style="border: none; border-top: 1px solid #e2e8f0; margin-bottom: 10px;">
             </div>
+            <button id="ef-btn-reload" class="ef-btn" style="width: 100%; background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; display: flex; align-items: center; justify-content: center; gap: 6px; border-radius: 6px; padding: 8px; margin-bottom: 8px; cursor: pointer; font-size: 13px; font-weight: 500;" title="Limpia la caché y recarga el sistema con la última versión (igual que Recargar en el escritorio)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+              Recargar
+            </button>
             <button id="ef-btn-change-password" class="ef-btn" style="width: 100%; background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; display: flex; align-items: center; justify-content: center; gap: 6px; border-radius: 6px; padding: 8px; margin-bottom: 8px; cursor: pointer; font-size: 13px; font-weight: 500;">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
               Cambiar Contraseña
@@ -1954,24 +1959,31 @@ class EFastSalePage {
     <!-- Maint Tab Content: Grupo de Ítems -->
     <div class="ef-maint-tab-content" id="ef-maint-tab-grupo-items" style="display:none;">
       <div class="ef-analytics-card" style="box-shadow: var(--ef-shadow); padding:20px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:12px;">
+        <div class="ef-ig-bar">
           <span style="font-weight:700; color:var(--ef-primary); font-size:16px;">Grupo de Ítems</span>
-          <div style="display:flex; align-items:center; gap:10px;">
-            <span id="ef-ig-status" style="font-size:11px; color:#64748b;"></span>
+          <input type="text" id="ef-ig-search" class="ef-input" placeholder="Buscar grupo…" autocomplete="off" />
+          <div class="ef-ig-bar-right">
+            <button id="ef-ig-btn-expand" class="ef-btn ef-btn-sm ef-btn-secondary" title="Desplegar todo el árbol">Expandir</button>
+            <button id="ef-ig-btn-collapse" class="ef-btn ef-btn-sm ef-btn-secondary" title="Contraer el árbol">Contraer</button>
             <button id="ef-ig-btn-new" class="ef-btn ef-btn-sm ef-btn-primary">+ Nuevo Grupo</button>
           </div>
+        </div>
+        <div class="ef-ml-chips" id="ef-ig-chips">
+          <button type="button" class="ef-ml-chip ef-active" data-filtro="">Todos</button>
+          <button type="button" class="ef-ml-chip" data-filtro="activos">Activos</button>
+          <button type="button" class="ef-ml-chip" data-filtro="deshabilitados">Deshabilitados</button>
+          <button type="button" class="ef-ml-chip" data-filtro="vacios">Sin ítems</button>
+          <span id="ef-ig-status" style="font-size:11px; color:#64748b; margin-left:6px; align-self:center;"></span>
         </div>
         <div class="ef-table-wrapper" style="max-height: 640px; overflow-y: auto;">
           <table class="ef-table">
             <thead><tr>
               <th class="ef-th">Grupo</th>
-              <th class="ef-th" style="width:180px;">Grupo Padre</th>
-              <th class="ef-th" style="width:70px; text-align:center;">Es Grupo</th>
-              <th class="ef-th" style="width:80px; text-align:right;">Ítems</th>
-              <th class="ef-th" style="width:70px; text-align:center;">Deshabilitado</th>
-              <th class="ef-th" style="width:90px;"></th>
+              <th class="ef-th" style="width:150px; text-align:right;">Ítems</th>
+              <th class="ef-th" style="width:110px; text-align:center;">Estado</th>
+              <th class="ef-th" style="width:190px;"></th>
             </tr></thead>
-            <tbody id="ef-ig-tbody"><tr><td colspan="6" style="text-align:center; padding:10px; color:#64748b;">Cargando...</td></tr></tbody>
+            <tbody id="ef-ig-tbody"><tr><td colspan="4" style="text-align:center; padding:10px; color:#64748b;">Cargando...</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -3497,6 +3509,27 @@ class EFastSalePage {
 	// el ítem del menú, más un aviso (una vez por sesión de pestaña).
 	_refresh_cierre_pending() {
 		if (!this._has_cierre_access()) return;
+		// Control de cierre: días ya cerrados (aviso al elegir fecha) y, si la
+		// compañía lo exige, bloqueo de facturas nuevas con cierres vencidos.
+		frappe.call({
+			method: "facex_multi.api.cierre.get_work_gate",
+			callback: (r) => {
+				const g = this._work_gate = r.message || {};
+				if (!(g.pendientes || []).length) return;
+				const dias = g.pendientes.map((x) => frappe.datetime.str_to_user(x.fecha)).join(", ");
+				const bloquea = !!g.bloquea;
+				if (bloquea) {
+					frappe.msgprint({
+						title: "Cierre Diario pendiente",
+						indicator: "red",
+						message: `Tiene ventas sin cerrar de: <b>${dias}</b>.<br>No podrá crear facturas nuevas hasta realizar su Cierre Diario.<br><br><a class="btn btn-primary btn-sm" href="/app/facex-cierre">Ir a Cierre Diario</a>`,
+					});
+				} else if (!window.__facex_gate_warned) {
+					window.__facex_gate_warned = true;
+					frappe.show_alert({ message: `<b>Cierre pendiente:</b> ${dias}. <a href="/app/facex-cierre">Cerrar ahora</a>`, indicator: "orange" }, 10);
+				}
+			},
+		});
 		frappe.call({
 			method: "facex_multi.api.cierre.get_pending_closures",
 			callback: (r) => {
@@ -4027,8 +4060,14 @@ body.facex-fullscreen-mode .ef-main-layout {
   border: 1px solid var(--ef-border);
   border-radius: var(--ef-radius);
   box-shadow: var(--ef-shadow);
-  overflow: hidden;
+  /* Sin overflow:hidden: recortaba la lista de resultados de Cliente,
+     Condición de Pago, Plantilla y Vendedor al empezar a escribir. */
+  overflow: visible;
+  position: relative;
 }
+/* La tarjeta con el foco queda por encima de sus vecinas para que su lista
+   de resultados no se dibuje debajo de la tarjeta de al lado / de abajo. */
+.ef-sec-card:focus-within { z-index: 6; }
 .ef-sec-head {
   display: flex;
   align-items: center;
@@ -4286,6 +4325,30 @@ body.facex-fullscreen-mode .ef-main-layout {
   cursor: default;
   font-style: italic;
 }
+/* Búsqueda de productos (Código Item y Descripción FEL): código + nombre en
+   varias líneas, coincidencias resaltadas, nunca más ancha que la pantalla. */
+.ef-autocomplete {
+  max-width: calc(100vw - 16px);
+  max-height: min(320px, 45vh);
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.ef-autocomplete .ef-ac-head {
+  position: sticky; top: 0; z-index: 1;
+  padding: 5px 12px; font-size: 10.5px; font-weight: 600; letter-spacing: .3px;
+  text-transform: uppercase; color: var(--ef-text-muted);
+  background: #f8fafc; border-bottom: 1px solid var(--ef-border);
+}
+.ef-autocomplete-item { white-space: normal; overflow-wrap: anywhere; line-height: 1.3; }
+.ef-autocomplete-item .ef-ac-code { font-weight: 700; font-size: 12.5px; }
+.ef-autocomplete-item .ef-ac-uom {
+  float: right; margin-left: 8px; font-size: 10.5px; font-weight: 600;
+  color: var(--ef-text-muted); background: #f1f5f9; border-radius: 4px; padding: 0 5px;
+}
+.ef-autocomplete-item.ef-ac-name-first .ef-ac-desc { font-size: 12.5px; color: var(--ef-text); font-weight: 600; }
+.ef-autocomplete-item.ef-ac-name-first .ef-ac-code { font-weight: 500; font-size: 11px; color: var(--ef-text-muted); display: block; }
+.ef-autocomplete-item mark { background: #fef08a; color: inherit; padding: 0; border-radius: 2px; }
+.ef-autocomplete-item.ef-ac-loading { color: var(--ef-text-muted); cursor: default; }
 
 /* Delete button */
 .ef-btn-del {
@@ -5385,11 +5448,153 @@ body.facex-fullscreen-mode .ef-main-layout {
   #ef-reports-view:not(.ef-rep-cards) #ef-report-table .ef-td { white-space: nowrap; }
 }
 
+/* ── Mantenimiento de Clientes / Productos: lista en vivo + ficha por pestañas ── */
+.ef-ml-grid { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 24px; align-items: start; }
+.ef-ml-side { box-shadow: var(--ef-shadow); padding: 16px; position: sticky; top: 64px; }
+.ef-ml-main { box-shadow: var(--ef-shadow); padding: 20px; min-width: 0; }
+.ef-ml-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 6px; }
+.ef-ml-chip {
+  border: 1px solid var(--ef-border); background: #fff; color: var(--ef-text-muted);
+  border-radius: 14px; padding: 3px 11px; font-size: 11px; font-weight: 600; cursor: pointer;
+}
+.ef-ml-chip.ef-active { background: var(--ef-primary); border-color: var(--ef-primary); color: #fff; }
+.ef-ml-list {
+  margin-top: 8px; border: 1px solid var(--ef-border); border-radius: 8px; background: #fff;
+  max-height: calc(100vh - 360px); min-height: 140px; overflow-y: auto; overscroll-behavior: contain;
+}
+.ef-ml-row { padding: 9px 12px; border-bottom: 1px solid #f1f5f9; cursor: pointer; border-left: 3px solid transparent; }
+.ef-ml-row:last-child { border-bottom: none; }
+.ef-ml-row:hover { background: #f8fafc; }
+.ef-ml-row.ef-active { background: #eef2ff; border-left-color: var(--ef-primary); }
+.ef-ml-title { font-size: 13px; font-weight: 600; color: var(--ef-text); overflow-wrap: anywhere; }
+.ef-ml-sub { font-size: 11px; color: var(--ef-text-muted); overflow-wrap: anywhere; margin-top: 1px; }
+.ef-ml-badge { display: inline-block; font-size: 10px; font-weight: 700; padding: 0 6px; border-radius: 8px; background: #e0e7ff; color: #3730a3; vertical-align: middle; }
+.ef-ml-badge-off { background: #fee2e2; color: #b91c1c; }
+.ef-ml-none { padding: 22px 14px; text-align: center; font-size: 12px; color: var(--ef-text-muted); }
+.ef-ml-more { display: block; width: 100%; border: none; background: #f8fafc; padding: 10px; font-size: 12px; font-weight: 600; color: var(--ef-primary); cursor: pointer; }
+.ef-ml-hdr { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ef-ml-hdr > span { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.ef-ml-back { display: none; }
+.ef-ml-empty { text-align: center; color: var(--ef-text-muted); font-size: 13px; padding: 60px 16px; display: none; }
+.ef-ml-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--ef-border); margin-bottom: 16px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.ef-ml-tab {
+  position: relative; background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  padding: 9px 14px; font-size: 13px; font-weight: 600; color: var(--ef-text-muted); cursor: pointer; white-space: nowrap;
+}
+.ef-ml-tab.ef-active { color: var(--ef-primary); border-bottom-color: var(--ef-primary); }
+.ef-ml-dot { display: none; width: 7px; height: 7px; border-radius: 50%; background: #dc2626; margin-left: 5px; vertical-align: middle; }
+.ef-ml-tab.ef-invalid-tab .ef-ml-dot { display: inline-block; }
+.ef-ml-pane { display: none; grid-template-columns: 1fr 1fr; gap: 16px; }
+.ef-ml-pane.ef-active { display: grid; }
+.ef-ml-pane > * { min-width: 0; }
+.ef-ml-h { grid-column: 1 / -1; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; color: var(--ef-primary); border-bottom: 1px solid var(--ef-border); padding-bottom: 4px; margin-top: 4px; }
+.ef-ml-h:first-child { margin-top: 0; }
+.ef-ml-pane > .ef-field-group[style*="span 2"] { grid-column: 1 / -1 !important; }
+.ef-ml-invalid { border-color: #dc2626 !important; box-shadow: 0 0 0 3px rgba(220,38,38,.12) !important; }
+.ef-ml-warn { font-size: 11.5px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 5px 8px; margin-top: 4px; }
+.ef-ml-note { display: none; grid-column: 1 / -1; padding: 22px 12px; text-align: center; color: var(--ef-text-muted); font-size: 12.5px; }
+#ef-maint-item-relations-wrap[style*="display: none"] ~ .ef-ml-note { display: block; }
+.ef-ml-actions { margin-top: 20px; text-align: right; }
+@media (max-width: 900px) {
+  #ef-maintenance-view { padding: 12px !important; }
+  .ef-ml-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .ef-ml-side { position: static; }
+  .ef-ml-list { max-height: 62vh; }
+  .ef-ml-main { padding: 14px; }
+  .ef-ml-grid:not(.ef-ml-form-on) .ef-ml-main { display: none; }
+  .ef-ml-grid.ef-ml-form-on .ef-ml-side { display: none; }
+  .ef-ml-back { display: inline-flex; }
+  .ef-ml-body > div[style*="grid-template-columns"] { grid-template-columns: minmax(0, 1fr) !important; }
+  .ef-ml-pane, .ef-ml-pane > div[style*="grid-template-columns"] { grid-template-columns: minmax(0, 1fr) !important; }
+  #ef-maint-item-relations-wrap > div { grid-template-columns: minmax(0, 1fr) !important; gap: 18px !important; }
+  .ef-ml-actions {
+    position: sticky; bottom: 0; z-index: 5; background: var(--ef-card); margin: 16px -14px -14px; padding: 10px 14px;
+    border-top: 1px solid var(--ef-border); display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end;
+  }
+  .ef-ml-actions .ef-btn { margin: 0 !important; flex: 1 1 auto; }
+}
+
+/* Familias: productos (hijos) desplegados bajo cada familia */
+.ef-fam-kids-btn {
+  border: 1px solid #c7d2fe; background: #eef2ff; color: #3730a3; border-radius: 12px;
+  padding: 1px 9px; font-size: 12px; font-weight: 700; cursor: pointer;
+}
+.ef-fam-kids-btn:hover { background: #e0e7ff; }
+.ef-fam-kids-cell { background: #f8fafc; padding: 0 !important; }
+.ef-fam-kids-box { padding: 10px 14px 12px; border-left: 3px solid var(--ef-primary); }
+.ef-fam-kids-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+.ef-fam-kids-filter { max-width: 320px; font-size: 12px; padding: 4px 8px; }
+.ef-fam-kids-count { font-size: 11px; color: var(--ef-text-muted); }
+.ef-fam-kids-loading, .ef-fam-kids-hint { font-size: 11.5px; color: var(--ef-text-muted); padding: 6px 0; }
+@media (max-width: 600px) { .ef-fam-kids-filter { max-width: none; width: 100%; } }
+
+/* Grupo de Ítems: árbol */
+.ef-ig-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.ef-ig-bar #ef-ig-search { flex: 1 1 220px; max-width: 320px; font-size: 13px; padding: 5px 9px; }
+.ef-ig-bar-right { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+.ef-ig-name { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ef-ig-name-group { font-weight: 700; color: var(--ef-text); }
+.ef-ig-caret { width: 20px; height: 20px; line-height: 18px; text-align: center; border: none; background: #f1f5f9; border-radius: 4px; cursor: pointer; font-size: 12px; color: var(--ef-primary); padding: 0; flex: 0 0 20px; }
+.ef-ig-caret:disabled { opacity: .4; cursor: default; }
+.ef-ig-caret-none { background: transparent; cursor: default; }
+.ef-ig-empty { font-size: 11px; color: #94a3b8; }
+.ef-ig-row-off { opacity: .6; }
+.ef-ig-inc { font-size: 12px; display: inline-flex; align-items: center; gap: 4px; margin: 0; cursor: pointer; }
+@media (max-width: 600px) { .ef-ig-bar-right { margin-left: 0; width: 100%; } .ef-ig-bar #ef-ig-search { max-width: none; } }
+
+/* Encabezado comprimido (ya hay detalle): resúmenes con etiquetas, en varias líneas si hace falta */
+.ef-sum-k { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; color: #94a3b8; }
+.ef-sum-sep { color: #cbd5e1; }
+.ef-sum-ok { color: #166534; font-weight: 700; }
+.ef-header.ef-header-compact .ef-sec-summary { white-space: normal; overflow: visible; text-overflow: clip; font-size: 11.5px; line-height: 1.35; color: var(--ef-text); }
+.ef-header.ef-header-compact .ef-sec-head { align-items: flex-start; padding: 7px 12px; }
+.ef-header.ef-header-compact .ef-sec-title { font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: var(--ef-text-muted); }
+.ef-header.ef-header-compact .ef-sections { gap: 8px; }
+.ef-header.ef-header-compact .ef-sec-locked .ef-sec-chev { display: block; }
 /* Fix long dropdown cut-off */
 .awesomplete > ul, .awesomplete ul, .link-select-container ul {
   max-height: 250px !important;
   overflow-y: auto !important;
   z-index: 999999 !important;
+}
+/* Listas de resultados de los campos del encabezado (Cliente, Condición de
+   Pago, Plantilla, Vendedor): al menos el ancho del campo, crecen hasta lo
+   que necesite el nombre sin salirse de la pantalla y el texto largo se
+   parte en líneas en vez de cortarse con "…". */
+.ef-link-ctrl .awesomplete > ul {
+  min-width: 100% !important;
+  width: max-content !important;
+  max-width: min(460px, calc(100vw - 32px)) !important;
+  max-height: min(320px, 50vh) !important;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.ef-link-ctrl .awesomplete > ul > li {
+  white-space: normal !important;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+.ef-link-ctrl .awesomplete > ul > li p { white-space: normal !important; }
+/* Campo de la columna derecha de una fila doble (ej. Vendedor): la lista se
+   alinea a la derecha para no salirse del borde de la pantalla. */
+.ef-field-row2 > .ef-field-group:last-child .ef-link-ctrl .awesomplete > ul {
+  left: auto !important; right: 0 !important;
+}
+@media (max-width: 480px) {
+  .ef-field-row2 > .ef-field-group:last-child .ef-link-ctrl .awesomplete > ul { left: 0 !important; right: auto !important; }
+}
+
+/* Encabezado demasiado alto para quedar fijo (pantallas bajas / móvil): se
+   desplaza con la página para que siempre se pueda ver completo (ver
+   _setup_header_stickiness). */
+.ef-header.ef-header-unstick { position: relative; }
+
+/* Móvil táctil: con letra < 16px iOS hace zoom al enfocar un campo y la
+   página queda descuadrada. */
+@media (max-width: 600px) and (pointer: coarse) {
+  .ef-input, .ef-select, .ef-textarea, .ef-cell-input,
+  .ef-link-ctrl input, .ef-search-input, #ef-barcode-scan { font-size: 16px !important; }
+  .ef-autocomplete-item { padding: 10px 12px; }
 }
 		`;
 		$("<style>").attr("id", "ef-styles").html(css).appendTo("head");
@@ -5442,6 +5647,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 		// Fecha de emisión
 		this.$body.find("#ef-posting-date").on("change", (e) => {
 			this.doc.posting_date = e.target.value;
+			if (this._work_gate && (this._work_gate.cerrados || []).includes(e.target.value)) {
+				frappe.show_alert({
+					message: `El día ${frappe.datetime.str_to_user(e.target.value)} ya tiene Cierre Diario cerrado: no se puede facturar con esa fecha. Pida a Gerencia que reabra el cierre.`,
+					indicator: "red",
+				}, 8);
+			}
 			if (this.doc.payment_terms_template) {
 				this._on_payment_terms_change(this.doc.payment_terms_template);
 			} else {
@@ -5927,6 +6138,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 	_mark_dirty() {
 		this._dirty = true;
 		this._update_action_bar_state();
+		this._update_header_sections();
 	}
 
 	// -----------------------------------------------------------------------
@@ -6069,6 +6281,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 	}
 
 	_render_items() {
+		this._apply_header_compact();
 		const $tbody = this.$body.find("#ef-items-body");
 		$tbody.empty();
 
@@ -6222,8 +6435,27 @@ body.facex-fullscreen-mode .ef-main-layout {
 		});
 		$itemCode.on("input change", () => this._mark_dirty());
 
+		// Descripción: en una fila SIN producto funciona como buscador por
+		// nombre (resultados mientras escribe). Con producto ya elegido es
+		// texto libre para la FEL, como siempre: no se busca ni se reemplaza.
+		const $desc = $row.find(".ef-item-desc");
+		this._setup_ac($desc, "Item", (value) => {
+			this.doc.items[idx].item_code = value;
+			$itemCode.val(value);
+			this._mark_dirty();
+			this._fetch_item_details(idx, value, { focus_field: "ef-qty" });
+		}, {
+			minChars: 2,
+			fillInput: false,
+			nameFirst: true,
+			shouldSearch: () => !(this.doc.items[idx] && this.doc.items[idx].item_code),
+		});
+		if (!this.doc.items[idx].item_code) {
+			$desc.attr("placeholder", "Escriba para buscar el producto por nombre…");
+		}
+
 		// description editable en FEL (sustituye item_name en la UI del Facturador)
-		$row.find(".ef-item-desc").on("change input", (e) => {
+		$desc.on("change input", (e) => {
 			this.doc.items[idx].description = e.target.value;
 			this._mark_dirty();
 		});
@@ -6474,6 +6706,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 						}
 						this._render_items();
 						this._update_local_footer();
+						// Elegido desde la búsqueda por Descripción: el siguiente
+						// dato a capturar es la cantidad.
+						if (opts.focus_field) {
+							const $f = this.$body.find(`#ef-row-${idx} .${opts.focus_field}`);
+							if ($f.length) { $f.trigger("focus"); try { $f[0].select(); } catch (e) { /* number input */ } }
+						}
 						this._handle_item_serial_adenda(idx, d, opts);
 						this._update_row_stock_flag(idx);
 						this._maybe_suggest_pair(item_code, opts);
@@ -7416,131 +7654,217 @@ body.facex-fullscreen-mode .ef-main-layout {
 	// Lightweight Autocomplete
 	// -----------------------------------------------------------------------
 
-	_setup_ac($input, doctype, onSelect) {
+	// Autocompletado propio (Código Item, Descripción FEL, mantenimiento).
+	// opts:
+	//   shouldSearch() → false para no buscar (ej. Descripción de una fila que
+	//                    ya tiene producto: ahí el texto se edita libremente).
+	//   minChars       → caracteres mínimos para buscar (default 1).
+	//   fillInput      → al elegir, escribe el código en el campo (default true).
+	//   nameFirst      → muestra el nombre del producto como título (Descripción).
+	// La lista se pega al body y se reubica con el scroll de la página o de la
+	// tabla, nunca se sale de la pantalla y abre hacia arriba si abajo no cabe.
+	_setup_ac($input, doctype, onSelect, opts = {}) {
+		const minChars = opts.minChars || 1;
+		const fillInput = opts.fillInput !== false;
 		let $dropdown = null;
 		let _timer = null;
 		let _results = [];
 		let _active = -1;
+		let _seq = 0;        // descarta respuestas que llegan después de otra más nueva
+		let _lastTxt = "";
 
+		const reposition = () => {
+			if (!$dropdown) return;
+			const el = $input[0];
+			if (!el || !document.body.contains(el)) { close(); return; }
+			const rect = el.getBoundingClientRect();
+			const vw = document.documentElement.clientWidth || window.innerWidth;
+			const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+			const width = Math.min(Math.max(opts.minWidth || 280, rect.width), vw - 16);
+			let left = rect.left;
+			if (left + width > vw - 8) left = Math.max(8, vw - 8 - width);
+			const below = vh - rect.bottom - 8;
+			const above = rect.top - 8;
+			const maxH = Math.min(320, Math.max(below, above) - 4);
+			$dropdown.css({ width, maxHeight: Math.max(120, maxH) });
+			const h = Math.min($dropdown[0].scrollHeight, Math.max(120, maxH));
+			const openUp = below < Math.min(h, 200) && above > below;
+			$dropdown.css({
+				left: left + window.scrollX,
+				top: (openUp ? rect.top - h - 2 : rect.bottom + 2) + window.scrollY,
+			});
+		};
+
+		const _onScroll = () => reposition();
 		const close = () => {
 			if ($dropdown) { $dropdown.remove(); $dropdown = null; }
 			_active = -1;
+			window.removeEventListener("scroll", _onScroll, true);
+			window.removeEventListener("resize", _onScroll);
 		};
 
-		const open = (results) => {
-			close();
-			if (!results.length) {
-				$dropdown = $(`<div class="ef-autocomplete"><div class="ef-autocomplete-item ef-ac-empty">Sin resultados</div></div>`);
-			} else {
-				_results = results;
-				const items = results
-					.map((r, i) => `<div class="ef-autocomplete-item" data-i="${i}">
-						${_esc(r.value)}
-						${r.description ? `<span class="ef-ac-desc">${_esc(r.description)}</span>` : ""}
-					</div>`)
-					.join("");
-				$dropdown = $(`<div class="ef-autocomplete">${items}</div>`);
-			}
+		const _hl = (text, txt) => {
+			const safe = _esc(text || "");
+			const terms = (txt || "").trim().split(/\s+/).filter((t) => t.length >= 1)
+				.map((t) => _esc(t).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+			if (!terms.length) return safe;
+			try {
+				return safe.replace(new RegExp(`(${terms.join("|")})`, "gi"), "<mark>$1</mark>");
+			} catch (e) { return safe; }
+		};
 
-			const offset = $input.offset();
-			const inputH = $input.outerHeight();
-			$dropdown.css({
-				top: offset.top + inputH + 2,
-				left: offset.left,
-				width: Math.max(240, $input.outerWidth()),
-			});
+		const _mount = ($el) => {
+			const isNew = !$dropdown;
+			if ($dropdown) $dropdown.remove();
+			$dropdown = $el;
 			$("body").append($dropdown);
-
-			$dropdown.on("mousedown", ".ef-autocomplete-item:not(.ef-ac-empty)", (e) => {
-				const i = parseInt($(e.currentTarget).data("i"));
-				const r = _results[i];
-				$input.val(r.value);
-				onSelect(r.value, r.description || "");
-				close();
+			// mousedown + preventDefault: elegir no le quita el foco al campo
+			// (en móvil evita que el teclado se cierre y la lista "salte").
+			$dropdown.on("mousedown", (e) => e.preventDefault());
+			$dropdown.on("click", ".ef-autocomplete-item[data-i]", (e) => {
+				const r = _results[parseInt($(e.currentTarget).data("i"))];
+				if (r) pick(r);
 			});
+			if (isNew) {
+				window.addEventListener("scroll", _onScroll, true);
+				window.addEventListener("resize", _onScroll);
+			}
+			reposition();
+		};
+
+		const pick = (r) => {
+			if (fillInput) $input.val(r.value);
+			close();
+			onSelect(r.value, r.description || "");
+		};
+
+		const open = (results, txt) => {
+			_active = -1;
+			_results = results;
+			let html;
+			if (!results.length) {
+				html = `<div class="ef-autocomplete-item ef-ac-empty">Sin resultados para “${_esc(txt)}”</div>`;
+			} else {
+				const head = opts.nameFirst
+					? `<div class="ef-ac-head">${results.length >= 50 ? "Primeros 50 productos" : results.length + " producto" + (results.length === 1 ? "" : "s")} · elija uno</div>`
+					: "";
+				html = head + results.map((r, i) => opts.nameFirst
+					? `<div class="ef-autocomplete-item ef-ac-name-first" data-i="${i}">
+						${r.uom ? `<span class="ef-ac-uom">${_esc(r.uom)}</span>` : ""}
+						<span class="ef-ac-desc">${_hl(r.description || r.value, txt)}</span>
+						<span class="ef-ac-code">${_hl(r.value, txt)}</span>
+					</div>`
+					: `<div class="ef-autocomplete-item" data-i="${i}">
+						${r.uom ? `<span class="ef-ac-uom">${_esc(r.uom)}</span>` : ""}
+						<span class="ef-ac-code">${_hl(r.value, txt)}</span>
+						${r.description ? `<span class="ef-ac-desc">${_hl(r.description, txt)}</span>` : ""}
+					</div>`).join("");
+			}
+			_mount($(`<div class="ef-autocomplete">${html}</div>`));
 		};
 
 		const highlight = (dir) => {
 			if (!$dropdown) return;
-			const $items = $dropdown.find(".ef-autocomplete-item:not(.ef-ac-empty)");
+			const $items = $dropdown.find(".ef-autocomplete-item[data-i]");
+			if (!$items.length) return;
 			$items.removeClass("ef-ac-active");
 			_active = Math.max(0, Math.min(_active + dir, $items.length - 1));
-			$items.eq(_active).addClass("ef-ac-active");
+			const $cur = $items.eq(_active).addClass("ef-ac-active");
+			if ($cur[0] && $cur[0].scrollIntoView) $cur[0].scrollIntoView({ block: "nearest" });
 		};
 
-		$input.on("input", () => {
+		const search = (txt) => {
+			const comp = this.doc.company || this.defaults.company || "";
+			const seq = ++_seq;
+			const done = (results) => {
+				// Respuesta vieja, o el usuario ya salió del campo / borró el texto
+				if (seq !== _seq || !document.activeElement || document.activeElement !== $input[0]) return;
+				open(results, txt);
+			};
+			if (doctype === "Item") {
+				frappe.call({
+					method: "facex_multi.api.item.search_items",
+					args: { txt, company: comp },
+					callback: (r) => done((r.message || []).map((it) => ({
+						value: it.name,
+						description: it.item_name || "",
+						uom: it.stock_uom || "",
+					}))),
+				});
+			} else if (doctype === "Customer") {
+				frappe.call({
+					method: "facex_multi.api.item.get_customers_list",
+					args: { txt, company: comp },
+					callback: (r) => done((r.message || []).map((c) => ({
+						value: c.name,
+						description: c.customer_name || "",
+					}))),
+				});
+			} else {
+				frappe.call({
+					method: "frappe.desk.search.search_link",
+					args: {
+						txt,
+						doctype,
+						ignore_user_permissions: 0,
+						reference_doctype: "Sales Invoice",
+						filters: {},
+					},
+					callback: (r) => {
+						const results = r.results || r.message || [];
+						done(Array.isArray(results) ? results : []);
+					},
+				});
+			}
+		};
+
+		const trigger = () => {
 			const txt = $input.val().trim();
 			clearTimeout(_timer);
-			if (txt.length < 1) { close(); return; }
+			if ((opts.shouldSearch && !opts.shouldSearch()) || txt.length < minChars) {
+				_seq++;
+				_lastTxt = "";
+				close();
+				return;
+			}
+			if (txt === _lastTxt && $dropdown) return;
+			_lastTxt = txt;
+			if (!$dropdown) _mount($(`<div class="ef-autocomplete"><div class="ef-autocomplete-item ef-ac-loading">Buscando…</div></div>`));
+			_timer = setTimeout(() => search(txt), 200);
+		};
 
-			const comp = this.doc.company || this.defaults.company || "";
-
-			_timer = setTimeout(() => {
-				if (doctype === "Item") {
-					frappe.call({
-						method: "facex_multi.api.item.search_items",
-						args: { txt, company: comp },
-						callback: (r) => {
-							const rows = r.message || [];
-							const results = rows.map((it) => ({
-								value: it.name,
-								description: it.item_name || "",
-							}));
-							open(results);
-						},
-					});
-				} else if (doctype === "Customer") {
-					frappe.call({
-						method: "facex_multi.api.item.get_customers_list",
-						args: { txt, company: comp },
-						callback: (r) => {
-							const rows = r.message || [];
-							const results = rows.map((c) => ({
-								value: c.name,
-								description: c.customer_name || "",
-							}));
-							open(results);
-						},
-					});
-				} else {
-					frappe.call({
-						method: "frappe.desk.search.search_link",
-						args: {
-							txt,
-							doctype,
-							ignore_user_permissions: 0,
-							reference_doctype: "Sales Invoice",
-							filters: {},
-						},
-						callback: (r) => {
-							const results = r.results || r.message || [];
-							open(Array.isArray(results) ? results : []);
-						},
-					});
-				}
-			}, 180);
-		});
+		$input.on("input", trigger);
 
 		$input.on("keydown", (e) => {
 			if (!$dropdown) return;
 			if (e.key === "ArrowDown") { e.preventDefault(); highlight(1); }
 			else if (e.key === "ArrowUp") { e.preventDefault(); highlight(-1); }
 			else if (e.key === "Enter") {
-				e.preventDefault();
 				const $active = $dropdown.find(".ef-ac-active");
 				if ($active.length) {
-					const i = parseInt($active.data("i"));
-					const r = _results[i];
-					$input.val(r.value);
-					onSelect(r.value, r.description || "");
+					e.preventDefault();
+					e.stopImmediatePropagation();
+					const r = _results[parseInt($active.data("i"))];
+					if (r) { pick(r); return; }
 				}
+				// Sin selección: en Código sigue el flujo de siempre (Enter
+				// busca el código escrito); en Descripción no se interrumpe.
+				if (opts.nameFirst) e.preventDefault();
+				_seq++;
 				close();
 			} else if (e.key === "Escape") {
+				e.preventDefault();
+				_seq++;
+				close();
+			} else if (e.key === "Tab") {
+				_seq++;
 				close();
 			}
 		});
 
-		$input.on("blur", () => setTimeout(close, 180));
+		$input.on("blur", () => setTimeout(() => {
+			if (document.activeElement !== $input[0]) { _seq++; _lastTxt = ""; close(); }
+		}, 150));
 	}
 
 	// -----------------------------------------------------------------------
@@ -8783,6 +9107,36 @@ body.facex-fullscreen-mode .ef-main-layout {
 			});
 		});
 
+		// Recargar: lo mismo que "Recargar" del menú del escritorio de Frappe
+		// (borra la caché local y del servidor de la sesión y recarga la
+		// página). Avisa antes si hay cambios sin guardar.
+		this.$body.find("#ef-btn-reload").on("click", (e) => {
+			e.stopPropagation();
+			const doReload = () => {
+				this.$body.find("#ef-user-dropdown-menu").fadeOut(150);
+				this._dirty = false;
+				if (frappe.ui.toolbar && frappe.ui.toolbar.clear_cache) {
+					frappe.ui.toolbar.clear_cache();
+				} else {
+					try { frappe.assets.clear_local_storage(); } catch (err) { /* sin assets */ }
+					frappe.xcall("frappe.sessions.clear")
+						.then(() => location.reload(true))
+						.catch(() => location.reload(true));
+				}
+			};
+			if (this._dirty) {
+				frappe.confirm("Hay cambios sin guardar que se perderán al recargar. ¿Recargar de todos modos?", doReload);
+			} else {
+				doReload();
+			}
+		});
+
+		this.$body.on("change", "#ef-maint-cust-ident", (e) => {
+			const $rec = this.$body.find("#ef-maint-cust-receptor");
+			if (e.target.value === "CF") $rec.val("CF");
+			else if (($rec.val() || "").toUpperCase() === "CF") $rec.val("");
+		});
+
 		this.$body.find("#ef-btn-logout").on("click", () => {
 			frappe.app.logout();
 		});
@@ -9272,6 +9626,46 @@ body.facex-fullscreen-mode .ef-main-layout {
 		});
 	}
 
+	// El encabezado queda fijo arriba mientras se trabaja la tabla, pero solo si
+	// cabe: con una tarjeta abierta en móvil o en pantallas bajas ocupaba toda
+	// la pantalla y su parte de abajo (y las listas de resultados) nunca se
+	// veía. En ese caso se desplaza con la página como cualquier contenido.
+	_setup_header_stickiness() {
+		const $header = this.$body.find(".ef-header");
+		if (!$header.length) return;
+		const check = () => {
+			const el = $header[0];
+			if (!el.offsetParent) return; // vista oculta
+			const vh = window.innerHeight || 0;
+			const tooTall = window.innerWidth <= 900 || el.offsetHeight > vh * 0.45;
+			$header.toggleClass("ef-header-unstick", tooTall);
+		};
+		this._check_header_sticky = check;
+		if (window.ResizeObserver) {
+			try { new ResizeObserver(() => check()).observe($header[0]); } catch (e) { /* sin RO */ }
+		}
+		$(window).on("resize.efsticky orientationchange.efsticky", () => check());
+		check();
+
+		// Móvil: al enfocar un campo con búsqueda (Cliente, Condición de Pago,
+		// Vendedor, Código / Descripción de la línea) se sube el campo hacia
+		// arriba para que la lista de resultados quepa sobre el teclado.
+		const coarse = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+		if (coarse) {
+			this.$body.on("focus", ".ef-link-ctrl input, .ef-item-code, .ef-item-desc", (e) => {
+				const el = e.currentTarget;
+				setTimeout(() => {
+					if (document.activeElement !== el || window.innerWidth > 900) return;
+					const top = el.getBoundingClientRect().top;
+					const navH = (this.$body.find(".ef-navbar-top:visible").outerHeight() || 0) + 12;
+					if (top < navH || top > window.innerHeight * 0.35) {
+						window.scrollBy({ top: top - navH, behavior: "smooth" });
+					}
+				}, 300);
+			});
+		}
+	}
+
 	// -----------------------------------------------------------------------
 	// Tarjetas colapsables del encabezado (Cliente / Documento / Facturación FEL)
 	// -----------------------------------------------------------------------
@@ -9387,33 +9781,62 @@ body.facex-fullscreen-mode .ef-main-layout {
 	_update_header_sections() {
 		const d = this.doc;
 		const $b = this.$body;
+		const lbl = (k, v) => (v ? `<span class="ef-sum-k">${k}</span> ${_esc(v)}` : "");
+		const join = (parts) => parts.filter(Boolean).join('<span class="ef-sum-sep"> · </span>');
 
-		// Cliente
+		// Cliente: nombre + identificación (tipo y número)
 		const custName = d.customer_name || d.customer || "";
-		const nit = $b.find("#ef-bfel-nit").val() || "";
-		$b.find("#ef-sec-cliente-summary").text(
-			custName ? (nit ? `${custName} · ${nit}` : custName) : "Sin cliente seleccionado"
+		const nit = ($b.find("#ef-bfel-nit").val() || "").trim();
+		const tipo = $b.find("#ef-bfel-identificacion").val() || "";
+		const ident = [tipo, nit].filter(Boolean).join(" ");
+		$b.find("#ef-sec-cliente-summary").html(
+			custName ? join([`<b>${_esc(custName)}</b>`, ident ? `<span class="ef-sum-k">ID</span> ${_esc(ident)}` : ""]) : "Sin cliente seleccionado"
 		);
 
-		// Documento
+		// Documento: establecimiento, serie, vencimiento, condición de pago y lista de precios
 		const est = $b.find("#ef-establecimiento").val() || "";
 		const serie = $b.find("#ef-naming-series").val() || "";
 		const due = $b.find("#ef-due-date").val() || "";
-		let docSummary = [est, serie].filter(Boolean).join(" · ");
-		if (due) docSummary += (docSummary ? " · vence " : "vence ") + due;
-		$b.find("#ef-sec-documento-summary").text(docSummary || "Sin datos de documento");
+		const terms = d.payment_terms_template || "";
+		const plist = d.selling_price_list || $b.find("#ef-price-list").val() || "";
+		const docParts = [
+			est ? lbl("Est.", est) : "", lbl("Serie", serie), lbl("Vence", due),
+			lbl("Pago", terms), lbl("Lista", plist),
+		];
+		$b.find("#ef-sec-documento-summary").html(
+			docParts.some(Boolean) ? join(docParts) : "Sin datos de documento"
+		);
 
-		// Facturación FEL
+		// Facturación FEL: estado a enviar y si ya fue certificada
 		const felStatus = $b.find("#ef-bfel-status").val() || "";
-		let felSummary;
-		if (d.bfel_uuid) {
-			felSummary = "Certificada · UUID " + String(d.bfel_uuid).slice(0, 8) + "…";
-		} else if (felStatus === "00 No enviar") {
-			felSummary = "No se enviará a SAT";
+		let cert;
+		if (d.bfel_uuid) cert = `<span class="ef-sum-ok">✔ Certificada</span> <span class="ef-sum-k">UUID</span> ${_esc(String(d.bfel_uuid).slice(0, 8))}…`;
+		else if (felStatus === "00 No enviar") cert = "No se enviará a SAT";
+		else cert = "Aún sin certificar";
+		$b.find("#ef-sec-fel-summary").html(join([felStatus ? lbl("Estado", felStatus) : "", cert]));
+	}
+
+	// Cuando el usuario ya empezó a capturar el detalle, el encabezado se comprime:
+	// las tres tarjetas quedan cerradas mostrando solo su resumen (cliente + ID,
+	// documento + serie / condición / lista, FEL + estado y certificación), y la
+	// tabla de productos gana espacio. Se hace una sola vez al pasar de "sin
+	// detalle" a "con detalle": si el usuario abre una tarjeta a mano no se le
+	// vuelve a cerrar. Sin detalle (factura nueva) vuelve a su estado normal.
+	_apply_header_compact() {
+		const hasDetail = (this.doc.items || []).some((r) => r && r.item_code);
+		if (hasDetail === !!this._hdr_compacted) return;
+		this._hdr_compacted = hasDetail;
+		const $hdr = this.$body.find(".ef-header");
+		const $fel = this.$body.find("#ef-sec-fel");
+		$hdr.toggleClass("ef-header-compact", hasDetail);
+		if (hasDetail) {
+			this.$body.find(".ef-sec-card").removeClass("ef-sec-open");
+			$fel.removeClass("ef-sec-locked");
 		} else {
-			felSummary = "Pendiente de envío a SAT";
+			$fel.addClass("ef-sec-locked ef-sec-open");
+			this.$body.find("#ef-sec-cliente").addClass("ef-sec-open");
 		}
-		$b.find("#ef-sec-fel-summary").text(felSummary);
+		this._update_header_sections();
 	}
 
 	// -----------------------------------------------------------------------
@@ -9542,7 +9965,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 				},
 				{ fieldtype: "Section Break", label: "General" },
 				{ fieldname: "customer_name",       fieldtype: "Data", label: "Nombre Cliente", reqd: 1 },
-				{ fieldname: "bfel_identificacion", fieldtype: "Data", label: "Identificación (FEL)" },
+				{ fieldname: "bfel_identificacion", fieldtype: "Select", label: "Identificación (FEL)", options: "\nNIT\nCUI\nPASAPORTE\nCF" },
 				{ fieldname: "bfel_id_receptor",    fieldtype: "Data", label: "ID Receptor (FEL)" },
 				{ fieldtype: "Column Break" },
 				{ fieldname: "custom_direccion",    fieldtype: "Data", label: "Dirección" },
@@ -9606,6 +10029,20 @@ body.facex-fullscreen-mode .ef-main-layout {
 		dlg.$wrapper.find("#ef-dlg-crear").on("click", () => setMode("create"));
 
 		this._setup_customer_dialog_search(dlg);
+
+		// Identificación = CF → el ID Receptor siempre es "CF" (consumidor final).
+		// Al salir de CF se limpia solo si seguía en "CF" para no borrar un NIT escrito.
+		const _identSel = dlg.fields_dict.bfel_identificacion;
+		if (_identSel && _identSel.$input) {
+			_identSel.$input.on("change", () => {
+				if (dlg._ef_mode === "view") return;
+				const tipo = _identSel.get_value();
+				const rec = dlg.fields_dict.bfel_id_receptor;
+				if (!rec) return;
+				if (tipo === "CF") rec.set_value("CF");
+				else if ((rec.get_value() || "").toUpperCase() === "CF") rec.set_value("");
+			});
+		}
 
 		if (dlg.fields_dict.default_sales_partner) {
 			dlg.fields_dict.default_sales_partner.get_query = () => {
@@ -9754,8 +10191,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 			} catch (_) {}
 			// Direct DOM fallback for immediate visual effect
 			if (fd.$wrapper) {
-				fd.$wrapper.find("input, textarea").prop("disabled", readonly);
-				fd.$wrapper.find("input, textarea").css({
+				fd.$wrapper.find("input, textarea, select").prop("disabled", readonly);
+				fd.$wrapper.find("input, textarea, select").css({
 					"background": readonly ? "#f1f5f9" : "",
 					"cursor": readonly ? "not-allowed" : "",
 					"color": readonly ? "#64748b" : "",
@@ -12863,12 +13300,19 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		// Sub-tab switching
 		this.$body.on("click", ".ef-maint-tab-btn", (e) => {
-			const tab = $(e.currentTarget).data("maint-tab");
-			this.$body.find(".ef-maint-tab-btn").removeClass("ef-tab-active");
-			$(e.currentTarget).addClass("ef-tab-active");
-			this.$body.find(".ef-maint-tab-content").hide();
-			this.$body.find(`#ef-maint-tab-${tab}`).show();
-			this._on_maint_tab_switch(tab);
+			const btn = e.currentTarget;
+			const tab = $(btn).data("maint-tab");
+			const goTab = () => {
+				this.$body.find(".ef-maint-tab-btn").removeClass("ef-tab-active");
+				$(btn).addClass("ef-tab-active");
+				this.$body.find(".ef-maint-tab-content").hide();
+				this.$body.find(`#ef-maint-tab-${tab}`).show();
+				this._on_maint_tab_switch(tab);
+			};
+			// Aviso si la pestaña actual (Clientes / Productos) tiene cambios sin guardar
+			const cur = this.$body.find(".ef-maint-tab-btn.ef-tab-active").data("maint-tab");
+			const kind = { clientes: "cust", productos: "item", proveedores: "supp", "listas-materiales": "lm" }[cur] || "";
+			if (kind && cur !== tab) this._ml_guard(kind, goTab); else goTab();
 		});
 
 		// ── Customers (búsqueda-primero, estilo SAP) ──
@@ -12876,20 +13320,17 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this._search_maint_customers();
 		});
 
-		this.$body.find("#ef-maint-cust-search").on("keydown", (e) => {
-			if (e.key === "Enter") {
-				e.preventDefault();
-				this._search_maint_customers();
-			}
-		});
-
 		this.$body.find("#ef-maint-cust-btn-all").on("click", () => {
-			this._view_all_maint_customers();
+			this._ml_open_advanced("cust");
 		});
 
 		this.$body.find("#ef-maint-cust-btn-new").on("click", () => {
-			this._clear_maint_cust_form();
-			this._set_maint_cust_form_mode("create");
+			this._ml_guard("cust", () => {
+				this._clear_maint_cust_form();
+				this._set_maint_cust_form_mode("create");
+				this.$body.find("#ef-maint-tab-clientes .ef-ml-grid").addClass("ef-ml-form-on");
+				this._ml_scroll_top();
+			});
 		});
 
 		this.$body.find("#ef-maint-cust-btn-save").on("click", () => {
@@ -12898,6 +13339,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		this.$body.find("#ef-maint-cust-receptor").on("change", (e) => {
 			this._lookup_maint_cust_name(e.target.value);
+			this._ml_check_dup_customer(e.target.value);
 		});
 
 		// ── Products (búsqueda-primero, estilo SAP) ──
@@ -12905,21 +13347,20 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this._search_maint_items();
 		});
 
-		this.$body.find("#ef-maint-item-search").on("keydown", (e) => {
-			if (e.key === "Enter") {
-				e.preventDefault();
-				this._search_maint_items();
-			}
-		});
-
 		this.$body.find("#ef-maint-item-btn-all").on("click", () => {
-			this._view_all_maint_items();
+			this._ml_open_advanced("item");
 		});
 
 		this.$body.find("#ef-maint-item-btn-new").on("click", () => {
-			this._clear_maint_item_form();
-			this._set_maint_item_form_mode("create");
+			this._ml_guard("item", () => {
+				this._clear_maint_item_form();
+				this._set_maint_item_form_mode("create");
+				this.$body.find("#ef-maint-tab-productos .ef-ml-grid").addClass("ef-ml-form-on");
+				this._ml_scroll_top();
+			});
 		});
+
+		this.$body.on("blur", "#ef-maint-item-code, #ef-maint-item-name", () => this._ml_check_dup_item());
 
 		this.$body.find("#ef-maint-item-btn-save").on("click", () => {
 			this._save_maint_item();
@@ -12930,20 +13371,17 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this._search_maint_lms();
 		});
 
-		this.$body.find("#ef-maint-lm-search").on("keydown", (e) => {
-			if (e.key === "Enter") {
-				e.preventDefault();
-				this._search_maint_lms();
-			}
-		});
-
 		this.$body.find("#ef-maint-lm-btn-all").on("click", () => {
-			this._view_all_maint_lms();
+			this._ml_open_advanced("lm");
 		});
 
 		this.$body.find("#ef-maint-lm-btn-new").on("click", () => {
-			this._clear_maint_lm_form();
-			this._set_maint_lm_form_mode("create");
+			this._ml_guard("lm", () => {
+				this._clear_maint_lm_form();
+				this._set_maint_lm_form_mode("create");
+				this.$body.find("#ef-maint-tab-listas-materiales .ef-ml-grid").addClass("ef-ml-form-on");
+				this._ml_scroll_top();
+			});
 		});
 
 		this.$body.find("#ef-maint-lm-btn-save").on("click", () => {
@@ -13074,21 +13512,20 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this._search_maint_suppliers();
 		});
 
-		this.$body.find("#ef-maint-supp-search").on("keydown", (e) => {
-			if (e.key === "Enter") {
-				e.preventDefault();
-				this._search_maint_suppliers();
-			}
-		});
-
 		this.$body.find("#ef-maint-supp-btn-all").on("click", () => {
-			this._view_all_maint_suppliers();
+			this._ml_open_advanced("supp");
 		});
 
 		this.$body.find("#ef-maint-supp-btn-new").on("click", () => {
-			this._clear_maint_supp_form();
-			this._set_maint_supp_form_mode("create");
+			this._ml_guard("supp", () => {
+				this._clear_maint_supp_form();
+				this._set_maint_supp_form_mode("create");
+				this.$body.find("#ef-maint-tab-proveedores .ef-ml-grid").addClass("ef-ml-form-on");
+				this._ml_scroll_top();
+			});
 		});
+
+		this.$body.find("#ef-maint-supp-nit").on("change", (e) => this._ml_check_dup_supplier(e.target.value));
 
 		this.$body.find("#ef-maint-supp-btn-save").on("click", () => {
 			this._save_maint_supplier();
@@ -13097,6 +13534,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-maint-supp-btn-delete").on("click", () => {
 			this._delete_maint_supplier();
 		});
+
+		// Lista en vivo + ficha por pestañas en Clientes y Productos
+		this._ml_enhance("cust");
+		this._ml_enhance("item");
+		this._ml_enhance("supp");
+		this._ml_enhance("lm");
+		this._ig_bind();
 	}
 
 	_load_maintenance_view() {
@@ -13112,12 +13556,15 @@ body.facex-fullscreen-mode .ef-main-layout {
 		if (tab === "clientes") {
 			this._clear_maint_cust_form();
 			this._set_maint_cust_form_mode("search");
+			this._ml_refresh("cust");
 		} else if (tab === "productos") {
 			this._clear_maint_item_form();
 			this._set_maint_item_form_mode("search");
+			this._ml_refresh("item");
 		} else if (tab === "listas-materiales") {
 			this._clear_maint_lm_form();
 			this._set_maint_lm_form_mode("search");
+			this._ml_refresh("lm");
 		} else if (tab === "precios") {
 			this._load_price_lists_dropdown_then_load_prices();
 		} else if (tab === "familias") {
@@ -13129,6 +13576,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		} else if (tab === "proveedores") {
 			this._clear_maint_supp_form();
 			this._set_maint_supp_form_mode("search");
+			this._ml_refresh("supp");
 		}
 	}
 
@@ -13439,6 +13887,513 @@ body.facex-fullscreen-mode .ef-main-layout {
 		);
 	}
 
+	// ═══════════════════════════════════════════════════════════════════════
+	// Mantenimiento de Clientes y Productos: lista en vivo + ficha por pestañas
+	// Reusa todos los controles y funciones de guardado existentes; solo
+	// reorganiza la pantalla (ver _ml_enhance) y agrega la búsqueda mientras
+	// se escribe, duplicar, guardar y crear otro, validación y aviso de cambios.
+	// ═══════════════════════════════════════════════════════════════════════
+
+	_ml_cfg(kind) {
+		if (kind === "cust") {
+			return {
+				kind, p: "cust", tab: "#ef-maint-tab-clientes", maintTab: "clientes",
+				method: "facex_multi.api.customer.search_customers_maintenance",
+				noun: ["cliente", "clientes"],
+				chips: [["", "Todos"], ["activos", "Activos"], ["inactivos", "Inactivos"], ["sin_nit", "Sin NIT"]],
+				fields: [["texto", "Todo"], ["nombre", "Nombre"], ["nit", "NIT / Identificación"], ["codigo", "Código"], ["grupo", "Grupo"]],
+				placeholder: "Escriba nombre, NIT, código o teléfono…",
+				row: (c) => ({
+					title: c.customer_name || c.name,
+					sub: [c.name !== c.customer_name ? c.name : "", c.tax_id, c.customer_group].filter(Boolean).join(" · "),
+					off: !!c.disabled, tag: "",
+				}),
+				load: (n) => this._load_maint_customer_details(n),
+				current: () => this._current_maint_cust_name,
+				clear: () => this._clear_maint_cust_form(),
+				setMode: (m) => this._set_maint_cust_form_mode(m),
+				canCreate: () => !!(this.perms && this.perms.crea_clientes),
+				advanced: (f) => this._open_maint_cust_browser(f),
+				advancedKeys: { texto: "nombre", nombre: "nombre", nit: "nit", codigo: "codigo", grupo: "grupo" },
+				panes: [["general", "General"], ["contacto", "Contacto y dirección"], ["comercial", "Comercial"]],
+			};
+		}
+		if (kind === "supp") {
+			return {
+				kind, p: "supp", tab: "#ef-maint-tab-proveedores", maintTab: "proveedores",
+				method: "facex_multi.api.purchase.search_suppliers_maintenance",
+				noun: ["proveedor", "proveedores"],
+				chips: [["", "Todos"], ["activos", "Activos"], ["inactivos", "Inactivos"], ["sin_nit", "Sin NIT"]],
+				fields: [["texto", "Todo"], ["nombre", "Nombre"], ["nit", "NIT / ID Fiscal"], ["codigo", "Código"]],
+				placeholder: "Escriba nombre, NIT o teléfono…",
+				row: (x) => ({
+					title: x.supplier_name || x.name,
+					sub: [x.name !== x.supplier_name ? x.name : "", x.tax_id, x.custom_telefono].filter(Boolean).join(" · "),
+					off: !!x.disabled, tag: "",
+				}),
+				load: (n) => this._load_maint_supp_form(n),
+				current: () => this._current_maint_supp,
+				clear: () => this._clear_maint_supp_form(),
+				setMode: (m) => this._set_maint_supp_form_mode(m),
+				canCreate: () => !!(this.perms && this.perms.crea_proveedores),
+				advanced: (f) => this._open_maint_supp_browser(f),
+				advancedKeys: { texto: "nombre", nombre: "nombre", nit: "nit", codigo: "codigo" },
+				panes: null,
+			};
+		}
+		if (kind === "lm") {
+			return {
+				kind, p: "lm", tab: "#ef-maint-tab-listas-materiales", maintTab: "listas-materiales",
+				method: "facex_multi.api.item.search_listas_materiales_maintenance",
+				noun: ["lista de materiales", "listas de materiales"],
+				chips: [["", "Todas"], ["padre", "Padre lleva stock"], ["hijos", "Hijos llevan stock"], ["inactivas", "Inactivas"]],
+				fields: [["texto", "Todo"], ["nombre", "Nombre"], ["codigo", "Código"]],
+				placeholder: "Escriba código o nombre del producto padre…",
+				row: (x) => ({
+					title: x.item_name || x.name,
+					sub: [x.name, `${x.num_componentes || 0} componente(s)`].filter(Boolean).join(" · "),
+					off: !!x.disabled, tag: x.modo_stock || "",
+				}),
+				load: (n) => this._load_maint_lm_details(n),
+				current: () => (this._maint_lm_form && this._maint_lm_form.item_code) || "",
+				clear: () => this._clear_maint_lm_form(),
+				setMode: (m) => this._set_maint_lm_form_mode(m),
+				canCreate: () => !!(this.perms && this.perms.gestiona_listas_materiales),
+				advanced: (f) => this._open_maint_lm_browser(f),
+				advancedKeys: { texto: "nombre", nombre: "nombre", codigo: "codigo" },
+				panes: null,
+			};
+		}
+		return {
+			kind, p: "item", tab: "#ef-maint-tab-productos", maintTab: "productos",
+			method: "facex_multi.api.item.search_items_maintenance",
+			noun: ["producto", "productos"],
+			chips: [["", "Todos"], ["activos", "Activos"], ["inactivos", "Inactivos"], ["sin_familia", "Sin familia"]],
+			fields: [["texto", "Todo"], ["nombre", "Nombre"], ["codigo", "Código"], ["grupo", "Grupo"]],
+			placeholder: "Escriba código, nombre o grupo…",
+			row: (it) => ({
+				title: it.item_name || it.name,
+				sub: [it.name, it.item_group, it.stock_uom].filter(Boolean).join(" · "),
+				off: !!it.disabled,
+				tag: it.gestionado_por && it.gestionado_por !== "General" ? it.gestionado_por : "",
+			}),
+			load: (n) => this._load_maint_item_details(n),
+			current: () => this._current_maint_item_code,
+			clear: () => this._clear_maint_item_form(),
+			setMode: (m) => this._set_maint_item_form_mode(m),
+			canCreate: () => !!(this.perms && this.perms.crea_items),
+			advanced: (f) => this._open_maint_item_browser(f),
+			advancedKeys: { texto: "nombre", nombre: "nombre", codigo: "codigo", grupo: "grupo" },
+			panes: [["general", "General"], ["inventario", "Inventario y costo"], ["extras", "Imágenes y búsqueda"], ["relaciones", "Relaciones"]],
+		};
+	}
+
+	_ml_main($tab) { return $tab.find(".ef-ml-main").first(); }
+
+	_ml_enhance(kind) {
+		const cfg = this._ml_cfg(kind);
+		const $tab = this.$body.find(cfg.tab);
+		if (!$tab.length || $tab.data("ml-ready")) return;
+		$tab.data("ml-ready", 1);
+		this._ml = this._ml || {};
+		this._ml_dirty = this._ml_dirty || {};
+		this._ml_another = this._ml_another || {};
+		this._ml[kind] = { rows: [], total: 0, seq: 0, filtro: "", timer: null };
+
+		const $grid = $tab.children().first().addClass("ef-ml-grid").removeAttr("style");
+		const $side = $grid.children().eq(0).addClass("ef-ml-side").removeAttr("style");
+		const $main = $grid.children().eq(1).addClass("ef-ml-main").removeAttr("style");
+		const p = cfg.p;
+
+		// ── Panel izquierdo: búsqueda + filtros + lista ──
+		const $inp = $side.find(`#ef-maint-${p}-search`);
+		const $sel = $side.find(`#ef-maint-${p}-search-field`);
+		$sel.html(cfg.fields.map((f) => `<option value="${f[0]}">${f[1]}</option>`).join(""));
+		$inp.attr("placeholder", cfg.placeholder).attr("autocomplete", "off");
+		const $inpGroup = $inp.closest(".ef-field-group");
+		const $selGroup = $sel.closest(".ef-field-group");
+		$inpGroup.find(".ef-label").hide();
+		$selGroup.find(".ef-label").text("Buscar en");
+		$inpGroup.insertBefore($selGroup);
+		$side.find(`#ef-maint-${p}-btn-search`).hide();
+		$side.find(`#ef-maint-${p}-btn-all`).text("Búsqueda avanzada / Exportar a Excel");
+		const $status = $side.find(`#ef-maint-${p}-search-status`);
+		$status.css({ "text-align": "left", "margin-top": "6px" });
+		$status.before(`<div class="ef-ml-chips" id="ef-ml-chips-${p}">${cfg.chips.map((c, i) =>
+			`<button type="button" class="ef-ml-chip${i === 0 ? " ef-active" : ""}" data-filtro="${c[0]}">${c[1]}</button>`).join("")}</div>`);
+		$status.after(`<div class="ef-ml-list" id="ef-ml-list-${p}"></div>`);
+
+		// ── Ficha: encabezado, pestañas y paneles ──
+		const $kids = $main.children();
+		const $hdr = $kids.first();
+		const $foot = $kids.last().addClass("ef-ml-actions").removeAttr("style");
+		const $form = $kids.slice(1, $kids.length - 1);
+		$hdr.addClass("ef-ml-hdr");
+		$hdr.prepend(`<button type="button" class="ef-btn ef-btn-sm ef-btn-secondary ef-ml-back" title="Volver a la lista">&larr; Lista</button>`);
+		const $newBtn = $main.find(`#ef-maint-${p}-btn-new`).text("+ Nuevo");
+		$newBtn.before(`<button type="button" class="ef-btn ef-btn-sm ef-btn-secondary ef-ml-btn-dup" style="display:none; margin-right:6px;" title="Crear uno nuevo partiendo de los datos de este">Duplicar</button>`);
+		$foot.append("");
+		$main.find(`#ef-maint-${p}-btn-save`).before(`<button type="button" class="ef-btn ef-btn-secondary ef-ml-btn-save-new" style="display:none; padding:8px 18px; margin-right:8px;">Guardar y crear otro</button>`);
+
+		const tabsHtml = !cfg.panes ? "" : `<div class="ef-ml-tabs">${cfg.panes.map((pn, i) =>
+			`<button type="button" class="ef-ml-tab${i === 0 ? " ef-active" : ""}" data-pane="${pn[0]}">${pn[1]}<span class="ef-ml-dot"></span></button>`).join("")}</div>`;
+		const emptyHtml = `<div class="ef-ml-empty">
+			<div style="font-size:34px; line-height:1;">${{ cust: "👤", item: "📦", supp: "🚚", lm: "🧩" }[kind]}</div>
+			<div style="font-weight:700; margin:8px 0 4px;">Seleccione un ${cfg.noun[0]} de la lista</div>
+			<div>o presione <b>+ Nuevo</b> para crear uno.</div></div>`;
+		const $body = $(`<div class="ef-ml-body">${tabsHtml}<div class="ef-ml-panes"></div></div>`);
+		const $panes = $body.find(".ef-ml-panes");
+		(cfg.panes || []).forEach((pn, i) => $panes.append(`<div class="ef-ml-pane${i === 0 ? " ef-active" : ""}" data-pane="${pn[0]}"></div>`));
+		const pane = (n) => $panes.find(`.ef-ml-pane[data-pane="${n}"]`);
+		const grp = (sel) => $main.find(sel).first().closest(".ef-field-group");
+		const unwrap = (sel, title, paneName) => {
+			const $d = $main.find(sel).first();
+			const $inner = $d.children("div").first();
+			pane(paneName).append(`<div class="ef-ml-h">${title}</div>`, $inner.css("grid-column", "1 / -1"));
+			$d.closest(".ef-field-group").remove();
+		};
+
+		if (kind === "cust") {
+			pane("general").append(grp("#ef-maint-cust-name"), grp("#ef-maint-cust-ident"), grp("#ef-maint-cust-receptor"), grp("#ef-maint-cust-group-ctrl"));
+			grp("#ef-maint-cust-receptor").append(`<div class="ef-ml-warn" id="ef-ml-dup-cust" style="display:none;"></div>`);
+			unwrap("#ef-maint-cust-contacto-section", "Contacto", "contacto");
+			unwrap("#ef-maint-cust-direccion-section", "Dirección", "contacto");
+			unwrap("#ef-maint-cust-terminos-section", "Términos y condiciones", "comercial");
+		} else if (kind === "supp") {
+			$main.find("#ef-maint-supp-nit").parent().append(`<div class="ef-ml-warn" id="ef-ml-dup-supp" style="display:none;"></div>`);
+		} else if (kind === "lm") {
+			// sin ajustes: la ficha ya es corta
+		} else {
+			pane("general").append(grp("#ef-maint-item-code"), grp("#ef-maint-item-name"), grp("#ef-maint-item-uom-ctrl"),
+				grp("#ef-maint-item-group-ctrl"), grp("#ef-maint-item-familia-ctrl"), grp("#ef-maint-item-desc"));
+			grp("#ef-maint-item-code").append(`<div class="ef-ml-warn" id="ef-ml-dup-item" style="display:none;"></div>`);
+			pane("inventario").append(grp("#ef-maint-item-gestionado-por"), grp("#ef-maint-item-is-stock"), grp("#ef-maint-item-costo-estandar"));
+			pane("extras").append(grp("#ef-maint-item-images-body"), grp("#ef-maint-item-keywords"));
+			const $rel = $main.find("#ef-maint-item-relations-wrap").css({ "border-top": "none", "padding-top": 0 });
+			pane("relaciones").append($rel, `<div class="ef-ml-note">Guarde el producto para configurar sus artículos en par y alternativos.</div>`);
+		}
+		$form.first().before($body);
+		if (cfg.panes) $form.remove(); else { $panes.remove(); $body.append($form); }
+		$body.before(emptyHtml);
+		// El LM marca cambios al quitar un componente (no dispara input/change)
+		$main.on("click", ".ef-maint-lm-remove", () => { this._ml_dirty[kind] = true; });
+
+		// ── Eventos ──
+		const run = () => this._ml_search(kind, false);
+		$inp.on("input", () => {
+			clearTimeout(this._ml[kind].timer);
+			this._ml[kind].timer = setTimeout(run, 250);
+		});
+		$inp.on("keydown", (e) => {
+			if (e.key === "Enter") {
+				e.preventDefault();
+				clearTimeout(this._ml[kind].timer);
+				const $first = this.$body.find(`#ef-ml-list-${p} .ef-ml-row`).first();
+				if ($first.length) $first.trigger("click"); else run();
+			}
+		});
+		$sel.on("change", run);
+		$side.on("click", ".ef-ml-chip", (e) => {
+			this._ml[kind].filtro = $(e.currentTarget).data("filtro") || "";
+			$side.find(".ef-ml-chip").removeClass("ef-active");
+			$(e.currentTarget).addClass("ef-active");
+			run();
+		});
+		$side.on("click", ".ef-ml-row", (e) => {
+			const name = $(e.currentTarget).data("name");
+			this._ml_guard(kind, () => {
+				cfg.load(name);
+				$grid.addClass("ef-ml-form-on");
+				this._ml_scroll_top();
+			});
+		});
+		$side.on("click", ".ef-ml-more", () => this._ml_search(kind, true));
+		$side.on("click", ".ef-ml-new-inline", () => $newBtn.trigger("click"));
+		$main.on("click", ".ef-ml-back", () => this._ml_guard(kind, () => {
+			cfg.clear();
+			cfg.setMode("search");
+			$grid.removeClass("ef-ml-form-on");
+		}));
+		$main.on("click", ".ef-ml-tab", (e) => this._ml_pane(kind, $(e.currentTarget).data("pane")));
+		$main.on("click", ".ef-ml-btn-dup", () => this._ml_duplicate(kind));
+		$main.on("click", ".ef-ml-btn-save-new", () => {
+			this._ml_another[kind] = true;
+			this.$body.find(`#ef-maint-${p}-btn-save`).trigger("click");
+		});
+		// Cambios sin guardar + quitar el rojo al corregir
+		$main.on("input change", "input, select, textarea", (e) => {
+			if ($(e.target).is("#ef-maint-item-par-search, #ef-maint-item-alt-search, #ef-maint-item-par-twoway, #ef-maint-item-alt-twoway")) return;
+			this._ml_dirty[kind] = true;
+			$(e.target).removeClass("ef-ml-invalid");
+		});
+		$main.on("click", ".ef-ml-dup-open", (e) => {
+			const name = $(e.currentTarget).data("name");
+			this._ml_guard(kind, () => cfg.load(name));
+		});
+		$(window).off(`beforeunload.ml${kind}`).on(`beforeunload.ml${kind}`, () => {
+			if (this._ml_dirty[kind] && $tab.is(":visible")) return "Hay cambios sin guardar.";
+		});
+		this._ml_search(kind, false);
+		this._ml_mode_ui(kind, "search");
+	}
+
+	// Búsqueda avanzada (el popup de siempre con filtros por columna y Excel),
+	// partiendo de lo que hay escrito en el buscador.
+	_ml_open_advanced(kind) {
+		const cfg = this._ml_cfg(kind);
+		const txt = (this.$body.find(`#ef-maint-${cfg.p}-search`).val() || "").trim();
+		const field = this.$body.find(`#ef-maint-${cfg.p}-search-field`).val() || "texto";
+		const filters = {};
+		if (txt) filters[cfg.advancedKeys[field] || "nombre"] = txt;
+		cfg.advanced(filters);
+	}
+
+	_ml_scroll_top() {
+		try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch (e) { /* sin scroll */ }
+	}
+
+	_ml_guard(kind, fn) {
+		if (this._ml_dirty && this._ml_dirty[kind]) {
+			frappe.confirm("Hay cambios sin guardar. ¿Descartarlos y continuar?", () => { this._ml_dirty[kind] = false; fn(); });
+		} else {
+			fn();
+		}
+	}
+
+	_ml_clean(kind) {
+		if (!this._ml_dirty) return;
+		this._ml_dirty[kind] = false;
+		// Los controles Link disparan "change" al cargarse; se limpia otra vez
+		// cuando ya terminaron para no avisar de cambios que el usuario no hizo.
+		clearTimeout(this._ml_clean_t && this._ml_clean_t[kind]);
+		this._ml_clean_t = this._ml_clean_t || {};
+		this._ml_clean_t[kind] = setTimeout(() => { this._ml_dirty[kind] = false; }, 700);
+	}
+
+	_ml_pane(kind, name) {
+		if (!this._ml_cfg(kind).panes) return;
+		const $main = this._ml_main(this.$body.find(this._ml_cfg(kind).tab));
+		$main.find(".ef-ml-tab").removeClass("ef-active").filter(`[data-pane="${name}"]`).addClass("ef-active");
+		$main.find(".ef-ml-pane").removeClass("ef-active").filter(`[data-pane="${name}"]`).addClass("ef-active");
+	}
+
+	// Llamado desde _set_maint_*_form_mode: ajusta botones y estado vacío.
+	_ml_mode_ui(kind, mode) {
+		const cfg = this._ml_cfg(kind);
+		const $tab = this.$body.find(cfg.tab);
+		const $main = this._ml_main($tab);
+		if (!$main.length || !$tab.data("ml-ready")) return;
+		$main.attr("data-mode", mode);
+		$main.find(".ef-ml-empty").toggle(mode === "search");
+		$main.find(".ef-ml-body").toggle(mode !== "search");
+		$main.find(".ef-ml-btn-dup").toggle(mode === "edit" && cfg.canCreate());
+		$main.find(".ef-ml-btn-save-new").toggle(mode === "create");
+		$main.find(".ef-ml-hdr .ef-ml-title-hint").remove();
+		if (mode === "search") $tab.find(".ef-ml-grid").removeClass("ef-ml-form-on");
+		$main.find(".ef-ml-tab").removeClass("ef-invalid-tab");
+		if (cfg.panes) this._ml_pane(kind, cfg.panes[0][0]);
+		this._ml_clean(kind);
+		this._ml_mark_active(kind);
+	}
+
+	_ml_mark_active(kind) {
+		const cfg = this._ml_cfg(kind);
+		const cur = cfg.current();
+		this.$body.find(`#ef-ml-list-${cfg.p} .ef-ml-row`).each((_, el) => {
+			$(el).toggleClass("ef-active", !!cur && $(el).data("name") === cur);
+		});
+	}
+
+	_ml_search(kind, append) {
+		const cfg = this._ml_cfg(kind);
+		const st = this._ml[kind];
+		if (!st) return;
+		const p = cfg.p;
+		const txt = (this.$body.find(`#ef-maint-${p}-search`).val() || "").trim();
+		const field = this.$body.find(`#ef-maint-${p}-search-field`).val() || "texto";
+		const seq = ++st.seq;
+		const args = {
+			company: this.doc.company || this.defaults.company || "",
+			start: append ? st.rows.length : 0,
+			page_length: 20,
+			filtro: st.filtro || "",
+		};
+		if (txt) args[field] = txt;
+		const $status = this.$body.find(`#ef-maint-${p}-search-status`);
+		$status.text("Buscando…");
+		frappe.call({
+			method: cfg.method, args, type: "GET", freeze: false, no_spinner: true,
+			callback: (r) => {
+				if (seq !== st.seq) return; // llegó una respuesta de una búsqueda más vieja
+				const res = r.message || { rows: [], total: 0 };
+				st.rows = append ? st.rows.concat(res.rows || []) : (res.rows || []);
+				st.total = res.total || 0;
+				$status.text(st.total ? `${st.total} ${st.total === 1 ? cfg.noun[0] : cfg.noun[1]}` : "");
+				this._ml_render_list(kind);
+			},
+			error: () => { if (seq === st.seq) $status.text("No se pudo buscar. Intente de nuevo."); },
+		});
+	}
+
+	_ml_refresh(kind) { this._ml_search(kind, false); }
+
+	_ml_render_list(kind) {
+		const cfg = this._ml_cfg(kind);
+		const st = this._ml[kind];
+		const $list = this.$body.find(`#ef-ml-list-${cfg.p}`);
+		if (!st.rows.length) {
+			$list.html(`<div class="ef-ml-none">Sin resultados.${cfg.canCreate() ? `<br><button type="button" class="ef-btn ef-btn-sm ef-btn-secondary ef-ml-new-inline" style="margin-top:8px;">+ Crear ${cfg.noun[0]} nuevo</button>` : ""}</div>`);
+			return;
+		}
+		const cur = cfg.current();
+		let html = st.rows.map((row) => {
+			const r = cfg.row(row);
+			return `<div class="ef-ml-row${cur && cur === row.name ? " ef-active" : ""}" data-name="${_esc(row.name)}">
+				<div class="ef-ml-title">${_esc(r.title)}${r.off ? ' <span class="ef-ml-badge ef-ml-badge-off">Inactivo</span>' : ""}${r.tag ? ` <span class="ef-ml-badge">${_esc(r.tag)}</span>` : ""}</div>
+				<div class="ef-ml-sub">${_esc(r.sub)}</div></div>`;
+		}).join("");
+		if (st.rows.length < st.total) {
+			html += `<button type="button" class="ef-ml-more">Cargar más (${st.total - st.rows.length} restantes)</button>`;
+		}
+		$list.html(html);
+	}
+
+	// Marca en rojo lo que falta, abre la pestaña donde está y avisa.
+	// checks: [[selector | jQuery, panel, mensaje]]  → true si todo está completo
+	_ml_require(kind, checks) {
+		const cfg = this._ml_cfg(kind);
+		const $main = this._ml_main(this.$body.find(cfg.tab));
+		$main.find(".ef-ml-invalid").removeClass("ef-ml-invalid");
+		$main.find(".ef-ml-tab").removeClass("ef-invalid-tab");
+		const bad = [];
+		checks.forEach(([target, paneName, msg, isOk]) => {
+			const $el = typeof target === "string" ? $main.find(target) : target;
+			if (isOk !== undefined ? isOk : !!($el.val() || "").toString().trim()) return;
+			$el.addClass("ef-ml-invalid");
+			$main.find(`.ef-ml-tab[data-pane="${paneName}"]`).addClass("ef-invalid-tab");
+			bad.push({ $el, paneName, msg });
+		});
+		if (!bad.length) return true;
+		this._ml_pane(kind, bad[0].paneName);
+		setTimeout(() => bad[0].$el.filter("input,select,textarea").first().trigger("focus"), 50);
+		frappe.show_alert({ message: bad.map((b) => b.msg).join("<br>"), indicator: "red" }, 7);
+		return false;
+	}
+
+	_ml_duplicate(kind) {
+		const cfg = this._ml_cfg(kind);
+		const f = (sel) => this.$body.find(sel);
+		const v = (c) => (c ? c.get_value() : "");
+		let snap;
+		if (kind === "cust") {
+			snap = {
+				name: f("#ef-maint-cust-name").val(), group: v(this.maint_cust_group_ctrl), pl: v(this.maint_cust_price_list_ctrl),
+				pt: v(this.maint_cust_payment_terms_ctrl), sp: v(this.maint_cust_sales_partner_ctrl),
+				credit: f("#ef-maint-cust-credit-limit").val(), dept: f("#ef-maint-cust-dept").val(),
+			};
+		} else if (kind === "supp") {
+			snap = { name: f("#ef-maint-supp-name").val(), terms: f("#ef-maint-supp-terms").val(), addr: f("#ef-maint-supp-address").val() };
+		} else if (kind === "lm") {
+			const lf = this._maint_lm_form || { items: [] };
+			snap = { modo: lf.modo_stock, items: (lf.items || []).map((r) => ({ item_code: r.item_code, item_name: r.item_name, qty: r.qty })) };
+		} else {
+			snap = {
+				name: f("#ef-maint-item-name").val(), uom: v(this.maint_item_uom_ctrl), group: v(this.maint_item_group_ctrl),
+				familia: v(this.maint_item_familia_ctrl), gest: f("#ef-maint-item-gestionado-por").val(),
+				stock: f("#ef-maint-item-is-stock").prop("checked"), costo: f("#ef-maint-item-costo-estandar").val(),
+			};
+		}
+		cfg.clear();
+		cfg.setMode("create");
+		this.$body.find(cfg.tab).find(".ef-ml-grid").addClass("ef-ml-form-on");
+		if (kind === "cust") {
+			f("#ef-maint-cust-name").val(`${snap.name} (copia)`);
+			f("#ef-maint-cust-credit-limit").val(snap.credit);
+			f("#ef-maint-cust-dept").val(snap.dept);
+			if (this.maint_cust_group_ctrl) this.maint_cust_group_ctrl.set_value(snap.group || "");
+			if (this.maint_cust_price_list_ctrl) this.maint_cust_price_list_ctrl.set_value(snap.pl || "");
+			if (this.maint_cust_payment_terms_ctrl) this.maint_cust_payment_terms_ctrl.set_value(snap.pt || "");
+			if (this.maint_cust_sales_partner_ctrl) this.maint_cust_sales_partner_ctrl.set_value(snap.sp || "");
+		} else if (kind === "supp") {
+			f("#ef-maint-supp-name").val(`${snap.name} (copia)`);
+			f("#ef-maint-supp-address").val(snap.addr);
+			this._load_maint_supp_terms(snap.terms || "");
+		} else if (kind === "lm") {
+			const lf = this._maint_lm_form;
+			lf.modo_stock = snap.modo;
+			snap.items.forEach((r) => { lf.uid_counter += 1; lf.items.push({ uid: lf.uid_counter, ...r }); });
+			f("input[name='ef-maint-lm-modo']").prop("checked", false);
+			f(`input[name='ef-maint-lm-modo'][value='${snap.modo}']`).prop("checked", true);
+			this._render_maint_lm_rows();
+		} else {
+			f("#ef-maint-item-name").val(`${snap.name} (copia)`).trigger("input");
+			if (this.maint_item_uom_ctrl) this.maint_item_uom_ctrl.set_value(snap.uom || "");
+			if (this.maint_item_group_ctrl) this.maint_item_group_ctrl.set_value(snap.group || "");
+			if (this.maint_item_familia_ctrl) this.maint_item_familia_ctrl.set_value(snap.familia || "");
+			f("#ef-maint-item-gestionado-por").val(snap.gest || "General").trigger("change");
+			f("#ef-maint-item-is-stock").prop("checked", snap.stock || f("#ef-maint-item-is-stock").prop("checked"));
+			f("#ef-maint-item-costo-estandar").val(snap.costo);
+		}
+		this._ml_dirty[kind] = true;
+		frappe.show_alert({ message: `Copia lista: ajuste los datos y guarde (${{ cust: "el NIT", item: "el código", supp: "el NIT", lm: "falta elegir el producto padre" }[kind]}${kind === "lm" ? "" : " no se copia"}).`, indicator: "blue" }, 6);
+		const focusSel = { cust: "#ef-maint-cust-name", item: "#ef-maint-item-name", supp: "#ef-maint-supp-name", lm: "#ef-maint-lm-padre-search" }[kind];
+		setTimeout(() => f(focusSel).trigger("focus").trigger("select"), 150);
+	}
+
+	_ml_show_dup(kind, rows, label) {
+		const $w = this.$body.find({ cust: "#ef-ml-dup-cust", item: "#ef-ml-dup-item", supp: "#ef-ml-dup-supp" }[kind]);
+		if (!rows.length) { $w.hide().empty(); return; }
+		$w.html(`⚠ ${label} ` + rows.map((r) =>
+			`<a href="#" class="ef-ml-dup-open" data-name="${_esc(r.name)}">${_esc(r.title)}</a>`).join(", ")).show();
+	}
+
+	_ml_check_dup_customer(value) {
+		const v = (value || "").trim();
+		if (!v || v.toUpperCase() === "CF") { this._ml_show_dup("cust", [], ""); return; }
+		frappe.call({
+			method: "facex_multi.api.customer.search_customers_maintenance", type: "GET", no_spinner: true,
+			args: { company: this.doc.company || this.defaults.company || "", nit: v, start: 0, page_length: 5 },
+			callback: (r) => {
+				const rows = ((r.message || {}).rows || []).filter((c) =>
+					c.name !== this._current_maint_cust_name && (c.tax_id || "").trim().toUpperCase() === v.toUpperCase());
+				this._ml_show_dup("cust", rows.map((c) => ({ name: c.name, title: `${c.customer_name} (${c.name})` })), "Ya existe un cliente con ese NIT:");
+			},
+		});
+	}
+
+	_ml_check_dup_supplier(value) {
+		const v = (value || "").trim();
+		if (!v) { this._ml_show_dup("supp", [], ""); return; }
+		frappe.call({
+			method: "facex_multi.api.purchase.search_suppliers_maintenance", type: "GET", no_spinner: true,
+			args: { company: this.doc.company || this.defaults.company || "", nit: v, start: 0, page_length: 5 },
+			callback: (r) => {
+				const rows = ((r.message || {}).rows || []).filter((x) =>
+					x.name !== this._current_maint_supp && (x.tax_id || "").trim().toUpperCase() === v.toUpperCase());
+				this._ml_show_dup("supp", rows.map((x) => ({ name: x.name, title: `${x.supplier_name} (${x.name})` })), "Ya existe un proveedor con ese NIT:");
+			},
+		});
+	}
+
+	_ml_check_dup_item() {
+		if (this._maint_item_mode !== "create") { this._ml_show_dup("item", [], ""); return; }
+		const code = (this.$body.find("#ef-maint-item-code").val() || "").trim();
+		const name = (this.$body.find("#ef-maint-item-name").val() || "").trim();
+		const q = code && !this.$body.find("#ef-maint-item-auto-code").prop("checked") ? { codigo: code } : (name ? { nombre: name } : null);
+		if (!q) { this._ml_show_dup("item", [], ""); return; }
+		frappe.call({
+			method: "facex_multi.api.item.search_items_maintenance", type: "GET", no_spinner: true,
+			args: { company: this.doc.company || this.defaults.company || "", start: 0, page_length: 5, ...q },
+			callback: (r) => {
+				const rows = ((r.message || {}).rows || []).filter((it) => q.codigo
+					? (it.name || "").toLowerCase() === code.toLowerCase()
+					: (it.item_name || "").trim().toLowerCase() === name.toLowerCase());
+				this._ml_show_dup("item", rows.map((it) => ({ name: it.name, title: `${it.item_name} (${it.name})` })),
+					q.codigo ? "Ya existe un producto con ese código:" : "Ya existe un producto con ese nombre:");
+			},
+		});
+	}
+
 	// ── Customers Maintenance (búsqueda-primero, estilo SAP) ──
 
 	_search_maint_customers() {
@@ -13733,6 +14688,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			$save.show().text("Guardar Cambios");
 			if (this.perms.modifica_clientes) $delete.show(); else $delete.hide();
 		}
+		this._ml_mode_ui("cust", mode);
 	}
 
 	_lookup_maint_cust_name(idReceptor) {
@@ -13819,10 +14775,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 	_save_maint_customer() {
 		const name = this._current_maint_cust_name || "";
 		const customer_name = this.$body.find("#ef-maint-cust-name").val().trim();
-		if (!customer_name) {
-			frappe.show_alert({ message: "El nombre es obligatorio.", indicator: "red" });
-			return;
-		}
+		const another = !!(this._ml_another && this._ml_another.cust);
+		if (this._ml_another) this._ml_another.cust = false;
+		if (!this._ml_require("cust", [["#ef-maint-cust-name", "general", "Falta el <b>nombre</b> del cliente."]])) return;
 
 		const data = {
 			name,
@@ -13851,8 +14806,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 			callback: (r) => {
 				if (!r.exc) {
 					frappe.show_alert({ message: "Cliente guardado exitosamente", indicator: "green" });
+					const savedName = r.message && r.message.name;
 					this._clear_maint_cust_form();
-					this._set_maint_cust_form_mode("search");
+					if (another) this._set_maint_cust_form_mode("create");
+					else if (savedName) this._load_maint_customer_details(savedName);
+					else this._set_maint_cust_form_mode("search");
+					this._ml_clean("cust");
+					this._ml_refresh("cust");
 				}
 			}
 		});
@@ -14139,6 +15099,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			$save.show().text("Guardar Cambios");
 			if (this.perms.modifica_items) $delete.show(); else $delete.hide();
 		}
+		this._ml_mode_ui("item", mode);
 	}
 
 	_load_maint_item_details(name) {
@@ -14351,17 +15312,17 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const item_code = this.$body.find("#ef-maint-item-code").val().trim();
 		const item_name = this.$body.find("#ef-maint-item-name").val().trim();
 
-		if (!item_name || (!auto_code && !item_code)) {
-			frappe.show_alert({ message: "Código y Nombre son campos obligatorios.", indicator: "red" });
-			return;
-		}
+		const another = !!(this._ml_another && this._ml_another.item);
+		if (this._ml_another) this._ml_another.item = false;
 
 		const familia = this.maint_item_familia_ctrl ? (this.maint_item_familia_ctrl.get_value() || "") : "";
 		const exige_fam = !!(this.company_config || {}).exige_familia_item;
-		if (exige_fam && !familia) {
-			frappe.show_alert({ message: "Debe asignar una Familia al producto.", indicator: "red" });
-			return;
-		}
+		const $famInput = this.maint_item_familia_ctrl && this.maint_item_familia_ctrl.$input ? this.maint_item_familia_ctrl.$input : $();
+		if (!this._ml_require("item", [
+			["#ef-maint-item-code", "general", "Falta el <b>código</b> del producto.", is_new ? (auto_code || !!item_code) : true],
+			["#ef-maint-item-name", "general", "Falta el <b>nombre</b> del producto."],
+			[$famInput, "general", "Debe asignar una <b>Familia</b> al producto.", !exige_fam || !!familia],
+		])) return;
 
 		const plist = this.$body.find("#ef-maint-price-list-select").val() || "";
 		const data = {
@@ -14407,8 +15368,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 					// Recargar el producto recién guardado precargado, para que el
 					// usuario lo vea/confirme sin volver a buscarlo.
 					const code = (r.message && r.message.item_code) || this._current_maint_item_code;
-					if (code) this._load_maint_item_details(code);
+					if (another) { this._clear_maint_item_form(); this._set_maint_item_form_mode("create"); }
+					else if (code) this._load_maint_item_details(code);
 					else { this._clear_maint_item_form(); this._set_maint_item_form_mode("search"); }
+					this._ml_clean("item");
+					this._ml_refresh("item");
 				}
 			}
 		});
@@ -14686,6 +15650,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			$save.show();
 			if (this.perms.gestiona_listas_materiales) $delete.show(); else $delete.hide();
 		}
+		this._ml_mode_ui("lm", mode);
 	}
 
 	_load_maint_lm_details(item_code) {
@@ -14749,6 +15714,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		}
 		this._maint_lm_form.uid_counter += 1;
 		this._maint_lm_form.items.push({ uid: this._maint_lm_form.uid_counter, item_code, item_name, qty: 1 });
+		if (this._ml_dirty) this._ml_dirty.lm = true;
 		this._render_maint_lm_rows();
 	}
 
@@ -14769,6 +15735,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 	_save_maint_lm() {
 		const f = this._maint_lm_form;
+		const another = !!(this._ml_another && this._ml_another.lm);
+		if (this._ml_another) this._ml_another.lm = false;
 		if (!f || !f.item_code) { frappe.show_alert({ message: "Seleccione el producto padre.", indicator: "orange" }); return; }
 		if (!f.modo_stock) { frappe.show_alert({ message: "Seleccione el modo de manejo de stock.", indicator: "orange" }); return; }
 		if (!f.items.length) { frappe.show_alert({ message: "Agregue al menos un componente.", indicator: "orange" }); return; }
@@ -14792,8 +15760,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 			callback: (r) => {
 				if (!r.message) return;
 				frappe.show_alert({ message: "Lista de Materiales guardada.", indicator: "green" });
+				const savedCode = f.item_code;
 				this._clear_maint_lm_form();
-				this._set_maint_lm_form_mode("search");
+				if (another) this._set_maint_lm_form_mode("create");
+				else if (savedCode) this._load_maint_lm_details(savedCode);
+				else this._set_maint_lm_form_mode("search");
+				this._ml_clean("lm");
+				this._ml_refresh("lm");
 			},
 		});
 	}
@@ -14813,6 +15786,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 						frappe.show_alert({ message: "Lista de Materiales eliminada.", indicator: "green" });
 						this._clear_maint_lm_form();
 						this._set_maint_lm_form_mode("search");
+						this._ml_refresh("lm");
 					},
 				});
 			}
@@ -14983,7 +15957,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 							<td class="ef-td ef-fam-desc"></td>
 							<td class="ef-td ef-fam-uom"></td>
 							<td class="ef-td ef-fam-group"></td>
-							<td class="ef-td" style="text-align:right;">${f.items || 0}</td>
+							<td class="ef-td" style="text-align:right;">${f.items
+								? `<button type="button" class="ef-fam-kids-btn" title="Ver los ${f.items} producto(s) de esta familia">${f.items} <span class="ef-fam-caret">▾</span></button>`
+								: "0"}</td>
 							<td class="ef-td" style="text-align:center;">${f.activa ? "✔️" : "—"}</td>
 							<td class="ef-td" style="text-align:center;">
 								<button class="ef-btn ef-btn-sm ef-btn-secondary ef-fam-edit" style="padding:3px 10px; font-size:11px;">${canEdit ? "Editar" : "Ver"}</button>
@@ -14994,10 +15970,74 @@ body.facex-fullscreen-mode .ef-main-layout {
 					$tr.find(".ef-fam-uom").text(f.uom || "");
 					$tr.find(".ef-fam-group").text(f.item_group || "");
 					$tr.find(".ef-fam-edit").on("click", () => this._familia_dialog(f.familia, canEdit));
+					$tr.find(".ef-fam-kids-btn").on("click", (e) => { e.stopPropagation(); this._familia_toggle_kids($tr, f); });
 					$tbody.append($tr);
 				});
 			},
 		});
+	}
+
+	// Muestra / oculta debajo de la familia la lista de productos que la usan.
+	_familia_toggle_kids($tr, f) {
+		const $next = $tr.next(".ef-fam-kids-row");
+		if ($next.length) {
+			$next.remove();
+			$tr.find(".ef-fam-caret").text("▾");
+			return;
+		}
+		$tr.find(".ef-fam-caret").text("▴");
+		const $row = $(`<tr class="ef-fam-kids-row"><td colspan="7" class="ef-fam-kids-cell">
+			<div class="ef-fam-kids-box"><div class="ef-fam-kids-loading">Cargando productos…</div></div></td></tr>`);
+		$tr.after($row);
+		const $box = $row.find(".ef-fam-kids-box");
+		frappe.call({
+			method: "facex_multi.api.familia.list_familia_items",
+			args: { familia: f.familia, company: this.doc.company || this.defaults.company || "" },
+			callback: (r) => {
+				const rows = (r.message || {}).rows || [];
+				if (!rows.length) { $box.html('<div class="ef-fam-kids-loading">Esta familia no tiene productos asignados.</div>'); return; }
+				const draw = (txt) => {
+					const t = (txt || "").toLowerCase().split(/\s+/).filter(Boolean);
+					const shown = rows.filter((x) => t.every((w) => `${x.item_code} ${x.item_name} ${x.item_group}`.toLowerCase().includes(w)));
+					$box.find(".ef-fam-kids-count").text(shown.length === rows.length ? `${rows.length} producto(s)` : `${shown.length} de ${rows.length}`);
+					$box.find("tbody").html(shown.length ? shown.map((x) => `
+						<tr>
+							<td class="ef-td"><a href="#" class="ef-fam-kid-open" data-code="${_esc(x.item_code)}"><b>${_esc(x.item_code)}</b></a></td>
+							<td class="ef-td">${_esc(x.item_name || "")}${x.disabled ? ' <span class="ef-ml-badge ef-ml-badge-off">Inactivo</span>' : ""}</td>
+							<td class="ef-td">${_esc(x.stock_uom || "")}</td>
+							<td class="ef-td">${_esc(x.item_group || "")}</td>
+						</tr>`).join("") : '<tr><td colspan="4" class="ef-td" style="text-align:center;color:#94a3b8;">Sin coincidencias.</td></tr>');
+				};
+				$box.html(`
+					<div class="ef-fam-kids-bar">
+						<input type="text" class="ef-input ef-fam-kids-filter" placeholder="Filtrar productos de ${_esc(f.familia)}…" />
+						<span class="ef-fam-kids-count"></span>
+					</div>
+					<div class="ef-table-wrapper" style="max-height:320px; overflow-y:auto;">
+						<table class="ef-table"><thead><tr>
+							<th class="ef-th" style="width:160px;">Código</th><th class="ef-th">Producto</th>
+							<th class="ef-th" style="width:90px;">UdM</th><th class="ef-th" style="width:150px;">Grupo</th>
+						</tr></thead><tbody></tbody></table>
+					</div>
+					<div class="ef-fam-kids-hint">Toque un código para abrir el producto en Mantenimiento › Productos.</div>`);
+				draw("");
+				$box.find(".ef-fam-kids-filter").on("input", (e) => draw(e.target.value));
+				$box.on("click", ".ef-fam-kid-open", (e) => {
+					e.preventDefault();
+					this._familia_open_item($(e.currentTarget).data("code"));
+				});
+			},
+		});
+	}
+
+	_familia_open_item(code) {
+		this.$body.find('.ef-maint-tab-btn[data-maint-tab="productos"]').trigger("click");
+		// el cambio de pestaña limpia la ficha; se carga el producto cuando ya está lista
+		setTimeout(() => {
+			this._load_maint_item_details(code);
+			this.$body.find("#ef-maint-tab-productos .ef-ml-grid").addClass("ef-ml-form-on");
+			this._ml_scroll_top();
+		}, 150);
 	}
 
 	_familia_dialog(name, canEdit) {
@@ -15095,44 +16135,177 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 	_load_item_groups_maint() {
 		const $tbody = this.$body.find("#ef-ig-tbody");
-		const $status = this.$body.find("#ef-ig-status");
 		const company = this.doc.company || this.defaults.company || "";
 		const canEdit = !!(this.perms || {}).puede_mantener_grupo_items;
 		this.$body.find("#ef-ig-btn-new").toggle(canEdit);
-		$tbody.html('<tr><td colspan="6" style="text-align:center; padding:10px; color:#64748b;">Cargando...</td></tr>');
+		this._ig = this._ig || { rows: [], collapsed: new Set(), filtro: "", txt: "", open: new Set(), inc: {} };
+		$tbody.html('<tr><td colspan="4" style="text-align:center; padding:10px; color:#64748b;">Cargando...</td></tr>');
 		frappe.call({
 			method: "facex_multi.api.item_group.list_item_groups_maintenance",
 			args: { company },
 			callback: (r) => {
-				const rows = (r.message || {}).item_groups || [];
-				$status.text(rows.length ? `${rows.length} grupo(s).` : "Sin grupos.");
-				if (!rows.length) {
-					$tbody.html('<tr><td colspan="6" style="text-align:center; padding:10px; color:#64748b;">No hay grupos. Cree uno con «+ Nuevo Grupo».</td></tr>');
-					return;
+				this._ig.rows = (r.message || {}).item_groups || [];
+				this._ig_render();
+			},
+		});
+	}
+
+	// Árbol de grupos: sangría por nivel, ramas que se pliegan, búsqueda y filtros.
+	// Con búsqueda o filtro activos se muestran las coincidencias con sus ancestros.
+	_ig_render() {
+		const st = this._ig;
+		const canEdit = !!(this.perms || {}).puede_mantener_grupo_items;
+		const $tbody = this.$body.find("#ef-ig-tbody");
+		const rows = st.rows;
+		const byName = {};
+		rows.forEach((g) => { byName[g.name] = g; });
+		const txt = (st.txt || "").toLowerCase().split(/\s+/).filter(Boolean);
+		const filtering = !!(txt.length || st.filtro);
+		const match = (g) => {
+			if (st.filtro === "activos" && g.disabled) return false;
+			if (st.filtro === "deshabilitados" && !g.disabled) return false;
+			if (st.filtro === "vacios" && g.item_count_total) return false;
+			const hay = `${g.item_group_name || ""} ${g.name}`.toLowerCase();
+			return txt.every((w) => hay.includes(w));
+		};
+		let visible = new Set();
+		if (filtering) {
+			rows.filter(match).forEach((g) => {
+				let cur = g;
+				while (cur && !visible.has(cur.name)) {
+					visible.add(cur.name);
+					cur = byName[cur.parent_item_group];
 				}
-				$tbody.empty();
-				rows.forEach((g) => {
-					const $tr = $(`
-						<tr class="ef-tr">
-							<td class="ef-td font-weight-bold"></td>
-							<td class="ef-td ef-ig-parent"></td>
-							<td class="ef-td" style="text-align:center;">${g.is_group ? "✔️" : "—"}</td>
-							<td class="ef-td" style="text-align:right;">${g.item_count || 0}</td>
-							<td class="ef-td" style="text-align:center;">${g.disabled ? "✔️" : "—"}</td>
-							<td class="ef-td" style="text-align:center;">
-								<button class="ef-btn ef-btn-sm ef-btn-secondary ef-ig-edit" style="padding:3px 10px; font-size:11px;">${canEdit ? "Editar" : "Ver"}</button>
-							</td>
-						</tr>`);
-					$tr.children().eq(0).text(g.item_group_name || g.name);
-					$tr.find(".ef-ig-parent").text(g.parent_item_group || "");
-					$tr.find(".ef-ig-edit").on("click", () => this._item_group_dialog(g.name, canEdit));
-					$tbody.append($tr);
+			});
+		} else {
+			rows.forEach((g) => {
+				let hidden = false, cur = byName[g.parent_item_group];
+				while (cur) { if (st.collapsed.has(cur.name)) { hidden = true; break; } cur = byName[cur.parent_item_group]; }
+				if (!hidden) visible.add(g.name);
+			});
+		}
+		const shown = rows.filter((g) => visible.has(g.name));
+		this.$body.find("#ef-ig-status").text(
+			filtering ? `${rows.filter(match).length} coincidencia(s) de ${rows.length}` : `${rows.length} grupo(s)`);
+		if (!shown.length) {
+			$tbody.html(`<tr><td colspan="4" style="text-align:center; padding:14px; color:#64748b;">${rows.length ? "Ningún grupo coincide." : "No hay grupos. Cree uno con «+ Nuevo Grupo»."}</td></tr>`);
+			return;
+		}
+		$tbody.empty();
+		shown.forEach((g) => {
+			const open = filtering || !st.collapsed.has(g.name);
+			const caret = g.child_count
+				? `<button type="button" class="ef-ig-caret" data-name="${_esc(g.name)}" ${filtering ? "disabled" : ""}>${open ? "▾" : "▸"}</button>`
+				: '<span class="ef-ig-caret ef-ig-caret-none"></span>';
+			const total = g.item_count_total || 0, own = g.item_count || 0;
+			const itemsCell = total
+				? `<button type="button" class="ef-fam-kids-btn ef-ig-items-btn" data-name="${_esc(g.name)}" title="Ver los productos de este grupo">${own}${total !== own ? ` <span style="font-weight:500;">(${total} en total)</span>` : ""} <span class="ef-fam-caret">${st.open.has(g.name) ? "▴" : "▾"}</span></button>`
+				: '<span class="ef-ig-empty">vacío</span>';
+			const kids = g.child_count ? ` <span class="ef-ml-badge">${g.child_count} subgrupo${g.child_count === 1 ? "" : "s"}</span>` : "";
+			const $tr = $(`
+				<tr class="ef-tr${g.disabled ? " ef-ig-row-off" : ""}">
+					<td class="ef-td" style="padding-left:${10 + g.depth * 20}px;">
+						<div class="ef-ig-name">${caret}<span class="${g.is_group ? "ef-ig-name-group" : ""}">${_esc(g.item_group_name || g.name)}</span>${kids}</div>
+					</td>
+					<td class="ef-td" style="text-align:right;">${itemsCell}</td>
+					<td class="ef-td" style="text-align:center;">${g.disabled ? '<span class="ef-ml-badge ef-ml-badge-off">Deshabilitado</span>' : '<span class="ef-ml-badge" style="background:#dcfce7;color:#166534;">Activo</span>'}</td>
+					<td class="ef-td" style="text-align:right; white-space:nowrap;">
+						${canEdit && g.is_group ? '<button type="button" class="ef-btn ef-btn-sm ef-btn-secondary ef-ig-sub" style="padding:3px 8px; font-size:11px;" title="Crear un subgrupo dentro de este">+ Subgrupo</button>' : ""}
+						<button type="button" class="ef-btn ef-btn-sm ef-btn-secondary ef-ig-edit" style="padding:3px 10px; font-size:11px;">${canEdit ? "Editar" : "Ver"}</button>
+					</td>
+				</tr>`);
+			$tr.find(".ef-ig-edit").on("click", () => this._item_group_dialog(g.name, canEdit));
+			$tr.find(".ef-ig-sub").on("click", () => this._item_group_dialog(null, canEdit, g.name));
+			$tbody.append($tr);
+			if (st.open.has(g.name) && total) this._ig_items_row($tr, g);
+		});
+	}
+
+	// Fila desplegable con los productos del grupo (y opcionalmente sus subgrupos).
+	_ig_items_row($tr, g) {
+		const st = this._ig;
+		const inc = st.inc[g.name] !== undefined ? st.inc[g.name] : true;
+		const $row = $(`<tr class="ef-fam-kids-row"><td colspan="4" class="ef-fam-kids-cell">
+			<div class="ef-fam-kids-box"><div class="ef-fam-kids-loading">Cargando productos…</div></div></td></tr>`);
+		$tr.after($row);
+		const $box = $row.find(".ef-fam-kids-box");
+		frappe.call({
+			method: "facex_multi.api.item_group.list_group_items",
+			args: { group: g.name, company: this.doc.company || this.defaults.company || "", include_children: inc ? 1 : 0 },
+			callback: (r) => {
+				const rows = (r.message || {}).rows || [];
+				const draw = (txt) => {
+					const t = (txt || "").toLowerCase().split(/\s+/).filter(Boolean);
+					const sh = rows.filter((x) => t.every((w) => `${x.item_code} ${x.item_name}`.toLowerCase().includes(w)));
+					$box.find(".ef-fam-kids-count").text(sh.length === rows.length ? `${rows.length} producto(s)` : `${sh.length} de ${rows.length}`);
+					$box.find("tbody").html(sh.length ? sh.map((x) => `
+						<tr>
+							<td class="ef-td"><a href="#" class="ef-fam-kid-open" data-code="${_esc(x.item_code)}"><b>${_esc(x.item_code)}</b></a></td>
+							<td class="ef-td">${_esc(x.item_name || "")}${x.disabled ? ' <span class="ef-ml-badge ef-ml-badge-off">Inactivo</span>' : ""}</td>
+							<td class="ef-td">${_esc(x.stock_uom || "")}</td>
+							<td class="ef-td">${_esc(x.item_group || "")}</td>
+						</tr>`).join("") : '<tr><td colspan="4" class="ef-td" style="text-align:center;color:#94a3b8;">Sin coincidencias.</td></tr>');
+				};
+				$box.html(`
+					<div class="ef-fam-kids-bar">
+						<input type="text" class="ef-input ef-fam-kids-filter" placeholder="Filtrar productos de ${_esc(g.item_group_name || g.name)}…" />
+						${g.child_count ? `<label class="ef-ig-inc"><input type="checkbox" class="ef-ig-inc-chk" ${inc ? "checked" : ""}/> Incluir subgrupos</label>` : ""}
+						<span class="ef-fam-kids-count"></span>
+					</div>
+					<div class="ef-table-wrapper" style="max-height:320px; overflow-y:auto;">
+						<table class="ef-table"><thead><tr>
+							<th class="ef-th" style="width:160px;">Código</th><th class="ef-th">Producto</th>
+							<th class="ef-th" style="width:90px;">UdM</th><th class="ef-th" style="width:170px;">Grupo</th>
+						</tr></thead><tbody></tbody></table>
+					</div>
+					<div class="ef-fam-kids-hint">Toque un código para abrir el producto en Mantenimiento › Productos.</div>`);
+				draw("");
+				$box.find(".ef-fam-kids-filter").on("input", (e) => draw(e.target.value));
+				$box.find(".ef-ig-inc-chk").on("change", (e) => {
+					st.inc[g.name] = e.target.checked;
+					$row.remove();
+					this._ig_items_row($tr, g);
+				});
+				$box.on("click", ".ef-fam-kid-open", (e) => {
+					e.preventDefault();
+					this._familia_open_item($(e.currentTarget).data("code"));
 				});
 			},
 		});
 	}
 
-	_item_group_dialog(name, canEdit) {
+	_ig_bind() {
+		const reload = () => this._ig && this._ig_render();
+		this.$body.on("input", "#ef-ig-search", (e) => {
+			this._ig = this._ig || { rows: [], collapsed: new Set(), filtro: "", txt: "", open: new Set(), inc: {} };
+			clearTimeout(this._ig_t);
+			const v = e.target.value;
+			this._ig_t = setTimeout(() => { this._ig.txt = v; reload(); }, 200);
+		});
+		this.$body.on("click", "#ef-ig-chips .ef-ml-chip", (e) => {
+			this._ig.filtro = $(e.currentTarget).data("filtro") || "";
+			this.$body.find("#ef-ig-chips .ef-ml-chip").removeClass("ef-active");
+			$(e.currentTarget).addClass("ef-active");
+			reload();
+		});
+		this.$body.on("click", ".ef-ig-caret[data-name]", (e) => {
+			const n = $(e.currentTarget).data("name");
+			if (this._ig.collapsed.has(n)) this._ig.collapsed.delete(n); else this._ig.collapsed.add(n);
+			reload();
+		});
+		this.$body.on("click", ".ef-ig-items-btn", (e) => {
+			const n = $(e.currentTarget).data("name");
+			if (this._ig.open.has(n)) this._ig.open.delete(n); else this._ig.open.add(n);
+			reload();
+		});
+		this.$body.on("click", "#ef-ig-btn-expand", () => { this._ig.collapsed.clear(); reload(); });
+		this.$body.on("click", "#ef-ig-btn-collapse", () => {
+			this._ig.rows.filter((g) => g.child_count && g.depth > 0).forEach((g) => this._ig.collapsed.add(g.name));
+			reload();
+		});
+	}
+
+	_item_group_dialog(name, canEdit, parentPrefill) {
 		const company = this.doc.company || this.defaults.company || "";
 		const build = (data) => {
 			const d = new frappe.ui.Dialog({
@@ -15203,7 +16376,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 				},
 			});
 		} else {
-			build({});
+			build(parentPrefill ? { parent_item_group: parentPrefill } : {});
 		}
 	}
 
@@ -15236,6 +16409,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 							frappe.show_alert({ message: "Cliente eliminado exitosamente", indicator: "green" });
 							this._clear_maint_cust_form();
 							this._set_maint_cust_form_mode("search");
+							this._ml_refresh("cust");
 						}
 					}
 				});
@@ -15260,6 +16434,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 							frappe.show_alert({ message: "Producto eliminado exitosamente", indicator: "green" });
 							this._clear_maint_item_form();
 							this._set_maint_item_form_mode("search");
+							this._ml_refresh("item");
 						}
 					}
 				});
@@ -15538,6 +16713,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			$save.show();
 			if (this.perms.modifica_proveedores) $delete.show(); else $delete.hide();
 		}
+		this._ml_mode_ui("supp", mode);
 	}
 
 	_clear_maint_supp_form() {
@@ -15597,10 +16773,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 	_save_maint_supplier() {
 		const supplier_name = this.$body.find("#ef-maint-supp-name").val().trim();
-		if (!supplier_name) {
-			frappe.msgprint({ message: "El nombre del proveedor es obligatorio.", indicator: "orange" });
-			return;
-		}
+		const another = !!(this._ml_another && this._ml_another.supp);
+		if (this._ml_another) this._ml_another.supp = false;
+		if (!this._ml_require("supp", [["#ef-maint-supp-name", "", "Falta el <b>nombre</b> del proveedor."]])) return;
 		const company = this.doc.company || this.defaults.company || "";
 		const data = {
 			name:             this._current_maint_supp || "",
@@ -15618,7 +16793,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 				if (!r.exc && r.message) {
 					frappe.show_alert({ message: `Proveedor <strong>${r.message.supplier_name}</strong> guardado.`, indicator: "green" });
 					this._clear_maint_supp_form();
-					this._set_maint_supp_form_mode("search");
+					if (another) this._set_maint_supp_form_mode("create");
+					else if (r.message.name) this._load_maint_supp_form(r.message.name);
+					else this._set_maint_supp_form_mode("search");
+					this._ml_clean("supp");
+					this._ml_refresh("supp");
 				}
 			},
 		});
@@ -15639,6 +16818,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 							frappe.show_alert({ message: "Proveedor eliminado.", indicator: "green" });
 							this._clear_maint_supp_form();
 							this._set_maint_supp_form_mode("search");
+							this._ml_refresh("supp");
 						}
 					},
 				});

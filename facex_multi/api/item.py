@@ -139,46 +139,54 @@ def search_items(txt: str = None, company: str = None):
 
     company = get_effective_company(company)
 
-    if txt and len(txt.strip()) >= 2:
-        q = f"%{txt.strip()}%"
-        rows = frappe.db.sql(
-            """
-            SELECT name, item_code, item_name, stock_uom, description
-            FROM `tabItem`
-            WHERE disabled = 0
-              AND (
+    company_filter = """(
                   bfel_company = %(company)s
                   OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
-              )
-              AND (name LIKE %(q)s OR item_name LIKE %(q)s)
-            ORDER BY item_name ASC
-            LIMIT 50
-            """,
-            {"q": q, "company": company},
-            as_dict=True,
-        )
-        return rows
-    else:
-        return frappe.db.sql(
-            """
-            SELECT name, item_code, item_name, stock_uom, description
-            FROM `tabItem`
-            WHERE disabled = 0
-              AND (
-                  bfel_company = %(company)s
-                  OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null, 0) = 0)
-              )
-            ORDER BY item_name ASC
-            LIMIT 50
-            """,
-            {"company": company},
-            as_dict=True,
-        )
+              )"""
+    params = {"company": company}
+
+    # Cada palabra debe aparecer en el código o en el nombre (en cualquier
+    # orden): "aceite 1l" encuentra "ACEITE MOTOR 1L". Con una sola palabra
+    # es el mismo LIKE de siempre.
+    terms = [t for t in (txt or "").strip().split() if t][:6]
+    conds = []
+    for i, t in enumerate(terms):
+        params[f"t{i}"] = f"%{t}%"
+        conds.append(f"(name LIKE %(t{i})s OR item_name LIKE %(t{i})s)")
+    where = " AND ".join([company_filter] + conds)
+
+    # Primero el código exacto, luego lo que empieza con lo escrito
+    # (código o nombre) y después el resto alfabético.
+    order = "item_name ASC"
+    if terms:
+        full = " ".join(terms)
+        params["full"] = full
+        params["full_pre"] = f"{full}%"
+        order = """CASE
+                WHEN name = %(full)s THEN 0
+                WHEN name LIKE %(full_pre)s THEN 1
+                WHEN item_name LIKE %(full_pre)s THEN 2
+                ELSE 3
+            END, item_name ASC"""
+
+    return frappe.db.sql(
+        f"""
+        SELECT name, item_code, item_name, stock_uom, description
+        FROM `tabItem`
+        WHERE disabled = 0
+          AND {where}
+        ORDER BY {order}
+        LIMIT 50
+        """,
+        params,
+        as_dict=True,
+    )
 
 
 @frappe.whitelist()
 def search_items_maintenance(company: str = None, start: int = 0, page_length: int = 15,
-                               nombre: str = None, codigo: str = None, grupo: str = None):
+                               nombre: str = None, codigo: str = None, grupo: str = None,
+                               texto: str = None, filtro: str = None):
     """Búsqueda/paginación de productos para el Mantenimiento de Productos (modo
     búsqueda-primero, igual que search_customers_maintenance en customer.py). Cada
     parámetro filtra una columna distinta y se combinan con AND. Sin filtros, lista
@@ -208,6 +216,21 @@ def search_items_maintenance(company: str = None, start: int = 0, page_length: i
     if grupo:
         conditions.append("item_group LIKE %(grupo)s")
         params["grupo"] = f"%{grupo}%"
+
+    # Búsqueda libre del panel de Mantenimiento: cada palabra debe aparecer en
+    # el código, el nombre o el grupo (en cualquier orden).
+    for i, t in enumerate([t for t in (texto or "").strip().split() if t][:6]):
+        params[f"tx{i}"] = f"%{t}%"
+        conditions.append(
+            f"(name LIKE %(tx{i})s OR item_name LIKE %(tx{i})s OR item_group LIKE %(tx{i})s)"
+        )
+
+    if filtro == "activos":
+        conditions.append("disabled = 0")
+    elif filtro == "inactivos":
+        conditions.append("disabled = 1")
+    elif filtro == "sin_familia" and frappe.get_meta("Item").has_field("custom_facex_familia"):
+        conditions.append("IFNULL(custom_facex_familia, '') = ''")
 
     company_filter = """(
               bfel_company = %(company)s
@@ -1278,7 +1301,8 @@ def list_listas_materiales(company: str = None):
 
 @frappe.whitelist()
 def search_listas_materiales_maintenance(company: str = None, start: int = 0, page_length: int = 15,
-                                           nombre: str = None, codigo: str = None, modo: str = None):
+                                           nombre: str = None, codigo: str = None, modo: str = None,
+                                           texto: str = None, filtro: str = None):
     """Búsqueda/paginación de Listas de Materiales para su Mantenimiento (modo
     búsqueda-primero, igual que search_customers_maintenance en customer.py). Cada
     parámetro filtra una columna distinta y se combinan con AND. Sin filtros, lista
@@ -1308,6 +1332,17 @@ def search_listas_materiales_maintenance(company: str = None, start: int = 0, pa
     if modo:
         conditions.append("bfel_modo_stock_lista = %(modo)s")
         params["modo"] = modo
+
+    for i, t in enumerate([t for t in (texto or "").strip().split() if t][:6]):
+        params[f"tx{i}"] = f"%{t}%"
+        conditions.append(f"(item_name LIKE %(tx{i})s OR name LIKE %(tx{i})s)")
+
+    if filtro == "padre":
+        conditions.append("bfel_modo_stock_lista = 'Padre'")
+    elif filtro == "hijos":
+        conditions.append("bfel_modo_stock_lista = 'Hijos'")
+    elif filtro == "inactivas":
+        conditions.append("disabled = 1")
 
     company_filter = """(
               bfel_company = %(company)s
