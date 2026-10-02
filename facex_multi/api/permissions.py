@@ -282,10 +282,12 @@ _COMPANY_CONFIG_FIELDS = [
     "cuenta_recargo_entrega", "cuenta_flete", "recargo_flete_con_iva",
     "recargo_es_venta", "flete_es_venta",
     "cuenta_dif_comision_ganancia", "cuenta_dif_comision_perdida",
+    "maneja_cierre_diario", "cierre_pendiente_modo", "cierre_pendiente_dias_gracia",
 ]
 # Campos texto (Select/Data/Link) — no convertir a int
 _CONFIG_TEXT_FIELDS = {"tipo_x_defecto", "item_flete", "cuenta_recargo_entrega", "cuenta_flete",
-                       "cuenta_dif_comision_ganancia", "cuenta_dif_comision_perdida"}
+                       "cuenta_dif_comision_ganancia", "cuenta_dif_comision_perdida",
+                       "cierre_pendiente_modo"}
 # Check fields que están ON por defecto cuando no hay config
 _CONFIG_DEFAULT_ON = {"mostrar_almacen", "mostrar_desc_pct", "mostrar_adenda", "mostrar_tipo"}
 
@@ -293,7 +295,9 @@ _CONFIG_DEFAULT_ON = {"mostrar_almacen", "mostrar_desc_pct", "mostrar_adenda", "
 def _config_default() -> dict:
     result = {}
     for k in _COMPANY_CONFIG_FIELDS:
-        if k in _CONFIG_TEXT_FIELDS:
+        if k == "cierre_pendiente_modo":
+            result[k] = "Avisar"
+        elif k in _CONFIG_TEXT_FIELDS:
             result[k] = ""
         elif k in _CONFIG_DEFAULT_ON:
             result[k] = 1
@@ -647,7 +651,9 @@ def get_facex_company_config(company: str) -> dict:
     result = {}
     for k in _COMPANY_CONFIG_FIELDS:
         v = row.get(k)
-        if k in _CONFIG_TEXT_FIELDS:
+        if k == "cierre_pendiente_modo":
+            result[k] = str(v or "Avisar")
+        elif k in _CONFIG_TEXT_FIELDS:
             result[k] = str(v or "")
         elif k in _CONFIG_DEFAULT_ON:
             result[k] = int(v) if v is not None else 1

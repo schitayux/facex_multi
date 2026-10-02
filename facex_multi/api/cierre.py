@@ -92,25 +92,33 @@ def _installed() -> bool:
     return frappe.db.table_exists(DOCTYPE) and frappe.get_meta("FacEx Settings").has_field("puede_crear_cierres")
 
 
+def _company_on(company: str) -> bool:
+    """Interruptor «Compañía maneja Cierre Diario» (config de la compañía).
+    Apagado = la compañía ignora el módulo por completo (sin menú, sin
+    congelamiento, sin pendientes), incluso para System Manager."""
+    from facex_multi.api.permissions import get_facex_company_config
+    return _installed() and bool(cint(get_facex_company_config(company).get("maneja_cierre_diario")))
+
+
 def _is_gerencia(company: str) -> bool:
     """Supervisa el Cierre Diario: ve los cierres de todos y crea/cierra por
     otro usuario (FacEx Settings / Perfil > cierre_supervisar; antes, el Rol
     (Clasificación) «Gerencia»)."""
-    return _installed() and (_is_sysman() or get_facex_can_supervise_cierres(company))
+    return _company_on(company) and (_is_sysman() or get_facex_can_supervise_cierres(company))
 
 
 def _can_reopen(company: str) -> bool:
     """Reabrir un cierre Cerrado (cierre_reabrir)."""
-    return _installed() and (_is_sysman() or get_facex_can_reopen_cierres(company))
+    return _company_on(company) and (_is_sysman() or get_facex_can_reopen_cierres(company))
 
 
 def _can_reclassify(company: str) -> bool:
     """Cambiar la condición de pago de facturas validadas (puede_reclasificar_condicion)."""
-    return _installed() and (_is_sysman() or get_facex_can_reclassify_terms(company))
+    return _company_on(company) and (_is_sysman() or get_facex_can_reclassify_terms(company))
 
 
 def _can_create(company: str) -> bool:
-    return _installed() and (_is_sysman() or get_facex_can_create_cierres(company))
+    return _company_on(company) and (_is_sysman() or get_facex_can_create_cierres(company))
 
 
 def _assert_module_access(company: str) -> None:
@@ -206,7 +214,7 @@ def cierre_has_permission(doc, ptype: str = "read", user: str = None) -> bool:
 # ---------------------------------------------------------------------------
 
 def _closed_dates(company: str, owner: str) -> set:
-    if not company or not owner or not frappe.db.table_exists(DOCTYPE):
+    if not company or not owner or not _company_on(company):
         return set()
     return {
         getdate(d)
@@ -1011,7 +1019,7 @@ def _familia_row(es_oferta: int, familia: str, descripcion: str, g: dict | None,
 def _pending_days(company: str, usuario: str | None) -> list:
     """Días con ventas validadas (últimos PENDING_LOOKBACK_DAYS, anteriores a
     hoy) que aún no tienen un cierre Cerrado para ese usuario."""
-    if not company or not _installed():
+    if not company or not _company_on(company):
         return []
     desde = add_days(today(), -PENDING_LOOKBACK_DAYS)
     cond = ""
@@ -1058,6 +1066,75 @@ def get_pending_closures(company: str = None) -> list:
     if not (_can_create(company) or _is_gerencia(company)):
         return []
     return _pending_days(company, None if _is_gerencia(company) else frappe.session.user)
+
+
+# ---------------------------------------------------------------------------
+# Control al crear facturas (fecha en día cerrado / cierres pendientes)
+# ---------------------------------------------------------------------------
+
+def _gate_cfg(company: str) -> tuple:
+    from facex_multi.api.permissions import get_facex_company_config
+    cfg = get_facex_company_config(company)
+    modo = cfg.get("cierre_pendiente_modo") or "Avisar"
+    return modo, max(0, cint(cfg.get("cierre_pendiente_dias_gracia")))
+
+
+def _overdue_pending(company: str, usuario: str, gracia: int) -> list:
+    """Días pendientes del usuario que ya pasaron la tolerancia: se puede
+    facturar hoy con hasta `gracia` días atrás sin cerrar."""
+    limite = add_days(today(), -gracia)
+    return [r for r in _pending_days(company, usuario) if getdate(r["fecha"]) < getdate(limite)]
+
+
+def guard_sales_invoice_closed_date(doc, method=None):
+    """Hook Sales Invoice.validate — (1) no se puede fechar una factura en un
+    día que el dueño ya cerró; (2) si la compañía lo exige, un usuario con
+    cierres vencidos no puede crear facturas nuevas hasta cerrarlos."""
+    if doc.flags.facex_cierre_bypass or frappe.flags.in_import or frappe.flags.in_patch:
+        return
+    if doc.docstatus == 2 or not doc.company or not doc.posting_date or not _company_on(doc.company):
+        return
+    if getdate(doc.posting_date) in _closed_dates(doc.company, doc.owner or frappe.session.user):
+        frappe.throw(_frozen_msg(doc.company, doc.owner or frappe.session.user, doc.posting_date),
+                     title=_("Cierre Diario"))
+
+    if not doc.is_new():
+        return
+    user = frappe.session.user
+    if user == "Administrator" or _is_gerencia(doc.company) or not _can_create(doc.company):
+        return
+    modo, gracia = _gate_cfg(doc.company)
+    if modo != "Bloquear":
+        return
+    vencidos = _overdue_pending(doc.company, user, gracia)
+    if vencidos:
+        fechas = ", ".join(formatdate(r["fecha"]) for r in vencidos[:5])
+        frappe.throw(
+            _("Tiene {0} día(s) con ventas sin cerrar ({1}). Realice su Cierre Diario antes de crear "
+              "facturas nuevas.").format(len(vencidos), fechas) + " " +
+            _("Si no puede cerrarlos, pida a Gerencia que lo haga."),
+            title=_("Cierre Diario pendiente"),
+        )
+
+
+@frappe.whitelist()
+def get_work_gate(company: str = None) -> dict:
+    """Estado para Clásico: ¿hay que cerrar antes de trabajar? y días ya
+    cerrados (para avisar al elegir fecha). No lanza error."""
+    company = get_effective_company(company)
+    out = {"modo": "No exigir", "bloquea": 0, "pendientes": [], "cerrados": []}
+    if not _company_on(company) or not _can_create(company) or _is_gerencia(company):
+        return out
+    user = frappe.session.user
+    modo, gracia = _gate_cfg(company)
+    out["modo"] = modo
+    out["cerrados"] = sorted(str(d) for d in _closed_dates(company, user))
+    if modo == "No exigir":
+        return out
+    vencidos = _overdue_pending(company, user, gracia)
+    out["pendientes"] = [{"fecha": r["fecha"], "num_facturas": r["num_facturas"]} for r in vencidos]
+    out["bloquea"] = int(modo == "Bloquear" and bool(vencidos))
+    return out
 
 
 # ---------------------------------------------------------------------------

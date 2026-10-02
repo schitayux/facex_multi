@@ -20,12 +20,16 @@ override_doctype_class = {
 # ERPNext nativo) mientras el body tenga la clase facex-fullscreen-mode; no
 # afecta al Desk normal (ver public/js/link_guard.js).
 #
+# fullscreen_layout.js: ancho completo/centrado de todas las pantallas FacEx
+# (quita el .container de Frappe v16 mientras facex-fullscreen-mode).
+#
 # etiqueta_etiba.js: diálogo "e-Imprimir" + vista previa de etiquetas eTIBA,
 # compartido por FacEx Clásico e Inventario (ver public/js/etiqueta_etiba.js).
 app_include_js = [
     "/assets/facex_multi/js/history_guard.js",
     "/assets/facex_multi/js/link_guard.js",
     "/assets/facex_multi/js/etiqueta_etiba.js",
+    "/assets/facex_multi/js/fullscreen_layout.js",
 ]
 
 doctype_js = {
@@ -86,6 +90,7 @@ doc_events = {
             "facex_multi.api.invoice.validate_guias_transporte_unicas",
             "facex_multi.api.invoice.sync_contra_entrega_from_price_list",
             "facex_multi.api.recargo.set_totales_con_recargo",
+            "facex_multi.api.cierre.guard_sales_invoice_closed_date",
         ],
         # Cierre Diario: una factura / sus pagos quedan congelados una vez que
         # el día del usuario está Cerrado (ver facex_multi.api.cierre).

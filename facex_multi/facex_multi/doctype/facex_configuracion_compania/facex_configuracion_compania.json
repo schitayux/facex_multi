@@ -50,7 +50,11 @@
   "fecha_inicio_operacion",
   "corte_usuarios_historial_visible",
   "cb_corte_operacion",
-  "corte_usuarios_sin_restriccion"
+  "corte_usuarios_sin_restriccion",
+  "sb_cierre_control",
+  "maneja_cierre_diario",
+  "cierre_pendiente_modo",
+  "cierre_pendiente_dias_gracia"
  ],
  "fields": [
   {
@@ -337,6 +341,34 @@
    "label": "Usuarios sin corte (ven todo)",
    "depends_on": "fecha_inicio_operacion",
    "description": "Un usuario por línea. Para ellos el corte no aplica: siguen viendo el histórico completo. Reservado a soporte y administración del sistema."
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "sb_cierre_control",
+   "fieldtype": "Section Break",
+   "label": "Control de Cierre Diario"
+  },
+  {
+   "default": "0",
+   "description": "Interruptor general del módulo Cierre Diario para esta compañía. Marcado: el módulo aparece en el menú de los usuarios con permiso y rigen sus controles (congelamiento de días cerrados, pendientes). Sin marcar: el módulo no se muestra y la compañía ignora por completo el Cierre Diario.",
+   "fieldname": "maneja_cierre_diario",
+   "fieldtype": "Check",
+   "label": "Compañía maneja Cierre Diario"
+  },
+  {
+   "default": "Avisar",
+   "description": "Qué pasa cuando un usuario con permiso de cierre tiene días con ventas sin cerrar e intenta crear una factura nueva. «Avisar»: se muestra el aviso y puede seguir. «Bloquear»: no puede crear facturas hasta cerrar sus días pendientes (Gerencia siempre queda exenta). «No exigir»: sin control. Independiente de esto, NUNCA se permite fechar una factura en un día ya cerrado del usuario.",
+   "fieldname": "cierre_pendiente_modo",
+   "fieldtype": "Select",
+   "label": "Si hay cierres pendientes",
+   "options": "No exigir\nAvisar\nBloquear"
+  },
+  {
+   "default": "0",
+   "description": "Días de tolerancia antes de bloquear. 0 = si ayer quedó sin cerrar, hoy ya no puede facturar. 1 = puede facturar hoy con el día de ayer pendiente, pero no con el de anteayer.",
+   "fieldname": "cierre_pendiente_dias_gracia",
+   "fieldtype": "Int",
+   "label": "Días de gracia"
   }
  ],
  "index_web_pages_for_search": 0,

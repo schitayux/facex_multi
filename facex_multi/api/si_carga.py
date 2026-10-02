@@ -570,6 +570,7 @@ def create_invoices(
             doc.validate_due_date = _fix_due_date_for_opening
 
             doc.flags.ignore_permissions = False
+            doc.flags.facex_cierre_bypass = True  # carga histórica: fechas pasadas a propósito
             doc.insert()
             frappe.db.commit()
 
@@ -745,6 +746,7 @@ def _create_customer(id_receptor: str, nombre_receptor: str, company: str) -> st
             doc.default_price_list = plist_global
 
     doc.flags.ignore_permissions = False
+    doc.flags.facex_cierre_bypass = True  # carga histórica: fechas pasadas a propósito
     doc.insert()
     frappe.db.commit()
     return doc.name
