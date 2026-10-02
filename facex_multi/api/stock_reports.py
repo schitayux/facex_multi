@@ -92,7 +92,26 @@ def _check_report_access(company: str, perm_field: str) -> str:
     return company
 
 
+def _excluded_items_condition(alias: str):
+    """Condición SQL que deja fuera los ítems marcados «Excluir de informes»
+    (códigos de prueba con movimientos que no se pueden borrar). None si el
+    campo aún no existe en el sitio (antes del primer migrate)."""
+    if not frappe.db.has_column("Item", "custom_excluir_de_informes"):
+        return None
+    return (f"{alias}.item_code NOT IN (SELECT name FROM `tabItem` "
+            f"WHERE custom_excluir_de_informes = 1)")
+
+
 def _warehouse_condition(company: str, warehouse, alias: str = "sle"):
+    """Bodegas permitidas + exclusión de ítems de prueba (ver _excluded_items_condition)."""
+    cond, params = _warehouse_condition_base(company, warehouse, alias)
+    excl = _excluded_items_condition(alias)
+    if excl:
+        cond = f"({cond}) AND {excl}" if cond else excl
+    return cond, params
+
+
+def _warehouse_condition_base(company: str, warehouse, alias: str = "sle"):
     """
     Retorna (condicion_sql_o_None, params_dict) acotando el reporte a las
     bodegas habilitadas del usuario (FacEx Settings > bodegas_habilitadas).
@@ -177,6 +196,7 @@ def get_kardex(
     item_code: str = None,
     establecimiento: str = None,
     owners=None,
+    movement_types=None,
 ):
     """
     Kardex completo: TODO documento que haya afectado el stock de la compañía
@@ -194,66 +214,76 @@ def get_kardex(
     """
     company = _check_report_access(company, "reporte_inv_kardex")
 
+    from facex_multi.api.permissions import SCOPE_OWN, get_facex_scope
+
     from_date = from_date or get_first_day(today())
     to_date = to_date or get_last_day(today())
 
-    conditions = [
-        "sle.company = %(company)s",
-        "sle.posting_date BETWEEN %(from_date)s AND %(to_date)s",
-    ]
+    # Condiciones de ÁMBITO (definen el inventario que se está mirando: bodega,
+    # sucursal, producto). Con ellas se calculan saldo inicial/final y los saldos
+    # corridos. Tipo de movimiento y usuario creador sólo filtran lo que se
+    # muestra, no el saldo — salvo «Solo lo creado por mí», que sí acota todo.
+    scope = ["sle.company = %(company)s"]
     params = {"company": company, "from_date": from_date, "to_date": to_date}
-
-    is_transfer_sql = "(sle.voucher_type = 'Stock Entry' AND se.purpose = 'Material Transfer')"
-    if movement_type == "transfer":
-        conditions.append(is_transfer_sql)
-    elif movement_type == "in":
-        conditions.append(f"sle.actual_qty > 0 AND NOT {is_transfer_sql}")
-    elif movement_type == "out":
-        conditions.append(f"sle.actual_qty < 0 AND NOT {is_transfer_sql}")
 
     wh_cond, wh_params = _warehouse_condition(company, warehouse, "sle")
     if wh_cond:
-        conditions.append(wh_cond)
+        scope.append(wh_cond)
         params.update(wh_params)
 
-    owner_cond, owner_params = _scoped_owner_condition(company, owners, "sle")
-    if owner_cond:
-        conditions.append(owner_cond)
-        params.update(owner_params)
+    forced_own = get_facex_scope(company, "inventario") == SCOPE_OWN
+    if forced_own:
+        scope.append("sle.owner = %(forced_owner)s")
+        params["forced_owner"] = frappe.session.user
 
     if item_code:
-        conditions.append("sle.item_code = %(item_code)s")
+        scope.append("sle.item_code = %(item_code)s")
         params["item_code"] = item_code
 
     try:
         est_cond, est_val = _establecimiento_condition(company, establecimiento, "sle")
     except _NoWarehousesForEstablecimiento:
-        return {"from_date": str(from_date), "to_date": str(to_date), "rows": []}
+        return {"from_date": str(from_date), "to_date": str(to_date), "rows": [], "summary": None}
     if est_cond:
-        conditions.append(est_cond)
+        scope.append(est_cond)
         params["wh_list"] = est_val
 
-    where_clause = " AND ".join(conditions)
+    scope_sql = " AND ".join(scope)
 
-    rows = frappe.db.sql(
+    # Saldo inicial por producto (todo lo anterior a «Desde»).
+    opening = frappe.db.sql(
+        f"""
+        SELECT sle.warehouse, sle.item_code, SUM(sle.actual_qty) AS qty, SUM(sle.stock_value_difference) AS val
+        FROM `tabStock Ledger Entry` sle
+        WHERE {scope_sql} AND sle.posting_date < %(from_date)s AND sle.is_cancelled = 0
+        GROUP BY sle.warehouse, sle.item_code
+        """,
+        params,
+        as_dict=True,
+    )
+    open_qty = {(o.warehouse, o.item_code): flt(o.qty) for o in opening}
+    open_val = {(o.warehouse, o.item_code): flt(o.val) for o in opening}
+
+    # Los movimientos anulados dejan dos asientos (el original y su reverso) que
+    # netean a cero: se listan como «Anulación …» y no cuentan en Entradas/Salidas.
+    raw = frappe.db.sql(
         f"""
         SELECT
-            sle.name AS sle_name, sle.voucher_type, sle.voucher_no,
-            sle.posting_date, sle.item_code, i.item_name,
+            sle.name AS sle_name, sle.voucher_type, sle.voucher_no, sle.voucher_detail_no,
+            sle.posting_date, sle.item_code, i.item_name, sle.owner,
             sle.actual_qty, sle.stock_uom, sle.warehouse, sle.company, sle.valuation_rate,
-            sle.stock_value_difference, sle.is_cancelled,
-            sle.batch_no, sle.serial_no,
+            sle.stock_value_difference, sle.is_cancelled, sle.creation AS sle_creation,
             w.bfel_establecimiento,
-            sed.expense_account,
+            sed.expense_account, sed.s_warehouse AS sed_source, sed.t_warehouse AS sed_target,
             se.purpose AS se_purpose, se.remarks AS se_remarks
         FROM `tabStock Ledger Entry` sle
         LEFT JOIN `tabItem` i ON i.name = sle.item_code
         LEFT JOIN `tabWarehouse` w ON w.name = sle.warehouse
         LEFT JOIN `tabStock Entry` se ON se.name = sle.voucher_no AND sle.voucher_type = 'Stock Entry'
         LEFT JOIN `tabStock Entry Detail` sed ON sed.name = sle.voucher_detail_no AND sle.voucher_type = 'Stock Entry'
-        WHERE {where_clause}
+        WHERE {scope_sql}
+          AND sle.posting_date BETWEEN %(from_date)s AND %(to_date)s
         ORDER BY sle.posting_date ASC, sle.posting_datetime ASC, sle.creation ASC
-        LIMIT 1000
         """,
         params,
         as_dict=True,
@@ -261,23 +291,233 @@ def get_kardex(
 
     est_map = {e["id"]: e["nombre"] for e in _get_establishments(company)}
 
-    running = 0.0
-    for r in rows:
-        is_transfer = r.voucher_type == "Stock Entry" and r.se_purpose == "Material Transfer"
-        r["movement_type_label"] = "Transferencia" if is_transfer else ("Entrada" if r.actual_qty > 0 else "Salida")
-        r["status_label"] = "Anulado" if r.is_cancelled else "Activo"
-        r["establecimiento_nombre"] = est_map.get(r.bfel_establecimiento, "Sin asignar" if not r.bfel_establecimiento else r.bfel_establecimiento)
-        if not is_transfer and not r.is_cancelled:
-            running += flt(r.stock_value_difference)
-        r["accumulated_value"] = running
+    # ¿Devolución / Nota de Crédito? (is_return de cada documento origen)
+    returns = {}
+    for dt in ("Sales Invoice", "Purchase Invoice", "Purchase Receipt", "Delivery Note"):
+        names = list({r.voucher_no for r in raw if r.voucher_type == dt})
+        if names:
+            for d in frappe.get_all(dt, filters={"name": ["in", names]}, fields=["name", "is_return"]):
+                returns[(dt, d.name)] = bool(d.is_return)
+
+    # Asiento de anulación = el más reciente de los asientos cancelados de una misma línea.
+    reversal = set()
+    seen_c = {}
+    for r in sorted((x for x in raw if x.is_cancelled), key=lambda x: (x.sle_creation, x.sle_name)):
+        k = (r.voucher_type, r.voucher_no, r.voucher_detail_no or "", r.item_code, r.warehouse)
+        if k in seen_c:
+            reversal.add(r.sle_name)
+        else:
+            seen_c[k] = r.sle_name
+
+    def _tipo(r):
+        vt, qty = r.voucher_type, flt(r.actual_qty)
+        ret = returns.get((vt, r.voucher_no), False)
+        if vt == "Sales Invoice":
+            base = "Nota de Crédito Venta" if ret else "Factura Venta"
+        elif vt == "Purchase Invoice":
+            base = "Nota de Crédito Compra" if ret else "Factura Compra"
+        elif vt == "Purchase Receipt":
+            base = "Devolución Compra" if ret else "Entrada Compra"
+        elif vt == "Delivery Note":
+            base = "Devolución Venta" if ret else "Nota de Entrega"
+        elif vt == "Stock Reconciliation":
+            base = "Conciliación Inv"
+        elif vt == "Stock Entry":
+            if r.se_purpose == "Material Transfer":
+                base = "Transferencia"
+            elif r.se_purpose == "Manufacture":
+                base = "Transf. Entrada" if qty > 0 else "Transf. Salida"
+            else:
+                base = "Entrada Inv" if r.se_purpose == "Material Receipt" or (r.se_purpose != "Material Issue" and qty > 0) else "Salida Inv"
+        else:
+            base = vt
+        return ("Anulación " + base) if r.sle_name in reversal else base
+
+    # Transferencias cuyas dos puntas caen dentro del ámbito: no son entrada ni salida real.
+    ends = {}
+    for r in raw:
+        if r.voucher_type == "Stock Entry" and r.se_purpose == "Material Transfer" and not r.is_cancelled:
+            ends.setdefault((r.voucher_no, r.voucher_detail_no or r.sle_name), set()).add(1 if flt(r.actual_qty) > 0 else -1)
+
+    run_qty = dict(open_qty)
+    run_val = dict(open_val)
+    groups = {}
+    for key in set(open_qty) | set(open_val):
+        groups[key] = {"warehouse": key[0], "item_code": key[1], "opening_qty": open_qty.get(key, 0.0),
+                       "opening_value": open_val.get(key, 0.0), "in_qty": 0.0, "out_qty": 0.0,
+                       "in_value": 0.0, "out_value": 0.0, "n": 0}
+    for r in raw:
+        key = (r.warehouse, r.item_code)
+        g = groups.setdefault(key, {"warehouse": r.warehouse, "item_code": r.item_code, "opening_qty": 0.0,
+                                    "opening_value": 0.0, "in_qty": 0.0, "out_qty": 0.0,
+                                    "in_value": 0.0, "out_value": 0.0, "n": 0})
+        g["item_name"] = r.item_name
+        g["uom"] = r.stock_uom
+        g["n"] += 1
+        qty = flt(r.actual_qty)
+        val = flt(r.stock_value_difference)
+        r["tipo"] = _tipo(r)
+        r["movement_type_label"] = r["tipo"]
+        r["is_reversal"] = r.sle_name in reversal
+        r["is_transfer"] = r.voucher_type == "Stock Entry" and r.se_purpose == "Material Transfer"
+        r["qty_in"] = qty if qty > 0 else 0.0
+        r["qty_out"] = -qty if qty < 0 else 0.0
+        r["value_moved"] = abs(val)
+        if r["is_transfer"]:
+            r["counterpart"] = (r.sed_source if qty > 0 else r.sed_target) if not r.is_reversal else (r.sed_target if qty > 0 else r.sed_source)
+        # Lo anulado se lista pero no mueve saldos (como el inventario real de ERPNext).
+        dq = 0.0 if r.is_cancelled else qty
+        dv = 0.0 if r.is_cancelled else val
+        run_qty[key] = run_qty.get(key, 0.0) + dq
+        run_val[key] = run_val.get(key, 0.0) + dv
+        r["balance_qty"] = run_qty[key]
+        r["balance_value"] = run_val[key]
+        r["group_key"] = f"{r.warehouse}||{r.item_code}"
+        if not r.is_cancelled:
+            internal = r.is_transfer and len(ends.get((r.voucher_no, r.voucher_detail_no or r.sle_name), ())) == 2
+            if not internal:
+                if qty > 0:
+                    g["in_qty"] += qty
+                    g["in_value"] += abs(val)
+                elif qty < 0:
+                    g["out_qty"] += -qty
+                    g["out_value"] += abs(val)
+    for key, g in groups.items():
+        g["closing_qty"] = run_qty.get(key, g["opening_qty"])
+        g["closing_value"] = run_val.get(key, g["opening_value"])
+        g["group_key"] = f"{key[0]}||{key[1]}"
+        if not g.get("item_name"):
+            g["item_name"] = frappe.db.get_value("Item", key[1], "item_name")
+
+    summary = {
+        "opening_value": sum(g["opening_value"] for g in groups.values()),
+        "closing_value": sum(g["closing_value"] for g in groups.values()),
+        "in_value": sum(g["in_value"] for g in groups.values()),
+        "out_value": sum(g["out_value"] for g in groups.values()),
+        "has_item": bool(item_code),
+        "opening_qty": sum(g["opening_qty"] for g in groups.values()) if item_code else None,
+        "closing_qty": sum(g["closing_qty"] for g in groups.values()) if item_code else None,
+        "in_qty": sum(g["in_qty"] for g in groups.values()) if item_code else None,
+        "out_qty": sum(g["out_qty"] for g in groups.values()) if item_code else None,
+    }
+
+    # Tipos que realmente existen en el ámbito (para que el filtro no ofrezca los que nadie usa).
+    _orden = ["Factura Venta", "Nota de Crédito Venta", "Nota de Entrega", "Devolución Venta",
+              "Factura Compra", "Nota de Crédito Compra", "Entrada Compra", "Devolución Compra",
+              "Entrada Inv", "Salida Inv", "Transferencia", "Transf. Entrada", "Transf. Salida", "Conciliación Inv"]
+    presentes = {r.movement_type_label for r in raw}
+    tipos_disponibles = [t for t in _orden if t in presentes] + sorted(t for t in presentes if t not in _orden)
+
+    # Filtros que sólo afectan lo mostrado (no los saldos).
+    rows = raw
+    tipos = _parse_list(movement_types)
+    if tipos:
+        rows = [r for r in rows if r.movement_type_label in tipos]
+    elif movement_type == "transfer":
+        rows = [r for r in rows if r.is_transfer]
+    elif movement_type == "in":
+        rows = [r for r in rows if not r.is_transfer and r.qty_in]
+    elif movement_type == "out":
+        rows = [r for r in rows if not r.is_transfer and r.qty_out]
+    owner_list = _parse_list(owners)
+    if owner_list and not forced_own:
+        rows = [r for r in rows if r.owner in owner_list]
+
+    truncated = len(rows) > 5000
+    rows = rows[:5000]
+    shown = {r.group_key for r in rows}
+    group_list = sorted((g for g in groups.values() if g["group_key"] in shown),
+                        key=lambda g: (g["warehouse"] or "", g["item_code"] or ""))
+
+    # Valor total del inventario filtrado en el tiempo (para la gráfica), sobre todo el ámbito.
+    timeline = []
+    run_total = sum(g["opening_value"] for g in groups.values())
+    by_day = {}
+    for r in raw:
+        if not r.is_cancelled:
+            run_total += flt(r.stock_value_difference)
+        by_day[str(r.posting_date)] = run_total
+    timeline = [[d, v] for d, v in by_day.items()]
 
     can_costs = get_facex_can_view_costs(company)
     if not can_costs:
-        _strip_cost_fields(rows, ("valuation_rate", "stock_value_difference", "accumulated_value"))
+        timeline = []
+        _strip_cost_fields(rows, ("valuation_rate", "stock_value_difference", "value_moved", "balance_value"))
+        _strip_cost_fields(group_list, ("opening_value", "closing_value", "in_value", "out_value"))
+        for k in ("opening_value", "closing_value", "in_value", "out_value"):
+            summary[k] = None
 
     return {
         "from_date": str(from_date), "to_date": str(to_date),
-        "rows": rows, "can_view_costs": can_costs,
+        "rows": rows, "groups": group_list, "summary": summary, "truncated": truncated,
+        "tipos": tipos_disponibles, "timeline": timeline, "can_view_costs": can_costs,
+    }
+
+
+# Documentos que pueden originar un movimiento de stock y su vista previa.
+_VOUCHER_PREVIEW = {
+    "Stock Entry": {"party": None},
+    "Sales Invoice": {"party": "customer"},
+    "Delivery Note": {"party": "customer"},
+    "Purchase Receipt": {"party": "supplier"},
+    "Purchase Invoice": {"party": "supplier"},
+    "Stock Reconciliation": {"party": None},
+}
+
+
+@frappe.whitelist()
+def get_voucher_preview(voucher_type: str, voucher_no: str, company: str = None):
+    """Vista previa de solo lectura de un documento del Kardex (para el pop-up)."""
+    company = _check_report_access(company, "reporte_inv_kardex")
+    cfg = _VOUCHER_PREVIEW.get(voucher_type)
+    if not cfg:
+        frappe.throw("Tipo de documento no soportado en la vista previa.")
+    doc = frappe.get_doc(voucher_type, voucher_no)
+    if doc.company != company:
+        frappe.throw("El documento no pertenece a la compañía activa.", frappe.PermissionError)
+
+    allowed = get_facex_allowed_warehouses(company)
+    whs = set()
+    for d in doc.items:
+        whs.update({d.get("warehouse"), d.get("s_warehouse"), d.get("t_warehouse")})
+    whs |= {doc.get("set_warehouse"), doc.get("from_warehouse"), doc.get("to_warehouse")}
+    if allowed is not None and not ({w for w in whs if w} & set(allowed)):
+        frappe.throw("Este documento no involucra ninguna de sus bodegas habilitadas.", frappe.PermissionError)
+
+    can_costs = get_facex_can_view_costs(company)
+    from facex_multi.api.stock import _stock_entry_changes
+    name_of = lambda u: frappe.db.get_value("User", u, "full_name") or u  # noqa: E731
+    party = doc.get(cfg["party"]) if cfg["party"] else None
+    if party:
+        pn = doc.get(cfg["party"] + "_name")
+        party = f"{party} — {pn}" if pn and pn != party else party
+
+    items = []
+    for d in doc.items:
+        rate = d.get("basic_rate") if voucher_type == "Stock Entry" else (d.get("valuation_rate") if voucher_type == "Stock Reconciliation" else d.get("rate"))
+        items.append({
+            "item_code": d.item_code,
+            "item_name": d.get("item_name") or frappe.db.get_value("Item", d.item_code, "item_name"),
+            "qty": d.get("qty"),
+            "uom": d.get("uom") or d.get("stock_uom"),
+            "warehouse": d.get("warehouse") or (f"{d.get('s_warehouse') or ''} → {d.get('t_warehouse') or ''}" if voucher_type == "Stock Entry" else ""),
+            "rate": rate if can_costs else None,
+        })
+
+    return {
+        "voucher_type": voucher_type,
+        "name": doc.name,
+        "party": party,
+        "posting_date": str(doc.get("posting_date") or ""),
+        "docstatus": doc.docstatus,
+        "remarks": doc.get("remarks") or doc.get("instructions") or "",
+        "owner_name": name_of(doc.owner),
+        "creation": str(doc.creation),
+        "modified": str(doc.modified),
+        "modified_by_name": name_of(doc.modified_by),
+        "changes": _stock_entry_changes(doc.name, doctype=voucher_type),
+        "items": items,
+        "can_view_costs": can_costs,
     }
 
 
@@ -531,8 +771,8 @@ def export_existencias(company: str = None, tab: str = "status", formato: str = 
     fbase = f"existencias_{tab}"
     if formato == "pdf":
         filtros = []
-        if warehouse:
-            filtros.append(f"Almacén: {warehouse}")
+        if _parse_list(warehouse):
+            filtros.append(f"Almacén: {', '.join(_parse_list(warehouse))}")
         groups = _parse_list(item_groups)
         if groups:
             filtros.append(f"Grupos: {', '.join(groups)}")

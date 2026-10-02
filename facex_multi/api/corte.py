@@ -310,3 +310,20 @@ def ensure_corte_fields():
         },
         ignore_validate=True,
     )
+    create_custom_fields(
+        {
+            "Item": [
+                {
+                    "fieldname": "custom_excluir_de_informes",
+                    "label": "Excluir de informes de inventario",
+                    "fieldtype": "Check",
+                    "insert_after": "disabled",
+                    "default": "0",
+                    "no_copy": 1,
+                    "description": "Códigos de prueba: sus movimientos se conservan pero no "
+                                   "suman ni restan en los informes de inventario de FacEx.",
+                },
+            ],
+        },
+        ignore_validate=True,
+    )

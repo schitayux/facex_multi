@@ -64,7 +64,18 @@ def get_warehouses_meta(company: str):
     return frappe.get_all(
         "Warehouse",
         filters=filters,
-        fields=["name", "bfel_establecimiento"],
+        fields=["name", "bfel_establecimiento", "parent_warehouse"],
+        order_by="name asc",
+    )
+
+
+def get_warehouse_groups(company: str):
+    """Almacenes-grupo de la compañía (name, parent_warehouse) para armar el
+    árbol de bodegas en los filtros. Solo nombres; no da acceso a nada."""
+    return frappe.get_all(
+        "Warehouse",
+        filters={"company": company, "is_group": 1},
+        fields=["name", "parent_warehouse"],
         order_by="name asc",
     )
 
@@ -1075,6 +1086,7 @@ def get_inventory_defaults(company: str = None):
         "warehouses": warehouses,
         "warehouses_por_operacion": warehouses_por_operacion,
         "warehouses_meta": warehouses_meta,
+        "warehouse_groups": get_warehouse_groups(company) if permissions.get("puede_ver_inventario") else [],
         "establishments": establishments,
         "item_groups": item_groups,
         "report_users": report_users,
@@ -1103,7 +1115,7 @@ def _get_company_item_groups(company: str) -> list:
     return rows or []
 
 
-def _list_stock_movements(mode: str, company: str = None, from_date: str = None, to_date: str = None):
+def _list_stock_movements(mode: str, company: str = None, from_date: str = None, to_date: str = None, warehouses=None):
     cfg = _MOVEMENT_CONFIG[mode]
 
     company = get_effective_company(company)
@@ -1141,6 +1153,22 @@ def _list_stock_movements(mode: str, company: str = None, from_date: str = None,
                          AND (sd.s_warehouse IN %(allowed_wh)s OR sd.t_warehouse IN %(allowed_wh)s))
           )"""
         values["allowed_wh"] = tuple(allowed) or ("",)
+
+    # Filtro opcional por almacén (selección múltiple): el movimiento entra si
+    # algún almacén elegido aparece en su encabezado o en sus líneas.
+    if isinstance(warehouses, str):
+        warehouses = frappe.parse_json(warehouses) if warehouses.strip().startswith("[") else [warehouses]
+    warehouses = [w for w in (warehouses or []) if w]
+    if warehouses:
+        wh_filter += """
+          AND (
+            se.from_warehouse IN %(sel_wh)s
+            OR se.to_warehouse IN %(sel_wh)s
+            OR EXISTS (SELECT 1 FROM `tabStock Entry Detail` sw
+                       WHERE sw.parent = se.name
+                         AND (sw.s_warehouse IN %(sel_wh)s OR sw.t_warehouse IN %(sel_wh)s))
+          )"""
+        values["sel_wh"] = tuple(warehouses)
 
     rows = frappe.db.sql(
         f"""
@@ -1188,23 +1216,50 @@ def _list_stock_movements(mode: str, company: str = None, from_date: str = None,
 
 
 @frappe.whitelist()
-def list_stock_entries_in(company: str = None, from_date: str = None, to_date: str = None):
-    return _list_stock_movements("in", company, from_date, to_date)
+def list_stock_entries_in(company: str = None, from_date: str = None, to_date: str = None, warehouses=None):
+    return _list_stock_movements("in", company, from_date, to_date, warehouses)
 
 
 @frappe.whitelist()
-def list_stock_entries_out(company: str = None, from_date: str = None, to_date: str = None):
-    return _list_stock_movements("out", company, from_date, to_date)
+def list_stock_entries_out(company: str = None, from_date: str = None, to_date: str = None, warehouses=None):
+    return _list_stock_movements("out", company, from_date, to_date, warehouses)
 
 
 @frappe.whitelist()
-def list_stock_entries_transfer(company: str = None, from_date: str = None, to_date: str = None):
-    return _list_stock_movements("transfer", company, from_date, to_date)
+def list_stock_entries_transfer(company: str = None, from_date: str = None, to_date: str = None, warehouses=None):
+    return _list_stock_movements("transfer", company, from_date, to_date, warehouses)
 
 
 @frappe.whitelist()
-def list_stock_entries_transform(company: str = None, from_date: str = None, to_date: str = None):
-    return _list_stock_movements("transform", company, from_date, to_date)
+def list_stock_entries_transform(company: str = None, from_date: str = None, to_date: str = None, warehouses=None):
+    return _list_stock_movements("transform", company, from_date, to_date, warehouses)
+
+
+def _stock_entry_changes(name: str, limit: int = 10, doctype: str = "Stock Entry"):
+    """Historial de cambios (Version) de un movimiento: quién, cuándo y qué campos."""
+    out = []
+    for v in frappe.get_all(
+        "Version",
+        filters={"ref_doctype": doctype, "docname": name},
+        fields=["owner", "creation", "data"],
+        order_by="creation desc",
+        limit=limit,
+    ):
+        try:
+            data = frappe.parse_json(v.data) or {}
+        except Exception:
+            data = {}
+        campos = [c[0] for c in (data.get("changed") or []) if c and c[0]]
+        if not campos and not (data.get("added") or data.get("removed") or data.get("row_changed")):
+            continue
+        if not campos:
+            campos = ["ítems"]
+        out.append({
+            "user": frappe.db.get_value("User", v.owner, "full_name") or v.owner,
+            "when": str(v.creation),
+            "fields": [frappe.unscrub(c) for c in campos],
+        })
+    return out
 
 
 @frappe.whitelist()
@@ -1247,6 +1302,10 @@ def get_stock_entry_detail(name: str):
         "letter_head": _resolve_letter_head(doc.company),
         "owner": doc.owner,
         "owner_name": frappe.db.get_value("User", doc.owner, "full_name") or doc.owner,
+        "creation": str(doc.creation),
+        "modified": str(doc.modified),
+        "modified_by_name": frappe.db.get_value("User", doc.modified_by, "full_name") or doc.modified_by,
+        "changes": _stock_entry_changes(doc.name),
         "source_warehouse": doc.from_warehouse,
         "target_warehouse": doc.to_warehouse,
         "posting_date": str(doc.posting_date),

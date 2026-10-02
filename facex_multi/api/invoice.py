@@ -672,7 +672,10 @@ def get_defaults(company: str = None):
     permissions = get_facex_permissions_for_company(company)
     permissions["puede_crear_cierres"] = int(get_facex_can_create_cierres(company))
     # Sitio sin migrar (bench compartido) → el módulo Cierre Diario no aparece
-    permissions["cierre_diario_instalado"] = int(frappe.db.table_exists("FacEx Cierre Diario"))
+    permissions["cierre_diario_instalado"] = int(
+        frappe.db.table_exists("FacEx Cierre Diario")
+        and bool(get_facex_company_config(company).get("maneja_cierre_diario"))
+    )
     permissions["puede_consultar_familias"] = int(get_facex_can_view_familias(company))
     permissions["puede_mantener_familias"] = int(get_facex_can_maintain_familias(company))
     permissions["puede_consultar_grupo_items"] = int(get_facex_can_view_item_groups(company))
