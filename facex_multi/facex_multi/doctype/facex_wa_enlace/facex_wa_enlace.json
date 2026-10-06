@@ -1,0 +1,29 @@
+{
+ "autoname": "field:token",
+ "creation": "2026-10-06 10:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": ["token", "company", "tipo", "reference_doctype", "reference_name", "print_format", "expires_on", "creado_por", "accesos"],
+ "fields": [
+  {"fieldname": "token", "fieldtype": "Data", "label": "Token", "reqd": 1, "unique": 1, "read_only": 1},
+  {"fieldname": "company", "fieldtype": "Link", "label": "Compañía", "options": "Company", "in_list_view": 1},
+  {"fieldname": "tipo", "fieldtype": "Data", "label": "Tipo", "in_list_view": 1},
+  {"fieldname": "reference_doctype", "fieldtype": "Link", "label": "Tipo de Documento", "options": "DocType"},
+  {"fieldname": "reference_name", "fieldtype": "Dynamic Link", "label": "Documento", "options": "reference_doctype", "in_list_view": 1},
+  {"fieldname": "print_format", "fieldtype": "Data", "label": "Formato de Impresión"},
+  {"fieldname": "expires_on", "fieldtype": "Datetime", "label": "Vence", "in_list_view": 1},
+  {"fieldname": "creado_por", "fieldtype": "Link", "label": "Creado por", "options": "User"},
+  {"default": "0", "fieldname": "accesos", "fieldtype": "Int", "label": "Veces abierto", "read_only": 1}
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-06 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FacEx Multi",
+ "name": "FacEx WA Enlace",
+ "owner": "Administrator",
+ "permissions": [{"create": 1, "delete": 1, "read": 1, "role": "System Manager", "write": 1}],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

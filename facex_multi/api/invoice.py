@@ -744,6 +744,7 @@ def get_defaults(company: str = None):
     default_sales_partner = get_facex_default_sales_partner(company)
 
     from facex_multi.api.permissions import get_facex_user_sales_partner
+    from facex_multi.api.whatsapp import get_wa_for_user, is_company_wa_on
     # El vendedor queda BLOQUEADO cuando el usuario está limitado a un socio
     # (socio_venta_por_defecto asignado) — no puede facturar a nombre de otro.
     fixed_sales_partner = get_facex_user_sales_partner(company)
@@ -767,6 +768,10 @@ def get_defaults(company: str = None):
         "bfel_status_default": get_facex_default_bfel_status(company),
         "permissions": permissions,
         "company_config": company_config,
+        # «Enviar por WhatsApp»: solo lo que este usuario puede enviar (ver api/whatsapp.py)
+        "wa": get_wa_for_user(company),
+        # ¿La compañía habilitó «Enviar por WhatsApp»? (si no, el POS conserva su botón de siempre)
+        "wa_company": bool(is_company_wa_on(company)),
         "default_pos_warehouse": default_pos_warehouse,
         "default_sales_partner": default_sales_partner,
         "default_sales_partner_locked": bool(fixed_sales_partner),

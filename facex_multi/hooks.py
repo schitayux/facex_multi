@@ -31,6 +31,9 @@ app_include_js = [
     "/assets/facex_multi/js/etiqueta_etiba.js",
     "/assets/facex_multi/js/fullscreen_layout.js",
     "/assets/facex_multi/js/fraccion.js",
+    "/assets/facex_multi/js/wa.js",
+    "/assets/facex_multi/js/pwa.js",
+    "/assets/facex_multi/js/scanner.js",
 ]
 
 doctype_js = {
@@ -198,3 +201,10 @@ fixtures = [
 
 web_include_js = "/assets/facex_multi/js/facex_login.js"
 
+
+
+scheduler_events = {
+    "daily": [
+        "facex_multi.api.whatsapp.purge_expired_links",
+    ],
+}

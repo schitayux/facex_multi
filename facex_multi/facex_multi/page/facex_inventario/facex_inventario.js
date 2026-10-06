@@ -869,7 +869,7 @@ class FacexInventario {
       </div>
     </div>
 
-    <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:18px 20px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:flex-end;gap:14px;flex-wrap:wrap;">
+    <div class="card inv-e-search-card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:18px 20px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:flex-end;gap:14px;flex-wrap:wrap;">
       <div style="flex:1;min-width:260px;">
         <label class="inv-label">Buscar producto para agregar</label>
         <div style="position:relative;max-width:420px;">
@@ -963,6 +963,8 @@ class FacexInventario {
 		this._render_entry_rows();
 		this._bind_movement_events();
 		this._setup_fraccion();
+		// Cámara del celular (PWA): lee el código y lo manda por el mismo camino del lector.
+		facex_multi.scanner.attach(this.$body.find("#inv-e-item-search"), this.$body.find("#inv-e-item-search").parent());
 	}
 
 	_switch_movement_tab(tab) {
@@ -1242,21 +1244,21 @@ ${[...base, ...extra].map((k) => `<label class="inv-ms-row"><input type="checkbo
 		$tbody.html(this.entry_rows.map((row) => {
 			const sinCosto = this.mode === "in" && row._has_estandar === false;
 			return `
-<tr data-row-id="${row.uid}" class="${sinCosto ? "inv-row-invalid" : ""}${row._flash ? " inv-row-scan" : ""}">
-  <td>
+<tr data-row-id="${row.uid}" class="inv-e-row ${sinCosto ? "inv-row-invalid" : ""}${row._flash ? " inv-row-scan" : ""}">
+  <td class="inv-e-prod">
     <span class="inv-row-info" data-info="${row.uid}" title="Ver existencia y costo">&#9432;</span>
     <strong>${frappe.utils.escape_html(row.item_code)}</strong><br>
     <span style="color:#6c757d;">${frappe.utils.escape_html(row.item_name || "")}</span>
     ${sinCosto ? `<br><span style="color:#e03e2d;font-size:11px;">Sin Costo Estándar — asígnelo en «Costos a Ítems»</span>` : ""}
   </td>
-  <td><input type="number" min="0" step="any" class="inv-e-field" data-field="qty" value="${row.qty}"></td>
-  ${this._show_uom() ? `<td>${this._frac_uom_cell(row)}</td>` : ""}
-  <td>${row.has_batch_no ? `<input type="text" class="inv-e-field" data-field="batch_no" value="${frappe.utils.escape_html(row.batch_no || "")}" placeholder="Lote">` : `<span style="color:#adb5bd;">—</span>`}</td>
-  <td>${this._render_serial_cell(row, cfg, pick_serials)}</td>
-  ${cfg.show_account ? `<td><input type="text" class="inv-e-field" data-field="expense_account" value="${frappe.utils.escape_html(row.expense_account || "")}" placeholder="${row._account_loading ? "Cargando…" : "Cuenta contable"}"></td>` : ""}
-  ${cfg.show_cost ? `<td><input type="number" min="0" step="any" class="inv-e-field" data-field="rate" value="${row.rate || ""}" placeholder="0.00"></td>` : ""}
-  ${cfg.show_total ? `<td class="inv-total-cell">${this._format_row_total(row)}</td>` : ""}
-  <td><span class="inv-row-remove" data-remove="${row.uid}">&times;</span></td>
+  <td data-label="Cantidad"><input type="number" min="0" step="any" class="inv-e-field" data-field="qty" value="${row.qty}"></td>
+  ${this._show_uom() ? `<td data-label="UdM">${this._frac_uom_cell(row)}</td>` : ""}
+  <td data-label="Lote" class="${row.has_batch_no ? "" : "inv-e-na"}">${row.has_batch_no ? `<input type="text" class="inv-e-field" data-field="batch_no" value="${frappe.utils.escape_html(row.batch_no || "")}" placeholder="Lote">` : `<span style="color:#adb5bd;">—</span>`}</td>
+  <td data-label="Series" class="${row.has_serial_no ? "" : "inv-e-na"}">${this._render_serial_cell(row, cfg, pick_serials)}</td>
+  ${cfg.show_account ? `<td data-label="Cuenta contable" class="inv-e-wide"><input type="text" class="inv-e-field" data-field="expense_account" value="${frappe.utils.escape_html(row.expense_account || "")}" placeholder="${row._account_loading ? "Cargando…" : "Cuenta contable"}"></td>` : ""}
+  ${cfg.show_cost ? `<td data-label="Costo"><input type="number" min="0" step="any" class="inv-e-field" data-field="rate" value="${row.rate || ""}" placeholder="0.00"></td>` : ""}
+  ${cfg.show_total ? `<td data-label="Total" class="inv-total-cell">${this._format_row_total(row)}</td>` : ""}
+  <td class="inv-e-del"><span class="inv-row-remove" data-remove="${row.uid}">&times;</span></td>
 </tr>`;
 		}).join(""));
 		this.entry_rows.forEach((r) => { r._flash = false; });
@@ -4555,6 +4557,7 @@ ${rec.comentario ? `<div style="background:#fff8e1;border:1px solid #f5c518;bord
 		$b.find("#inv-rt-back").on("click", () => this._render_recepcion());
 		$b.find("#inv-rt-destino").on("change", (e) => { rec.destino = e.target.value; });
 		const $scan = $b.find("#inv-rt-scan");
+		facex_multi.scanner.attach($scan);
 		$scan.on("keydown", (e) => {
 			if (e.key !== "Enter") return;
 			e.preventDefault();
@@ -4592,24 +4595,29 @@ ${rec.comentario ? `<div style="background:#fff8e1;border:1px solid #f5c518;bord
 		$tb.html(rec.rows.map((row, i) => {
 			const parcial = row.recibido < row.qty_pendiente;
 			return `
-<tr class="${row._flash ? "inv-row-scan" : ""}">
-  <td><strong>${frappe.utils.escape_html(row.item_code)}</strong> <span style="color:#6c757d;">${frappe.utils.escape_html(row.item_name || "")}</span>
+<tr class="inv-rt-row ${row._flash ? "inv-row-scan" : ""}">
+  <td class="inv-rt-prod"><strong>${frappe.utils.escape_html(row.item_code)}</strong> <span style="color:#6c757d;">${frappe.utils.escape_html(row.item_name || "")}</span>
     ${row.batch_no ? `<br><span style="color:#6c757d;font-size:11px;">Lote ${frappe.utils.escape_html(row.batch_no)}</span>` : ""}
     ${row.has_serial_no ? `<br><span style="color:#ff9f43;font-size:11px;">Por serie — se recibe completo</span>` : ""}</td>
-  <td>${frappe.format(row.qty_enviada, { fieldtype: "Float" })}</td>
-  <td>${frappe.format(row.qty_pendiente, { fieldtype: "Float" })}</td>
-  <td><input type="number" min="0" step="any" class="inv-e-field inv-rt-recibido" data-i="${i}" value="${row.recibido || ""}" ${row.has_serial_no ? "readonly" : ""} style="width:90px;"></td>
-  <td>${parcial ? `<select class="inv-select inv-rt-resto" data-i="${i}" style="width:150px;">
+  <td data-label="Enviado">${this._qty_txt(row.qty_enviada)}</td>
+  <td data-label="Pendiente">${this._qty_txt(row.qty_pendiente)}</td>
+  <td data-label="Recibido"><input type="number" min="0" step="any" class="inv-e-field inv-rt-recibido" data-i="${i}" value="${row.recibido || ""}" ${row.has_serial_no ? "readonly" : ""} style="width:90px;"></td>
+  <td data-label="Resto" class="${parcial ? "" : "inv-e-na"}">${parcial ? `<select class="inv-select inv-rt-resto" data-i="${i}" style="width:150px;">
       <option value="devolucion" ${row.resto === "devolucion" ? "selected" : ""}>Devolución</option>
       <option value="recepcion" ${row.resto === "recepcion" ? "selected" : ""}>Recepción posterior</option>
     </select>` : `<span style="color:#adb5bd;">—</span>`}</td>
-  <td>${(parcial && row.resto === "devolucion") ? `<select class="inv-select inv-rt-motivo" data-i="${i}" style="width:180px;">
+  <td data-label="Motivo" class="${(parcial && row.resto === "devolucion") ? "" : "inv-e-na"}">${(parcial && row.resto === "devolucion") ? `<select class="inv-select inv-rt-motivo" data-i="${i}" style="width:180px;">
       <option value="">(sin motivo)</option>
       ${rec.motivos.map(m => `<option value="${frappe.utils.escape_html(m.name)}" ${m.name === row.motivo ? "selected" : ""}>${frappe.utils.escape_html(m.motivo)}</option>`).join("")}
     </select>` : `<span style="color:#adb5bd;">—</span>`}</td>
 </tr>`;
 		}).join(""));
 		rec.rows.forEach((r) => { r._flash = false; });
+	}
+
+	// Cantidad legible: 0.5 / 2 / 1.25 (sin «0.500000»).
+	_qty_txt(v) {
+		return frappe.utils.escape_html(String(Math.round(flt(v) * 1000) / 1000));
 	}
 
 	_rt_scan(code) {
@@ -6408,6 +6416,39 @@ body.facex-fullscreen-mode .main-section {
 .inv-company-select { width:100%;margin-bottom:8px; }
 .inv-user-menu-btn { width:100%;margin-bottom:8px; }
 .inv-user-menu-btn:last-child { margin-bottom:0; }
+
+/* ── Celular (PWA) ─────────────────────────────────────────────── */
+@media (max-width: 600px) {
+  .inv-topbar { padding:8px 10px; flex-wrap:wrap; gap:6px; }
+  .inv-topbar-right { gap:2px; flex-wrap:wrap; justify-content:flex-end; margin-left:auto; }
+  .inv-topbar-sub { display:none; }
+  .inv-topbar-link { padding:6px 7px; font-size:12px; }
+  .inv-transporte-menu { left:auto; right:0; }
+  .inv-e-search-card { display:block !important; padding:14px !important; }
+  .inv-e-search-card > div { min-width:0 !important; }
+  .inv-e-search-card #inv-e-paste-btn { margin-top:10px; width:100%; }
+  .inv-e-search-card .inv-label { text-align:left; }
+  #inv-e-tbody { display:block; }
+  #inv-e-tbody tr.inv-e-row { display:grid; grid-template-columns:1fr 1fr; gap:6px 10px; padding:10px 6px; border-bottom:6px solid #f1f3f6; position:relative; }
+  #inv-e-tbody tr.inv-e-row > td { display:block; padding:0 !important; border:0 !important; min-width:0; }
+  #inv-e-tbody tr.inv-e-row > td.inv-e-prod { grid-column:1 / -1; padding-right:28px !important; }
+  #inv-e-tbody tr.inv-e-row > td.inv-e-wide { grid-column:1 / -1; }
+  #inv-e-tbody tr.inv-e-row > td.inv-e-na { display:none; }
+  #inv-e-tbody tr.inv-e-row > td.inv-e-del { position:absolute; top:8px; right:6px; }
+  #inv-e-tbody tr.inv-e-row > td[data-label]::before { content:attr(data-label); display:block; font-size:10px; font-weight:700; color:#6c757d; text-transform:uppercase; letter-spacing:.3px; margin-bottom:2px; }
+  #inv-e-tbody tr.inv-e-row input, #inv-e-tbody tr.inv-e-row select { width:100% !important; }
+  #inv-rt-tbody { display:block; }
+  #inv-rt-tbody tr.inv-rt-row { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px 10px; padding:10px 6px; border-bottom:6px solid #f1f3f6; }
+  #inv-rt-tbody tr.inv-rt-row > td { display:block; padding:0 !important; border:0 !important; min-width:0; }
+  #inv-rt-tbody tr.inv-rt-row > td.inv-rt-prod { grid-column:1 / -1; }
+  #inv-rt-tbody tr.inv-rt-row > td.inv-e-na { display:none; }
+  #inv-rt-tbody tr.inv-rt-row > td[data-label="Resto"], #inv-rt-tbody tr.inv-rt-row > td[data-label="Motivo"] { grid-column:span 3; }
+  #inv-rt-tbody tr.inv-rt-row > td[data-label]::before { content:attr(data-label); display:block; font-size:10px; font-weight:700; color:#6c757d; text-transform:uppercase; letter-spacing:.3px; margin-bottom:2px; }
+  #inv-rt-tbody tr.inv-rt-row input, #inv-rt-tbody tr.inv-rt-row select { width:100% !important; }
+  #inv-rt-tbody { }
+  table:has(> #inv-rt-tbody) > thead { display:none; }
+  .inv-e-grid-card table thead, #inv-e-grid-card table thead { display:none; }
+}
 `;
 
 const INV_STYLES = `

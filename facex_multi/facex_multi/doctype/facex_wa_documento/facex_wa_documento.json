@@ -1,0 +1,28 @@
+{
+ "autoname": "hash",
+ "creation": "2026-10-06 10:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": ["tipo", "activo", "adjuntar_pdf", "mensaje"],
+ "fields": [
+  {"fieldname": "tipo", "fieldtype": "Select", "in_list_view": 1, "label": "Documento",
+   "options": "Factura validada\nCotización\nPago recibido", "reqd": 1, "columns": 2},
+  {"default": "1", "fieldname": "activo", "fieldtype": "Check", "in_list_view": 1, "label": "Activo", "columns": 1},
+  {"default": "1", "fieldname": "adjuntar_pdf", "fieldtype": "Check", "in_list_view": 1, "label": "Adjuntar impresión", "columns": 1},
+  {"fieldname": "mensaje", "fieldtype": "Small Text", "in_list_view": 1, "label": "Mensaje",
+   "description": "Variables: {cliente} {documento} {tipo_doc} {total} {saldo} {monto} {fecha} {empresa}", "columns": 6}
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-06 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FacEx Multi",
+ "name": "FacEx WA Documento",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

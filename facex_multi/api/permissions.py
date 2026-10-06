@@ -257,6 +257,9 @@ PROFILE_PERM_FIELDS = [
     "puede_ver_facex_settings",
     "puede_resetear_password",
     "puede_cambiar_password",
+    "wa_factura",
+    "wa_cotizacion",
+    "wa_pago",
     "reportes_todas_bodegas",
     "puede_autorellenar_recepcion",
 ]

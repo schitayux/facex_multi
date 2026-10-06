@@ -1139,6 +1139,13 @@ body.facex-fullscreen-mode .layout-container, body.facex-fullscreen-mode #space-
 .cd-grid-3 { display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px; }
 .cd-grid-2 { display:grid;grid-template-columns:2fr 1fr;gap:14px; }
 @media (max-width:900px){ .cd-grid-2 { grid-template-columns:1fr; } }
+/* Celular (PWA): la barra superior no debe sacar el menú de usuario de la pantalla */
+@media (max-width:600px){
+  .cd-topbar { padding:8px 10px; flex-wrap:wrap; gap:6px; }
+  .cd-topbar-right { gap:4px; flex-wrap:wrap; justify-content:flex-end; margin-left:auto; }
+  .cd-topbar-sub, .cd-topbar-company { display:none; }
+  .cd-topbar-link { padding:6px 7px; font-size:12px; }
+}
 
 .cd-block { border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;background:#fafbfc; }
 .cd-block-title { background:#1f5fa8;color:#fff;font-weight:800;font-size:12px;letter-spacing:.6px;padding:5px 10px;border-radius:4px;margin:-4px -6px 10px; }

@@ -63,7 +63,10 @@
   "fraccion_factor",
   "cb_fraccion",
   "fraccion_etiqueta",
-  "fraccion_unidades_base"
+  "fraccion_unidades_base",
+  "sb_wa",
+  "wa_habilitado",
+  "wa_documentos"
  ],
  "fields": [
   {
@@ -444,11 +447,32 @@
    "label": "Unidades base que admiten fracción",
    "mandatory_depends_on": "maneja_fraccion",
    "description": "Solo los ítems cuya unidad base esté aquí admiten fracción (ej. Docena). Los demás (ej. Unidad / surtidos) siempre se venden enteros."
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "sb_wa",
+   "fieldtype": "Section Break",
+   "label": "Enviar por WhatsApp"
+  },
+  {
+   "default": "0",
+   "fieldname": "wa_habilitado",
+   "fieldtype": "Check",
+   "label": "Habilitar «Enviar por WhatsApp»",
+   "description": "Si está marcado, los usuarios con el permiso en su FacEx Settings ven el botón de WhatsApp junto a Imprimir en los documentos activados abajo. El mensaje abre WhatsApp con el texto listo; el PDF va como enlace temporal (7 días)."
+  },
+  {
+   "depends_on": "wa_habilitado",
+   "fieldname": "wa_documentos",
+   "fieldtype": "Table",
+   "options": "FacEx WA Documento",
+   "label": "Documentos y mensajes",
+   "description": "Qué documentos se pueden enviar, su mensaje y si se adjunta el formato de impresión. Variables: {cliente} {documento} {tipo_doc} {total} {saldo} {monto} {fecha} {empresa}."
   }
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-06 09:00:00.000000",
+ "modified": "2026-10-06 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Configuracion Compania",

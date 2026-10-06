@@ -393,7 +393,7 @@ class EFastPOSScreen {
 					</div>
 
 					<div class="efs-ticket">
-						<div class="efs-ticket-header">Ticket</div>
+						<div class="efs-ticket-header">Ticket <button type="button" class="efs-ticket-close" id="efs-ticket-close" aria-label="Cerrar ticket">▼ Seguir vendiendo</button></div>
 						<div class="efs-ticket-lines" id="efs-ticket-lines">
 							<div class="efs-ticket-empty" id="efs-ticket-empty">Toque un producto para agregarlo.</div>
 						</div>
@@ -428,6 +428,13 @@ class EFastPOSScreen {
 					</div>
 				</div>
 
+				<!-- Celular: el ticket es un panel deslizante; esta barra lo abre. -->
+				<button type="button" class="efs-mcart" id="efs-mcart">
+					<span id="efs-mcart-count">0 líneas</span>
+					<b id="efs-mcart-total">Q 0.00</b>
+					<span class="efs-mcart-open">Ver ticket ▲</span>
+				</button>
+
 				<div class="efs-overlay" id="efs-payment-view" style="display:none;"></div>
 				<div class="efs-overlay" id="efs-held-view" style="display:none;"></div>
 				<div class="efs-overlay" id="efs-confirm-view" style="display:none;"></div>
@@ -437,6 +444,13 @@ class EFastPOSScreen {
 				<div class="efs-overlay" id="efs-keyword-view" style="display:none;"></div>
 			</div>
 		`);
+
+		// Cámara del celular (PWA): lee el código y lo manda por el mismo camino del lector.
+		facex_multi.scanner.attach(this.$body.find("#efs-search"));
+
+		// Celular: ticket como panel deslizante.
+		this.$body.find("#efs-mcart").on("click", () => this.$body.find(".efs-ticket").addClass("efs-ticket-open"));
+		this.$body.find("#efs-ticket-close").on("click", () => this.$body.find(".efs-ticket").removeClass("efs-ticket-open"));
 
 		this.$body.find("#efs-search").on("input", (e) => {
 			this.searchTxt = e.target.value.trim().toLowerCase();
@@ -1154,6 +1168,9 @@ class EFastPOSScreen {
 
 	_show_step(n) {
 		this.step = n;
+		// Celular: la barra del ticket solo existe en el paso de productos.
+		this.$body.find(".efs-wrap").toggleClass("efs-on-products", n === 2);
+		this.$body.find(".efs-ticket").removeClass("efs-ticket-open");
 		clearInterval(this._homeClockTimer);
 		this.$body.find("#efs-home-view").hide();
 		this.$body.find(".efs-body").show();
@@ -2509,6 +2526,11 @@ class EFastPOSScreen {
 		this.$body.find("#efs-flete-total").text(`Q ${_efs_fmt(flete)}`);
 		this.$body.find("#efs-total-est-row").css("display", (recargo || flete) ? "" : "none");
 		this.$body.find("#efs-total-est").text(`Q ${_efs_fmt(subtotal + recargo + flete)}`);
+		// Barra del ticket en celular
+		const n = (this.doc.items || []).length;
+		this.$body.find("#efs-mcart-count").text(`${n} ${n === 1 ? "línea" : "líneas"}`);
+		this.$body.find("#efs-mcart-total").text(`Q ${_efs_fmt(subtotal + recargo + flete)}`);
+		this.$body.find("#efs-mcart").toggleClass("efs-mcart-has", n > 0);
 		this._render_stepbar();
 	}
 
@@ -3840,7 +3862,10 @@ class EFastPOSScreen {
 					${isPrintOnlyLocked ? "" : `<button class="efs-btn-secondary efs-btn-green" id="efs-confirm-cert-print" ${skipCustomerGate ? "" : "disabled"}>Certificar FEL e Imprimir</button>`}
 					${isCertified ? "" : `<button class="efs-btn-secondary efs-btn-yellow" id="efs-confirm-print-only" ${skipCustomerGate ? "" : "disabled"}>Solo Imprimir (sin certificar)</button>`}
 					<button class="efs-btn-secondary" id="efs-confirm-preview" ${alreadyProcessed ? "" : "disabled"}>Vista Preliminar</button>
-					<button class="efs-btn-secondary" id="efs-confirm-email" ${alreadyProcessed ? "" : "disabled"}>Enviar x WhatsApp</button>
+					${this.defaults.wa_company
+						? `${(this.defaults.wa || {}).factura ? `<button class="efs-btn-secondary efs-btn-wa" id="efs-confirm-wa" ${alreadyProcessed ? "" : "disabled"}>${facex_multi.wa.ICON} WhatsApp</button>` : ""}
+						${(this.defaults.wa || {}).pago ? `<button class="efs-btn-secondary efs-btn-wa" id="efs-confirm-wa-pay" ${alreadyProcessed ? "" : "disabled"}>${facex_multi.wa.ICON} Recibo de pago</button>` : ""}`
+						: `<button class="efs-btn-secondary" id="efs-confirm-email" ${alreadyProcessed ? "" : "disabled"}>Enviar x WhatsApp</button>`}
 					${canXml ? `<button class="efs-btn-secondary" id="efs-confirm-xml" ${isCertified ? "" : "disabled"}>Descargar XML</button>` : ""}
 					<button class="efs-btn-charge" id="efs-confirm-new" ${skipCustomerGate ? "" : "disabled"}>Nueva Venta</button>
 				</div>
@@ -3860,7 +3885,7 @@ class EFastPOSScreen {
 				this._print_invoice();
 				if (this.doc._certified) {
 					$view.find("#efs-confirm-print-only").remove();
-					$view.find("#efs-confirm-preview, #efs-confirm-email, #efs-confirm-cancel, #efs-confirm-xml").prop("disabled", false);
+					$view.find("#efs-confirm-preview, #efs-confirm-email, #efs-confirm-wa, #efs-confirm-wa-pay, #efs-confirm-cancel, #efs-confirm-xml").prop("disabled", false);
 					if (canCancel) $view.find("#efs-confirm-cancel").text(__("Anular Factura FEL"));
 				}
 			});
@@ -3877,7 +3902,7 @@ class EFastPOSScreen {
 							this.doc.bfel_impreso_sin_certificar = 1;
 							this._open_local_print(true);
 							$view.find("#efs-confirm-cert-print").remove();
-							$view.find("#efs-confirm-preview, #efs-confirm-email, #efs-confirm-cancel").prop("disabled", false);
+							$view.find("#efs-confirm-preview, #efs-confirm-email, #efs-confirm-wa, #efs-confirm-wa-pay, #efs-confirm-cancel").prop("disabled", false);
 						},
 					});
 				}
@@ -3885,6 +3910,9 @@ class EFastPOSScreen {
 		});
 		$view.find("#efs-confirm-preview").on("click", () => this._show_ticket_preview());
 		$view.find("#efs-confirm-email").on("click", () => this._send_whatsapp());
+		// «Enviar por WhatsApp» configurable (api/whatsapp.py): solo lo ve quien tiene el permiso.
+		$view.find("#efs-confirm-wa").on("click", () => this._wa_open("factura"));
+		$view.find("#efs-confirm-wa-pay").on("click", () => this._wa_open("pago"));
 		$view.find("#efs-confirm-xml").on("click", () => this._download_xml());
 		$view.find("#efs-confirm-new").on("click", () => this._new_sale());
 		$view.find("#efs-confirm-cancel").on("click", () => this._show_cancel_invoice_dialog());
@@ -4716,6 +4744,14 @@ class EFastPOSScreen {
 		window.open(url, "_blank");
 	}
 
+	_wa_open(tipo) {
+		if (!this.doc.name || this.doc.name === "new") {
+			frappe.show_alert({ message: __("Primero guarde la venta."), indicator: "orange" });
+			return;
+		}
+		facex_multi.wa.open(this.doc.name, tipo);
+	}
+
 	_send_whatsapp() {
 		// this.doc.bfel_uuid solo viene poblado al recargar la factura desde
 		// Historial — si se certificó en esta misma sesión, _ensure_certified
@@ -5146,6 +5182,8 @@ body.facex-fullscreen-mode .main-section {
   border-radius: var(--efs-radius); font-size: 16px; font-weight: 700; cursor: pointer;
 }
 .efs-btn-charge:disabled { background: #cbd5e1; cursor: not-allowed; }
+.efs-btn-wa { background:#25d366 !important; color:#fff !important; border-color:#1ebe5b !important; }
+.efs-btn-wa svg { vertical-align:-2px; margin-right:4px; }
 .efs-btn-secondary {
   padding: 12px; background: #fff; border: 1px solid var(--efs-border); border-radius: var(--efs-radius);
   font-size: 14px; font-weight: 600; cursor: pointer; flex: 1;
@@ -5409,5 +5447,37 @@ body.facex-fullscreen-mode .main-section {
 }
 @media (max-width: 480px) {
   .efs-company-badge { display: none; }
+}
+
+/* ── Celular (PWA): barra superior compacta + ticket deslizante ─────── */
+.efs-mcart, .efs-ticket-close { display: none; }
+@media (max-width: 700px) {
+  .efs-header { padding: 8px 10px; }
+  .efs-header-left { gap: 8px; }
+  .efs-header-right { flex-wrap: wrap; gap: 6px; width: 100%; justify-content: space-between; }
+  .efs-customer-pill { font-size: 12px; padding: 4px 10px; max-width: 100%; }
+  #efs-vendor-pill .efs-pill-label { display: none; }
+  #efs-vendor-select { max-width: 130px; }
+  .efs-header .efg-hint-badge, .efs-search-row .efg-hint-badge { display: none !important; }
+  .efs-search-row { flex-wrap: wrap; gap: 8px; }
+  .efs-search-row .efs-search-input { flex: 1 1 100%; min-width: 0; }
+  .efs-main { padding: 10px; }
+  .efs-wrap.efs-on-products .efs-body { padding-bottom: 76px; }
+  .efs-ticket {
+    position: fixed; left: 0; right: 0; bottom: 0; top: auto; width: 100%; height: 80vh; max-height: 80vh; z-index: 130;
+    border-radius: 16px 16px 0 0; border-top: none; box-shadow: 0 -10px 30px rgba(15, 23, 42, .28);
+    transform: translateY(105%); transition: transform .22s ease;
+  }
+  .efs-ticket.efs-ticket-open { transform: none; }
+  .efs-ticket-header { display: flex; align-items: center; justify-content: space-between; }
+  .efs-ticket-close { display: inline-block; background: #eef2ff; color: #153375; border: 0; border-radius: 8px; padding: 6px 10px; font-weight: 700; font-size: 12px; }
+  .efs-wrap.efs-on-products .efs-mcart {
+    display: flex; position: fixed; left: 10px; right: 10px; bottom: 10px; z-index: 120; align-items: center; gap: 10px;
+    background: #153375; color: #fff; border: 0; border-radius: 14px; padding: 13px 16px; font-size: 14px;
+    box-shadow: 0 8px 24px rgba(21, 51, 117, .35);
+  }
+  .efs-mcart b { margin-left: auto; font-size: 16px; }
+  .efs-mcart .efs-mcart-open { font-size: 12px; opacity: .85; }
+  .efs-mcart:not(.efs-mcart-has) { background: #64748b; }
 }
 `;

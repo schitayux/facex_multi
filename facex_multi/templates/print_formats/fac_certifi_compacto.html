@@ -1,0 +1,190 @@
+{#- FAC CERTIFI — diseño compacto (2026-10-06, neko).
+    Factura certificada (02) o «Recibo de compra» (00 No enviar). Layout solo con
+    tablas: wkhtmltopdf no soporta flex/grid y el Print Style «Redesign» fuerza
+    padding/line-height en td (se anula con .fxr ... !important). Sin clase
+    «label» (Bootstrap la dibuja como chip). -#}
+{%- set _fx_vu = frappe.db.get_value("FacEx Configuracion Compania", doc.company, "mostrar_uom") -%}
+{%- set si = doc -%}
+{%- set bfel_code = (si.bfel_status or '')[:2] -%}
+{%- set is_certified = bfel_code == "02" -%}
+{%- set is_recibo = bfel_code == "00" -%}
+{%- set is_cancelled = (si.bfel_documento_anulado or 0)|int == 1 -%}
+{%- set serie_prefix = (si.name or '')[:4] -%}
+{%- set bs_list = frappe.get_all("BFEL Settings", filters={"company": si.company, "enabled": 1}, limit=1) -%}
+{%- set bdm_list = [] -%}
+{%- if bs_list -%}
+  {%- set bdm_list = frappe.get_all("BFEL Document Map", filters={"type_docdte": serie_prefix, "bfel_settings": bs_list[0].name}, limit=1) -%}
+{%- endif -%}
+{%- if bs_list -%}
+  {%- set bs = frappe.get_doc("BFEL Settings", bs_list[0].name) -%}
+{%- else -%}
+  {%- set bs = namespace(name="", direccionemisor="", paisemisor="", company_nit="", isr_regime="", certifier="") -%}
+{%- endif -%}
+{%- set company = frappe.get_doc("Company", si.company) -%}
+{%- set doc_type = (frappe.db.get_value("BFEL Document Map", bdm_list[0].name, "fel_document_type") if bdm_list else "FACTURA") or "FACTURA" -%}
+{%- set est_logo = "" -%}{%- set est_name = company.company_name -%}{%- set est_subname = "" -%}
+{%- if si.bfel_establecimiento and bs.name -%}
+  {%- set ests = frappe.get_all("BFEL Establecimientos", filters={"parent": bs.name, "establecimiento_id": si.bfel_establecimiento, "activo": 1}, fields=["logo", "nombre_establecimiento", "subnombre_establecimiento"]) -%}
+  {%- if ests -%}{%- set est_logo = ests[0].logo -%}{%- set est_name = ests[0].nombre_establecimiento or est_name -%}{%- set est_subname = ests[0].subnombre_establecimiento -%}{%- endif -%}
+{%- endif -%}
+{%- set logo = est_logo or company.company_logo or ((frappe.db.get_value("Letter Head", company.default_letter_head, "image") or "") if company.default_letter_head else "") -%}
+{%- set nit_emisor = bs.company_nit or company.tax_id or "" -%}
+{%- macro m(v) -%}{{ frappe.utils.fmt_money(v or 0, currency=doc.currency) }}{%- endmacro -%}
+
+{%- set tax_ns = namespace(rate=0) -%}
+{%- for tax in si.taxes -%}{%- if (tax.rate or 0) > 0 and tax_ns.rate == 0 -%}{%- set tax_ns.rate = tax.rate -%}{%- endif -%}{%- endfor -%}
+
+<style>
+.fxr, .fxr * { font-family: Helvetica, Arial, sans-serif !important; color: #1f2937; }
+.fxr { font-size: 10.5px; line-height: 1.35 !important; }
+.fxr table { width: 100%; border-collapse: collapse; }
+.fxr td, .fxr th { padding: 0 !important; line-height: 1.35 !important; vertical-align: top; border: 0 !important; }
+.fxr .hd td { vertical-align: middle; }
+.fxr .logo { max-height: 46px; max-width: 150px; }
+.fxr .emp { font-size: 13px; font-weight: 700; color: #153375; }
+.fxr .emp-sub { font-size: 8.5px; color: #6b7280; }
+.fxr .doc-title { font-size: 17px; font-weight: 800; color: #153375; letter-spacing: .5px; text-align: right; }
+.fxr .doc-sub { font-size: 8.5px; color: #6b7280; text-align: right; }
+.fxr .doc-num { font-size: 11px; font-weight: 700; text-align: right; margin-top: 2px; }
+.fxr .rule { border-top: 2px solid #153375; margin: 8px 0 8px 0; }
+.fxr .cli td { padding: 2px 0 !important; }
+.fxr .k { font-size: 8px; text-transform: uppercase; color: #6b7280; letter-spacing: .4px; }
+.fxr .v { font-size: 10.5px; font-weight: 600; }
+.fxr .items { margin-top: 10px; }
+.fxr .items th { background: #eef2f8 !important; color: #153375 !important; font-size: 8.5px; text-transform: uppercase; letter-spacing: .3px;
+                 padding: 5px 6px !important; border-bottom: 1.5px solid #153375 !important; text-align: left; }
+.fxr .items td { padding: 4px 6px !important; border-bottom: 1px solid #e5e7eb !important; font-size: 10px; }
+.fxr .num { text-align: right !important; white-space: nowrap; }
+.fxr .tot td { padding: 2px 6px !important; font-size: 10px; }
+.fxr .tot .grand td { font-size: 14px; font-weight: 800; color: #153375; border-top: 2px solid #153375 !important; padding-top: 5px !important; }
+.fxr .note { font-size: 8.5px; color: #6b7280; }
+.fxr .qr td { vertical-align: middle; }
+.fxr .foot { margin-top: 14px; border-top: 1px solid #e5e7eb; padding-top: 5px; font-size: 7.5px; color: #9ca3af; text-align: center; }
+.fxr .anulado { position: fixed; top: 38%; left: 8%; font-size: 70px; color: rgba(220, 38, 38, .13); font-weight: 900; -webkit-transform: rotate(-25deg); transform: rotate(-25deg); }
+</style>
+
+<div class="fxr">
+{%- if is_cancelled -%}<div class="anulado">ANULADO</div>{%- endif -%}
+
+<table class="hd"><tr>
+  <td style="width:58%;">
+    <table><tr>
+      {%- if logo -%}<td style="width:96px; padding-right:10px !important;"><img src="{{ logo }}" class="logo" style="max-width:86px;"></td>{%- endif -%}
+      <td>
+        <div class="emp">{{ est_name }}</div>
+        <div class="emp-sub">
+          {% if bs.direccionemisor %}{{ bs.direccionemisor }}{% endif %}{% if est_subname %} · {{ est_subname }}{% endif %}<br>
+          NIT {{ nit_emisor }}{%- if bs.isr_regime -%} · {{ bs.isr_regime }}{%- endif -%}
+        </div>
+      </td>
+    </tr></table>
+  </td>
+  <td style="width:42%;">
+    <div class="doc-title">{{ "RECIBO DE COMPRA" if is_recibo else (doc_type|upper) }}</div>
+    <div class="doc-sub">{{ "Documento interno · no es factura" if is_recibo else "Documento Tributario Electrónico" }}</div>
+    <div class="doc-num">{{ si.name }}</div>
+  </td>
+</tr></table>
+
+<div class="rule"></div>
+
+<table class="cli">
+  <tr>
+    <td style="width:58%;"><div class="k">Cliente</div><div class="v">{{ si.bfel_nombre or si.customer_name }}</div></td>
+    <td style="width:22%;"><div class="k">NIT / CUI</div><div class="v">{{ si.bfel_nit or "CF" }}</div></td>
+    <td style="width:20%;" class="num"><div class="k">Fecha</div><div class="v">{{ si.get_formatted("posting_date") }}</div></td>
+  </tr>
+  <tr>
+    <td>{%- if si.bfel_direccion -%}<div class="k">Dirección</div><div class="v" style="font-weight:400;">{{ si.bfel_direccion }}</div>{%- endif -%}</td>
+    <td><div class="k">Condición</div><div class="v" style="font-weight:400;">{{ si.payment_terms_template or "Contado" }}</div></td>
+    <td class="num">{%- if si.due_date and si.due_date != si.posting_date -%}<div class="k">Vence</div><div class="v">{{ si.get_formatted("due_date") }}</div>{%- endif -%}</td>
+  </tr>
+</table>
+
+<table class="items">
+  <thead><tr>
+    <th class="num" style="width:7%;">Cant.</th>
+    {%- if _fx_vu -%}<th class="fx-uom-col" style="width:13%;">UdM</th>{%- endif -%}
+    <th>Descripción</th>
+    <th class="num" style="width:13%;">Precio</th>
+    {%- if not is_recibo -%}<th class="num" style="width:11%;">IVA</th>{%- endif -%}
+    <th class="num" style="width:14%;">Total</th>
+  </tr></thead>
+  <tbody>
+  {%- set ns = namespace(total=0, total_iva=0) -%}
+  {%- for item in si.items -%}
+    {%- set ns.total = ns.total + (item.amount or 0) -%}
+    {%- set item_tax_text = item.item_tax_rate or "" -%}
+    {%- set zero_tax = item_tax_text and (": 0" in item_tax_text or ":0" in item_tax_text or "0.0" in item_tax_text) -%}
+    {%- if zero_tax -%}{%- set iva_linea = 0 -%}
+    {%- elif (item.amount or 0) > 0 and (item.net_amount or 0) > 0 and (item.amount or 0) > (item.net_amount or 0) -%}{%- set iva_linea = (item.amount or 0) - (item.net_amount or 0) -%}
+    {%- elif (tax_ns.rate or 0) > 0 -%}{%- set iva_linea = (item.amount or 0) * tax_ns.rate / 100 -%}
+    {%- else -%}{%- set iva_linea = 0 -%}{%- endif -%}
+    {%- set ns.total_iva = ns.total_iva + (iva_linea or 0) -%}
+    <tr>
+      <td class="num">{{ "%g"|format(item.qty or 0) }}</td>
+      {%- if _fx_vu -%}<td class="fx-uom-col">{%- if item.stock_uom and item.uom != item.stock_uom -%}<b style="background:#fff3cd;border:1px solid #f0a500;padding:0 3px;border-radius:3px;">{{ item.uom }}</b>{%- else -%}{{ item.uom or item.stock_uom or "" }}{%- endif -%}</td>{%- endif -%}
+      <td>{{ item.item_name }}</td>
+      <td class="num">{{ m(item.rate) }}</td>
+      {%- if not is_recibo -%}<td class="num">{{ m(iva_linea) }}</td>{%- endif -%}
+      <td class="num">{{ m(item.amount) }}</td>
+    </tr>
+  {%- endfor -%}
+  </tbody>
+</table>
+
+{#- Leyenda de exención de IVA (frases distintas de los ítems) -#}
+{%- set legend_ns = namespace(frases=[]) -%}
+{%- if frappe.get_meta("Item").has_field("custom_facex_frase_exencion") -%}
+  {%- for item in si.items -%}{%- set _f = frappe.db.get_value("Item", item.item_code, "custom_facex_frase_exencion") -%}{%- if _f and _f not in legend_ns.frases -%}{%- set legend_ns.frases = legend_ns.frases + [_f] -%}{%- endif -%}{%- endfor -%}
+{%- endif -%}
+
+{#- Cargos FacEx (Recargo Contra Entrega / Flete): filas de cargos que suman al total -#}
+{%- set cargos_ns = namespace(recargo=0, flete=0) -%}
+{%- for tx in si.taxes -%}{%- if tx.get("facex_tipo_cargo") -%}
+  {%- if "Flete" in tx.facex_tipo_cargo -%}{%- set cargos_ns.flete = cargos_ns.flete + (tx.tax_amount or 0) -%}
+  {%- else -%}{%- set cargos_ns.recargo = cargos_ns.recargo + (tx.tax_amount or 0) -%}{%- endif -%}
+{%- endif -%}{%- endfor -%}
+{%- set subtotal = ns.total -%}
+{%- set grand = ns.total + cargos_ns.recargo + cargos_ns.flete -%}
+{%- set pagos = si.get("custom_efast_payments") or [] -%}
+{%- set pagado = namespace(v=0) -%}{%- for p in pagos -%}{%- set pagado.v = pagado.v + (p.amount or 0) -%}{%- endfor -%}
+
+<table style="margin-top:8px;"><tr>
+  <td style="width:55%; padding-right:14px !important;">
+    {%- if legend_ns.frases -%}<div class="note" style="font-style:italic;">{%- for f in legend_ns.frases -%}<div>{{ f }}</div>{%- endfor -%}</div>{%- endif -%}
+    {%- if pagos -%}
+      <div class="k" style="margin-top:4px;">Pagos</div>
+      {%- for p in pagos -%}<div class="note" style="color:#374151;">{{ p.payment_method }}{% if p.reference and p.reference != "Automático x FacEx" %} · {{ p.reference }}{% endif %} — {{ m(p.amount) }}</div>{%- endfor -%}
+    {%- endif -%}
+    {%- if si.get("remarks") and si.remarks not in ("No Remarks", "Sin observaciones") -%}<div class="note" style="margin-top:4px;">{{ si.remarks }}</div>{%- endif -%}
+  </td>
+  <td style="width:45%;">
+    <table class="tot">
+      {%- if cargos_ns.recargo or cargos_ns.flete -%}<tr><td>Subtotal</td><td class="num">{{ m(subtotal) }}</td></tr>{%- endif -%}
+      {%- if cargos_ns.recargo -%}<tr><td>Recargo por entrega</td><td class="num">{{ m(cargos_ns.recargo) }}</td></tr>{%- endif -%}
+      {%- if cargos_ns.flete -%}<tr><td>Flete</td><td class="num">{{ m(cargos_ns.flete) }}</td></tr>{%- endif -%}
+      {%- if not is_recibo -%}<tr><td>IVA incluido</td><td class="num">{{ m(ns.total_iva) }}</td></tr>{%- endif -%}
+      <tr class="grand"><td>TOTAL</td><td class="num">{{ m(grand) }}</td></tr>
+      {%- if pagos and (grand - pagado.v) > 0.009 -%}<tr><td class="note">Saldo pendiente</td><td class="num note" style="color:#b91c1c;">{{ m(grand - pagado.v) }}</td></tr>{%- endif -%}
+    </table>
+  </td>
+</tr></table>
+
+{%- if is_certified -%}
+  {%- set sat_emisor = (nit_emisor or '') | replace('-', '') -%}
+  {%- set sat_receptor = (si.bfel_nit or 'CF') | replace('-', '') -%}
+  {%- set sat_url = 'https://felpub.c.sat.gob.gt/verificador-web/publico/vistas/verificacionDte.jsf?tipo=autorizacion&numero=' + (si.bfel_uuid or '') + '&emisor=' + sat_emisor + '&receptor=' + sat_receptor + '&monto=' + ("%.6f"|format(si.grand_total)) -%}
+  <table class="qr" style="margin-top:10px; border-top:1px solid #e5e7eb;"><tr>
+    <td style="width:96px; padding:6px 10px 0 0 !important;"><img src="{{ get_qr_base64(sat_url) }}" style="width:82px; height:82px;"></td>
+    <td class="note" style="padding-top:6px !important;">
+      <b>Autorización:</b> {{ si.bfel_uuid }}<br>
+      <b>Serie:</b> {{ si.bfel_docto_serie }} · <b>Número:</b> {{ si.bfel_docto_no }}<br>
+      <b>Certificación:</b> {{ si.bfel_fechacertificacion }}<br>
+      Certificador: {{ bs.certifier }} · NIT 107902281
+    </td>
+  </tr></table>
+{%- endif -%}
+
+<div class="foot">{% if is_recibo %}Gracias por su compra · {% endif %}FacEx — Soluciones Integrales CHAPP, S.A.</div>
+</div>

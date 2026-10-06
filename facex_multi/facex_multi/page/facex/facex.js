@@ -971,6 +971,7 @@ class EFastSalePage {
             </div>
           </div>
           <div class="ef-payments-actions">
+            <button id="ef-btn-wa-pay" class="ef-btn ef-btn-wa" style="display:none" title="Enviar el recibo de pago por WhatsApp">${facex_multi.wa.ICON} Enviar recibo por WhatsApp</button>
             <button id="ef-btn-save-payments" class="ef-btn ef-btn-primary">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
               Guardar Pagos
@@ -1411,6 +1412,7 @@ class EFastSalePage {
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
                     Imprimir Recibo (PDF)
                   </button>
+                  <button id="ef-btn-wa-receipt" class="ef-btn ef-btn-wa" style="display:none; align-items:center; justify-content:center; gap:8px; font-weight:700;" title="Enviar el recibo de pago por WhatsApp">${facex_multi.wa.ICON} WhatsApp</button>
                 </div>
               </div>
             </div>
@@ -4743,6 +4745,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 .ef-btn-info      { background: var(--ef-info); color: #fff; }
 .ef-btn-info:hover      { background: #29a8d4; }
+.ef-btn-wa        { background: #25d366; color: #fff; border-color: #1ebe5b; }
+.ef-btn-wa:hover  { background: #1ebe5b; }
+.ef-btn-wa svg    { vertical-align: -2px; margin-right: 4px; }
 
 .ef-btn-secondary { background: #f1f5f9; color: var(--ef-text); border: 1px solid var(--ef-border); }
 .ef-btn-secondary:hover { background: #e2e8f0; }
@@ -5596,6 +5601,53 @@ body.facex-fullscreen-mode .ef-main-layout {
    _setup_header_stickiness). */
 .ef-header.ef-header-unstick { position: relative; }
 
+/* ── Celular (PWA): líneas de la factura como tarjetas ─────────────
+   Fila 1: descripción + quitar · Fila 2: código + almacén · Fila 3:
+   cantidad, UdM, precio, importe. Las columnas ocultas por configuración
+   siguen ocultas (display:none en línea). */
+@media (max-width: 600px) {
+  .ef-items-header { flex-wrap: wrap; gap: 8px; }
+  .ef-items-header > div { flex-wrap: wrap; width: 100%; }
+  #ef-barcode-scan { flex: 1 1 60%; width: auto !important; min-width: 0; }
+  #ef-items-table thead { display: none; }
+  #ef-items-table, #ef-items-table tbody { display: block; width: 100%; }
+  #ef-items-body > tr.ef-tr {
+    display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 4px 8px;
+    padding: 10px 12px; border-bottom: 6px solid #f1f5f9; position: relative;
+  }
+  #ef-items-body > tr.ef-tr > td { padding: 0; border: 0; min-width: 0; }
+  #ef-items-body > tr.ef-tr > td:nth-child(1) { display: none; }
+  #ef-items-body > tr.ef-tr > td:nth-child(3) { grid-column: 1 / 4; grid-row: 1; }
+  #ef-items-body > tr.ef-tr > td:nth-child(3) .ef-item-desc { font-weight: 700; }
+  #ef-items-body > tr.ef-tr > td:nth-child(14) { grid-column: 4; grid-row: 1; text-align: right; }
+  #ef-items-body > tr.ef-tr > td:nth-child(2) { grid-column: 1 / 3; grid-row: 2; }
+  #ef-items-body > tr.ef-tr > td:nth-child(4) { grid-column: 3 / 5; grid-row: 2; }
+  #ef-items-body > tr.ef-tr > td:nth-child(5) { grid-column: 1; grid-row: 3; }
+  #ef-items-body > tr.ef-tr > td:nth-child(6) { grid-column: 2; grid-row: 3; }
+  #ef-items-body > tr.ef-tr > td:nth-child(7) { grid-column: 3; grid-row: 3; }
+  #ef-items-body > tr.ef-tr > td:nth-child(9) { grid-column: 4; grid-row: 3; }
+  #ef-items-body > tr.ef-tr > td:nth-child(8),
+  #ef-items-body > tr.ef-tr > td:nth-child(n+10):not(:nth-child(14)) { grid-column: span 2; }
+  #ef-items-body > tr.ef-tr > td:nth-child(5)::before { content: "Cant."; }
+  #ef-items-body > tr.ef-tr > td:nth-child(6)::before { content: "UdM"; }
+  #ef-items-body > tr.ef-tr > td:nth-child(7)::before { content: "Precio"; }
+  #ef-items-body > tr.ef-tr > td:nth-child(8)::before { content: "Desc %"; }
+  #ef-items-body > tr.ef-tr > td:nth-child(9)::before { content: "Importe"; }
+  #ef-items-body > tr.ef-tr > td:nth-child(10)::before { content: "Recargo"; }
+  #ef-items-body > tr.ef-tr > td:nth-child(11)::before { content: "Total c/rec."; }
+  #ef-items-body > tr.ef-tr > td::before { display: block; font-size: 10px; font-weight: 700; color: var(--ef-text-muted); text-transform: uppercase; letter-spacing: .3px; text-align: left; }
+  #ef-items-body > tr.ef-tr > td:nth-child(9) .ef-amount { font-weight: 800; color: #153375; }
+  #ef-items-body > tr.ef-tr .fx-uom-sel, #ef-items-body > tr.ef-tr .fx-uom-tag { min-width: 0 !important; width: 100%; }
+  #ef-items-body > tr.ef-tr-lm-detail { display: block; }
+  #ef-payments-table { min-width: 0; }
+  #ef-payments-table .ef-td:first-child, #ef-payments-table .ef-th:first-child { display: none; }
+  .ef-payments-actions { flex-wrap: wrap; gap: 8px; }
+  .ef-footer-inner { flex-wrap: wrap; }
+  .ef-footer-inner > * { flex: 1 1 100%; min-width: 0 !important; max-width: 100%; }
+  .ef-totals { min-width: 0 !important; width: 100%; }
+  .ef-payments-actions .ef-btn { flex: 1 1 auto; justify-content: center; }
+}
+
 /* Móvil táctil: con letra < 16px iOS hace zoom al enfocar un campo y la
    página queda descuadrada. */
 @media (max-width: 600px) and (pointer: coarse) {
@@ -6164,6 +6216,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this._mark_dirty();
 			this._update_local_footer();
 		});
+
+		// Cámara del celular (PWA): lee el código y lo manda por el mismo camino del lector.
+		facex_multi.scanner.attach(this.$body.find("#ef-barcode-scan"));
 
 		// Escaneo de código de barras / QR: agrega la línea automáticamente,
 		// o suma 1 a la cantidad si el producto ya está en la lista.
@@ -8374,6 +8429,7 @@ body.facex-fullscreen-mode .ef-main-layout {
     <span class="ef-btn-label">Imprimir</span>
     <kbd class="ef-kbd">F4</kbd>
   </button>
+  <button id="ef-btn-wa" class="ef-btn ef-btn-wa" title="Enviar por WhatsApp" style="display:none">${facex_multi.wa.ICON}<span class="ef-btn-label">WhatsApp</span></button>
   <button id="ef-btn-pdf" class="ef-btn ef-btn-danger" title="Descargar PDF" style="display:none">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
     <span class="ef-btn-label">PDF</span>
@@ -8406,6 +8462,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		$bar.find("#ef-btn-duplicate").on("click", () => this._action_duplicate());
 		$bar.find("#ef-btn-guia-transporte").on("click", () => this._action_guias_transporte());
 		$bar.find("#ef-btn-print").on("click", () => this._action_print());
+		$bar.find("#ef-btn-wa").on("click", () => this._action_wa());
 		$bar.find("#ef-btn-pdf").on("click", () => this._action_pdf());
 		$bar.find("#ef-btn-xml").on("click", () => this._action_xml());
 		$bar.find("#ef-btn-new").on("click", () => this._action_new());
@@ -8433,7 +8490,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		// Ocultar todo primero, luego mostrar solo lo necesario
 		["#ef-btn-save", "#ef-btn-cancel-changes", "#ef-btn-submit", "#ef-btn-delete-draft",
 		 "#ef-btn-certify", "#ef-btn-cancel-doc", "#ef-btn-cancel-fel", "#ef-btn-print", "#ef-btn-customer", "#ef-btn-pdf",
-		 "#ef-btn-xml", "#ef-btn-duplicate", "#ef-btn-guia-transporte"].forEach(hide);
+		 "#ef-btn-xml", "#ef-btn-duplicate", "#ef-btn-guia-transporte", "#ef-btn-wa"].forEach(hide);
 		btn("#ef-btn-save").removeClass("ef-btn-save-dirty");
 
 		// Siempre visibles: Nueva Fac
@@ -8537,6 +8594,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 		} else {
 			hide("#ef-btn-xml");
 		}
+
+		this._update_wa_buttons();
 
 		// Permisos FacEx Settings — prevalecen sobre estado del documento
 		const p = this.perms;
@@ -8860,6 +8919,41 @@ body.facex-fullscreen-mode .ef-main-layout {
 				}
 			},
 		});
+	}
+
+	// ── Enviar por WhatsApp (ver public/js/wa.js y api/whatsapp.py) ───────
+	// Los botones solo existen para quien tiene el permiso: defaults.wa trae
+	// únicamente los tipos que este usuario puede enviar.
+
+	_wa_tipo_doc() {
+		const d = this.doc;
+		if (!d.name || d.name === "new" || d.bfel_documento_anulado) return "";
+		return d.docstatus === 0 ? "cotizacion" : (d.docstatus === 1 ? "factura" : "");
+	}
+
+	_update_wa_buttons() {
+		const wa = (this.defaults || {}).wa || {};
+		const tipo = this._wa_tipo_doc();
+		const ok = !!tipo && facex_multi.wa.can(wa, tipo);
+		if (this.$bar) this.$bar.find("#ef-btn-wa").toggle(ok);
+		const pays = (this.doc.custom_efast_payments || []).length;
+		const okPay = this.doc.name && this.doc.name !== "new" && this.doc.docstatus < 2 && pays > 0 && facex_multi.wa.can(wa, "pago");
+		this.$body.find("#ef-btn-wa-pay").toggle(!!okPay);
+	}
+
+	_action_wa(tipo) {
+		tipo = tipo || this._wa_tipo_doc();
+		if (!tipo || !this.doc.name || this.doc.name === "new") return;
+		// Una factura validada no se edita: se envía tal como está guardada. Solo un
+		// borrador (cotización) puede tener cambios pendientes — se avisa, sin bloquear.
+		if (this._dirty && this.doc.docstatus === 0) {
+			frappe.confirm(
+				"La cotización tiene cambios sin guardar. Se enviará la última versión guardada. ¿Continuar?",
+				() => facex_multi.wa.open(this.doc.name, tipo)
+			);
+			return;
+		}
+		facex_multi.wa.open(this.doc.name, tipo);
 	}
 
 	_action_pdf() {
@@ -10505,6 +10599,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		});
 
 		this.$body.on("click", "#ef-btn-save-payments", () => this._save_payments());
+		this.$body.on("click", "#ef-btn-wa-pay", () => this._action_wa("pago"));
 	}
 
 	_sync_pagado_ui() {
@@ -10721,6 +10816,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 	}
 
 	_update_payments_total() {
+		this._update_wa_buttons();
 		const payments = this.doc.custom_efast_payments || [];
 		const grandTotal = parseFloat(this.doc.outstanding_amount) || 0;
 		const totalPaid  = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
@@ -12137,11 +12233,15 @@ body.facex-fullscreen-mode .ef-main-layout {
 						<td class="ef-td"><span class="ef-badge ef-badge-draft">${inv.bfel_status}</span></td>
 						<td class="ef-td">
 							<button class="ef-btn ef-btn-sm ef-btn-secondary ef-rep-print-quot" data-name="${inv.name}" data-company="${inv.company || ""}" style="padding:2px 8px; font-size:10px;">Imprimir F4</button>
+							${facex_multi.wa.can((this.defaults || {}).wa, "cotizacion") ? `<button class="ef-btn ef-btn-sm ef-btn-wa ef-rep-wa" data-name="${inv.name}" data-tipo="cotizacion" title="Enviar la cotización por WhatsApp" style="padding:2px 8px; font-size:10px;">${facex_multi.wa.ICON}</button>` : ""}
 						</td>
 					</tr>
 				`);
 			});
 
+			$tbody.off("click", ".ef-rep-wa").on("click", ".ef-rep-wa", (e) => {
+				facex_multi.wa.open($(e.currentTarget).data("name"), $(e.currentTarget).data("tipo"));
+			});
 			$tbody.off("click", ".ef-rep-print-quot").on("click", ".ef-rep-print-quot", (e) => {
 				const name = $(e.currentTarget).data("name");
 				// Usar SIEMPRE la compañía real de la factura de la fila, no la compañía
@@ -12204,11 +12304,15 @@ body.facex-fullscreen-mode .ef-main-layout {
 						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700; color:var(--ef-success);">${_fmtCurrency(pay.amount, "GTQ")}</td>
 						<td class="ef-td" style="text-align:center;">
 							<button class="ef-btn ef-btn-sm ef-btn-secondary ef-rep-print-receipt" data-name="${pay.invoice}" data-company="${pay.company || ""}" style="padding:2px 8px; font-size:10px; font-weight:600;">Imprimir Recibo</button>
+							${facex_multi.wa.can((this.defaults || {}).wa, "pago") ? `<button class="ef-btn ef-btn-sm ef-btn-wa ef-rep-wa" data-name="${pay.invoice}" data-tipo="pago" title="Enviar el recibo de pago por WhatsApp" style="padding:2px 8px; font-size:10px;">${facex_multi.wa.ICON}</button>` : ""}
 						</td>
 					</tr>
 				`);
 			});
 
+			$tbody.off("click", ".ef-rep-wa").on("click", ".ef-rep-wa", (e) => {
+				facex_multi.wa.open($(e.currentTarget).data("name"), $(e.currentTarget).data("tipo"));
+			});
 			$tbody.off("click", ".ef-rep-print-receipt").on("click", ".ef-rep-print-receipt", (e) => {
 				const name = $(e.currentTarget).data("name");
 				const company = $(e.currentTarget).data("company");
@@ -13213,6 +13317,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 					this.$body.find("#ef-btn-print-receipt-format").off("click").on("click", () => {
 						this._print_payment_receipt(inv_name, res.company);
 					});
+					this.$body.find("#ef-btn-wa-receipt").off("click").on("click", () => facex_multi.wa.open(inv_name, "pago"))
+						.css("display", facex_multi.wa.can((this.defaults || {}).wa, "pago") ? "flex" : "none");
 
 					this.$body.find("#ef-print-receipt-details").show();
 				}
@@ -14423,7 +14529,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const $status = this.$body.find(`#ef-maint-${p}-search-status`);
 		$status.text("Buscando…");
 		frappe.call({
-			method: cfg.method, args, type: "GET", freeze: false, no_spinner: true,
+			// silent: la lista se precarga al abrir el Clásico aunque el usuario no tenga
+			// ese mantenimiento (proveedores, listas de materiales): sin el error emergente.
+			method: cfg.method, args, type: "GET", freeze: false, no_spinner: true, silent: true,
 			callback: (r) => {
 				if (seq !== st.seq) return; // llegó una respuesta de una búsqueda más vieja
 				const res = r.message || { rows: [], total: 0 };

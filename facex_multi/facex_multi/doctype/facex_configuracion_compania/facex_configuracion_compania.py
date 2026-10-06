@@ -21,6 +21,8 @@ class FacExConfiguracionCompania(Document):
 		from facex_multi.api.series import validate_series_table
 		validate_series_table(self, self.company)
 		self._validate_fraccion()
+		from facex_multi.api.whatsapp import ensure_default_rows
+		ensure_default_rows(self)
 
 	def _validate_fraccion(self):
 		if not self.get("maneja_fraccion"):
