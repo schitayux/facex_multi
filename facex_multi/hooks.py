@@ -25,7 +25,10 @@ override_doctype_class = {
 #
 # etiqueta_etiba.js: diálogo "e-Imprimir" + vista previa de etiquetas eTIBA,
 # compartido por FacEx Clásico e Inventario (ver public/js/etiqueta_etiba.js).
+boot_session = "facex_multi.api.novedades.boot_session"
+
 app_include_js = [
+    "/assets/facex_multi/js/novedades.js",
     "/assets/facex_multi/js/history_guard.js",
     "/assets/facex_multi/js/link_guard.js",
     "/assets/facex_multi/js/etiqueta_etiba.js",
