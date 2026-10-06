@@ -102,7 +102,7 @@
         <th>Producto</th>
         {%- if muestra_bodega -%}<th style="width: 120px;">Bodega</th>{%- endif -%}
         <th class="num" style="width: 70px;">Cant.</th>
-        <th style="width: 50px;">UdM</th>
+        {%- if _fx_vu -%}<th style="width: 50px;">UdM</th>{%- endif -%}
         <th class="num" style="width: 90px;">Precio</th>
         <th class="num" style="width: 95px;">Total</th>
       </tr>
@@ -118,7 +118,7 @@
         </td>
         {%- if muestra_bodega -%}<td>{{ it.warehouse or "" }}</td>{%- endif -%}
         <td class="num">{{ q(it.qty) }}</td>
-        <td>{{ it.uom or "" }}</td>
+        {%- if _fx_vu -%}<td>{{ it.uom or "" }}</td>{%- endif -%}
         <td class="num">{{ m(it.rate) }}</td>
         <td class="num">{{ m(it.amount) }}</td>
       </tr>

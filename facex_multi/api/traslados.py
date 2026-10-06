@@ -97,16 +97,22 @@ def _transit_bin_qty(company: str, transito: str, item_codes: list) -> dict:
 
 def _origin_items(stock_entry: str) -> list:
     """Líneas del traslado origen que entraron al tránsito, agregadas por
-    (item, lote). Las series se concatenan."""
+    (item, lote). Las series se concatenan.
+
+    Siempre en UNIDAD BASE (transfer_qty / stock_uom): un traslado puede llevar
+    el mismo ítem en Docena y en Media Docena (Entero/Fracción) y la recepción
+    empareja por ítem+lote — en unidad base es una sola línea (1.5 Docena) y el
+    stock que se mueve del tránsito es exactamente el que entró."""
     rows = frappe.db.sql(
         """
-        SELECT sed.item_code, i.item_name, sed.uom, sed.stock_uom,
-               sed.batch_no, sed.serial_no, SUM(sed.qty) AS qty,
+        SELECT sed.item_code, i.item_name, sed.stock_uom AS uom, sed.stock_uom,
+               sed.batch_no, sed.serial_no,
+               SUM(COALESCE(NULLIF(sed.transfer_qty, 0), sed.qty * COALESCE(NULLIF(sed.conversion_factor, 0), 1))) AS qty,
                i.has_serial_no, i.has_batch_no
         FROM `tabStock Entry Detail` sed
         INNER JOIN `tabItem` i ON i.name = sed.item_code
         WHERE sed.parent = %(se)s
-        GROUP BY sed.item_code, sed.batch_no, sed.serial_no, sed.uom, sed.stock_uom
+        GROUP BY sed.item_code, sed.batch_no, sed.serial_no, sed.stock_uom
         ORDER BY sed.item_code
         """,
         {"se": stock_entry},
@@ -141,7 +147,8 @@ def _assert_rec_propia(rec, transito: str):
 def _origin_header(stock_entry: str) -> dict:
     se = frappe.db.get_value(
         "Stock Entry", stock_entry,
-        ["name", "company", "purpose", "docstatus", "from_warehouse", "to_warehouse", "posting_date"],
+        ["name", "company", "purpose", "docstatus", "from_warehouse", "to_warehouse", "posting_date",
+         "remarks", "creation", "owner"],
         as_dict=True,
     )
     if not se:
@@ -279,6 +286,11 @@ def get_traslado_para_recepcion(stock_entry: str, company: str = None):
         "from_warehouse": se.from_warehouse,
         "transito": transito,
         "recepcion": rec.name if rec else None,
+        # Comentario que el emisor escribió al crear el traslado (para que quien
+        # recibe lo lea al validar), con quién y cuándo.
+        "comentario": (se.remarks or "").strip(),
+        "creado": str(se.creation) if se.creation else "",
+        "creado_por": frappe.db.get_value("User", se.owner, "full_name") or se.owner,
         "items": items,
         "motivos": motivos,
         "destinos": _allowed_destinos(company),

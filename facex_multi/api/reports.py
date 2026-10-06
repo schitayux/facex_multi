@@ -385,7 +385,10 @@ def get_sales_by_product(start_date: str, end_date: str, item_code: str = None,
         values["establecimiento"] = establecimiento
         
     query = f"""
-        SELECT i.item_code, i.item_name, SUM(i.qty) AS total_qty, AVG(i.rate) AS avg_rate, SUM(i.amount) AS total_amount
+        SELECT i.item_code, i.item_name,
+               SUM(COALESCE(i.stock_qty, i.qty)) AS total_qty,
+               AVG(i.rate / COALESCE(NULLIF(i.conversion_factor, 0), 1)) AS avg_rate,
+               SUM(i.amount) AS total_amount
         FROM `tabSales Invoice Item` i
         JOIN `tabSales Invoice` p ON i.parent = p.name AND i.parenttype = 'Sales Invoice' AND i.parentfield = 'items'
         WHERE { " AND ".join(conditions) }
@@ -1290,7 +1293,7 @@ def get_invoice_peek(name: str, company: str = None) -> dict:
 
     items = frappe.db.sql(
         """
-        SELECT item_code, item_name, qty, rate, amount
+        SELECT item_code, item_name, qty, uom, stock_uom, rate, amount
         FROM `tabSales Invoice Item`
         WHERE parent = %(name)s
         ORDER BY idx

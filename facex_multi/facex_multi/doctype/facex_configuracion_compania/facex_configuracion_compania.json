@@ -19,6 +19,7 @@
   "mostrar_desc_pct",
   "mostrar_adenda",
   "mostrar_tipo",
+  "mostrar_uom",
   "sec_pagos",
   "exige_pago_completo",
   "permite_pago_credito",
@@ -54,7 +55,15 @@
   "sb_cierre_control",
   "maneja_cierre_diario",
   "cierre_pendiente_modo",
-  "cierre_pendiente_dias_gracia"
+  "cierre_pendiente_dias_gracia",
+  "lineas_nuevas_al_inicio",
+  "sb_fraccion",
+  "maneja_fraccion",
+  "fraccion_uom",
+  "fraccion_factor",
+  "cb_fraccion",
+  "fraccion_etiqueta",
+  "fraccion_unidades_base"
  ],
  "fields": [
   {
@@ -135,6 +144,13 @@
    "fieldname": "mostrar_tipo",
    "fieldtype": "Check",
    "label": "Mostrar Tipo FEL"
+  },
+  {
+   "default": "0",
+   "fieldname": "mostrar_uom",
+   "fieldtype": "Check",
+   "label": "Ver unidad de medida",
+   "description": "Si está marcado se dibuja la unidad de medida (columna UdM) en los documentos de venta (Facturador Clásico, Factura Screen y su impresión), de inventario (Entradas/Salidas/Transferencias) y de compras. Desmarcado = no se dibuja en ninguno. Requerido si se usa Entero/Fracción."
   },
   {
    "fieldname": "sec_pagos",
@@ -369,11 +385,70 @@
    "fieldname": "cierre_pendiente_dias_gracia",
    "fieldtype": "Int",
    "label": "Días de gracia"
+  },
+  {
+   "default": "0",
+   "fieldname": "lineas_nuevas_al_inicio",
+   "fieldtype": "Check",
+   "label": "Líneas nuevas al inicio del documento",
+   "description": "Al escanear/agregar un producto en Facturador Clásico, POS y Entradas/Salidas/Transferencias de Inventario, la línea nueva se coloca de PRIMERA y, si se re-escanea un producto existente, su línea sube al inicio con la cantidad incrementada. Desmarcado = orden natural (las nuevas al final). No aplica a Compras."
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "sb_fraccion",
+   "fieldtype": "Section Break",
+   "label": "Entero / Fracción (Leer/Seleccionar)"
+  },
+  {
+   "default": "0",
+   "fieldname": "maneja_fraccion",
+   "fieldtype": "Check",
+   "label": "Leer/Seleccionar Entero/Fracción",
+   "description": "Permite vender/mover fracciones de la unidad base (ej. Media Docena) en Facturador Clásico, Factura Screen y Entradas/Salidas/Transferencias de Inventario: selector Entero/Fracción, QR de modo, línea propia por fracción y conversión automática de 0.5 / 2.5. Desmarcado = flujo normal."
+  },
+  {
+   "depends_on": "maneja_fraccion",
+   "fieldname": "fraccion_uom",
+   "fieldtype": "Link",
+   "options": "UOM",
+   "label": "Unidad de Fracción",
+   "mandatory_depends_on": "maneja_fraccion",
+   "description": "Unidad de medida con la que se registra la fracción (ej. Media Docena). Se agrega sola a la ficha de cada ítem cuya unidad base admite fracción."
+  },
+  {
+   "default": "0.5",
+   "depends_on": "maneja_fraccion",
+   "fieldname": "fraccion_factor",
+   "fieldtype": "Float",
+   "label": "Factor de la Fracción",
+   "mandatory_depends_on": "maneja_fraccion",
+   "description": "Cuánto de la unidad base es 1 fracción (0.5 = media). El precio de la fracción es el de la unidad base × este factor."
+  },
+  {
+   "fieldname": "cb_fraccion",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Media",
+   "depends_on": "maneja_fraccion",
+   "fieldname": "fraccion_etiqueta",
+   "fieldtype": "Data",
+   "label": "Etiqueta del modo Fracción",
+   "description": "Texto del botón de modo en pantalla (ej. Media)."
+  },
+  {
+   "depends_on": "maneja_fraccion",
+   "fieldname": "fraccion_unidades_base",
+   "fieldtype": "Table MultiSelect",
+   "options": "FacEx Unidad Fraccion",
+   "label": "Unidades base que admiten fracción",
+   "mandatory_depends_on": "maneja_fraccion",
+   "description": "Solo los ítems cuya unidad base esté aquí admiten fracción (ej. Docena). Los demás (ej. Unidad / surtidos) siempre se venden enteros."
   }
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-01 02:10:00.000000",
+ "modified": "2026-10-06 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Configuracion Compania",

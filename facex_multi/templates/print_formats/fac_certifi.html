@@ -1,3 +1,4 @@
+{%- set _fx_vu = frappe.db.get_value("FacEx Configuracion Compania", doc.company, "mostrar_uom") -%}
 {# ============================================================= #}
 {# CONTEXTO                                                       #}
 {# ============================================================= #}
@@ -332,7 +333,7 @@ Detalle
 
 Cantidad
 
-</th>
+</th>{% if _fx_vu %}<th class="fx-uom-col">UdM</th>{% endif %}
 
 <th>
 
@@ -422,7 +423,7 @@ ns.total_iva+
 
 {{ item.qty }}
 
-</td>
+</td>{% if _fx_vu %}<td class="fx-uom-col ">{% if item.stock_uom and item.uom != item.stock_uom %}<b style="background:#fff3cd;border:1px solid #f0a500;padding:0 3px;border-radius:3px;">{{ item.uom }}</b>{% else %}{{ item.uom or item.stock_uom or "" }}{% endif %}</td>{% endif %}
 
 <td>
 

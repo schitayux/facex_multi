@@ -20,6 +20,21 @@ class FacExConfiguracionCompania(Document):
 
 		from facex_multi.api.series import validate_series_table
 		validate_series_table(self, self.company)
+		self._validate_fraccion()
+
+	def _validate_fraccion(self):
+		if not self.get("maneja_fraccion"):
+			return
+		if not self.get("mostrar_uom"):
+			frappe.throw("Entero/Fracción necesita «Ver unidad de medida» activo: sin la columna UdM no se distingue la Media Docena.")
+		factor = self.get("fraccion_factor") or 0
+		if not (0 < factor < 1):
+			frappe.throw("Entero/Fracción: el Factor de la Fracción debe ser mayor que 0 y menor que 1 (ej. 0.5 = media).")
+		bases = [r.uom for r in (self.get("fraccion_unidades_base") or [])]
+		if not bases:
+			frappe.throw("Entero/Fracción: indique al menos una unidad base que admite fracción (ej. Docena).")
+		if self.get("fraccion_uom") in bases:
+			frappe.throw("Entero/Fracción: la Unidad de Fracción no puede ser también una unidad base.")
 
 	# Un cargo en modo PASARELA (el cliente paga un extra que el transportista
 	# descuenta luego en su liquidación) es un PASIVO, no un ingreso; un cargo
@@ -59,3 +74,6 @@ class FacExConfiguracionCompania(Document):
 	def on_update(self):
 		from facex_multi.api.permissions import clear_permissions_cache
 		clear_permissions_cache()
+		# Entero/Fracción: UdM de fracción + ficha de los ítems que la admiten.
+		from facex_multi.api.fraccion import on_config_update
+		on_config_update(self.company)

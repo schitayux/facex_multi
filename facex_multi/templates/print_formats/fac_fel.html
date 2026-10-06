@@ -1,3 +1,4 @@
+{%- set _fx_vu = frappe.db.get_value("FacEx Configuracion Compania", doc.company, "mostrar_uom") -%}
 <script>
     document.title = "{{ doc.name }}";
 </script>
@@ -221,7 +222,7 @@
 <table class="items-table">
   <thead>
     <tr>
-      <th class="qty-col">Cantidad</th>
+      <th class="qty-col">Cantidad</th>{% if _fx_vu %}<th class="fx-uom-col">UdM</th>{% endif %}
       <th>Descripción</th>
       <th class="money-col">Precio Unitario</th>
       <th class="money-col">Subtotal</th>
@@ -232,7 +233,7 @@
     {% for sii in si.items %}
       {% set ns.total = ns.total + (sii.amount or 0) %}
       <tr>
-        <td class="qty-col">{{ sii.qty }}</td>
+        <td class="qty-col">{{ sii.qty }}</td>{% if _fx_vu %}<td class="fx-uom-col ">{% if sii.stock_uom and sii.uom != sii.stock_uom %}<b style="background:#fff3cd;border:1px solid #f0a500;padding:0 3px;border-radius:3px;">{{ sii.uom }}</b>{% else %}{{ sii.uom or sii.stock_uom or "" }}{% endif %}</td>{% endif %}
         <td>
           <div class="item-name">{{ sii.item_name }}</div>
           {% if sii.description and sii.description != sii.item_name %}

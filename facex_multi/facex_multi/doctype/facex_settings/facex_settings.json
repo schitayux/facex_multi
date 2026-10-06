@@ -120,6 +120,7 @@
   "puede_hacer_salidas",
   "puede_hacer_transferencias",
   "puede_recibir_traslados",
+  "puede_autorellenar_recepcion",
   "cb_inv_movs2",
   "puede_cancelar_movimientos",
   "puede_hacer_transformaciones",
@@ -187,6 +188,7 @@
   "puede_ver_facex_settings",
   "cb_seguridad",
   "puede_resetear_password",
+  "puede_cambiar_password",
   "sb_flete",
   "item_flete",
   "cb_flete",
@@ -930,6 +932,13 @@
    "label": "Recibir Traslados (Recepción/Devolución)"
   },
   {
+   "default": "0",
+   "fieldname": "puede_autorellenar_recepcion",
+   "fieldtype": "Check",
+   "label": "Auto Rellenar Cantidad Recibida (Recepción de Traslados)",
+   "description": "Muestra en «Recepción de Traslados» un botón amarillo «Auto rellenar cantidad recibida» que marca como recibida toda la cantidad pendiente de cada línea (evita digitar o escanear). Deshabilitado por defecto."
+  },
+  {
    "fieldname": "cb_inv_movs2",
    "fieldtype": "Column Break"
   },
@@ -1332,6 +1341,13 @@
    "label": "Reiniciar Contraseña de Usuarios"
   },
   {
+   "default": "1",
+   "fieldname": "puede_cambiar_password",
+   "fieldtype": "Check",
+   "label": "Cambiar Mi Contraseña",
+   "description": "Muestra la opción «Cambiar Contraseña» en el menú del usuario (esquina superior derecha). Habilitado por defecto; en neko.chappsa.com solo se habilita a Gerencia."
+  },
+  {
    "fieldname": "sb_flete",
    "fieldtype": "Section Break",
    "label": "Flete",
@@ -1416,7 +1432,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-09-29 18:00:00.000000",
+ "modified": "2026-10-05 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Settings",

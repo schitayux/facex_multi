@@ -57,6 +57,36 @@ def _guia_transporte_signature(row) -> tuple:
     )
 
 
+def enforce_update_stock(doc, method=None):
+    """
+    Sales Invoice > before_validate / before_submit: una factura con ítems de
+    inventario NUNCA se graba/valida sin rebajar el inventario (update_stock=1),
+    sin importar lo que mande el cliente (pantalla, API, duplicado, config de
+    compañía). Se exceptúan las filas ya despachadas por Nota de Entrega
+    (delivery_note/dn_detail) porque esa nota es la que rebaja el stock.
+    """
+    if method == "before_submit":
+        if doc.update_stock or not _tiene_items_inventario_sin_despacho(doc):
+            return
+        frappe.throw(
+            "No se puede validar la factura sin rebajar inventario (Actualizar Existencias).",
+            title="Inventario",
+        )
+
+    if doc.update_stock or not _tiene_items_inventario_sin_despacho(doc):
+        return
+    doc.update_stock = 1
+
+
+def _tiene_items_inventario_sin_despacho(doc):
+    for row in doc.items:
+        if not row.item_code or row.get("delivery_note") or row.get("dn_detail"):
+            continue
+        if frappe.get_cached_value("Item", row.item_code, "is_stock_item"):
+            return True
+    return False
+
+
 def guard_guias_transporte_permission(doc, method=None):
     """
     Se activa via doc_events Sales Invoice > validate, como hook adicional
@@ -668,6 +698,7 @@ def get_defaults(company: str = None):
         get_facex_can_view_seguridad, get_facex_can_reset_password,
         get_facex_default_bfel_status, get_facex_is_gerencia,
         get_facex_can_create_cierres, get_facex_can_download_xml,
+        get_facex_can_change_password,
     )
     permissions = get_facex_permissions_for_company(company)
     permissions["puede_crear_cierres"] = int(get_facex_can_create_cierres(company))
@@ -682,6 +713,7 @@ def get_defaults(company: str = None):
     permissions["puede_mantener_grupo_items"] = int(get_facex_can_maintain_item_groups(company))
     permissions["puede_ver_facex_settings"] = int(get_facex_can_view_seguridad(company))
     permissions["puede_resetear_password"] = int(get_facex_can_reset_password(company))
+    permissions["puede_cambiar_password"] = int(get_facex_can_change_password(company))
     permissions["puede_ver_costos"] = int(get_facex_can_view_costs(company))
     permissions["puede_editar_precio"] = int(get_facex_can_edit_price(company))
     permissions["puede_eliminar_ventas_espera"] = int(get_facex_can_delete_held_sales(company))
@@ -1961,8 +1993,16 @@ def save_draft(doc_json: str):
     #    de la lista (evita facturar en 0 cuando la fila se cargó sin lista).
     if "items" in data:
         from facex_multi.api.permissions import get_facex_can_edit_price
+        from facex_multi.api.fraccion import resolve_row_conversion
         can_edit_price = get_facex_can_edit_price(company)
-        for item_row in data["items"]:
+        for _i, item_row in enumerate(data["items"], start=1):
+            # Entero/Fracción: la fila en la unidad de fracción (Media Docena)
+            # se graba con el factor de la ficha → stock_qty = qty × 0.5 y
+            # ERPNext cotiza la lista de la unidad base × factor.
+            if item_row.get("item_code") and item_row.get("uom"):
+                _cf = resolve_row_conversion(item_row["item_code"], item_row["uom"], company, f"Fila {_i} — ")
+                if _cf:
+                    item_row["conversion_factor"] = _cf
             disc_pct = float(item_row.get("discount_percentage") or 0)
             original_rate = float(item_row.get("rate") or 0)
             item_row["discount_percentage"] = disc_pct if disc_pct > 0 else 0.0
@@ -2129,7 +2169,10 @@ def _guard_stock_before_submit(doc):
         if not frappe.get_cached_value("Item", row.item_code, "is_stock_item"):
             continue
         key = (row.item_code, row.warehouse)
-        needed[key] = needed.get(key, 0) + flt(row.qty)
+        # En unidad base (Bin.actual_qty): 1 Media Docena = 0.5 Docena.
+        needed[key] = needed.get(key, 0) + (
+            flt(row.stock_qty) if row.get("stock_qty") else flt(row.qty) * (flt(row.conversion_factor) or 1)
+        )
 
     if not needed:
         return
@@ -3051,7 +3094,7 @@ def get_dashboard_stats(start_date=None, end_date=None, customer=None, item_code
         item_details = frappe.db.get_all(
             "Sales Invoice Item",
             filters=item_filters,
-            fields=["item_code", "item_name", "qty", "rate", "amount"]
+            fields=["item_code", "item_name", "qty", "stock_qty", "rate", "amount"]
         )
     else:
         item_details = []
@@ -3069,7 +3112,9 @@ def get_dashboard_stats(start_date=None, end_date=None, customer=None, item_code
                 "qty": 0.0,
                 "amount": 0.0
             }
-        items_summary[code]["qty"] += float(d.qty or 0)
+        # Unidad base: una Media Docena suma 0.5 (igual que antes, cuando se
+        # registraba como 0.5 Docena).
+        items_summary[code]["qty"] += float(d.stock_qty if d.stock_qty is not None else (d.qty or 0))
         items_summary[code]["amount"] += float(d.amount or 0)
 
     items_summary_list = sorted(items_summary.values(), key=lambda x: x["amount"], reverse=True)

@@ -1,3 +1,4 @@
+{%- set _fx_vu = frappe.db.get_value("FacEx Configuracion Compania", doc.company, "mostrar_uom") -%}
 <script>
     document.title = "{{ doc.name }}";
 </script>
@@ -60,7 +61,7 @@
             <tr>
                 <th class="th-num">#</th>
                 <th class="th-desc">Producto</th>
-                <th class="th-qty text-right">Cant.</th>
+                <th class="th-qty text-right">Cant.</th>{% if _fx_vu %}<th class="fx-uom-col">UdM</th>{% endif %}
                 <th class="th-rate text-right">Precio Unit.</th>
                 <th class="th-total text-right">Total</th>
             </tr>
@@ -75,7 +76,7 @@
                     <div class="item-desc">💬 {{ item.bfel_comentario }}</div>
                     {% endif %}
                 </td>
-                <td class="text-right">{{ item.qty }}</td>
+                <td class="text-right">{{ item.qty }}</td>{% if _fx_vu %}<td class="fx-uom-col ">{% if item.stock_uom and item.uom != item.stock_uom %}<b style="background:#fff3cd;border:1px solid #f0a500;padding:0 3px;border-radius:3px;">{{ item.uom }}</b>{% else %}{{ item.uom or item.stock_uom or "" }}{% endif %}</td>{% endif %}
                 <td class="text-right">{{ doc.currency }} {{ "{:,.2f}".format(item.rate) }}</td>
                 <td class="text-right">{{ doc.currency }} {{ "{:,.2f}".format(item.amount) }}</td>
             </tr>

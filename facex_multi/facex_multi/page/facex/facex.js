@@ -128,11 +128,14 @@ class EFastSalePage {
 					this.defaults = r.message;
 					this.perms = r.message.permissions || this._full_perms();
 					this.company_config = r.message.company_config || {};
+					// Permiso «Cambiar Mi Contraseña» (FacEx Settings): sin él no aparece la opción.
+					if (this.perms.puede_cambiar_password === 0) this.$body.find("#ef-btn-change-password").hide();
 					if (this.defaults.company) {
 						this.$body.find("#ef-navbar-company-badge").css("display", "flex");
 						this.$body.find("#ef-active-company-name").text(this.defaults.company);
 					}
 					this.$body.find("#ef-flete-toggle").css("display", this.company_config.item_flete ? "flex" : "none");
+					this._setup_fraccion();
 				}
 				this._setup_header_controls();
 				this._setup_item_table();
@@ -219,6 +222,8 @@ class EFastSalePage {
 		// Documento nuevo: ninguna lectura previa con la que comparar (ver
 		// _add_or_increment_item / _notify_row_merged).
 		this._last_scan_item_code = null;
+		// Entero/Fracción: cada documento nuevo arranca leyendo enteros.
+		if (this._frac_mode === "fraccion") this._set_frac_mode("entero", false);
 		this.doc = this._empty_doc();
 		this.doc.company = this.defaults.company || "";
 		this.doc.naming_series = (this.defaults.naming_series || [])[0] || "SINV-.YYYY.-";
@@ -829,6 +834,7 @@ class EFastSalePage {
             </label>
             <input type="text" id="ef-barcode-scan" class="ef-input" style="width:220px;"
               placeholder="Escanear código de barras / QR..." autocomplete="off" title="Escanee un código de barras o QR para agregar el producto (o sumar cantidad si ya está en la lista)." />
+            <span id="ef-frac-slot"></span>
             <button id="ef-add-row" class="ef-btn ef-btn-sm ef-btn-secondary">
               <span>+</span> Agregar Línea
             </button>
@@ -844,6 +850,7 @@ class EFastSalePage {
                 <th class="ef-th ef-th-name">Descripción FEL</th>
                 <th class="ef-th ef-th-wh ef-col-wh">Almacén</th>
                 <th class="ef-th ef-th-qty">Cantidad</th>
+                <th class="ef-th ef-th-uom ef-col-uom" style="width:120px;">UdM</th>
                 <th class="ef-th ef-th-rate">Precio Unit.</th>
                 <th class="ef-th ef-th-disc ef-col-disc">Desc %</th>
                 <th class="ef-th ef-th-amount">Importe</th>
@@ -3459,7 +3466,7 @@ class EFastSalePage {
 		const shown = items.slice(0, 8);
 		const items_html = shown.length
 			? shown.map((it) =>
-				row(`${it.qty} × ${_esc(it.item_name || it.item_code || "")}`, money(it.amount))
+				row(`${it.qty}${this.company_config.mostrar_uom && it.uom ? ` <b>${_esc(it.uom)}</b>` : ""} × ${_esc(it.item_name || it.item_code || "")}`, money(it.amount))
 			).join("") + (items.length > shown.length
 				? `<div class="ef-peek-muted">y ${items.length - shown.length} línea(s) más…</div>`
 				: "")
@@ -6166,6 +6173,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 			const $input = this.$body.find("#ef-barcode-scan");
 			const code = $input.val().trim();
 			if (!code) return;
+			// QR de modo Entero / Fracción: cambia el modo, no busca producto.
+			const ctl = facex_multi.fraccion.control_code(this._frac_cfg(), code);
+			if (ctl) {
+				this._set_frac_mode(ctl, true);
+				this._focus_barcode_scan();
+				return;
+			}
 			$input.prop("disabled", true);
 			frappe.call({
 				method: "facex_multi.api.item.find_item_by_code",
@@ -6224,12 +6238,14 @@ body.facex-fullscreen-mode .ef-main-layout {
 	// Aviso de que la lectura se acumuló en una línea que ya existía: mensaje
 	// con el número de línea y la cantidad nueva, destello en la fila y la trae
 	// a la vista — sin quitarle el cursor al lector.
-	_notify_row_merged(idx, row) {
+	_notify_row_merged(idx, row, movedFrom = -1) {
 		const nombre = row.item_name || row.item_code || "";
 		const qty = Math.round((parseFloat(row.qty) || 0) * 1000) / 1000;
 		frappe.show_alert(
 			{
-				message: __("{0} ya estaba en la línea {1} — cantidad: {2}", [nombre, idx + 1, qty]),
+				message: movedFrom > 0
+					? __("{0} subió de la línea {1} a la 1 — cantidad: {2}", [nombre, movedFrom + 1, qty])
+					: __("{0} ya estaba en la línea {1} — cantidad: {2}", [nombre, idx + 1, qty]),
 				indicator: "blue",
 			},
 			5
@@ -6250,11 +6266,29 @@ body.facex-fullscreen-mode .ef-main-layout {
 	// quedarse en la fila, para poder escanear el siguiente producto de una.
 	_add_or_increment_item(it, opts = {}) {
 		const from_scan = !!opts.from_scan;
+		// Entero/Fracción: en modo fracción el producto entra en su unidad de
+		// fracción (ej. Media Docena) y la llave de la línea es (código, fracción):
+		// nunca suma a la línea de enteros del mismo código.
+		const F = facex_multi.fraccion;
+		const cfg = this._frac_cfg();
+		let wantFrac = false;
+		if (this._frac_mode === "fraccion" && F.on(cfg)) {
+			if (F.admite(cfg, it.stock_uom)) wantFrac = true;
+			else frappe.show_alert({ message: `${_esc(it.item_name || it.item_code)} (${_esc(it.stock_uom || "")}) no admite ${_esc(cfg.uom)}: se agregó entero.`, indicator: "orange" }, 5);
+		}
 		if (!it.has_serial_no) {
-			const idx = this.doc.items.findIndex((row) => row.item_code === it.item_code);
+			let idx = this.doc.items.findIndex((row) => row.item_code === it.item_code && F.is_frac(cfg, row) === wantFrac);
 			if (idx !== -1) {
 				const row = this.doc.items[idx];
 				row.qty = (parseFloat(row.qty) || 0) + 1;
+				// «Líneas nuevas al inicio» (Configuración de Compañía): la línea
+				// re-escaneada sube a la primera posición para ubicarla sin scroll.
+				const movedFrom = (this._lines_on_top() && idx > 0) ? idx : -1;
+				if (movedFrom > 0) {
+					this.doc.items.splice(idx, 1);
+					this.doc.items.unshift(row);
+				}
+				if (movedFrom > 0) idx = 0;
 				this._render_items();
 				this._update_local_footer();
 				this._mark_dirty();
@@ -6266,7 +6300,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					// tiene forma de saber que su lectura sí entró.
 					const repite = this._last_scan_item_code === it.item_code;
 					this._last_scan_item_code = it.item_code;
-					if (!repite) this._notify_row_merged(idx, row);
+					if (!repite || movedFrom > 0) this._notify_row_merged(idx, row, movedFrom);
 					this._focus_barcode_scan();
 				} else {
 					this.$body.find(`#ef-row-${idx} .ef-qty`).trigger("focus");
@@ -6275,8 +6309,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 			}
 		}
 		if (from_scan) this._last_scan_item_code = it.item_code;
-		this._add_item_row({ item_code: it.item_code }, { focus: !from_scan });
-		const newIdx = this.doc.items.length - 1;
+		const newIdx = this._add_item_row(
+			{ item_code: it.item_code, uom: wantFrac ? cfg.uom : "", _stock_uom: it.stock_uom || "" },
+			{ focus: !from_scan }
+		);
 		this._fetch_item_details(newIdx, it.item_code, { from_scan });
 	}
 
@@ -6337,7 +6373,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			: "";
 		const _lm_row = item._is_lista_materiales
 			? `<tr class="ef-tr-lm-detail" id="ef-row-lm-${idx}" style="display:${item._lm_expanded ? "" : "none"};">
-  <td class="ef-td-lm-detail" colspan="13">${this._lm_detail_html(item)}</td>
+  <td class="ef-td-lm-detail" colspan="14">${this._lm_detail_html(item)}</td>
 </tr>`
 			: "";
 
@@ -6371,10 +6407,11 @@ body.facex-fullscreen-mode .ef-main-layout {
     ${_no_stock_badge}
   </td>
   <td class="ef-td ef-td-num">
-    <input type="number" class="ef-cell-input ef-input-num ef-qty"
+    <input type="number" class="ef-cell-input ef-input-num ef-qty${this._frac_row(item) ? " fx-uom-frac" : ""}"
       data-field="qty" data-idx="${idx}"
       value="${item.qty || 1}" min="0" step="any" />
   </td>
+  <td class="ef-td ef-td-uom ef-col-uom">${this._frac_uom_cell(item, idx)}</td>
   <td class="ef-td ef-td-num">
     <input type="number" class="ef-cell-input ef-input-num ef-rate"
       data-field="rate" data-idx="${idx}"
@@ -6473,6 +6510,21 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this._mark_dirty();
 		});
 
+		// Entero/Fracción: valor previo de la cantidad (para revertir) y regla
+		// 0.5 / 2.5 al terminar de escribir; selector de UdM de la línea.
+		$row.find('[data-field="qty"]').on("focus", () => {
+			this.doc.items[idx]._qty_prev = parseFloat(this.doc.items[idx].qty) || 1;
+		});
+		$row.find(".fx-uom-sel").on("change", (e) => {
+			const row = this.doc.items[idx];
+			facex_multi.fraccion.apply_uom_change(this._frac_cfg(), row, e.target.value,
+				row._stock_uom || row.stock_uom, ["rate", "price_list_rate"]);
+			row.amount = this._calc_amount(row.qty, row.rate, row.discount_percentage);
+			this._render_items();
+			this._update_local_footer();
+			this._mark_dirty();
+		});
+
 		// qty / rate / discount → recalcular amount local
 		["qty", "rate", "discount_percentage"].forEach((field) => {
 			$row.find(`[data-field="${field}"]`).on("input change", (e) => {
@@ -6490,6 +6542,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 				this._mark_dirty();
 			});
 		});
+
+		// Después del manejador genérico (que ya copió la cantidad a la fila).
+		$row.find('[data-field="qty"]').on("change", () => this._frac_qty_check(idx));
 
 		// Adenda DIGECAM button (editar o completar)
 		$row.find(".ef-btn-adenda").on("click", (e) => {
@@ -6551,6 +6606,116 @@ body.facex-fullscreen-mode .ef-main-layout {
 		});
 	}
 
+	_lines_on_top() {
+		return !!(this.company_config || {}).lineas_nuevas_al_inicio;
+	}
+
+	// ── Entero / Fracción (ver public/js/fraccion.js) ─────────────────────
+
+	_frac_cfg() {
+		return facex_multi.fraccion.cfg(this.company_config);
+	}
+
+	_frac_row(item) {
+		return facex_multi.fraccion.is_frac(this._frac_cfg(), item);
+	}
+
+	_setup_fraccion() {
+		const F = facex_multi.fraccion;
+		const cfg = this._frac_cfg();
+		this._frac_mode = "entero";
+		const $slot = this.$body.find("#ef-frac-slot");
+		if (!F.on(cfg)) { $slot.empty(); return; }
+		$slot.html(F.toggle_html(cfg, "ef-frac"));
+		$slot.find("[data-fxmode]").on("click", (e) => {
+			this._set_frac_mode($(e.currentTarget).data("fxmode"), true);
+			this._focus_barcode_scan();
+		});
+		$slot.find("#ef-frac-qr").on("click", () => F.show_qr_sheet(this.doc.company || this.defaults.company));
+		this._paint_frac_mode();
+	}
+
+	_set_frac_mode(mode, announce) {
+		const cfg = this._frac_cfg();
+		if (!facex_multi.fraccion.on(cfg)) return;
+		this._frac_mode = mode === "fraccion" ? "fraccion" : "entero";
+		this._paint_frac_mode();
+		if (announce) facex_multi.fraccion.mode_alert(cfg, this._frac_mode);
+	}
+
+	_paint_frac_mode() {
+		facex_multi.fraccion.paint_toggle(this.$body, "ef-frac", this._frac_mode || "entero", this.$body.find("#ef-barcode-scan"));
+	}
+
+	// Celda de la columna UdM: siempre un valor; selector Entero/Fracción si la
+	// unidad base del ítem admite fracción (la de fracción se ve en ámbar).
+	_frac_uom_cell(item, idx) {
+		const F = facex_multi.fraccion;
+		const cfg = this._frac_cfg();
+		const stock_uom = item._stock_uom || item.stock_uom || "";
+		if (!item.item_code) return "";
+		if (F.admite(cfg, stock_uom)) return F.uom_select_html(cfg, item, stock_uom, `data-idx="${idx}"`);
+		const u = item.uom || stock_uom;
+		return u ? `<span class="fx-uom-tag${F.is_frac(cfg, item) ? " fx-uom-frac" : ""}">${_esc(u)}</span>` : "";
+	}
+
+	// Cantidad escrita a mano en una línea que admite fracción:
+	//  · entero con decimal de fracción (0.5) → la línea pasa a 1 Media Docena;
+	//  · 2.5 → la línea queda en 2 y se agrega 1 Media Docena (con confirmación);
+	//  · en una línea de fracción la cantidad debe ser entera.
+	_frac_qty_check(idx) {
+		const F = facex_multi.fraccion;
+		const cfg = this._frac_cfg();
+		const row = this.doc.items[idx];
+		if (!row || !row.item_code || !F.on(cfg)) return;
+		const stock_uom = row._stock_uom || row.stock_uom || "";
+		if (!F.admite(cfg, stock_uom)) return;
+		const qty = parseFloat(row.qty) || 0;
+		const prev = row._qty_prev != null ? row._qty_prev : 1;
+		const refresh = () => {
+			row.amount = this._calc_amount(row.qty, row.rate, row.discount_percentage);
+			this._render_items();
+			this._update_local_footer();
+			this._mark_dirty();
+		};
+		if (F.is_frac(cfg, row)) {
+			if (Math.abs(qty - Math.round(qty)) > 1e-9) {
+				frappe.show_alert({ message: `La cantidad en ${_esc(cfg.uom)} debe ser entera.`, indicator: "orange" });
+				row.qty = prev;
+				refresh();
+			}
+			return;
+		}
+		const sp = F.split(cfg, qty);
+		if (!sp) return;
+		if (sp.enteros === 0) {
+			F.apply_uom_change(cfg, row, cfg.uom, stock_uom, ["rate", "price_list_rate"]);
+			row.qty = sp.fracciones;
+			frappe.show_alert({ message: `Se registró como <b>${sp.fracciones} ${_esc(cfg.uom)}</b>.`, indicator: "orange" });
+			refresh();
+			return;
+		}
+		F.ask_split(cfg, stock_uom, sp, () => {
+			row.qty = sp.enteros;
+			const at = this.doc.items.indexOf(row);
+			const existing = this.doc.items.find((r) => r !== row && r.item_code === row.item_code && F.is_frac(cfg, r));
+			if (existing) {
+				existing.qty = (parseFloat(existing.qty) || 0) + sp.fracciones;
+				existing.amount = this._calc_amount(existing.qty, existing.rate, existing.discount_percentage);
+			} else {
+				const fr = { ...row, qty: sp.fracciones };
+				delete fr.name;
+				F.apply_uom_change(cfg, fr, cfg.uom, stock_uom, ["rate", "price_list_rate"]);
+				fr.amount = this._calc_amount(fr.qty, fr.rate, fr.discount_percentage);
+				this.doc.items.splice(at + 1, 0, fr);
+			}
+			refresh();
+		}, () => {
+			row.qty = prev;
+			refresh();
+		});
+	}
+
 	_add_item_row(item = {}, opts = {}) {
 		const defaults = this.defaults;
 		const row = {
@@ -6559,15 +6724,20 @@ body.facex-fullscreen-mode .ef-main-layout {
 			warehouse: item.warehouse || defaults.default_pos_warehouse || defaults.default_warehouse || "",
 			qty: item.qty || 1,
 			uom: item.uom || "",
+			_stock_uom: item._stock_uom || "",
 			rate: item.rate || 0,
 			discount_percentage: item.discount_percentage || 0,
 			amount: item.amount || 0,
 			cost_center: item.cost_center || defaults.default_cost_center || "",
 			description: item.description || "",
 		};
-		this.doc.items.push(row);
+		// Con «Líneas nuevas al inicio» el producto nuevo entra de primero; las
+		// filas en blanco (+, F2, Tab) siguen yendo al final.
+		const top = !!row.item_code && opts.top !== false && this._lines_on_top();
+		if (top) this.doc.items.unshift(row);
+		else this.doc.items.push(row);
 		this._render_items();
-		const newIdx = this.doc.items.length - 1;
+		const newIdx = top ? 0 : this.doc.items.length - 1;
 		// La fila agregada por escaneo no roba el foco: el cursor se queda en
 		// el campo de lectura (ver _add_or_increment_item).
 		if (opts.focus !== false) this.$body.find(`#ef-row-${newIdx} .ef-item-code`).focus();
@@ -6578,6 +6748,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 		if (this.doc.taxes_and_charges && !this.doc._taxes_template) {
 			this._fetch_tax_template(this.doc.taxes_and_charges);
 		}
+		// Índice de la fila nueva (0 con «Líneas nuevas al inicio»): los llamadores
+		// lo usan para cargar los datos del producto.
+		return newIdx;
 	}
 
 	_remove_item_row(idx) {
@@ -6661,6 +6834,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 	_fetch_item_details(idx, item_code, opts = {}) {
 		if (!item_code) return;
+		// Los índices se desplazan si entra otra línea arriba mientras responde
+		// el servidor: se sigue a la fila por referencia.
+		const rowRef = this.doc.items[idx];
 		frappe.call({
 			method: "facex_multi.api.invoice.get_item_details",
 			args: {
@@ -6673,11 +6849,21 @@ body.facex-fullscreen-mode .ef-main-layout {
 			callback: (r) => {
 				if (!r.exc && r.message) {
 					const d = r.message;
+					if (rowRef) {
+						const live = this.doc.items.indexOf(rowRef);
+						if (live !== -1) idx = live;
+					}
 					const row = this.doc.items[idx];
 					if (row) {
 						row.item_name = d.item_name || row.item_name;
-						row.rate = d.rate !== undefined ? d.rate : row.rate;
-						row.uom = d.uom || row.uom;
+						// Entero/Fracción: la línea en fracción conserva su UdM y
+						// cotiza el precio de la unidad base × factor.
+						const _F = facex_multi.fraccion, _cfg = this._frac_cfg();
+						const _frac = _F.is_frac(_cfg, row) && _F.admite(_cfg, d.stock_uom);
+						if (_F.is_frac(_cfg, row) && !_frac) row.uom = "";
+						row._stock_uom = d.stock_uom || row._stock_uom;
+						row.rate = d.rate !== undefined ? (_frac ? d.rate * _F.factor(_cfg) : d.rate) : row.rate;
+						if (!_frac) row.uom = d.uom || row.uom;
 						row.description = d.description || "";
 						if (d.warehouse) row.warehouse = d.warehouse;
 						if (d.cost_center) row.cost_center = d.cost_center;
@@ -6777,8 +6963,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 					const cur = this.doc.items[idx];
 					if (!cur || cur.item_code !== row.item_code) return;
 					if (d.rate !== undefined && d.rate !== null) {
-						cur.rate = d.rate;
-						cur.price_list_rate = d.rate;
+						const _F = facex_multi.fraccion, _cfg = this._frac_cfg();
+						const _r = _F.is_frac(_cfg, cur) ? d.rate * _F.factor(_cfg) : d.rate;
+						cur.rate = _r;
+						cur.price_list_rate = _r;
 						cur.amount = this._calc_amount(cur.qty, cur.rate, cur.discount_percentage);
 					}
 					this._render_items();
@@ -6803,8 +6991,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 				frappe.confirm(
 					`<strong>${_esc(item_code)}</strong> tiene un artículo en par configurado: <strong>${_esc(pair.item_name || pair.item_code)}</strong>. ¿Agregarlo también a la factura?`,
 					() => {
-						this._add_item_row({ item_code: pair.item_code }, { focus: !from_scan });
-						this._fetch_item_details(this.doc.items.length - 1, pair.item_code, { from_scan });
+						const pairIdx = this._add_item_row({ item_code: pair.item_code }, { focus: !from_scan });
+						this._fetch_item_details(pairIdx, pair.item_code, { from_scan });
 					}
 				);
 				// La confirmación se lleva el foco: al cerrarla vuelve al lector.
@@ -6879,8 +7067,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 						$results().find(".ef-cust-result").on("click", (e) => {
 							const item_code = $(e.currentTarget).data("code");
 							dlg.hide();
-							this._add_item_row({ item_code });
-							this._fetch_item_details(this.doc.items.length - 1, item_code);
+							const kwIdx = this._add_item_row({ item_code });
+							this._fetch_item_details(kwIdx, item_code);
 						});
 					},
 				});
@@ -6980,7 +7168,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 			method: "facex_multi.api.invoice.get_item_stock",
 			args: { item_code: row.item_code, company: this.doc.company || this.defaults.company || "" },
 			callback: (r) => {
-				if (this.doc.items[idx] !== row) return;
+				// La fila pudo moverse (líneas nuevas al inicio): se sigue por referencia.
+				idx = this.doc.items.indexOf(row);
+				if (idx === -1) return;
 				const whRow = (r.message || []).find(wr => wr.warehouse === row.warehouse);
 				row._no_stock = !whRow || parseFloat(whRow.actual_qty || 0) <= 0;
 				this._apply_row_stock_class(idx);
@@ -8362,9 +8552,14 @@ body.facex-fullscreen-mode .ef-main-layout {
 	// Actions
 	// -----------------------------------------------------------------------
 
-	_action_save() {
+	_action_save(opts = {}) {
 		if (this._request_pending) return;
 		if (!this._validate_header()) return;
+		// Entero/Fracción: resumen de fracciones antes de grabar.
+		if (!opts.fraccion_ok && facex_multi.fraccion.summary(this._frac_cfg(), this.doc.items)) {
+			facex_multi.fraccion.confirm_summary(this._frac_cfg(), this.doc.items, "Guardar", () => this._action_save({ ...opts, fraccion_ok: true }));
+			return;
+		}
 
 		// REFUERZO: Validar que si hay taxes_and_charges se hayan calculado antes de guardar
 		if (this.doc.taxes_and_charges && !this.doc._taxes_template) {
@@ -8414,12 +8609,17 @@ body.facex-fullscreen-mode .ef-main-layout {
 		);
 	}
 
-	async _action_submit() {
+	async _action_submit(opts = {}) {
 		if (!this.doc.name || this.doc.name === "new") {
 			frappe.show_alert({ message: "Primero guarde la factura.", indicator: "orange" });
 			return;
 		}
 		if (this._request_pending) return;
+		// Entero/Fracción: resumen de fracciones antes de validar.
+		if (!opts.fraccion_ok && facex_multi.fraccion.summary(this._frac_cfg(), this.doc.items)) {
+			facex_multi.fraccion.confirm_summary(this._frac_cfg(), this.doc.items, "Validar", () => this._action_submit({ ...opts, fraccion_ok: true }));
+			return;
+		}
 
 		// ── Pre-check 1: cliente genérico no puede comprar ARMAS ni MUNICIÓN ──
 		const GRUPOS_RESTRINGIDOS = ["ARMAS", "MUNICIÓN"];
@@ -9416,6 +9616,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 			[".ef-col-disc",   cfg.mostrar_desc_pct !== undefined ? cfg.mostrar_desc_pct : 1],
 			[".ef-col-adenda", cfg.mostrar_adenda   !== undefined ? cfg.mostrar_adenda   : 1],
 			[".ef-col-tipo",   cfg.mostrar_tipo     !== undefined ? cfg.mostrar_tipo     : 1],
+			// «Ver unidad de medida» (Configuración de Compañía): nace apagado.
+			[".ef-col-uom",    cfg.mostrar_uom      ? 1 : 0],
 			// Recargo Contra Entrega: solo si la lista de precios del doc lleva Q/pieza
 			[".ef-col-recargo", (this._recargo_ctx && parseFloat(this._recargo_ctx.recargo_por_pieza) > 0) ? 1 : 0],
 		];
@@ -9431,8 +9633,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		if (this.controls.taxes_and_charges) d.taxes_and_charges = this.controls.taxes_and_charges.get_value() || d.taxes_and_charges;
 		if (this.controls.sales_partner) d.sales_partner = this.controls.sales_partner.get_value() || d.sales_partner;
 
-		const _cfg = this.company_config || {};
-		const _update_stock = (_cfg.maneja_inventario && (d.items || []).some(r => r.is_stock_item)) ? 1 : 0;
+		const _update_stock = (d.items || []).some(r => r.is_stock_item) ? 1 : 0;
 
 		const payload = {
 			doctype: "Sales Invoice",

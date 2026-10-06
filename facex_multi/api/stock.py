@@ -353,11 +353,17 @@ def _build_stock_entry_items(
             "Item", item_code, ["stock_uom", "has_batch_no", "has_serial_no"], as_dict=True
         )
 
+        uom = row.get("uom") or item_meta.stock_uom
+        # Factor de la ficha del ítem (Media Docena = 0.5): transfer_qty / stock
+        # en unidad base. Unidades que la ficha no tiene conservan el factor 1
+        # de siempre; la unidad de fracción exige que el ítem la admita.
+        from facex_multi.api.fraccion import resolve_row_conversion
+        cf = resolve_row_conversion(item_code, uom, company, f"Fila {i} — ") or 1
         entry_row = {
             "item_code": item_code,
             "qty": qty,
-            "uom": row.get("uom") or item_meta.stock_uom,
-            "conversion_factor": 1,
+            "uom": uom,
+            "conversion_factor": cf,
         }
 
         # Costo: solo aplica en Entradas — en Salidas/Transferencias el valor
@@ -1079,9 +1085,12 @@ def get_inventory_defaults(company: str = None):
     from facex_multi.api.permissions import get_facex_inventory_scope, get_facex_purchase_scope
     permissions["alcance_inventario"] = get_facex_inventory_scope(company)
     permissions["alcance_compras"] = get_facex_purchase_scope(company)
+    from facex_multi.api.permissions import get_facex_can_change_password, get_facex_company_config
+    permissions["puede_cambiar_password"] = int(get_facex_can_change_password(company))
 
     return {
         "company": company,
+        "company_config": get_facex_company_config(company),
         "companies": allowed_companies,
         "warehouses": warehouses,
         "warehouses_por_operacion": warehouses_por_operacion,
@@ -1317,6 +1326,8 @@ def get_stock_entry_detail(name: str):
                 "item_name": frappe.db.get_value("Item", d.item_code, "item_name"),
                 "qty": d.qty,
                 "uom": d.uom,
+                "stock_uom": d.stock_uom,
+                "conversion_factor": d.conversion_factor,
                 "batch_no": d.batch_no,
                 "serial_no": d.serial_no,
                 "rate": d.basic_rate if can_view_costs else None,

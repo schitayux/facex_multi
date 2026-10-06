@@ -556,6 +556,8 @@ class FacexInventario {
 			callback: (r) => {
 				this.defaults = r.message || {};
 				this._can_costs = !!((this.defaults.permissions || {}).puede_ver_costos);
+				// Permiso «Cambiar Mi Contraseña» (FacEx Settings): sin él no aparece la opción.
+				if ((this.defaults.permissions || {}).puede_cambiar_password === 0) this.$page_root.find("#inv-btn-change-password").hide();
 				this._render_transporte_menu();
 				// Cambio de compañía: lo guardado pertenecía a otra compañía.
 				this._nav_stack = [];
@@ -751,6 +753,8 @@ class FacexInventario {
 
 	_open_movement(mode, prefill) {
 		this.mode = mode;
+		// Entero/Fracción: cada documento arranca leyendo enteros.
+		this._frac_mode = "entero";
 		this.entry_rows = [];
 		this._entry_uid = 0;
 		this._saving = false;
@@ -872,6 +876,7 @@ class FacexInventario {
           <input type="text" id="inv-e-item-search" class="inv-select" style="width:100%;" placeholder="Código o nombre del producto..." autocomplete="off">
           <div id="inv-e-item-results" class="inv-autocomplete"></div>
         </div>
+        <div id="inv-frac-slot" style="margin-top:8px;"></div>
       </div>
       <button type="button" id="inv-e-paste-btn" class="inv-btn inv-btn-secondary" title="También puede pegar (Ctrl+V) directamente sobre la tabla">Pegar datos</button>
     </div>
@@ -882,7 +887,7 @@ class FacexInventario {
           <tr>
             <th>Producto</th>
             <th style="width:100px;">Cantidad</th>
-            <th style="width:80px;">UOM</th>
+            ${this._show_uom() ? `<th style="width:80px;">UdM</th>` : ""}
             <th style="width:140px;">Lote</th>
             <th style="width:200px;">N° de Serie</th>
             ${cfg.show_account ? `<th style="width:180px;">Cuenta Contable</th>` : ""}
@@ -895,7 +900,7 @@ class FacexInventario {
         ${cfg.show_total ? `
         <tfoot>
           <tr>
-            <td colspan="${5 + (cfg.show_account ? 1 : 0) + (cfg.show_cost ? 1 : 0)}" style="text-align:right;font-weight:600;color:#495057;border-top:2px solid #dee2e6;">Total General</td>
+            <td colspan="${(this._show_uom() ? 5 : 4) + (cfg.show_account ? 1 : 0) + (cfg.show_cost ? 1 : 0)}" style="text-align:right;font-weight:600;color:#495057;border-top:2px solid #dee2e6;">Total General</td>
             <td style="font-weight:700;color:#333;border-top:2px solid #dee2e6;" id="inv-e-grand-total">Q 0.00</td>
             <td style="border-top:2px solid #dee2e6;"></td>
           </tr>
@@ -957,6 +962,7 @@ class FacexInventario {
 
 		this._render_entry_rows();
 		this._bind_movement_events();
+		this._setup_fraccion();
 	}
 
 	_switch_movement_tab(tab) {
@@ -1011,7 +1017,7 @@ class FacexInventario {
 		});
 		const rows = (doc.items || []).map((r) => `<tr>
   <td><strong>${esc(r.item_code)}</strong><br><span style="color:#6c757d;">${esc(r.item_name || "")}</span></td>
-  <td>${esc(String(r.qty))} ${esc(r.uom || "")}</td>
+  <td>${esc(String(r.qty))}${this._show_uom() ? " " + esc(r.uom || "") : ""}</td>
   ${cfg.show_cost ? `<td>${r.rate === null || r.rate === undefined ? "—" : frappe.format(flt(r.rate), { fieldtype: "Currency" })}</td>` : ""}
 </tr>`).join("");
 		d.$body.html(`
@@ -1226,7 +1232,7 @@ ${[...base, ...extra].map((k) => `<label class="inv-ms-row"><input type="checkbo
 	_render_entry_rows() {
 		const cfg = this._movement_cfg();
 		const pick_serials = cfg.fields.includes("source"); // out/transfer: la serie ya debe existir
-		const ncols = 6 + (cfg.show_account ? 1 : 0) + (cfg.show_cost ? 1 : 0) + (cfg.show_total ? 1 : 0);
+		const ncols = (this._show_uom() ? 6 : 5) + (cfg.show_account ? 1 : 0) + (cfg.show_cost ? 1 : 0) + (cfg.show_total ? 1 : 0);
 		const $tbody = this.$body.find("#inv-e-tbody");
 		if (!this.entry_rows.length) {
 			$tbody.html(`<tr id="inv-e-empty-row"><td colspan="${ncols}" style="text-align:center;color:#adb5bd;padding:20px;">Busque un producto arriba para agregarlo.</td></tr>`);
@@ -1244,7 +1250,7 @@ ${[...base, ...extra].map((k) => `<label class="inv-ms-row"><input type="checkbo
     ${sinCosto ? `<br><span style="color:#e03e2d;font-size:11px;">Sin Costo Estándar — asígnelo en «Costos a Ítems»</span>` : ""}
   </td>
   <td><input type="number" min="0" step="any" class="inv-e-field" data-field="qty" value="${row.qty}"></td>
-  <td><input type="text" class="inv-e-field" data-field="uom" value="${frappe.utils.escape_html(row.uom || "")}"></td>
+  ${this._show_uom() ? `<td>${this._frac_uom_cell(row)}</td>` : ""}
   <td>${row.has_batch_no ? `<input type="text" class="inv-e-field" data-field="batch_no" value="${frappe.utils.escape_html(row.batch_no || "")}" placeholder="Lote">` : `<span style="color:#adb5bd;">—</span>`}</td>
   <td>${this._render_serial_cell(row, cfg, pick_serials)}</td>
   ${cfg.show_account ? `<td><input type="text" class="inv-e-field" data-field="expense_account" value="${frappe.utils.escape_html(row.expense_account || "")}" placeholder="${row._account_loading ? "Cargando…" : "Cuenta contable"}"></td>` : ""}
@@ -1281,7 +1287,8 @@ ${[...base, ...extra].map((k) => `<label class="inv-ms-row"><input type="checkbo
 
 	_format_row_total(row) {
 		const rate = this.mode === "in" ? flt(row.rate) : flt(row.auto_rate);
-		const total = flt(row.qty) * rate;
+		// El costo es por unidad base: una Media Docena vale la mitad.
+		const total = flt(row.qty) * this._row_cf(row) * rate;
 		const sub = this.mode === "out"
 			? `<br><span style="color:#adb5bd;font-size:10.5px;">@ ${frappe.format(rate, { fieldtype: "Currency" })}</span>`
 			: "";
@@ -1294,7 +1301,7 @@ ${[...base, ...extra].map((k) => `<label class="inv-ms-row"><input type="checkbo
 		let grand = 0;
 		this.entry_rows.forEach((row) => {
 			const rate = this.mode === "in" ? flt(row.rate) : flt(row.auto_rate);
-			grand += flt(row.qty) * rate;
+			grand += flt(row.qty) * this._row_cf(row) * rate;
 		});
 		this.$body.find("#inv-e-grand-total").html(frappe.format(grand, { fieldtype: "Currency" }));
 	}
@@ -1395,7 +1402,7 @@ ${[...base, ...extra].map((k) => `<label class="inv-ms-row"><input type="checkbo
 		});
 		$body.on("click", "#inv-e-item-results div", (e) => {
 			const $d = $(e.currentTarget);
-			this._movement_add_row($d.data("item"));
+			this._movement_scan_item($d.data("item"), { merge: false });
 			$body.find("#inv-e-item-search").val("").focus();
 			$body.find("#inv-e-item-results").hide();
 		});
@@ -1408,6 +1415,13 @@ ${[...base, ...extra].map((k) => `<label class="inv-ms-row"><input type="checkbo
 			const $input = $body.find("#inv-e-item-search");
 			const code = $input.val().trim();
 			if (!code) return;
+			// QR de modo Entero / Fracción: cambia el modo, no busca producto.
+			const ctl = facex_multi.fraccion.control_code(this._frac_cfg(), code);
+			if (ctl) {
+				$input.val("").focus();
+				this._set_frac_mode(ctl, true);
+				return;
+			}
 			$input.prop("disabled", true);
 			frappe.call({
 				method: "facex_multi.api.item.find_item_by_code",
@@ -1439,6 +1453,24 @@ ${[...base, ...extra].map((k) => `<label class="inv-ms-row"><input type="checkbo
 			const row = this.entry_rows.find((r) => r.uid === uid);
 			if (row) row[field] = $(e.target).val();
 			this._update_row_display(uid);
+		});
+
+		// Entero/Fracción: regla 0.5 / 2.5 al terminar de escribir la cantidad
+		// y selector de UdM de la línea.
+		$body.on("focus", '.inv-e-field[data-field="qty"]', (e) => {
+			const row = this.entry_rows.find((r) => r.uid === $(e.target).closest("tr").data("row-id"));
+			if (row) row._qty_prev = flt(row.qty) || 1;
+		});
+		$body.on("change", '.inv-e-field[data-field="qty"]', (e) => {
+			const row = this.entry_rows.find((r) => r.uid === $(e.target).closest("tr").data("row-id"));
+			if (row) { row.qty = $(e.target).val(); this._frac_qty_check(row); }
+		});
+		$body.on("change", ".fx-uom-sel", (e) => {
+			const row = this.entry_rows.find((r) => r.uid === $(e.target).closest("tr").data("row-id"));
+			if (!row) return;
+			// En Inventario el costo es por unidad base: solo cambia la UdM.
+			facex_multi.fraccion.apply_uom_change(this._frac_cfg(), row, e.target.value, row.stock_uom, []);
+			this._render_entry_rows();
 		});
 
 		// Quitar fila
@@ -1512,17 +1544,148 @@ ${[...base, ...extra].map((k) => `<label class="inv-ms-row"><input type="checkbo
 
 	// Escaneo: si el producto ya está en el grid suma +1 a su línea en lugar de
 	// agregar otra (la última línea del mismo código, por si se partió en lotes).
-	_movement_scan_item(item) {
+	_movement_scan_item(item, opts = {}) {
 		if (!item) return;
 		const code = item.item_code || item.name;
-		const row = [...this.entry_rows].reverse().find((r) => r.item_code === code);
-		if (!row) { this._movement_add_row(item); return; }
+		// Entero/Fracción: en modo fracción el producto entra en su unidad de
+		// fracción y la llave de la línea es (código, fracción).
+		const F = facex_multi.fraccion;
+		const fcfg = this._frac_cfg();
+		let frac = false;
+		if (this._frac_mode === "fraccion" && F.on(fcfg)) {
+			if (F.admite(fcfg, item.stock_uom)) frac = true;
+			else frappe.show_alert({ message: `${frappe.utils.escape_html(item.item_name || code)} (${frappe.utils.escape_html(item.stock_uom || "")}) no admite ${frappe.utils.escape_html(fcfg.uom)}: se agregó entero.`, indicator: "orange" }, 5);
+		}
+		// Agregado desde la lista de resultados: línea nueva, como siempre.
+		if (opts.merge === false) { this._movement_add_row(item, frac); return; }
+		const row = [...this.entry_rows].reverse().find((r) => r.item_code === code && F.is_frac(fcfg, r) === frac);
+		if (!row) { this._movement_add_row(item, frac); return; }
 		row.qty = flt(row.qty) + 1;
 		row._flash = true;
+		// «Líneas nuevas al inicio» (Configuración de Compañía): la línea
+		// re-escaneada sube a la primera posición.
+		if (this._lines_on_top()) {
+			const i = this.entry_rows.indexOf(row);
+			if (i > 0) {
+				this.entry_rows.splice(i, 1);
+				this.entry_rows.unshift(row);
+			}
+		}
 		this._render_entry_rows();
+		this._scroll_entry_top();
 	}
 
-	_movement_add_row(item) {
+	_lines_on_top() {
+		return !!((this.defaults.company_config || {}).lineas_nuevas_al_inicio);
+	}
+
+	// ── Entero / Fracción (ver public/js/fraccion.js) ─────────────────────
+
+	_frac_cfg() {
+		return facex_multi.fraccion.cfg(this.defaults.company_config);
+	}
+
+	// «Ver unidad de medida» (Configuración de Compañía): sin él no se dibuja la
+	// UdM en los documentos de inventario.
+	_show_uom() {
+		return !!((this.defaults.company_config || {}).mostrar_uom);
+	}
+
+	// Factor de la línea respecto de la unidad base (costos y totales).
+	_row_cf(row) {
+		const F = facex_multi.fraccion, cfg = this._frac_cfg();
+		return F.is_frac(cfg, row) ? F.factor(cfg) : 1;
+	}
+
+	_setup_fraccion() {
+		const F = facex_multi.fraccion;
+		const cfg = this._frac_cfg();
+		const $slot = this.$body.find("#inv-frac-slot");
+		if (!F.on(cfg)) { $slot.empty().hide(); return; }
+		$slot.html(`<span style="font-size:12px;color:#495057;margin-right:6px;">Leer en:</span>${F.toggle_html(cfg, "inv-frac")}`);
+		$slot.find("[data-fxmode]").on("click", (e) => {
+			this._set_frac_mode($(e.currentTarget).data("fxmode"), true);
+			this.$body.find("#inv-e-item-search").focus();
+		});
+		$slot.find("#inv-frac-qr").on("click", () => F.show_qr_sheet(this.defaults.company));
+		this._paint_frac_mode();
+	}
+
+	_set_frac_mode(mode, announce) {
+		const cfg = this._frac_cfg();
+		if (!facex_multi.fraccion.on(cfg)) return;
+		this._frac_mode = mode === "fraccion" ? "fraccion" : "entero";
+		this._paint_frac_mode();
+		if (announce) facex_multi.fraccion.mode_alert(cfg, this._frac_mode);
+	}
+
+	_paint_frac_mode() {
+		facex_multi.fraccion.paint_toggle(this.$body, "inv-frac", this._frac_mode || "entero", this.$body.find("#inv-e-item-search"));
+	}
+
+	// Celda UdM: selector Entero/Fracción si el ítem lo admite; si no, el
+	// campo de texto de siempre.
+	_frac_uom_cell(row) {
+		const F = facex_multi.fraccion;
+		const cfg = this._frac_cfg();
+		if (F.admite(cfg, row.stock_uom)) {
+			return F.uom_select_html(cfg, row, row.stock_uom, "")
+				+ (F.is_frac(cfg, row) && this.mode === "in" ? `<div style="font-size:10.5px;color:#7a4a00;">costo por ${frappe.utils.escape_html(row.stock_uom)}</div>` : "");
+		}
+		return `<input type="text" class="inv-e-field${F.is_frac(cfg, row) ? " fx-uom-frac" : ""}" data-field="uom" value="${frappe.utils.escape_html(row.uom || "")}">`;
+	}
+
+	// Misma regla que en Facturación: 0.5 → 1 Media Docena; 2.5 → 2 + nueva
+	// línea de 1 Media Docena (con confirmación); en fracción la cantidad es entera.
+	_frac_qty_check(row) {
+		const F = facex_multi.fraccion;
+		const cfg = this._frac_cfg();
+		if (!F.on(cfg) || !F.admite(cfg, row.stock_uom)) return;
+		const qty = flt(row.qty);
+		const prev = row._qty_prev != null ? row._qty_prev : 1;
+		if (F.is_frac(cfg, row)) {
+			if (Math.abs(qty - Math.round(qty)) > 1e-9) {
+				frappe.show_alert({ message: `La cantidad en ${frappe.utils.escape_html(cfg.uom)} debe ser entera.`, indicator: "orange" });
+				row.qty = prev;
+				this._render_entry_rows();
+			}
+			return;
+		}
+		const sp = F.split(cfg, qty);
+		if (!sp) return;
+		if (sp.enteros === 0) {
+			F.apply_uom_change(cfg, row, cfg.uom, row.stock_uom, []);
+			row.qty = sp.fracciones;
+			frappe.show_alert({ message: `Se registró como <b>${sp.fracciones} ${frappe.utils.escape_html(cfg.uom)}</b>.`, indicator: "orange" });
+			this._render_entry_rows();
+			return;
+		}
+		F.ask_split(cfg, row.stock_uom, sp, () => {
+			row.qty = sp.enteros;
+			const existing = this.entry_rows.find((r) => r !== row && r.item_code === row.item_code && F.is_frac(cfg, r) && (r.batch_no || "") === (row.batch_no || ""));
+			if (existing) {
+				existing.qty = flt(existing.qty) + sp.fracciones;
+			} else {
+				this._entry_uid += 1;
+				const fr = { ...row, uid: this._entry_uid, qty: sp.fracciones, serial_no: "" };
+				F.apply_uom_change(cfg, fr, cfg.uom, row.stock_uom, []);
+				this.entry_rows.splice(this.entry_rows.indexOf(row) + 1, 0, fr);
+			}
+			this._render_entry_rows();
+		}, () => {
+			row.qty = prev;
+			this._render_entry_rows();
+		});
+	}
+
+	// Trae a la vista la primera línea del grid (donde cae lo recién escaneado).
+	_scroll_entry_top() {
+		if (!this._lines_on_top()) return;
+		const tr = this.$body.find("#inv-e-tbody tr").first()[0];
+		if (tr && tr.scrollIntoView) tr.scrollIntoView({ block: "nearest" });
+	}
+
+	_movement_add_row(item, frac = false) {
 		if (!item) return;
 		const cfg = this._movement_cfg();
 		this._entry_uid += 1;
@@ -1531,7 +1694,8 @@ ${[...base, ...extra].map((k) => `<label class="inv-ms-row"><input type="checkbo
 			uid,
 			item_code: item.item_code || item.name,
 			item_name: item.item_name,
-			uom: item.stock_uom,
+			uom: frac ? this._frac_cfg().uom : item.stock_uom,
+			stock_uom: item.stock_uom,
 			has_batch_no: cint(item.has_batch_no),
 			has_serial_no: cint(item.has_serial_no),
 			qty: 1,
@@ -1542,8 +1706,10 @@ ${[...base, ...extra].map((k) => `<label class="inv-ms-row"><input type="checkbo
 			expense_account: "",
 			_account_loading: cfg.show_account,
 		};
-		this.entry_rows.push(row);
+		if (this._lines_on_top()) this.entry_rows.unshift(row);
+		else this.entry_rows.push(row);
 		this._render_entry_rows();
+		this._scroll_entry_top();
 
 		if (this.mode === "in") {
 			row._has_estandar = true; // optimista hasta que responda el preview
@@ -1689,6 +1855,7 @@ ${[...base, ...extra].map((k) => `<label class="inv-ms-row"><input type="checkbo
 						has_batch_no: cint(meta.has_batch_no),
 						has_serial_no: cint(meta.has_serial_no),
 						qty: flt(p.qty) || 1,
+						stock_uom: meta.stock_uom,
 						batch_no: p.batch_no,
 						serial_no: p.serial_no,
 						rate: p.rate,
@@ -1817,8 +1984,13 @@ ${[...base, ...extra].map((k) => `<label class="inv-ms-row"><input type="checkbo
 		});
 	}
 
-	_movement_save() {
+	_movement_save(opts = {}) {
 		if (this._saving) return;
+		// Entero/Fracción: resumen de fracciones antes de grabar.
+		if (!opts.fraccion_ok && facex_multi.fraccion.summary(this._frac_cfg(), this.entry_rows)) {
+			facex_multi.fraccion.confirm_summary(this._frac_cfg(), this.entry_rows, "Grabar el movimiento", () => this._movement_save({ fraccion_ok: true }));
+			return;
+		}
 
 		const cfg = this._movement_cfg();
 		const source_warehouse = cfg.fields.includes("source") ? this.$body.find("#inv-e-warehouse-source").val() : "";
@@ -1951,7 +2123,7 @@ ${[...base, ...extra].map((k) => `<label class="inv-ms-row"><input type="checkbo
         <tr>
           <th>Producto</th>
           <th style="width:100px;">Cantidad</th>
-          <th style="width:80px;">UOM</th>
+          ${this._show_uom() ? `<th style="width:80px;">UdM</th>` : ""}
           <th style="width:140px;">Lote</th>
           <th style="width:200px;">N° de Serie</th>
           ${cfg.show_account ? `<th style="width:180px;">Cuenta Contable</th>` : ""}
@@ -1963,19 +2135,19 @@ ${[...base, ...extra].map((k) => `<label class="inv-ms-row"><input type="checkbo
         ${doc.items.map(r => `<tr>
           <td><strong>${frappe.utils.escape_html(r.item_code)}</strong><br><span style="color:#6c757d;">${frappe.utils.escape_html(r.item_name || "")}</span></td>
           <td>${frappe.utils.escape_html(String(r.qty))}</td>
-          <td>${frappe.utils.escape_html(r.uom || "")}</td>
+          ${this._show_uom() ? `<td>${frappe.utils.escape_html(r.uom || "")}</td>` : ""}
           <td>${r.batch_no ? frappe.utils.escape_html(r.batch_no) : `<span style="color:#adb5bd;">—</span>`}</td>
           <td>${r.serial_no ? frappe.utils.escape_html(r.serial_no).replace(/\n/g, "<br>") : `<span style="color:#adb5bd;">—</span>`}</td>
           ${cfg.show_account ? `<td>${frappe.utils.escape_html(r.expense_account || "")}</td>` : ""}
           ${cfg.show_cost ? `<td>${frappe.format(flt(r.rate), { fieldtype: "Currency" })}</td>` : ""}
-          ${cfg.show_total ? `<td>${frappe.format(flt(r.qty) * flt(r.rate), { fieldtype: "Currency" })}</td>` : ""}
+          ${cfg.show_total ? `<td>${frappe.format(flt(r.qty) * (flt(r.conversion_factor) || 1) * flt(r.rate), { fieldtype: "Currency" })}</td>` : ""}
         </tr>`).join("")}
       </tbody>
       ${cfg.show_total ? `
       <tfoot>
         <tr>
-          <td colspan="${5 + (cfg.show_account ? 1 : 0) + (cfg.show_cost ? 1 : 0)}" style="text-align:right;font-weight:600;color:#495057;border-top:2px solid #dee2e6;">Total General</td>
-          <td style="font-weight:700;color:#333;border-top:2px solid #dee2e6;">${frappe.format(doc.items.reduce((sum, r) => sum + flt(r.qty) * flt(r.rate), 0), { fieldtype: "Currency" })}</td>
+          <td colspan="${(this._show_uom() ? 5 : 4) + (cfg.show_account ? 1 : 0) + (cfg.show_cost ? 1 : 0)}" style="text-align:right;font-weight:600;color:#495057;border-top:2px solid #dee2e6;">Total General</td>
+          <td style="font-weight:700;color:#333;border-top:2px solid #dee2e6;">${frappe.format(doc.items.reduce((sum, r) => sum + flt(r.qty) * (flt(r.conversion_factor) || 1) * flt(r.rate), 0), { fieldtype: "Currency" })}</td>
         </tr>
       </tfoot>` : ""}
     </table>
@@ -2543,7 +2715,7 @@ ${[...base, ...extra].map((k) => `<label class="inv-ms-row"><input type="checkbo
 				});
 				const rows = (doc.items || []).map((it) => `<tr>
   <td><strong>${esc(it.item_code)}</strong><br><span style="color:#6c757d;">${esc(it.item_name || "")}</span></td>
-  <td>${esc(String(it.qty ?? ""))} ${esc(it.uom || "")}</td>
+  <td>${esc(String(it.qty ?? ""))}${this._show_uom() ? " " + esc(it.uom || "") : ""}</td>
   <td>${esc(it.warehouse || "")}</td>
   ${doc.can_view_costs ? `<td>${money(it.rate)}</td>` : ""}
 </tr>`).join("");
@@ -4335,6 +4507,9 @@ ${rows.map(r => `<tr>
 					})),
 					from_warehouse: d.from_warehouse,
 					transito: d.transito,
+					comentario: d.comentario || "",
+					creado: d.creado || "",
+					creado_por: d.creado_por || "",
 				};
 				this._render_rt_recepcion_detalle();
 			},
@@ -4349,6 +4524,10 @@ ${rows.map(r => `<tr>
   <button type="button" id="inv-rt-back" class="inv-btn inv-btn-secondary">&larr; Lista</button>
   <div style="font-size:13px;color:#495057;">Traslado <strong>${frappe.utils.escape_html(rec.stock_entry)}</strong> · ${frappe.utils.escape_html(rec.from_warehouse || "")} → ${frappe.utils.escape_html(rec.transito || "")}</div>
 </div>
+${rec.comentario ? `<div style="background:#fff8e1;border:1px solid #f5c518;border-left:5px solid #f5c518;border-radius:6px;padding:12px 16px;margin-bottom:12px;">
+  <div style="font-size:11px;color:#6c5a00;margin-bottom:4px;">Comentario del traslado · ${frappe.utils.escape_html(rec.creado_por)} · ${frappe.utils.escape_html(frappe.datetime.str_to_user(rec.creado))}</div>
+  <div style="font-weight:700;font-size:14px;color:#3b2f00;white-space:pre-wrap;">${frappe.utils.escape_html(rec.comentario)}</div>
+</div>` : ""}
 <div class="card" style="background:#fff;border:1px solid #d1d8dd;border-radius:6px;padding:16px 18px;margin-bottom:12px;display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;">
   <div style="flex:1;min-width:240px;">
     <label class="inv-label">Escanear (QR / código de barras / código de ítem)</label>
@@ -4367,7 +4546,9 @@ ${rows.map(r => `<tr>
     <th style="width:110px;">Recibido</th><th style="width:160px;">Resto</th><th style="width:190px;">Motivo devolución</th>
   </tr></thead><tbody id="inv-rt-tbody"></tbody></table>
 </div>
-<div style="display:flex;justify-content:flex-end;">
+<div style="display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;">
+  ${cint((this.defaults.permissions || {}).puede_autorellenar_recepcion)
+    ? `<button type="button" id="inv-rt-autorellenar" class="inv-btn" style="background:#f5c518;border:1px solid #d9a900;color:#3b2f00;font-weight:600;" title="Marca como recibida toda la cantidad pendiente de cada línea">Auto rellenar cantidad recibida</button>` : ""}
   <button type="button" id="inv-rt-aceptar" class="inv-btn inv-btn-primary">Aceptar</button>
 </div>`);
 		this._render_rt_recepcion_rows();
@@ -4396,6 +4577,13 @@ ${rows.map(r => `<tr>
 			rec.rows[+$(e.currentTarget).data("i")].motivo = e.target.value;
 		});
 		$b.find("#inv-rt-aceptar").on("click", () => this._rt_aceptar());
+		// Atajo para quien no necesita confirmar línea por línea (permiso
+		// puede_autorellenar_recepcion): todo lo pendiente queda como recibido.
+		$b.find("#inv-rt-autorellenar").on("click", () => {
+			rec.rows.forEach((row) => { row.recibido = flt(row.qty_pendiente); });
+			this._render_rt_recepcion_rows();
+			frappe.show_alert({ message: "Cantidad recibida rellenada con lo pendiente de cada línea.", indicator: "green" });
+		});
 	}
 
 	_render_rt_recepcion_rows() {
@@ -4440,7 +4628,8 @@ ${rows.map(r => `<tr>
 					frappe.show_alert({ message: `${row.item_code}: ya alcanzó la cantidad pendiente (${row.qty_pendiente}).`, indicator: "orange" });
 					return;
 				} else {
-					row.recibido += 1;
+					// Tope en lo pendiente (en unidad base puede quedar 0.5: Media Docena).
+					row.recibido = Math.min(row.recibido + 1, flt(row.qty_pendiente));
 				}
 				row._flash = true;
 				this._render_rt_recepcion_rows();

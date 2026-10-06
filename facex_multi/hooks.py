@@ -30,6 +30,7 @@ app_include_js = [
     "/assets/facex_multi/js/link_guard.js",
     "/assets/facex_multi/js/etiqueta_etiba.js",
     "/assets/facex_multi/js/fullscreen_layout.js",
+    "/assets/facex_multi/js/fraccion.js",
 ]
 
 doctype_js = {
@@ -72,7 +73,8 @@ doc_events = {
         "validate": [
             "facex_multi.api.item.normalize_item_casing",
             "facex_multi.api.item.validate_lista_materiales",
-            "facex_multi.api.familia.validate_item_familia"
+            "facex_multi.api.familia.validate_item_familia",
+            "facex_multi.api.fraccion.validate_item_fraccion"
         ],
         "on_update": "facex_multi.api.item.sync_lista_materiales_product_bundle"
     },
@@ -84,7 +86,11 @@ doc_events = {
         ],
         # Recargo Contra Entrega / Flete como filas de cargos: tiene que ir en
         # before_validate porque ERPNext calcula totales dentro de validate.
-        "before_validate": "facex_multi.api.recargo.apply_recargo_y_flete",
+        "before_validate": [
+            "facex_multi.api.invoice.enforce_update_stock",
+            "facex_multi.api.recargo.apply_recargo_y_flete",
+        ],
+        "before_submit": "facex_multi.api.invoice.enforce_update_stock",
         "validate": [
             "facex_multi.api.invoice.guard_guias_transporte_permission",
             "facex_multi.api.invoice.validate_guias_transporte_unicas",

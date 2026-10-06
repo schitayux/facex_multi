@@ -43,3 +43,8 @@ facex_multi.patches.v1_0.add_compras_devoluciones_permisos
 facex_multi.patches.v1_0.add_pagos_proveedor
 facex_multi.patches.v1_0.backfill_diferencia_comision
 facex_multi.patches.v1_0.backfill_cierre_cargos_terceros
+facex_multi.patches.v1_0.add_password_autorellenar_lineas
+facex_multi.patches.v1_0.setup_fraccion_neko
+facex_multi.patches.v1_0.mostrar_uom_neko
+facex_multi.patches.v1_0.gate_uom_print_formats
+facex_multi.patches.v1_0.uom_columna_impresion

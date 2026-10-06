@@ -256,7 +256,9 @@ PROFILE_PERM_FIELDS = [
     "mantiene_grupo_items",
     "puede_ver_facex_settings",
     "puede_resetear_password",
+    "puede_cambiar_password",
     "reportes_todas_bodegas",
+    "puede_autorellenar_recepcion",
 ]
 
 # Selects de alcance de datos que el perfil define (mismo modelo perfil +
@@ -274,7 +276,7 @@ PROFILE_SCOPE_FIELDS = {
 _COMPANY_CONFIG_FIELDS = [
     "maneja_series", "maneja_adendas", "concatena_descripcion2",
     "maneja_inventario", "tipo_x_defecto",
-    "mostrar_almacen", "mostrar_desc_pct", "mostrar_adenda", "mostrar_tipo",
+    "mostrar_almacen", "mostrar_desc_pct", "mostrar_adenda", "mostrar_tipo", "mostrar_uom",
     "exige_pago_completo", "permite_pago_credito", "permite_pago_contra_entrega",
     "exige_familia_item",
     "item_flete", "mayusculas_items", "mayusculas_clientes",
@@ -283,6 +285,7 @@ _COMPANY_CONFIG_FIELDS = [
     "recargo_es_venta", "flete_es_venta",
     "cuenta_dif_comision_ganancia", "cuenta_dif_comision_perdida",
     "maneja_cierre_diario", "cierre_pendiente_modo", "cierre_pendiente_dias_gracia",
+    "lineas_nuevas_al_inicio",
 ]
 # Campos texto (Select/Data/Link) — no convertir a int
 _CONFIG_TEXT_FIELDS = {"tipo_x_defecto", "item_flete", "cuenta_recargo_entrega", "cuenta_flete",
@@ -659,6 +662,10 @@ def get_facex_company_config(company: str) -> dict:
             result[k] = int(v) if v is not None else 1
         else:
             result[k] = int(v or 0)
+    # Entero/Fracción (ver facex_multi.api.fraccion): llega a las pantallas
+    # dentro de company_config.
+    from facex_multi.api.fraccion import get_fraction_config
+    result["fraccion"] = get_fraction_config(company)
     return result
 
 
@@ -688,6 +695,7 @@ _INVENTORY_PERM_FIELDS = [
     "mantiene_costos_items",
     "mantiene_almacenes",
     "puede_recibir_traslados",
+    "puede_autorellenar_recepcion",
     "entrada_grabar_borrador", "entrada_validar_confirmar",
     "salida_grabar_borrador", "salida_validar_confirmar",
     "transferencia_grabar_borrador", "transferencia_validar_confirmar",
@@ -1163,6 +1171,18 @@ def get_facex_can_reset_password(company: str) -> bool:
     Independiente de get_facex_can_view_seguridad: un usuario puede tener SOLO
     este privilegio (sin ver el resto del módulo de Seguridad)."""
     return _flag(company, "puede_resetear_password")
+
+
+def get_facex_can_change_password(company: str) -> bool:
+    """Opción «Cambiar Contraseña» del menú de usuario. A diferencia del resto,
+    es ALLOW-by-default: sin fila (o fila sin el campo) se permite. Los sitios
+    que lo restringen (neko: solo Gerencia) lo dejan en 0 por perfil/usuario."""
+    if _is_sm() or not company:
+        return True
+    row = _row(company)
+    if not row or row.get("puede_cambiar_password") is None:
+        return True
+    return bool(int(row.get("puede_cambiar_password") or 0))
 
 
 # ---------------------------------------------------------------------------

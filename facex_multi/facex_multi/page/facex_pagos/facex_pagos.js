@@ -943,6 +943,8 @@ class FacexPagos {
 
 	_render_topbar_links() {
 		const p = this.defaults.permissions || {};
+		// Permiso «Cambiar Mi Contraseña» (FacEx Settings): sin él no aparece la opción.
+		if (p.puede_cambiar_password === 0) this.$root.find("#cp-change-password").hide();
 		const links = [
 			p.puede_compras && ["Compras", "/app/facex-compras"],
 			p.puede_facturar && ["Facturador", "/app/facex"],

@@ -120,6 +120,8 @@ class EFastPOSScreen {
 				this.defaults = d;
 				this.company_config = d.company_config || {};
 				this.perms = d.permissions || {};
+				// Permiso «Cambiar Mi Contraseña» (FacEx Settings): sin él no aparece la opción.
+				if (this.perms.puede_cambiar_password === 0) this.$body.find("#efs-btn-change-password").hide();
 				// puede_ver_pos no solo oculta el botón en el menú de FacEx: sin
 				// este corte, escribir /app/facex-screen en la barra abría el POS.
 				if (!this.perms.puede_ver_pos) {
@@ -132,6 +134,7 @@ class EFastPOSScreen {
 					return;
 				}
 				this.$body.find("#efs-flete-toggle").css("display", this.company_config.item_flete ? "flex" : "none");
+				this._setup_fraccion();
 				this.posWarehouse = d.default_pos_warehouse || "";
 				this.doc.company = d.company || "";
 				this.doc.naming_series = (d.naming_series || [])[0] || "";
@@ -378,6 +381,7 @@ class EFastPOSScreen {
 						<div class="efs-step-pane" id="efs-step-productos" style="display:none;">
 							<div class="efs-search-row">
 								<input type="text" id="efs-search" class="efs-search-input" placeholder="Buscar producto por nombre o código…" />
+								<span id="efs-frac-slot" style="white-space:nowrap;"></span>
 								<label class="efs-instock-toggle">
 									<input type="checkbox" id="efs-filter-instock" checked />
 									En Stock
@@ -445,6 +449,13 @@ class EFastPOSScreen {
 		this.$body.find("#efs-search").on("keydown", (e) => {
 			if (e.key !== "Enter") return;
 			e.preventDefault();
+			// QR de modo Entero / Fracción: cambia el modo, no busca producto.
+			const ctl = facex_multi.fraccion.control_code(this._frac_cfg(), e.target.value);
+			if (ctl) {
+				this._set_frac_mode(ctl, true);
+				this._clear_efs_search();
+				return;
+			}
 			const matches = this._filtered_items();
 			if (matches.length === 1) {
 				this._add_or_prompt(matches[0], { from_scan: true });
@@ -1843,9 +1854,11 @@ class EFastPOSScreen {
 	}
 
 	_cart_qty_for(item_code) {
+		// En unidad base: una Media Docena cuenta 0.5.
+		const F = facex_multi.fraccion, cfg = this._frac_cfg();
 		return (this.doc.items || [])
 			.filter((r) => r.item_code === item_code)
-			.reduce((sum, r) => sum + (parseFloat(r.qty) || 0), 0);
+			.reduce((sum, r) => sum + (parseFloat(r.qty) || 0) * (F.is_frac(cfg, r) ? F.factor(cfg) : 1), 0);
 	}
 
 	_card_html(it) {
@@ -1882,12 +1895,30 @@ class EFastPOSScreen {
 			});
 		}
 
+		// Entero/Fracción: en modo fracción el producto entra en su unidad de
+		// fracción (ej. Media Docena) en su propia línea — la llave es
+		// (código, fracción) y nunca suma a la línea de enteros.
+		const F = facex_multi.fraccion;
+		const fcfg = this._frac_cfg();
+		let wantFrac = false;
+		if (this._frac_mode === "fraccion" && F.on(fcfg)) {
+			if (F.admite(fcfg, item.stock_uom)) wantFrac = true;
+			else frappe.show_alert({ message: `${_efs_esc(item.item_name || item.item_code)} (${_efs_esc(item.stock_uom || "")}) no admite ${_efs_esc(fcfg.uom)}: se agregó entero.`, indicator: "orange" }, 5);
+		}
 		const mergeable = !item.has_serial_no && !item.custom_tiene_adenda;
 		if (mergeable) {
-			const existingIdx = this.doc.items.findIndex((r) => r.item_code === item.item_code);
+			let existingIdx = this.doc.items.findIndex((r) => r.item_code === item.item_code && F.is_frac(fcfg, r) === wantFrac);
 			if (existingIdx !== -1) {
 				const row = this.doc.items[existingIdx];
 				row.qty = (parseFloat(row.qty) || 0) + 1;
+				// «Líneas nuevas al inicio» (Configuración de Compañía): la línea
+				// re-escaneada sube a la primera posición.
+				const movedFrom = (this._lines_on_top() && existingIdx > 0) ? existingIdx : -1;
+				if (movedFrom > 0) {
+					this.doc.items.splice(existingIdx, 1);
+					this.doc.items.unshift(row);
+					existingIdx = 0;
+				}
 				this._render_cart();
 				this._render_grid();
 				if (opts.from_scan) {
@@ -1897,14 +1928,14 @@ class EFastPOSScreen {
 					// productos (ver _notify_cart_merged).
 					const repite = this._last_scan_item_code === item.item_code;
 					this._last_scan_item_code = item.item_code;
-					if (!repite) this._notify_cart_merged(existingIdx, row);
+					if (!repite || movedFrom > 0) this._notify_cart_merged(existingIdx, row, movedFrom);
 				}
 				return;
 			}
 		}
 
 		if (opts.from_scan) this._last_scan_item_code = item.item_code;
-		const idx = this._push_cart_row(item);
+		const idx = this._push_cart_row(item, 1, wantFrac);
 		if (item.has_serial_no || item.custom_tiene_adenda) {
 			this._handle_item_serial_adenda(idx, item);
 			// La ventana de serie/adenda se queda con el foco: al cerrarla el
@@ -1919,12 +1950,14 @@ class EFastPOSScreen {
 	// Aviso de que la lectura se acumuló en una línea que ya estaba en el
 	// ticket: mensaje con el número de línea y la cantidad nueva, destello en
 	// la línea y la trae a la vista — sin quitarle el cursor al buscador.
-	_notify_cart_merged(idx, row) {
+	_notify_cart_merged(idx, row, movedFrom = -1) {
 		const nombre = row.item_name || row.item_code || "";
 		const qty = Math.round((parseFloat(row.qty) || 0) * 1000) / 1000;
 		frappe.show_alert(
 			{
-				message: __("{0} ya estaba en la línea {1} — cantidad: {2}", [nombre, idx + 1, qty]),
+				message: movedFrom > 0
+					? __("{0} subió de la línea {1} a la 1 — cantidad: {2}", [nombre, movedFrom + 1, qty])
+					: __("{0} ya estaba en la línea {1} — cantidad: {2}", [nombre, idx + 1, qty]),
 				indicator: "blue",
 			},
 			5
@@ -2109,16 +2142,24 @@ class EFastPOSScreen {
 		setTimeout(() => $view.find("#efs-kw-search").trigger("focus"), 100);
 	}
 
-	_push_cart_row(item, qty = 1) {
+	_lines_on_top() {
+		return !!(this.company_config || {}).lineas_nuevas_al_inicio;
+	}
+
+	_push_cart_row(item, qty = 1, frac = false) {
+		// Línea en fracción: su UdM y el precio de la unidad base × factor.
+		const fcfg = this._frac_cfg();
+		const fmul = frac ? facex_multi.fraccion.factor(fcfg) : 1;
 		const row = {
 			item_code: item.item_code,
 			item_name: item.item_name,
 			description: item.item_name,
 			qty,
-			rate: parseFloat(item.rate) || 0,
-			price_list_rate: parseFloat(item.rate) || 0,
+			rate: (parseFloat(item.rate) || 0) * fmul,
+			price_list_rate: (parseFloat(item.rate) || 0) * fmul,
 			discount_percentage: 0,
-			uom: item.stock_uom || "Nos",
+			uom: frac ? fcfg.uom : (item.stock_uom || "Nos"),
+			stock_uom: item.stock_uom || "Nos",
 			warehouse: this.posWarehouse || this.defaults.default_warehouse || "",
 			cost_center: this.defaults.default_cost_center || "",
 			bfel_multi_tipo: (this.company_config || {}).tipo_x_defecto || "",
@@ -2133,8 +2174,11 @@ class EFastPOSScreen {
 			serial_no: "",
 			tiene_adenda: 0,
 		};
-		this.doc.items.push(row);
-		const newIdx = this.doc.items.length - 1;
+		// «Líneas nuevas al inicio» (Configuración de Compañía): entra de primera.
+		const top = this._lines_on_top();
+		if (top) this.doc.items.unshift(row);
+		else this.doc.items.push(row);
+		const newIdx = top ? 0 : this.doc.items.length - 1;
 		// El precio del grid es el precio estándar del catálogo; re-cotizar
 		// contra la lista vigente (la del cliente si tiene, o la elegida).
 		this._reprice_row(newIdx);
@@ -2158,11 +2202,14 @@ class EFastPOSScreen {
 			},
 			callback: (r) => {
 				if (r.exc || !r.message) return;
-				const cur = this.doc.items[idx];
+				// Los índices se desplazan si entra otra línea arriba mientras
+				// responde el servidor: se sigue a la fila por referencia.
+				const cur = this.doc.items.includes(row) ? row : this.doc.items[idx];
 				if (!cur || cur.item_code !== item_code) return;
 				const d = r.message;
 				if (d.rate !== undefined && d.rate !== null) {
-					cur.rate = parseFloat(d.rate) || 0;
+					const _F = facex_multi.fraccion, _cfg = this._frac_cfg();
+					cur.rate = (parseFloat(d.rate) || 0) * (_F.is_frac(_cfg, cur) ? _F.factor(_cfg) : 1);
 					cur.price_list_rate = cur.rate;
 					this._render_cart();
 				}
@@ -2193,11 +2240,103 @@ class EFastPOSScreen {
 		const qty = Math.max(0, parseFloat(value) || 0);
 		if (qty === 0) {
 			this.doc.items.splice(idx, 1);
+		} else if (this._frac_set_qty(row, qty)) {
+			return;
 		} else {
 			row.qty = qty;
 		}
 		this._render_cart();
 		this._render_grid();
+	}
+
+	// ── Entero / Fracción (ver public/js/fraccion.js) ─────────────────────
+
+	_frac_cfg() {
+		return facex_multi.fraccion.cfg(this.company_config);
+	}
+
+	_frac_row(row) {
+		return facex_multi.fraccion.is_frac(this._frac_cfg(), row);
+	}
+
+	_setup_fraccion() {
+		const F = facex_multi.fraccion;
+		const cfg = this._frac_cfg();
+		this._frac_mode = "entero";
+		const $slot = this.$body.find("#efs-frac-slot");
+		if (!F.on(cfg)) { $slot.empty(); return; }
+		$slot.html(F.toggle_html(cfg, "efs-frac"));
+		$slot.find("[data-fxmode]").on("click", (e) => {
+			this._set_frac_mode($(e.currentTarget).data("fxmode"), true);
+			this._focus_efs_search();
+		});
+		$slot.find("#efs-frac-qr").on("click", () => F.show_qr_sheet(this.doc.company || this.defaults.company));
+		this._paint_frac_mode();
+	}
+
+	_set_frac_mode(mode, announce) {
+		const cfg = this._frac_cfg();
+		if (!facex_multi.fraccion.on(cfg)) return;
+		this._frac_mode = mode === "fraccion" ? "fraccion" : "entero";
+		this._paint_frac_mode();
+		if (announce) facex_multi.fraccion.mode_alert(cfg, this._frac_mode);
+	}
+
+	_paint_frac_mode() {
+		facex_multi.fraccion.paint_toggle(this.$body, "efs-frac", this._frac_mode || "entero", this.$body.find("#efs-search"));
+	}
+
+	// UdM de la línea del ticket (solo si «Ver unidad de medida» está activo):
+	// siempre un valor; selector Entero/Fracción si la unidad base lo admite.
+	_frac_uom_cell(row, idx) {
+		const F = facex_multi.fraccion;
+		const cfg = this._frac_cfg();
+		if (!row.item_code || !(this.company_config || {}).mostrar_uom) return "";
+		if (F.admite(cfg, row.stock_uom)) return F.uom_select_html(cfg, row, row.stock_uom, `data-idx="${idx}" style="width:auto;margin:0 0 0 6px;"`);
+		const u = row.uom || row.stock_uom;
+		return u ? `<span class="fx-uom-tag${F.is_frac(cfg, row) ? " fx-uom-frac" : ""}" style="margin-left:6px;">${_efs_esc(u)}</span>` : "";
+	}
+
+	// Cantidad del teclado en una línea que admite fracción (misma regla que el
+	// Facturador Clásico): 0.5 → 1 Media Docena; 2.5 → 2 + nueva línea de
+	// 1 Media Docena (con confirmación); en fracción la cantidad es entera.
+	// true = ya se encargó (render incluido).
+	_frac_set_qty(row, qty) {
+		const F = facex_multi.fraccion;
+		const cfg = this._frac_cfg();
+		if (!F.on(cfg) || !F.admite(cfg, row.stock_uom)) return false;
+		const done = () => { this._render_cart(); this._render_grid(); };
+		if (F.is_frac(cfg, row)) {
+			if (Math.abs(qty - Math.round(qty)) > 1e-9) {
+				frappe.show_alert({ message: `La cantidad en ${_efs_esc(cfg.uom)} debe ser entera.`, indicator: "orange" });
+				done();
+				return true;
+			}
+			return false;
+		}
+		const sp = F.split(cfg, qty);
+		if (!sp) return false;
+		if (sp.enteros === 0) {
+			F.apply_uom_change(cfg, row, cfg.uom, row.stock_uom, ["rate", "price_list_rate"]);
+			row.qty = sp.fracciones;
+			frappe.show_alert({ message: `Se registró como <b>${sp.fracciones} ${_efs_esc(cfg.uom)}</b>.`, indicator: "orange" });
+			done();
+			return true;
+		}
+		F.ask_split(cfg, row.stock_uom, sp, () => {
+			row.qty = sp.enteros;
+			const existing = this.doc.items.find((r) => r !== row && r.item_code === row.item_code && F.is_frac(cfg, r));
+			if (existing) {
+				existing.qty = (parseFloat(existing.qty) || 0) + sp.fracciones;
+			} else {
+				const fr = { ...row, qty: sp.fracciones };
+				delete fr.name;
+				F.apply_uom_change(cfg, fr, cfg.uom, row.stock_uom, ["rate", "price_list_rate"]);
+				this.doc.items.splice(this.doc.items.indexOf(row) + 1, 0, fr);
+			}
+			done();
+		}, done);
+		return true;
 	}
 
 	_remove_line(idx) {
@@ -2292,6 +2431,13 @@ class EFastPOSScreen {
 			$lines.find(".efs-qty-value").on("click", (e) => this._show_qty_keypad(parseInt($(e.currentTarget).data("idx"), 10)));
 			$lines.find(".efs-line-remove").on("click", (e) => this._remove_line(parseInt($(e.currentTarget).data("idx"), 10)));
 			$lines.find(".efs-line-options").on("click", (e) => this._show_line_options(parseInt($(e.currentTarget).data("idx"), 10)));
+			$lines.find(".fx-uom-sel").on("change", (e) => {
+				const row = this.doc.items[parseInt($(e.currentTarget).data("idx"), 10)];
+				if (!row) return;
+				facex_multi.fraccion.apply_uom_change(this._frac_cfg(), row, e.target.value, row.stock_uom, ["rate", "price_list_rate"]);
+				this._render_cart();
+				this._render_grid();
+			});
 		}
 		this.$body.find("#efs-btn-suspend").prop("disabled", !items.length);
 		this._update_totals();
@@ -2336,8 +2482,9 @@ class EFastPOSScreen {
 				<div class="efs-line-bottom">
 					<div class="efs-line-qty">
 						<button class="efs-qty-btn efs-qty-minus" data-idx="${idx}">−</button>
-						<span class="efs-qty-value" data-idx="${idx}">${row.qty}</span>
+						<span class="efs-qty-value${this._frac_row(row) ? " fx-uom-frac" : ""}" data-idx="${idx}" style="${this._frac_row(row) ? "border-radius:6px;padding:0 6px;" : ""}">${row.qty}</span>
 						<button class="efs-qty-btn efs-qty-plus" data-idx="${idx}">+</button>
+						${this._frac_uom_cell(row, idx)}
 					</div>
 					<div class="efs-line-bottom-right">
 						<span class="efs-line-rate">Q ${_efs_fmt(row.rate)} c/u</span>
@@ -2845,12 +2992,8 @@ class EFastPOSScreen {
 	// a validar (docstatus=1), porque get_held_sales ya filtra por docstatus=0.
 	_build_save_payload({ suspend = null } = {}) {
 		const d = this.doc;
-		// Respeta la configuración de compañía (maneja_inventario), igual que
-		// FacEx Clásico (_build_save_payload en facex.js) — antes quedaba
-		// hardcodeado en 1, así que una compañía con inventario desactivado
-		// veía su kardex desincronizado entre Clásico y Screen.
-		const _cfg = this.company_config || {};
-		const _update_stock = (_cfg.maneja_inventario && (d.items || []).some(r => r.is_stock_item)) ? 1 : 0;
+		// Siempre rebaja inventario si hay ítems de stock (el servidor también lo fuerza).
+		const _update_stock = (d.items || []).some(r => r.is_stock_item) ? 1 : 0;
 		return {
 			doctype: "Sales Invoice",
 			name: d.name || undefined,
@@ -2919,6 +3062,15 @@ class EFastPOSScreen {
 		if (!this.doc.sales_partner) {
 			frappe.show_alert({ message: __("Seleccione un Vendedor antes de cobrar."), indicator: "orange" }, 5);
 			return;
+		}
+
+		// Entero/Fracción: resumen de fracciones antes de grabar la venta.
+		if (facex_multi.fraccion.summary(this._frac_cfg(), this.doc.items)) {
+			const ok = await new Promise((resolve) => {
+				facex_multi.fraccion.confirm_summary(this._frac_cfg(), this.doc.items, "Continuar al cobro",
+					() => resolve(true), () => resolve(false));
+			});
+			if (!ok) return;
 		}
 
 		const pendientes = this._adendas_pendientes();
@@ -4630,6 +4782,8 @@ class EFastPOSScreen {
 		// Venta nueva: ninguna lectura previa con la que comparar (ver
 		// _add_or_prompt / _notify_cart_merged).
 		this._last_scan_item_code = null;
+		// Entero/Fracción: cada venta nueva arranca leyendo enteros.
+		if (this._frac_mode === "fraccion") this._set_frac_mode("entero", false);
 		this.doc.company = this.defaults.company || "";
 		this.doc.naming_series = (this.defaults.naming_series || [])[0] || "";
 		this.doc.bfel_establecimiento = String(((this.defaults.establishments || [])[0] || {}).establecimiento_id || "");

@@ -414,6 +414,13 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
             frappe.PermissionError,
         )
     flete_item = (get_facex_company_config(company).get("item_flete") or "").strip()
+    # Unidad de fracción (Media Docena) aunque hoy esté apagada: las facturas
+    # del día pudieron grabarse con ella.
+    frac_uom = (
+        frappe.db.get_value("FacEx Configuracion Compania", company, "fraccion_uom")
+        if frappe.db.table_exists("FacEx Configuracion Compania")
+        and frappe.get_meta("FacEx Configuracion Compania").has_field("fraccion_uom") else None
+    ) or ""
 
     invoices = frappe.get_all(
         "Sales Invoice",
@@ -519,11 +526,21 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
             venta_sin_desc += amount
             key = ("FAM", it.familia) if it.familia else ("ITEM", it.item_code)
         g = _group(key)
-        g["cantidad_original"] += flt(it.qty)
-        g["cantidad"] += flt(it.stock_qty) if it.stock_qty is not None else flt(it.qty) * (flt(it.conversion_factor) or 1)
+        stock_qty = flt(it.stock_qty) if it.stock_qty is not None else flt(it.qty) * (flt(it.conversion_factor) or 1)
+        if frac_uom and it.uom == frac_uom:
+            # Entero/Fracción: la Media Docena se presenta en la unidad base
+            # (igual que cuando se registraba 0.5 Docena) para no mezclar
+            # unidades en la «cantidad original» ni volver la familia «Varias».
+            g["cantidad_original"] += stock_qty
+            g["uoms"].add(it.stock_uom or "")
+            g["conversions"].add(1.0)
+            g["fracciones"] = g.get("fracciones", 0.0) + flt(it.qty)
+        else:
+            g["cantidad_original"] += flt(it.qty)
+            g["uoms"].add(it.uom or it.stock_uom or "")
+            g["conversions"].add(round(flt(it.conversion_factor) or 1, 6))
+        g["cantidad"] += stock_qty
         g["total"] += amount
-        g["uoms"].add(it.uom or it.stock_uom or "")
-        g["conversions"].add(round(flt(it.conversion_factor) or 1, 6))
         g["num_lineas"] += 1
         g["items"][it.item_code] += flt(it.stock_qty) if it.stock_qty is not None else flt(it.qty)
         if key[0] == "FAM":

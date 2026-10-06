@@ -314,6 +314,8 @@ class FacexCompras {
 
 	_render_topbar_links() {
 		const p = this.defaults.permissions || {};
+		// Permiso «Cambiar Mi Contraseña» (FacEx Settings): sin él no aparece la opción.
+		if (p.puede_cambiar_password === 0) this.$root.find("#cp-change-password").hide();
 		const links = [
 			p.puede_compras && ["Pagos", "/app/facex-pagos"],
 			p.puede_facturar && ["Facturador", "/app/facex"],
@@ -1077,7 +1079,7 @@ class FacexCompras {
 			<td data-label="Cant. a devolver" class="cp-num">${serialInput
 				? `<span class="cp-strong cp-l-qty-ro">${cpFlt(it.qty)}</span>`
 				: `<input type="number" class="cp-input cp-num cp-l-qty" min="0" max="${cpFlt(it.max_qty)}" step="any" value="${cpFlt(it.qty)}" ${dis}>`}
-				${editable ? `<span class="cp-muted cp-uom">de ${cpFlt(it.max_qty)} ${cpEsc(it.uom || "")}</span>` : `<span class="cp-muted cp-uom">${cpEsc(it.uom || "")}</span>`}</td>
+				${(this.defaults.permissions || {}).mostrar_uom ? (editable ? `<span class="cp-muted cp-uom">de ${cpFlt(it.max_qty)} ${cpEsc(it.uom || "")}</span>` : `<span class="cp-muted cp-uom">${cpEsc(it.uom || "")}</span>`) : (editable ? `<span class="cp-muted cp-uom">de ${cpFlt(it.max_qty)}</span>` : "")}</td>
 			<td data-label="Precio Unit." class="cp-num">${cpMoney(it.rate, doc.currency)}</td>
 			<td data-label="Total" class="cp-num cp-strong cp-l-amount">${cpMoney(cpFlt(it.qty) * cpFlt(it.rate), doc.currency)}</td>
 			<td data-label="Bodega">${cpEsc(it.warehouse || "—")}</td>
@@ -1132,7 +1134,7 @@ class FacexCompras {
 			<td data-label="Cantidad" class="cp-num">${serialInput
 				? `<span class="cp-strong cp-l-qty-ro">${cpFlt(it.qty)}</span>`
 				: `<input type="number" class="cp-input cp-num cp-l-qty" min="0" step="any" value="${cpFlt(it.qty)}" ${dis}>`}
-				<span class="cp-muted cp-uom">${cpEsc(it.uom || "")}</span></td>
+				${(this.defaults.permissions || {}).mostrar_uom ? `<span class="cp-muted cp-uom">${cpEsc(it.uom || "")}</span>` : ""}</td>
 			<td data-label="Precio Unit." class="cp-num"><input type="number" class="cp-input cp-num cp-l-rate" min="0" step="any" value="${cpFlt(it.rate)}" ${dis}></td>
 			<td data-label="Total" class="cp-num cp-strong cp-l-amount">${cpMoney(cpFlt(it.qty) * cpFlt(it.rate), doc.currency)}</td>
 			<td data-label="Bodega">${it.is_stock_item

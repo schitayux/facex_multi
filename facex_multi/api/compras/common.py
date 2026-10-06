@@ -248,6 +248,7 @@ def get_compras_defaults(company: str = None) -> dict:
     from facex_multi.api.permissions import (
         get_facex_can_access_inventory_menu,
         get_facex_can_access_pos,
+        get_facex_can_change_password,
         get_facex_permissions_for_company,
         get_facex_purchase_scope,
     )
@@ -272,6 +273,9 @@ def get_compras_defaults(company: str = None) -> dict:
     perms["puede_ver_pos"] = int(get_facex_can_access_pos(company))
     perms["puede_ver_menu_inventario"] = int(get_facex_can_access_inventory_menu(company))
     perms["alcance_compras"] = get_facex_purchase_scope(company) if company else ""
+    perms["puede_cambiar_password"] = int(get_facex_can_change_password(company))
+    from facex_multi.api.permissions import get_facex_company_config
+    perms["mostrar_uom"] = int(get_facex_company_config(company).get("mostrar_uom") or 0) if company else 0
 
     currency = get_company_currency(company) if company else "GTQ"
     currencies = [currency] + [c for c in ("GTQ", "USD") if c != currency]
