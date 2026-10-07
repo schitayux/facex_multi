@@ -21,6 +21,7 @@
   "puede_facturar",
   "puede_ver_pos",
   "puede_ver_menu_inventario",
+  "permite_navegar_erp",
   "cb_facturador",
   "puede_guardar",
   "puede_validar",
@@ -325,6 +326,13 @@
    "fieldname": "puede_ver_menu_inventario",
    "fieldtype": "Check",
    "label": "Ver botón Inventario (menú FacEx)"
+  },
+  {
+   "default": "0",
+   "description": "Desmarcado (por defecto): el usuario solo puede usar las pantallas de FacEx; cualquier otra URL del ERP (escritorio, listas, formularios) lo regresa a la «Página de inicio (navegación restringida)» de FacEx Configuración Compañía. Marcado: navega el ERP. Si el usuario tiene varias compañías, basta con que una lo tenga marcado. Un usuario sin configuración FacEx no entra ni a FacEx ni al ERP. System Manager nunca se restringe.",
+   "fieldname": "permite_navegar_erp",
+   "fieldtype": "Check",
+   "label": "Permitir navegar x ERP"
   },
   {
    "fieldname": "cb_facturador",
@@ -1462,7 +1470,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-06 10:00:00.000000",
+ "modified": "2026-10-06 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Settings",

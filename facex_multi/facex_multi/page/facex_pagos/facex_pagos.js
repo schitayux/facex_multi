@@ -399,7 +399,7 @@ class FacexPagos {
 	<div class="cp-card cp-totals" id="pg-totals"></div>
 
 	<div class="cp-actionbar">
-		${p.name ? `<a class="cp-btn cp-btn-ghost" href="/app/payment-entry/${encodeURIComponent(p.name)}" target="_blank">Abrir en ERP</a>` : ""}
+		${p.name && !facex_multi.nav_restricted() ? `<a class="cp-btn cp-btn-ghost" href="/app/payment-entry/${encodeURIComponent(p.name)}" target="_blank">Abrir en ERP</a>` : ""}
 		${p.name && editable ? `<button type="button" class="cp-btn cp-btn-danger" id="pg-delete">Eliminar</button>` : ""}
 		<span class="cp-spacer"></span>
 		${editable ? `<button type="button" class="cp-btn cp-btn-secondary" id="pg-save">Grabar Borrador</button>` : ""}
@@ -736,7 +736,7 @@ class FacexPagos {
 		${p.cargos_bancarios ? row("Cargos bancarios", pgMoney(p.cargos_bancarios)) : ""}
 	</div>
 	<div class="cp-actionbar">
-		<a class="cp-btn cp-btn-ghost" href="/app/payment-entry/${encodeURIComponent(p.name)}" target="_blank">Abrir en ERP</a>
+		${facex_multi.nav_restricted() ? "" : `<a class="cp-btn cp-btn-ghost" href="/app/payment-entry/${encodeURIComponent(p.name)}" target="_blank">Abrir en ERP</a>`}
 		<button type="button" class="cp-btn cp-btn-secondary" id="pg-print">Imprimir</button>
 		${p.docstatus === 1 && this._can("cancelar") ? `<button type="button" class="cp-btn cp-btn-danger" id="pg-cancel">Cancelar pago</button>` : ""}
 		<span class="cp-spacer"></span>

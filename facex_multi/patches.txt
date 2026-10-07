@@ -50,3 +50,4 @@ facex_multi.patches.v1_0.gate_uom_print_formats
 facex_multi.patches.v1_0.uom_columna_impresion
 facex_multi.patches.v1_0.setup_whatsapp_neko
 facex_multi.patches.v1_0.fac_certifi_compacto_neko
+facex_multi.patches.v1_0.add_permite_navegar_erp

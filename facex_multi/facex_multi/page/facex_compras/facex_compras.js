@@ -863,7 +863,7 @@ class FacexCompras {
 		const btn = (id, label, cls) => `<button type="button" class="cp-btn ${cls}" id="${id}">${label}</button>`;
 		const out = [];
 		if (doc.name) {
-			out.push(`<a class="cp-btn cp-btn-ghost" href="/app/${c.route}/${encodeURIComponent(doc.name)}" target="_blank">Abrir en ERP</a>`);
+			if (!facex_multi.nav_restricted()) out.push(`<a class="cp-btn cp-btn-ghost" href="/app/${c.route}/${encodeURIComponent(doc.name)}" target="_blank">Abrir en ERP</a>`);
 			out.push(btn("cp-print", "Imprimir", "cp-btn-secondary"));
 		}
 		if (doc.name && editable && this._can(kind, "draft")) out.push(btn("cp-delete", "Eliminar", "cp-btn-danger"));

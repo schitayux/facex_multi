@@ -1,0 +1,24 @@
+{% extends "templates/web.html" %}
+
+{% block title %}{{ title }}{% endblock %}
+{% block navbar %}{% endblock %}
+{% block footer %}{% endblock %}
+
+{% block page_content %}
+<style>
+	body {
+		background-color: var(--subtle-accent);
+		font-size: var(--text-base);
+	}
+</style>
+<div class="error-page">
+	<div>
+		<h4 class="page-card-head">{{ title }}</h4>
+		<div class="details">
+			<p>Hola, <b>{{ full_name }}</b> ({{ user }}).</p>
+			<p>Tu usuario todavía no tiene configuración de permisos en FacEx. Pide al administrador que la cree en el módulo <b>Seguridad</b> de FacEx y vuelve a entrar.</p>
+			<div><a href="/logout" class="btn btn-primary btn-sm btn-block">Cerrar sesión</a></div>
+		</div>
+	</div>
+</div>
+{% endblock %}

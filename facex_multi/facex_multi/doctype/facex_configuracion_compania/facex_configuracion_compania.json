@@ -66,7 +66,9 @@
   "fraccion_unidades_base",
   "sb_wa",
   "wa_habilitado",
-  "wa_documentos"
+  "wa_documentos",
+  "sb_navegacion",
+  "pagina_inicio_restringida"
  ],
  "fields": [
   {
@@ -468,11 +470,24 @@
    "options": "FacEx WA Documento",
    "label": "Documentos y mensajes",
    "description": "Qué documentos se pueden enviar, su mensaje y si se adjunta el formato de impresión. Variables: {cliente} {documento} {tipo_doc} {total} {saldo} {monto} {fecha} {empresa}."
+  },
+  {
+   "fieldname": "sb_navegacion",
+   "fieldtype": "Section Break",
+   "label": "Navegación restringida"
+  },
+  {
+   "default": "facex",
+   "description": "Pantalla de FacEx a la que se envía a los usuarios con «Permitir navegar x ERP» desmarcado cuando intentan abrir cualquier otra URL del ERP.",
+   "fieldname": "pagina_inicio_restringida",
+   "fieldtype": "Select",
+   "label": "Página de inicio (navegación restringida)",
+   "options": "facex\nfacex-screen\nfacex-inventario\nfacex-cierre\nfacex-pagos\nfacex-compras"
   }
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-06 10:00:00.000000",
+ "modified": "2026-10-06 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Configuracion Compania",

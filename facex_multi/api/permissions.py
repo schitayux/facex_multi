@@ -163,6 +163,7 @@ PROFILE_PERM_FIELDS = [
     "puede_facturar",
     "puede_ver_pos",
     "puede_ver_menu_inventario",
+    "permite_navegar_erp",
     "puede_guardar",
     "puede_validar",
     "puede_certificar",

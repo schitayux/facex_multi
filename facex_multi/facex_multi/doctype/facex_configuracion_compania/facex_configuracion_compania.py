@@ -76,6 +76,10 @@ class FacExConfiguracionCompania(Document):
 	def on_update(self):
 		from facex_multi.api.permissions import clear_permissions_cache
 		clear_permissions_cache()
+		# Página de inicio de la navegación restringida (viaja en el boot).
+		if self.has_value_changed("pagina_inicio_restringida"):
+			from facex_multi.api.nav_guard import clear_boot_cache
+			clear_boot_cache(self)
 		# Entero/Fracción: UdM de fracción + ficha de los ítems que la admiten.
 		from facex_multi.api.fraccion import on_config_update
 		on_config_update(self.company)

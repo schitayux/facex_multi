@@ -25,10 +25,17 @@ override_doctype_class = {
 #
 # etiqueta_etiba.js: diálogo "e-Imprimir" + vista previa de etiquetas eTIBA,
 # compartido por FacEx Clásico e Inventario (ver public/js/etiqueta_etiba.js).
-boot_session = "facex_multi.api.novedades.boot_session"
+#
+# nav_guard.js + before_request + boot_session: navegación restringida para
+# usuarios con «Permitir navegar x ERP» desmarcado — solo pantallas FacEx;
+# cualquier otra URL los regresa a la página de inicio de la compañía (ver
+# api/nav_guard.py). Sin efecto para quien tiene el check (default) o es
+# System Manager.
+boot_session = "facex_multi.api.nav_guard.boot_session"
+before_request = ["facex_multi.api.nav_guard.before_request"]
 
 app_include_js = [
-    "/assets/facex_multi/js/novedades.js",
+    "/assets/facex_multi/js/nav_guard.js",
     "/assets/facex_multi/js/history_guard.js",
     "/assets/facex_multi/js/link_guard.js",
     "/assets/facex_multi/js/etiqueta_etiba.js",

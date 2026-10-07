@@ -48,10 +48,15 @@ class FacExSettings(Document):
         # Caché de permisos por petición (permissions._row/_children).
         from facex_multi.api.permissions import clear_permissions_cache
         clear_permissions_cache()
+        # «Permitir navegar x ERP» viaja en el boot (cacheado en redis).
+        from facex_multi.api.nav_guard import clear_boot_cache
+        clear_boot_cache(self)
 
     def on_trash(self):
         from facex_multi.api.permissions import clear_permissions_cache
         clear_permissions_cache()
+        from facex_multi.api.nav_guard import clear_boot_cache
+        clear_boot_cache(self)
 
     def _validate_bodegas_habilitadas(self):
         import frappe
