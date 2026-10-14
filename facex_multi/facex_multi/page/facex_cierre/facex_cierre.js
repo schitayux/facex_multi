@@ -1,8 +1,10 @@
 // FacEx Multi — Cierre Diario de Ventas y Cuadre de Pagos
 // Page interactiva sobre el DocType «FacEx Cierre Diario» (ver api/cierre.py).
 //
-// Un cierre = Compañía + Fecha + Usuario (caja). El usuario con permiso
-// puede_crear_cierres cuadra y cierra SUS ventas del día; Gerencia
+// Un cierre = Compañía + Fecha + Usuario (caja) + Serie. La serie es
+// obligatoria: «Todas» consolida todas las series del usuario; una serie
+// concreta obliga a cerrar ese día serie por serie (ver api/cierre.py).
+// El usuario con permiso puede_crear_cierres cuadra y cierra SUS ventas del día; Gerencia
 // (rol_clasificacion) ve los cierres de todos y es la única que puede
 // reabrir uno ya Cerrado para permitir correcciones.
 
@@ -28,7 +30,7 @@ frappe.pages["facex-cierre"].on_page_show = function (wrapper) {
 	$("body").addClass("facex-fullscreen-mode");
 	if (!wrapper.facexCierre) return;
 	facex_multi.setup_back_guard({ to: "/app/facex", is_dirty: () => wrapper.facexCierre.is_dirty() });
-	// Ruta profunda: /app/facex-cierre?fecha=YYYY-MM-DD&usuario=... abre
+	// Ruta profunda: /app/facex-cierre?fecha=YYYY-MM-DD&usuario=...[&serie=...] abre
 	// directamente ese cierre (usado por la alerta de pendientes en FacEx).
 	wrapper.facexCierre.handle_route();
 };
@@ -57,7 +59,7 @@ class FacexCierreDiario {
 		this.ctx = null;
 		this.doc = null; // documento cargado (o null si es nuevo)
 		this.snap = null; // snapshot mostrado (vivo o congelado)
-		this.form = { fecha: "", usuario: "", almacen: "", egresos: [], observaciones: "" };
+		this.form = { fecha: "", usuario: "", serie: "", almacen: "", egresos: [], observaciones: "" };
 		this._dirty = false;
 		this._view = "list";
 		this._facturasFilter = null; // "contado" | "contra_entrega" | "credito" | null (sin filtro)
@@ -109,7 +111,7 @@ class FacexCierreDiario {
 		if (q.name || q.fecha) {
 			history.replaceState(null, "", "/app/facex-cierre");
 			if (q.name) this._open_existing(q.name);
-			else this._open_new(q.fecha, q.usuario || this.ctx.user);
+			else this._open_new(q.fecha, q.usuario || this.ctx.user, null, q.serie || "");
 			return;
 		}
 		if (first) this._render_list();
@@ -229,10 +231,11 @@ class FacexCierreDiario {
 	<div id="cd-pending" class="cd-alert ${pend.length ? "cd-alert-warn" : "cd-alert-ok"}">
 		${pend.length
 			? `<div class="cd-alert-title">⚠ ${pend.length} día(s) con ventas pendientes de cierre</div>
-			   <div class="cd-alert-chips">${pend.map((p) => `
-					<button type="button" class="cd-chip" data-fecha="${_cd_esc(p.fecha)}" data-usuario="${_cd_esc(p.usuario)}" data-name="${_cd_esc(p.cierre || "")}">
+			   <div class="cd-alert-chips">${pend.map((p, i) => `
+					<button type="button" class="cd-chip" data-idx="${i}">
 						<b>${this.short_date(p.fecha)}</b>${ctx.es_gerencia ? ` · ${_cd_esc(p.usuario_nombre || p.usuario)}` : ""}
 						<span class="cd-chip-meta">${p.num_facturas} fact. · ${this.fmt(p.total_venta)}${p.estado ? ` · ${_cd_esc(p.estado)}` : ""}</span>
+						${(p.series_pendientes || []).length ? `<span class="cd-chip-meta">Falta: ${p.series_pendientes.map((x) => _cd_esc(x.label)).join(", ")}</span>` : ""}
 					</button>`).join("")}</div>`
 			: `<div class="cd-alert-title">✓ Sin días pendientes de cierre (últimos 60 días)</div>`}
 	</div>
@@ -251,9 +254,14 @@ class FacexCierreDiario {
 
 		this.$body.find("#cd-btn-new").on("click", () => this._open_new(ctx.today, ctx.user));
 		this.$body.find(".cd-chip").on("click", (e) => {
-			const $c = $(e.currentTarget);
-			if ($c.data("name")) this._open_existing($c.data("name"));
-			else this._open_new($c.data("fecha"), $c.data("usuario"));
+			const p = pend[parseInt($(e.currentTarget).data("idx"), 10)];
+			// Día por serie con una sola serie pendiente: directo a esa serie;
+			// si no, el selector de serie del día.
+			const sp = p.series_pendientes || [];
+			if (p.cierre) this._open_existing(p.cierre);
+			else if (sp.length === 1 && sp[0].cierre) this._open_existing(sp[0].cierre);
+			else if (sp.length === 1) this._open_new(p.fecha, p.usuario, null, sp[0].serie);
+			else this._open_new(p.fecha, p.usuario);
 		});
 		this.$body.find("#cd-btn-filter").on("click", () => this._load_list());
 		this._load_list();
@@ -279,13 +287,14 @@ class FacexCierreDiario {
 				$t.html(`
 <table class="cd-table">
 	<thead><tr>
-		<th>Fecha</th><th>Usuario</th><th>Estado</th><th class="r">Facturas</th><th class="r">Venta</th><th class="r">Terceros</th>
+		<th>Fecha</th><th>Usuario</th><th>Serie</th><th>Estado</th><th class="r">Facturas</th><th class="r">Venta</th><th class="r">Terceros</th>
 		<th class="r">Efectivo</th><th class="r">Crédito</th><th class="r">Egresos</th><th class="r">A depositar</th><th>Cerrado</th>
 	</tr></thead>
 	<tbody>${rows.map((c) => `
 		<tr class="cd-row" data-name="${_cd_esc(c.name)}">
 			<td><b>${this.short_date(c.fecha)}</b><div class="cd-muted">${_cd_esc(c.name)}</div></td>
 			<td>${_cd_esc(c.usuario_nombre || c.usuario)}</td>
+			<td>${_cd_esc(c.serie_label || c.serie)}</td>
 			<td>${this.badge(c.estado)}</td>
 			<td class="r">${c.num_facturas || 0}</td>
 			<td class="r">${this.fmt(c.venta_neta)}</td>
@@ -304,15 +313,29 @@ class FacexCierreDiario {
 
 	// ─────────────────────────── DETALLE ───────────────────────────
 
-	_open_new(fecha, usuario, keep_egresos) {
-		// Si ya existe un cierre para esa fecha/usuario, abrirlo en vez de duplicar.
+	_open_new(fecha, usuario, keep_egresos, serie) {
+		// Sin serie el servidor solo devuelve las series del día y se muestra el
+		// selector (elegir serie o «Todas» es obligatorio). Si ya existe un
+		// cierre para esa fecha/usuario/serie, se abre en vez de duplicar.
 		frappe.call({
 			method: "facex_multi.api.cierre.compute_preview",
-			args: { fecha, usuario },
+			args: { fecha, usuario, serie: serie || "" },
 			freeze: true,
 			freeze_message: __("Calculando el día…"),
 			callback: (r) => {
 				const snap = r.message;
+				if (snap.requiere_serie) {
+					// Día sin cierres y una sola serie con movimiento: «Todas» y esa serie
+					// dan lo mismo, así que se abre directo el cierre de esa serie.
+					const sd = snap.series_dia || {};
+					const activas = (sd.series || []).filter((o) => o.num_facturas > 0 || o.con_cobros);
+					if (!sd.modo && activas.length === 1) {
+						this._open_new(fecha, usuario, keep_egresos, activas[0].serie);
+						return;
+					}
+					this._render_picker(fecha, usuario, snap.series_dia, keep_egresos);
+					return;
+				}
 				if (snap.existing) {
 					this._open_existing(snap.existing);
 					return;
@@ -320,7 +343,7 @@ class FacexCierreDiario {
 				this.doc = null;
 				this.snap = snap;
 				this.form = {
-					fecha, usuario,
+					fecha, usuario, serie: snap.serie,
 					almacen: "",
 					egresos: keep_egresos || (this.ctx.default_egresos || []).map((c) => ({ concepto: c, monto: 0, referencia: "", observaciones: "" })),
 					observaciones: "",
@@ -342,6 +365,7 @@ class FacexCierreDiario {
 				this.form = {
 					fecha: this.doc.fecha,
 					usuario: this.doc.usuario,
+					serie: this.doc.serie,
 					almacen: this.doc.almacen || "",
 					egresos: (this.doc.egresos || []).map((e) => ({ concepto: e.concepto, monto: _cd_flt(e.monto), referencia: e.referencia || "", observaciones: e.observaciones || "" })),
 					observaciones: this.doc.observaciones || "",
@@ -360,10 +384,78 @@ class FacexCierreDiario {
 		});
 	}
 
+	// Selector obligatorio de serie: «Todas» (consolidado) o una serie concreta
+	// (el día pasa a cerrarse serie por serie). El modo que ya tenga el día
+	// deshabilita la otra forma.
+	_render_picker(fecha, usuario, info, keep_egresos) {
+		this._view = "picker";
+		this.doc = null;
+		this.snap = null;
+		const ctx = this.ctx;
+		const modo = info.modo || "";
+		const opt = (o, disabled, why) => `
+			<button type="button" class="cd-serie-opt ${o.serie === "Todas" ? "cd-serie-todas" : ""}" data-serie="${_cd_esc(o.serie)}" data-name="${_cd_esc(o.cierre || "")}" ${disabled ? "disabled" : ""} title="${_cd_esc(why || o.serie)}">
+				<div class="cd-serie-head"><b>${_cd_esc(o.label)}</b>${o.estado ? this.badge(o.estado) : ""}</div>
+				<div class="cd-serie-meta">${o.num_facturas || 0} fact. · ${this.fmt(o.total_venta)}${o.con_cobros ? " · con cobros de cartera" : ""}</div>
+				${o.serie !== "Todas" ? `<div class="cd-serie-code">${_cd_esc(o.serie)}</div>` : `<div class="cd-serie-code">Consolidado, como hasta ahora</div>`}
+				${why ? `<div class="cd-serie-why">${_cd_esc(why)}</div>` : ""}
+			</button>`;
+		// Solo las series del día (con movimiento o con cierre); las configuradas
+		// sin uso se ocultan, salvo que no haya ninguna con movimiento.
+		const todas_series = info.series || [];
+		const en_uso = todas_series.filter((o) => o.num_facturas > 0 || o.con_cobros || o.cierre);
+		const series = en_uso.length ? en_uso : todas_series;
+		this.$body.html(`
+<div class="cd-wrap">
+	<div class="cd-head">
+		<div>
+			<button type="button" class="cd-link" id="cd-btn-back">← Cierres</button>
+			<div class="cd-title">Nuevo Cierre Diario ${this.badge("Nuevo")}</div>
+			<div class="cd-subtitle">${this.long_date(fecha)}</div>
+		</div>
+	</div>
+	<div class="cd-card">
+		<div class="cd-grid-4">
+			<div class="cd-field"><label>Fecha</label><input type="date" id="cd-fecha" class="cd-input" value="${_cd_esc(fecha)}" max="${ctx.today}"></div>
+			<div class="cd-field"><label>Usuario (caja)</label>
+				${ctx.es_gerencia
+					? `<select id="cd-usuario" class="cd-input">${ctx.users.map((u) => `<option value="${_cd_esc(u.name)}" ${u.name === usuario ? "selected" : ""}>${_cd_esc(u.full_name || u.name)}</option>`).join("")}</select>`
+					: `<input type="text" class="cd-input" value="${_cd_esc(this.user_label(usuario))}" disabled>`}
+			</div>
+		</div>
+	</div>
+	<div class="cd-card">
+		<div class="cd-card-title">ELIJA LA SERIE A CERRAR <span class="cd-muted">obligatorio</span></div>
+		<div class="cd-hint" style="margin-bottom:12px;">
+			<b>Todas las series</b> genera un solo cierre consolidado. Si elige <b>una serie</b>, este día se cierra serie por serie:
+			cada serie con movimiento necesita su propio cierre y el día no queda completo hasta cerrarlas todas.
+		</div>
+		${modo === "serie" ? `<div class="cd-alert cd-alert-warn">Este día ya se está cerrando <b>por serie</b>: elija la serie que le toca.</div>` : ""}
+		${modo === "todas" ? `<div class="cd-alert cd-alert-warn">Este día ya tiene un cierre <b>consolidado</b>.</div>` : ""}
+		<div class="cd-serie-grid">
+			${opt(info.todas, modo === "serie", modo === "serie" ? "No disponible: el día ya se cierra por serie." : "")}
+			${series.map((o) => opt(o, modo === "todas", modo === "todas" ? "No disponible: el día ya tiene cierre consolidado." : "")).join("")}
+		</div>
+		${!series.length ? `<div class="cd-hint">El usuario no tiene facturas, cobros ni series configuradas para esta fecha.</div>` : ""}
+	</div>
+</div>`);
+		this.$body.find("#cd-btn-back").on("click", () => this._go_list());
+		this.$body.find(".cd-serie-opt").on("click", (e) => {
+			const $o = $(e.currentTarget);
+			if ($o.data("name")) this._open_existing($o.data("name"));
+			else this._open_new(fecha, usuario, keep_egresos, String($o.data("serie")));
+		});
+		const reload = () => {
+			const f = this.$body.find("#cd-fecha").val();
+			if (f) this._open_new(f, this.$body.find("#cd-usuario").val() || usuario, keep_egresos);
+		};
+		this.$body.find("#cd-fecha, #cd-usuario").on("change", reload);
+	}
+
 	_recompute(cb) {
 		frappe.call({
 			method: "facex_multi.api.cierre.compute_preview",
-			args: { fecha: this.form.fecha, usuario: this.form.usuario },
+			args: { fecha: this.form.fecha, usuario: this.form.usuario, serie: this.form.serie },
 			freeze: true,
 			freeze_message: __("Recalculando…"),
 			callback: (r) => {
@@ -465,6 +557,17 @@ class FacexCierreDiario {
 	</div>`;
 	}
 
+	// Cierre de una serie concreta: estado de las demás series del día, para
+	// que el usuario vea qué le falta cerrar.
+	_series_dia_html(s) {
+		const info = s.series_dia;
+		if (!info || !this.form.serie || this.form.serie === "Todas") return "";
+		const otras = (info.series || []).filter((o) => o.serie !== this.form.serie && (o.num_facturas || o.con_cobros || o.cierre));
+		const chips = otras.map((o) => `<span class="cd-tag" title="${_cd_esc(o.serie)}">${_cd_esc(o.label)} · ${o.estado ? _cd_esc(o.estado) : "sin cierre"}</span>`).join(" ");
+		return `<div class="cd-alert cd-alert-warn"><b>Cierre por serie:</b> solo cuentan las facturas de ${_cd_esc(s.serie_label || this.form.serie)} (ventas, cobros, devoluciones y recuperación de cartera).
+			${otras.length ? `<div style="margin-top:4px;">Otras series del día: ${chips}</div>` : ""}</div>`;
+	}
+
 	_clasificacion_facturas(facts) {
 		const grupos = {
 			contado: { count: 0, total: 0, alertas: 0 },
@@ -529,6 +632,7 @@ class FacexCierreDiario {
 	${cerrado ? `<div class="cd-alert cd-alert-ok"><b>Día cerrado</b> por ${_cd_esc(doc.cerrado_por)} el ${frappe.datetime.str_to_user(doc.cerrado_en)}. Las facturas y pagos de esta fecha están congelados; solo Gerencia puede reabrir.</div>` : ""}
 	${estado === "Reabierto" ? `<div class="cd-alert cd-alert-danger"><b>Cierre reabierto</b> por ${_cd_esc(doc.reabierto_por)} el ${frappe.datetime.str_to_user(doc.reabierto_en)} — motivo: ${_cd_esc(doc.motivo_reapertura)}. Realice las correcciones necesarias, recalcule y vuelva a cerrar el día.</div>` : ""}
 	${!canManage ? `<div class="cd-alert cd-alert-warn">Solo lectura: este cierre pertenece a otro usuario.</div>` : ""}
+	${this._series_dia_html(s)}
 
 	<div class="cd-card">
 		<div class="cd-grid-4">
@@ -537,6 +641,12 @@ class FacexCierreDiario {
 				${ctx.es_gerencia && !doc
 					? `<select id="cd-usuario" class="cd-input">${ctx.users.map((u) => `<option value="${_cd_esc(u.name)}" ${u.name === this.form.usuario ? "selected" : ""}>${_cd_esc(u.full_name || u.name)}</option>`).join("")}</select>`
 					: `<input type="text" class="cd-input" value="${_cd_esc(this.user_label(this.form.usuario))}" disabled>`}
+			</div>
+			<div class="cd-field"><label>Serie</label>
+				${!doc && s.series_dia
+					? `<select id="cd-serie" class="cd-input">${[s.series_dia.todas].concat(s.series_dia.series || [])
+						.map((o) => `<option value="${_cd_esc(o.serie)}" ${o.serie === this.form.serie ? "selected" : ""}>${_cd_esc(o.label)}</option>`).join("")}</select>`
+					: `<input type="text" class="cd-input" value="${_cd_esc(s.serie_label || (doc && doc.serie_label) || this.form.serie)}" title="${_cd_esc(this.form.serie)}" disabled>`}
 			</div>
 			<div class="cd-field"><label>Almacén (referencia)</label>
 				<select id="cd-almacen" class="cd-input" ${editable ? "" : "disabled"}><option value="">—</option>${ctx.warehouses.map((w) => `<option value="${_cd_esc(w.name)}" ${w.name === this.form.almacen ? "selected" : ""}>${_cd_esc(w.warehouse_name || w.name)}</option>`).join("")}</select>
@@ -771,15 +881,17 @@ class FacexCierreDiario {
 		});
 
 		if (!this.doc) {
-			// Nuevo: cambiar fecha/usuario recalcula (y si ya existe, lo abre).
-			const reload = () => {
+			// Nuevo: cambiar fecha/serie recalcula (y si ya existe, lo abre);
+			// otro usuario tiene otras series, así que vuelve al selector.
+			const reload = (serie) => {
 				const fecha = this.$body.find("#cd-fecha").val();
 				const usuario = this.$body.find("#cd-usuario").val() || this.form.usuario;
 				if (!fecha) return;
-				this._open_new(fecha, usuario, this.form.egresos);
+				this._open_new(fecha, usuario, this.form.egresos, serie);
 			};
-			this.$body.find("#cd-fecha").on("change", reload);
-			this.$body.find("#cd-usuario").on("change", reload);
+			this.$body.find("#cd-fecha").on("change", () => reload(this.form.serie));
+			this.$body.find("#cd-serie").on("change", (e) => reload(e.target.value));
+			this.$body.find("#cd-usuario").on("change", () => reload(""));
 		}
 
 		this.$body.find(".cd-reclass").on("click", (e) => {
@@ -829,6 +941,7 @@ class FacexCierreDiario {
 			name: this.doc ? this.doc.name : "",
 			fecha: this.form.fecha,
 			usuario: this.form.usuario,
+			serie: this.form.serie,
 			almacen: this.form.almacen,
 			egresos: this.form.egresos,
 			observaciones: this.form.observaciones,
@@ -866,7 +979,7 @@ class FacexCierreDiario {
 		if (!close) { doit(); return; }
 		frappe.confirm(
 			`<div style="font-size:14px;">
-				<p><b>¿Cerrar el día ${this.short_date(this.form.fecha)} de ${_cd_esc(this.user_label(this.form.usuario))}?</b></p>
+				<p><b>¿Cerrar el día ${this.short_date(this.form.fecha)} de ${_cd_esc(this.user_label(this.form.usuario))} — ${_cd_esc((this.snap || {}).serie_label || this.form.serie)}?</b></p>
 				<p>Efectivo cobrado: <b>${this.fmt(t.cobro_efectivo)}</b> · Egresos: <b>${this.fmt(t.egresos)}</b> · A depositar: <b>${this.fmt(t.a_depositar)}</b></p>
 				<p class="text-muted">A partir de este momento no se podrán anular facturas ni modificar pagos de esta fecha. Solo un usuario de Gerencia podrá reabrir el cierre.</p>
 			</div>`,
@@ -986,6 +1099,7 @@ class FacexCierreDiario {
 <h1>D E T A L L E &nbsp; D E &nbsp; V E N T A &nbsp; D I A R I A</h1>
 <table class="hdr"><tr><td><b>FECHA</b></td><td>${this.long_date(this.form.fecha)}</td><td><b>USUARIO</b></td><td>${_cd_esc(this.user_label(this.form.usuario))}</td></tr>
 <tr><td><b>COMPAÑÍA</b></td><td>${_cd_esc(this.ctx.company)}</td><td><b>ALMACÉN</b></td><td>${_cd_esc(almacen)}</td></tr>
+<tr><td><b>SERIE</b></td><td colspan="3">${_cd_esc(s.serie_label || (doc && doc.serie_label) || this.form.serie || "Todas las series")}</td></tr>
 <tr><td><b>CIERRE</b></td><td>${doc ? _cd_esc(doc.name) + " · " + _cd_esc(doc.estado) : "(sin guardar)"}</td><td><b>CERRADO</b></td><td>${doc && doc.cerrado_por ? _cd_esc(doc.cerrado_por) + " " + frappe.datetime.str_to_user(doc.cerrado_en) : "—"}</td></tr></table>
 
 <table><thead><tr><th style="width:36px;">No.</th><th>DESCRIPCIÓN / FAMILIA</th><th class="r">Cantidad</th><th class="r">Precio por Unidad</th><th class="r">TOTAL</th></tr></thead>
@@ -1117,6 +1231,15 @@ body.facex-fullscreen-mode .layout-container, body.facex-fullscreen-mode #space-
 .cd-chip { background:#fff;border:1px solid #fbd38d;border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;text-align:left;color:#0f172a; }
 .cd-chip:hover { border-color:#b45309;box-shadow:0 2px 6px rgba(0,0,0,.08); }
 .cd-chip-meta { display:block;color:#6c757d;font-size:11px; }
+.cd-serie-grid { display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px; }
+.cd-serie-opt { background:#fff;border:1px solid #d1d8dd;border-radius:8px;padding:10px 12px;text-align:left;cursor:pointer;color:#0f172a; }
+.cd-serie-opt:hover:not([disabled]) { border-color:#5e64ff;box-shadow:0 2px 6px rgba(0,0,0,.08); }
+.cd-serie-opt[disabled] { opacity:.5;cursor:not-allowed; }
+.cd-serie-todas { border-color:#c7d2fe;background:#f5f7ff; }
+.cd-serie-head { display:flex;justify-content:space-between;align-items:center;gap:6px;font-size:14px; }
+.cd-serie-meta { color:#475569;font-size:12px;margin-top:4px; }
+.cd-serie-code { color:#6c757d;font-size:11px;margin-top:2px;word-break:break-all; }
+.cd-serie-why { color:#b45309;font-size:11px;margin-top:4px; }
 
 .cd-class-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px; }
 .cd-class-box { display:block;text-align:left;background:#fafbfc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;cursor:pointer;font-family:inherit; }

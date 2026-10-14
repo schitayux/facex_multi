@@ -266,14 +266,17 @@ def create_or_update_familia(data_json: str, company: str = None):
     doc.activa = int(data.get("activa", 1) or 0)
     doc.costo_estandar = flt(data.get("costo_estandar") or 0)
 
-    doc.set("precios", [])
-    for row in data.get("precios") or []:
-        if not row.get("price_list"):
-            continue
-        doc.append("precios", {
-            "price_list": row["price_list"],
-            "price_list_rate": flt(row.get("price_list_rate") or 0),
-        })
+    # Los precios ya no se editan desde Familias (se mantienen en Mantenimiento ›
+    # Precios): solo se reemplazan si el cliente los envía explícitamente.
+    if "precios" in data:
+        doc.set("precios", [])
+        for row in data.get("precios") or []:
+            if not row.get("price_list"):
+                continue
+            doc.append("precios", {
+                "price_list": row["price_list"],
+                "price_list_rate": flt(row.get("price_list_rate") or 0),
+            })
 
     doc.save(ignore_permissions=False)
     frappe.db.commit()

@@ -854,6 +854,11 @@ def get_invoice_payment_detail(name: str):
         order_by="idx asc",
     )
 
+    # Saldo contra el total certificado en SAT (`grand_total`, sin el redondeo
+    # de ERPNext) menos los pagos eFast. `outstanding_amount` no sirve aquí: no
+    # baja mientras el Payment Entry siga en borrador y además está redondeado.
+    invoice.saldo = max(flt(invoice.grand_total) - sum(flt(p.amount) for p in payments), 0.0)
+
     return {"invoice": invoice, "payments": payments}
 
 
@@ -1206,23 +1211,18 @@ def _cierre_bloqueo_de_pago(pe_posting_date, invoice_name) -> dict:
     from facex_multi.api import cierre as _cierre
 
     si = frappe.db.get_value(
-        "Sales Invoice", invoice_name, ["company", "owner", "posting_date"], as_dict=True
+        "Sales Invoice", invoice_name, ["company", "owner", "posting_date", "naming_series"], as_dict=True
     )
     if not si:
         return {}
-    cerrados = _cierre._closed_dates(si.company, si.owner)
+    cerrados = _cierre._closed_dates(si.company, si.owner, si.naming_series)
     if not cerrados:
         return {}
-    if not (getdate(si.posting_date) in cerrados
-            or _cierre._row_frozen(pe_posting_date, si.posting_date, cerrados)):
+    if not _cierre._row_frozen(pe_posting_date, si.posting_date, cerrados):
         return {}
     fecha = si.posting_date if getdate(si.posting_date) in cerrados else pe_posting_date
     return {
-        "cierre": frappe.db.get_value(
-            "FacEx Cierre Diario",
-            {"company": si.company, "usuario": si.owner, "fecha": getdate(fecha), "estado": "Cerrado"},
-            "name",
-        ) or "",
+        "cierre": _cierre._closed_name(si.company, si.owner, fecha, si.naming_series),
         "fecha": str(getdate(fecha)),
         "usuario": si.owner,
         "sales_invoice": invoice_name,
@@ -1322,11 +1322,11 @@ def _assert_pago_facex_no_congelado(invoice_name, payment_date) -> None:
     from facex_multi.api import cierre as _cierre
 
     si = frappe.db.get_value(
-        "Sales Invoice", invoice_name, ["company", "owner", "posting_date"], as_dict=True
+        "Sales Invoice", invoice_name, ["company", "owner", "posting_date", "naming_series"], as_dict=True
     )
     if not si:
         return
-    cerrados = _cierre._closed_dates(si.company, si.owner)
+    cerrados = _cierre._closed_dates(si.company, si.owner, si.naming_series)
     if cerrados and _cierre._row_frozen(payment_date, si.posting_date, cerrados):
         frappe.throw(
             f"El abono del {frappe.utils.escape_html(str(payment_date))} para la factura "
@@ -2899,6 +2899,152 @@ def _create_payment_entry(invoice_doc, payment_method, payment_date, reference, 
 # 10. Guardar pagos eFast → Payment Entry borrador
 # ---------------------------------------------------------------------------
 
+def _validar_pagos_activo(company) -> bool:
+    from facex_multi.api.permissions import get_facex_company_config
+    return bool(frappe.utils.cint(get_facex_company_config(company).get("validar_pagos_automaticamente")))
+
+
+def _validar_payment_entries(names) -> list:
+    """Valida (submit) los Payment Entry en borrador recién creados. Un fallo no
+    deshace el abono: el comprobante queda en borrador y se avisa."""
+    validados = []
+    for n in names:
+        try:
+            pe = frappe.get_doc("Payment Entry", n)
+            if pe.docstatus == 0:
+                pe.submit()
+                validados.append(n)
+        except Exception:
+            frappe.log_error(frappe.get_traceback(), f"FacEx: no se pudo validar {n}")
+            frappe.msgprint(
+                f"El comprobante {n} quedó en borrador: no se pudo validar automáticamente. "
+                "Revise el error en ERPNext.", indicator="orange",
+            )
+    if validados:
+        frappe.db.commit()
+    return validados
+
+
+def _estado_pagos(name) -> dict:
+    doc = frappe.get_doc("Sales Invoice", name)
+    return {
+        "success":               True,
+        "custom_pagado":         int(doc.custom_pagado or 0),
+        "custom_efast_payments": [r.as_dict() for r in (doc.get("custom_efast_payments") or [])],
+        "outstanding_amount":    float(doc.outstanding_amount or 0),
+        "_payment_entries":      _payment_entries_summary(name, doc.docstatus),
+    }
+
+
+@frappe.whitelist()
+def anular_abono(invoice_name: str, payment_entry: str):
+    """Borra un abono desde la pestaña Pagos: cancela su Payment Entry (o borra
+    el borrador) y quita la fila de «Pagos eFast» correspondiente. Cancelar un
+    comprobante validado exige «Validar pagos automáticamente» en la compañía y
+    respeta el Cierre Diario (cierre.guard_payment_entry_cancel)."""
+    from facex_multi.api.permissions import require_facex_permission
+    name = (invoice_name or "").strip()
+    company = frappe.db.get_value("Sales Invoice", name, "company")
+    if not company:
+        frappe.throw(f"Factura {name} no encontrada.")
+    require_facex_permission(company, "puede_guardar", msg="No tiene permiso para modificar pagos en FacEx.")
+
+    pe = frappe.get_doc("Payment Entry", payment_entry)
+    refs = [r for r in pe.references]
+    if not refs or any(r.reference_name != name for r in refs):
+        frappe.throw(f"El comprobante {pe.name} no pertenece solo a la factura {name}; anúlelo desde ERPNext.")
+
+    fecha, monto, ref_no = pe.posting_date, flt(pe.paid_amount), (pe.reference_no or "").strip()
+    if pe.docstatus == 1:
+        if not _validar_pagos_activo(company):
+            frappe.throw("Para anular un pago validado desde FacEx active «Validar pagos automáticamente» en la configuración de la compañía, o anúlelo en ERPNext.")
+        pe.cancel()
+    elif pe.docstatus == 0:
+        frappe.delete_doc("Payment Entry", pe.name, ignore_permissions=True, force=True)
+    else:
+        frappe.throw(f"El comprobante {pe.name} ya está cancelado.")
+
+    filas = frappe.get_all(
+        "eFast Invoice Payment",
+        filters={"parenttype": "Sales Invoice", "parent": name},
+        fields=["name", "payment_date", "amount", "reference"],
+        order_by="idx desc",
+    )
+    cand = [f for f in filas if str(f.payment_date) == str(fecha) and abs(flt(f.amount) - monto) < 0.01]
+    cand.sort(key=lambda f: (f.reference or "").strip() != ref_no)
+    if cand:
+        frappe.db.delete("eFast Invoice Payment", {"name": cand[0].name})
+    if not frappe.db.count("eFast Invoice Payment", {"parenttype": "Sales Invoice", "parent": name}):
+        frappe.db.set_value("Sales Invoice", name, "custom_pagado", 0, update_modified=False)
+    frappe.db.commit()
+    return _estado_pagos(name)
+
+
+def _append_abonos(name, payments, submitted, all_pes):
+    """Factura con Payment Entry ya validado: los pagos existentes no se tocan
+    (se gestionan en ERPNext) y `payments` trae SOLO los abonos nuevos, que se
+    agregan como fila eFast + Payment Entry en borrador. Cada abono respeta el
+    Cierre Diario: su fecha no puede caer en un día cerrado del dueño/serie de
+    la factura (ver cierre._row_frozen); una fecha posterior sí es válida."""
+    doc = frappe.get_doc("Sales Invoice", name)
+    if doc.docstatus != 1:
+        frappe.throw(f"La factura {name} no está validada.")
+
+    nuevos = []
+    for row in payments:
+        amount = float(row.get("amount") or 0)
+        if amount <= 0:
+            continue
+        nuevos.append({
+            "payment_method": row.get("payment_method") or "Efectivo",
+            "payment_date":   row.get("payment_date") or today(),
+            "reference":      row.get("reference") or "",
+            "amount":         amount,
+        })
+    if not nuevos:
+        frappe.throw("Ingrese al menos un abono con monto mayor a cero.")
+    if any(n["payment_method"] == "Contra Entrega" for n in nuevos):
+        frappe.throw("Un abono sobre una factura con pagos validados no puede ser Contra Entrega.")
+
+    # Los borradores aún no bajan el saldo de la factura: se descuentan aquí
+    # para no permitir abonar dos veces el mismo saldo.
+    en_borrador = sum(float(pe.get("paid_amount") or 0) for pe in all_pes if pe.get("docstatus") == 0)
+    disponible  = float(doc.outstanding_amount or 0) - en_borrador
+    if sum(n["amount"] for n in nuevos) > disponible + 0.01:
+        frappe.throw(
+            f"Los abonos ({sum(n['amount'] for n in nuevos):,.2f}) superan el saldo disponible "
+            f"de la factura {name} ({max(disponible, 0):,.2f})."
+        )
+
+    for n in nuevos:
+        _assert_pago_facex_no_congelado(name, n["payment_date"])
+
+    created_pes = []
+    for n in nuevos:
+        doc.append("custom_efast_payments", n)
+        created_pes.append(
+            _create_payment_entry(doc, n["payment_method"], n["payment_date"], n["reference"], n["amount"])
+        )
+    doc.custom_pagado = 1
+    doc.flags.ignore_validate_update_after_submit = True
+    doc.save(ignore_permissions=False)
+    frappe.db.commit()
+    if _validar_pagos_activo(doc.company):
+        _validar_payment_entries(created_pes)
+
+    doc.reload()
+    return {
+        "success":               True,
+        "total_paid":            sum(n["amount"] for n in nuevos),
+        "pagado":                1,
+        "payment_entries":       created_pes,
+        "custom_pagado":         int(doc.custom_pagado or 0),
+        "custom_efast_payments": [r.as_dict() for r in (doc.get("custom_efast_payments") or [])],
+        "outstanding_amount":    float(doc.outstanding_amount or 0),
+        "_payment_entries":      _payment_entries_summary(name, doc.docstatus),
+    }
+
+
 @frappe.whitelist()
 def save_payments(invoice_name: str, payments_json: str, pagado: str = "0"):
     """
@@ -2923,10 +3069,7 @@ def save_payments(invoice_name: str, payments_json: str, pagado: str = "0"):
     all_pes   = _get_linked_payment_entries(name)
     submitted = [pe for pe in all_pes if pe.get("docstatus") == 1]
     if submitted:
-        frappe.throw(
-            f"La factura {name} tiene {len(submitted)} pago(s) ya validado(s) en ERPNext. "
-            "No se puede modificar el estado de pago desde FacEx."
-        )
+        return _append_abonos(name, payments, submitted, all_pes)
 
     # Eliminar PEs borrador existentes y recrear
     _delete_draft_payment_entries(name)
@@ -2970,6 +3113,8 @@ def save_payments(invoice_name: str, payments_json: str, pagado: str = "0"):
     doc.flags.ignore_validate_update_after_submit = True
     doc.save(ignore_permissions=False)
     frappe.db.commit()
+    if created_pes and _validar_pagos_activo(doc.company):
+        _validar_payment_entries(created_pes)
 
     total_paid = sum(float(r.get("amount") or 0) for r in payments)
     # Estado ya persistido, tal como lo devolvería get_invoice: el page lo

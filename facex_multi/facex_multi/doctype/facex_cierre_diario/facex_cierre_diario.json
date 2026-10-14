@@ -10,6 +10,7 @@
   "fecha",
   "usuario",
   "usuario_nombre",
+  "serie",
   "almacen",
   "cb_cabecera",
   "estado",
@@ -99,6 +100,17 @@
    "fieldtype": "Data",
    "label": "Nombre del Usuario",
    "read_only": 1
+  },
+  {
+   "default": "Todas",
+   "fieldname": "serie",
+   "fieldtype": "Data",
+   "label": "Serie de Facturación",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "«Todas» = cierre consolidado de todas las series del usuario. Una serie concreta = el día se cierra por serie (un cierre por cada serie)."
   },
   {
    "description": "Solo informativo — se imprime en el encabezado del cierre.",
@@ -393,7 +405,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-09-29 07:54:38.292532",
+ "modified": "2026-10-08 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Cierre Diario",

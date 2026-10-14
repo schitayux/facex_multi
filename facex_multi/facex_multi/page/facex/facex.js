@@ -587,20 +587,6 @@ class EFastSalePage {
   <!-- ── VIEW 2: BILLING INTERFACE ───────────────────────────────── -->
   <div id="ef-billing-view" class="ef-view-content" style="display:none;">
 
-    <!-- Riel de secciones: mapa de la pantalla pegado al borde derecho. Marca
-         en qué sección vas mientras bajás y permite saltar a cualquiera.
-         Se oculta en pantallas angostas (ver Responsive). -->
-    <div class="ef-rail" id="ef-section-rail">
-      <button type="button" class="ef-rail-toggle" id="ef-rail-toggle-all" title="Expandir o colapsar todas las tarjetas">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 13 12 18 17 13"></polyline><polyline points="7 6 12 11 17 6"></polyline></svg>
-      </button>
-      <button type="button" class="ef-rail-item" data-target="cliente"><span class="ef-rail-label">Cliente</span><span class="ef-rail-dot"></span></button>
-      <button type="button" class="ef-rail-item" data-target="documento"><span class="ef-rail-label">Documento</span><span class="ef-rail-dot"></span></button>
-      <button type="button" class="ef-rail-item" data-target="fel"><span class="ef-rail-label">Facturación FEL</span><span class="ef-rail-dot"></span></button>
-      <button type="button" class="ef-rail-item" data-target="detalle"><span class="ef-rail-label">Detalle</span><span class="ef-rail-dot"></span></button>
-      <button type="button" class="ef-rail-item" data-target="totales"><span class="ef-rail-label">Totales</span><span class="ef-rail-dot"></span></button>
-    </div>
-
     <button type="button" class="ef-to-top" id="ef-to-top" title="Volver arriba">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
     </button>
@@ -1451,7 +1437,7 @@ class EFastSalePage {
   </div>
 
   <!-- ── VIEW 4: MAINTENANCE / MANTENIMIENTO ───────────────────────── -->
-  <div id="ef-maintenance-view" class="ef-view-content" style="display:none; padding: 24px; max-width: 1200px; margin: 0 auto; font-family: var(--ef-font);">
+  <div id="ef-maintenance-view" class="ef-view-content" style="display:none; padding: 24px; max-width: 1600px; margin: 0 auto; font-family: var(--ef-font);">
     <div style="background: linear-gradient(135deg, #153375, #4361ee); color: white; padding: 20px 24px; border-radius: 12px; margin-bottom: 24px; box-shadow: 0 10px 15px -3px rgba(21,51,117,0.2);">
       <h1 style="margin:0; font-size: 20px; font-weight: 800; color: #ffffff !important;">Panel de Mantenimiento</h1>
       <p style="margin: 4px 0 0 0; opacity: 0.9; font-size: 12px; color: #ffffff !important;">Administra clientes, catálogo de productos y precios estándar de venta.</p>
@@ -1877,7 +1863,8 @@ class EFastSalePage {
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:12px;">
           <div style="display:flex; align-items:center; gap:8px;">
             <span style="font-weight:700; color:var(--ef-primary); font-size:16px;">Mantenimiento de Precios</span>
-            <select id="ef-maint-price-list-select" class="ef-select" style="width:240px; padding: 4px 8px; font-size: 13px;"></select>
+            <label for="ef-maint-price-list-select" style="margin:0 0 0 8px; font-size:12px; font-weight:600; color:#475569;">Lista de precios <span style="color:#dc2626;">*</span></label>
+            <select id="ef-maint-price-list-select" class="ef-select ef-maint-price-list-required" style="width:280px; padding: 4px 8px; font-size: 13px;"></select>
           </div>
           <div id="ef-maint-prices-status" style="font-size:11px; color:#64748b;"></div>
         </div>
@@ -1903,7 +1890,7 @@ class EFastSalePage {
             <button id="ef-maint-prices-btn-export" class="ef-btn ef-btn-sm ef-btn-primary">Exportar seleccionados a Excel</button>
           </div>
         </div>
-        <div class="ef-table-wrapper" style="max-height: 640px; overflow-y: auto;">
+        <div class="ef-table-wrapper ef-maint-tw" style="overflow-y: auto;">
           <table class="ef-table">
             <thead>
               <tr>
@@ -1948,7 +1935,7 @@ class EFastSalePage {
             <button id="ef-fam-btn-new" class="ef-btn ef-btn-sm ef-btn-primary">+ Nueva Familia</button>
           </div>
         </div>
-        <div class="ef-table-wrapper" style="max-height: 640px; overflow-y: auto;">
+        <div class="ef-table-wrapper ef-maint-tw" style="overflow-y: auto;">
           <table class="ef-table">
             <thead><tr>
               <th class="ef-th" style="width:150px;">Familia</th>
@@ -1984,7 +1971,7 @@ class EFastSalePage {
           <button type="button" class="ef-ml-chip" data-filtro="vacios">Sin ítems</button>
           <span id="ef-ig-status" style="font-size:11px; color:#64748b; margin-left:6px; align-self:center;"></span>
         </div>
-        <div class="ef-table-wrapper" style="max-height: 640px; overflow-y: auto;">
+        <div class="ef-table-wrapper ef-maint-tw" style="overflow-y: auto;">
           <table class="ef-table">
             <thead><tr>
               <th class="ef-th">Grupo</th>
@@ -5526,6 +5513,25 @@ body.facex-fullscreen-mode .ef-main-layout {
   .ef-ml-actions .ef-btn { margin: 0 !important; flex: 1 1 auto; }
 }
 
+/* Mantenimiento: aprovecha el alto de la ventana, pestañas con scroll horizontal
+   y encabezado fijo en la rejilla de Precios. */
+#ef-maintenance-view .ef-maint-tw { max-height: max(380px, calc(100vh - 340px)); }
+#ef-maintenance-view .ef-tabs-nav { overflow-x: auto; flex-wrap: nowrap; scrollbar-width: thin; }
+#ef-maintenance-view .ef-tab-btn { white-space: nowrap; flex: 0 0 auto; }
+#ef-maint-tab-precios thead tr:first-child th { position: sticky; top: 0; z-index: 3; height: 34px; background: var(--ef-card, #fff); box-shadow: 0 1px 0 var(--ef-border); }
+#ef-maint-tab-precios thead .ef-cust-popup-filter-row td { position: sticky; top: 34px; z-index: 2; background: var(--ef-card, #fff); }
+.ef-maint-price-list-required.ef-invalid { border-color: #dc2626 !important; box-shadow: 0 0 0 3px rgba(220,38,38,.12); }
+.ef-price-empty { text-align: center; padding: 48px 16px !important; color: var(--ef-text-muted, #64748b); }
+.ef-price-empty b { display: block; font-size: 15px; color: var(--ef-primary); margin-bottom: 4px; }
+.ef-price-row-dirty > td { background: #fffbeb; }
+.ef-price-row-saved > td { background: #ecfdf5; transition: background .6s; }
+.ef-price-row-noprice .ef-price-input { border-color: #f59e0b; }
+.ef-price-badge { display: inline-block; font-size: 10px; font-weight: 700; color: #b45309; background: #fef3c7; border-radius: 10px; padding: 1px 7px; margin-left: 6px; }
+.ef-btn-save-price[disabled] { opacity: .35; cursor: default; }
+.ef-fam-prices-list { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-bottom: 8px; }
+.ef-fam-prices-list td, .ef-fam-prices-list th { padding: 4px 8px; border-bottom: 1px solid var(--ef-border, #e2e8f0); text-align: left; }
+.ef-fam-prices-list td:last-child, .ef-fam-prices-list th:last-child { text-align: right; }
+
 /* Familias: productos (hijos) desplegados bajo cada familia */
 .ef-fam-kids-btn {
   border: 1px solid #c7d2fe; background: #eef2ff; color: #3730a3; border-radius: 12px;
@@ -5706,7 +5712,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 		// Fecha de emisión
 		this.$body.find("#ef-posting-date").on("change", (e) => {
 			this.doc.posting_date = e.target.value;
-			if (this._work_gate && (this._work_gate.cerrados || []).includes(e.target.value)) {
+			const g = this._work_gate || {};
+			if ((g.cerrados || []).includes(e.target.value)
+				|| ((g.cerrados_serie || {})[e.target.value] || []).includes(this.doc.naming_series)) {
 				frappe.show_alert({
 					message: `El día ${frappe.datetime.str_to_user(e.target.value)} ya tiene Cierre Diario cerrado: no se puede facturar con esa fecha. Pida a Gerencia que reabra el cierre.`,
 					indicator: "red",
@@ -10672,11 +10680,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 			$empty.hide();
 			$addBtn.hide();
 			$saveBtn.hide();
+			if (this._abonosDoc !== this.doc.name) { this._abonos = []; this._abonosDoc = this.doc.name; }
 			// Aviso en la parte superior de la tabla
 			const $notice = $(`<tr><td colspan="6" style="padding:8px 10px;background:#f0fdf4;border-bottom:1px solid #bbf7d0;font-size:11px;color:#166534;">
 				<strong>✓ Pagos validados en ERPNext.</strong> Para modificarlos gestione el Comprobante de Pago directamente en ERPNext.
 			</td></tr>`);
 			$tbody.append($notice);
+			const autoVal = !!(this.company_config || {}).validar_pagos_automaticamente;
 			pes.submitted.forEach((pe) => {
 				const link = `/app/payment-entry/${encodeURIComponent(pe.name)}`;
 				const row = `<tr class="ef-tr">
@@ -10685,10 +10695,23 @@ body.facex-fullscreen-mode .ef-main-layout {
 					<td class="ef-td">${pe.posting_date || ""}</td>
 					<td class="ef-td"><a href="${link}" target="_blank" style="color:#2563eb;text-decoration:underline;font-size:11px">${pe.name}</a></td>
 					<td class="ef-td ef-td-num">${_fmtCurrency(pe.paid_amount, this.doc.currency || "GTQ")}</td>
-					<td class="ef-td"></td>
+					<td class="ef-td">${autoVal ? `<button class="ef-btn-del ef-del-pe" data-pe="${pe.name}" title="Anular este pago">×</button>` : ""}</td>
 				</tr>`;
 				$tbody.append(row);
 			});
+			(pes.draft || []).forEach((pe) => {
+				const link = `/app/payment-entry/${encodeURIComponent(pe.name)}`;
+				$tbody.append(`<tr class="ef-tr">
+					<td class="ef-td ef-td-idx" style="color:#b45309" title="Borrador: falta validarlo en ERPNext">…</td>
+					<td class="ef-td">${pe.mode_of_payment || ""}</td>
+					<td class="ef-td">${pe.posting_date || ""}</td>
+					<td class="ef-td"><a href="${link}" target="_blank" style="color:#2563eb;text-decoration:underline;font-size:11px">${pe.name}</a> (borrador)</td>
+					<td class="ef-td ef-td-num">${_fmtCurrency(pe.paid_amount, this.doc.currency || "GTQ")}</td>
+					<td class="ef-td"><button class="ef-btn-del ef-del-pe" data-pe="${pe.name}" title="Borrar este borrador">×</button></td>
+				</tr>`);
+			});
+			this.$body.find(".ef-del-pe").off("click").on("click", (e) => this._anular_abono($(e.currentTarget).data("pe")));
+			this._render_abonos_nuevos($tbody);
 		} else {
 			const payments = this.doc.custom_efast_payments;
 			$addBtn.show();
@@ -10717,6 +10740,90 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		// Sync footer pagado UI
 		this._sync_pagado_ui();
+	}
+
+	// Factura con Payment Entry validado: los pagos existentes son de solo
+	// lectura, pero mientras quede saldo se pueden agregar abonos nuevos. Su
+	// fecha no puede caer en un día con Cierre Diario cerrado (lo valida el
+	// servidor); por omisión se propone hoy.
+	_abono_saldo() {
+		const pes = this.doc._payment_entries || {};
+		const enBorrador = (pes.draft || []).reduce((s, pe) => s + (parseFloat(pe.paid_amount) || 0), 0);
+		const abonos = (this._abonos || []).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
+		return (parseFloat(this.doc.outstanding_amount) || 0) - enBorrador - abonos;
+	}
+
+	_render_abonos_nuevos($tbody) {
+		const cur = this.doc.currency || "GTQ";
+		(this._abonos || []).forEach((p, i) => $tbody.append(this._payment_row_html(i, p)));
+		const saldo = this._abono_saldo();
+		const $bar = $(`<tr><td colspan="6" style="padding:8px 10px;font-size:12px;">
+			<span>Saldo por abonar: <strong>${_fmtCurrency(Math.max(saldo, 0), cur)}</strong></span>
+			${saldo > 0.01 ? `<button class="btn btn-xs btn-default" id="ef-abono-add" style="margin-left:10px">+ Agregar abono</button>` : ""}
+			${(this._abonos || []).length ? `<button class="btn btn-xs btn-primary" id="ef-abono-save" style="margin-left:6px">Guardar abono(s)</button>` : ""}
+		</td></tr>`);
+		$tbody.append($bar);
+		$bar.find("#ef-abono-add").on("click", () => {
+			this._abonos.push({
+				payment_method: "Efectivo",
+				payment_date: frappe.datetime.get_today(),
+				reference: "",
+				amount: Math.max(this._abono_saldo(), 0),
+			});
+			this._render_payments_tab();
+		});
+		$bar.find("#ef-abono-save").on("click", () => this._save_abonos());
+		(this._abonos || []).forEach((p, i) => {
+			const $row = this.$body.find(`#ef-pay-row-${i}`);
+			$row.find(".ef-pay-method").on("change", (e) => { p.payment_method = e.target.value; });
+			$row.find(".ef-pay-date").on("change", (e) => { p.payment_date = e.target.value; });
+			$row.find(".ef-pay-ref").on("input", (e) => { p.reference = e.target.value; });
+			$row.find(".ef-pay-amount").on("change", (e) => {
+				p.amount = Math.max(parseFloat(e.target.value) || 0, 0);
+				this._render_payments_tab();
+			});
+			$row.find(".ef-del-payment").on("click", () => { this._abonos.splice(i, 1); this._render_payments_tab(); });
+		});
+	}
+
+	_anular_abono(peName) {
+		const invoiceName = this.doc.name;
+		frappe.confirm(
+			`¿Anular el pago <strong>${peName}</strong>? Se cancela su comprobante y la factura recupera ese saldo.`,
+			() => frappe.call({
+				method: "facex_multi.api.invoice.anular_abono",
+				args: { invoice_name: invoiceName, payment_entry: peName },
+				freeze: true,
+				freeze_message: "Anulando pago...",
+				callback: (r) => {
+					if (r.exc || !r.message) return;
+					frappe.show_alert({ message: "Pago anulado.", indicator: "green" });
+					if (this.doc.name === invoiceName) this._apply_payment_state(r.message);
+					this.load_invoice(invoiceName);
+				},
+			}),
+		);
+	}
+
+	_save_abonos() {
+		const invoiceName = this.doc.name;
+		if (this._abono_saldo() < -0.01) {
+			frappe.show_alert({ message: "Los abonos superan el saldo de la factura.", indicator: "red" });
+			return;
+		}
+		frappe.call({
+			method: "facex_multi.api.invoice.save_payments",
+			args: { invoice_name: invoiceName, payments_json: JSON.stringify(this._abonos || []), pagado: 1 },
+			freeze: true,
+			freeze_message: "Guardando abono...",
+			callback: (r) => {
+				if (r.exc || !r.message) return;
+				this._abonos = [];
+				frappe.show_alert({ message: (this.company_config || {}).validar_pagos_automaticamente ? "Abono guardado y validado." : "Abono guardado. Valide el comprobante en ERPNext.", indicator: "green" });
+				if (this.doc.name === invoiceName) this._apply_payment_state(r.message);
+				this.load_invoice(invoiceName);
+			},
+		});
 	}
 
 	_update_contra_entrega_note() {
@@ -11579,8 +11686,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 			method: "facex_multi.api.item.get_price_lists",
 			args: { company },
 			callback: (r) => {
-				const lists = (r.message || []).filter((l) => l.selling || !l.buying);
-				const src = lists.length ? lists : (r.message || []);
+				const lists = (r.message || []).filter((l) => l.selling);
+				const src = lists;
 				$sel.empty();
 				if (!src.length) {
 					$sel.append('<option value="">(lista de venta por defecto)</option>');
@@ -13291,8 +13398,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 				callback: (payRes) => {
 					const payments = payRes.message || [];
 					const totalPaid = payments.reduce((acc, curr) => acc + parseFloat(curr.amount || 0), 0.0);
-					// Usar outstanding_amount (no grand_total): refleja el redondeo aplicado por ERPNext
-					const balance = Math.max(0.0, parseFloat(res.outstanding_amount || 0) - totalPaid);
+					// Saldo contra el total certificado en SAT (grand_total) menos los
+					// pagos eFast. outstanding_amount está redondeado por ERPNext y,
+					// con el Payment Entry ya validado, restarle los pagos los cuenta dos veces.
+					const balance = Math.max(0.0, parseFloat(res.grand_total || 0) - totalPaid);
 
 					this.$body.find("#ef-receipt-total-paid").text(_fmtCurrency(totalPaid, "GTQ"));
 					this.$body.find("#ef-receipt-balance").text(_fmtCurrency(balance, "GTQ"));
@@ -13752,12 +13861,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 		});
 
 		this.$body.find("#ef-maint-price-list-select").on("change", () => {
+			this._sync_precios_controls();
 			this._load_maint_prices();
 		});
 
 		this.$body.find("#ef-maint-prices-f-familia").on("change", () => {
-			const fam = this.$body.find("#ef-maint-prices-f-familia").val();
-			this.$body.find("#ef-maint-prices-familia-apply").prop("disabled", !fam);
+			this._sync_precios_controls();
 			this._load_maint_prices();
 		});
 
@@ -13891,6 +14000,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 	_load_price_lists_dropdown_then_load_prices() {
 		const $select = this.$body.find("#ef-maint-price-list-select");
+		const previa = $select.val() || "";
 		$select.empty().append('<option value="">Cargando listas...</option>');
 
 		frappe.call({
@@ -13898,25 +14008,21 @@ body.facex-fullscreen-mode .ef-main-layout {
 			args: { company: this.doc.company || this.defaults.company || "" },
 			callback: (r) => {
 				$select.empty();
-				const lists = r.message || [];
+				const lists = (r.message || []).filter((l) => l.selling);
 				if (lists.length === 0) {
 					$select.append('<option value="">Sin listas activas</option>');
+					this._load_maint_prices();
 					return;
 				}
+				// Sin lista por defecto: el usuario debe elegirla a propósito.
+				$select.append('<option value="">— Seleccione una lista de precios —</option>');
 				lists.forEach((list) => {
-					// We prioritize Selling price lists or show both
 					const label = `${list.name} (${list.currency})`;
 					$select.append(`<option value="${_esc(list.name)}">${_esc(label)}</option>`);
 				});
-
-				// Auto-select defaults
-				const defaultList = this.defaults.default_price_list || "Standard Selling";
-				if ($select.find(`option[value="${defaultList}"]`).length) {
-					$select.val(defaultList);
-				} else if (lists.length > 0) {
-					$select.val(lists[0].name);
-				}
-
+				// Conserva la elección si el usuario ya había elegido una en esta sesión.
+				if (previa && $select.find(`option[value="${previa}"]`).length) $select.val(previa);
+				this._sync_precios_controls();
 				this._load_maint_prices();
 			}
 		});
@@ -13931,9 +14037,38 @@ body.facex-fullscreen-mode .ef-main-layout {
 					(r.message || []).forEach((f) => {
 						$fam.append(`<option value="${_esc(f.familia)}">${_esc(f.familia)}${f.descripcion ? " — " + _esc(f.descripcion) : ""}</option>`);
 					});
+					this._aplicar_familia_pendiente();
 				},
 			});
+		} else {
+			this._aplicar_familia_pendiente();
 		}
+	}
+
+	// Atajo desde Familias: abre Precios con la familia ya filtrada. La lista
+	// de precios la elige el usuario.
+	_ir_a_precios_familia(familia) {
+		this._familia_pendiente = familia;
+		this.$body.find('.ef-maint-tab-btn[data-maint-tab="precios"]').trigger("click");
+	}
+
+	_aplicar_familia_pendiente() {
+		const fam = this._familia_pendiente;
+		if (!fam) return;
+		const $fam = this.$body.find("#ef-maint-prices-f-familia");
+		if ($fam.find(`option[value="${fam}"]`).length) {
+			this._familia_pendiente = null;
+			$fam.val(fam).trigger("change");
+		}
+	}
+
+	// Lista obligatoria: marca el selector, habilita/inhabilita lo que depende de ella.
+	_sync_precios_controls() {
+		const plist = this.$body.find("#ef-maint-price-list-select").val();
+		const fam = this.$body.find("#ef-maint-prices-f-familia").val();
+		this.$body.find("#ef-maint-price-list-select").toggleClass("ef-invalid", !plist);
+		this.$body.find("#ef-maint-prices-familia-apply").prop("disabled", !(plist && fam));
+		this.$body.find("#ef-maint-prices-btn-mark-all, #ef-maint-prices-btn-unmark-all, #ef-maint-prices-btn-export, #ef-maint-prices-select-all").prop("disabled", !plist);
 	}
 
 	// ── Asignación de Precios por Utilidad ──
@@ -13980,8 +14115,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 			args: { company: this._ap_company() },
 			callback: (r) => {
 				$select.empty();
-				const lists = (r.message || []).filter((l) => l.selling || !l.buying);
-				const src = lists.length ? lists : (r.message || []);
+				const lists = (r.message || []).filter((l) => l.selling);
+				const src = lists;
 				if (!src.length) {
 					$select.append('<option value="">Sin listas activas</option>');
 				} else {
@@ -16114,7 +16249,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const familia = this.$body.find("#ef-maint-prices-f-familia").val() || "";
 
 		if (!plist) {
-			$tbody.html('<tr><td colspan="8" style="text-align:center; padding:10px; color:#64748b;">Seleccione una Lista de Precios primero</td></tr>');
+			$tbody.html('<tr><td colspan="8" class="ef-price-empty"><b>Elija una lista de precios</b>Seleccione arriba la lista que desea consultar o modificar; los productos se cargan al elegirla.</td></tr>');
+			$status.text("");
+			this._sync_precios_controls();
 			this._update_maint_prices_selected_count();
 			return;
 		}
@@ -16127,7 +16264,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			callback: (r) => {
 				$tbody.empty();
 				const items = r.message || [];
-				$status.text(items.length ? `${items.length} producto(s).` : "");
+				$status.text(items.length ? `${items.length} producto(s) en «${plist}»` : "");
 				this.$body.find("#ef-maint-prices-select-all").prop("checked", false);
 				if (items.length === 0) {
 					$tbody.html('<tr><td colspan="8" style="text-align:center; padding:10px; color:#64748b;">Sin productos</td></tr>');
@@ -16135,8 +16272,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 					return;
 				}
 				items.forEach((it) => {
+					const sinPrecio = !(parseFloat(it.price) > 0);
 					const $row = $(`
-						<tr class="ef-tr">
+						<tr class="ef-tr${sinPrecio ? " ef-price-row-noprice" : ""}">
 							<td class="ef-td" style="text-align:center;"><input type="checkbox" class="ef-price-chk" data-code="${_esc(it.item_code)}" /></td>
 							<td class="ef-td font-weight-bold ef-lbl-code"></td>
 							<td class="ef-td ef-lbl-name"></td>
@@ -16157,6 +16295,16 @@ body.facex-fullscreen-mode .ef-main-layout {
 					$row.find(".ef-lbl-group").text(it.item_group || "");
 					$row.find(".ef-lbl-familia").text(it.familia || "");
 					$row.find(".ef-lbl-uom").text(it.stock_uom);
+					if (sinPrecio) $row.find(".ef-lbl-currency").before('<span class="ef-price-badge">Sin precio</span>');
+					const $btnSave = $row.find(".ef-btn-save-price").prop("disabled", true);
+					let basePrice = parseFloat(it.price) || 0;
+					$row.find(".ef-price-input").on("input", (e) => {
+						const dirty = (parseFloat(e.target.value) || 0) !== basePrice;
+						$row.toggleClass("ef-price-row-dirty", dirty).removeClass("ef-price-row-saved");
+						$btnSave.prop("disabled", !dirty);
+					}).on("keydown", (e) => {
+						if (e.key === "Enter") { e.preventDefault(); if (!$btnSave.prop("disabled")) $btnSave.trigger("click"); }
+					});
 					$row.find(".ef-lbl-currency").text(it.currency || "GTQ");
 
 					$row.find(".ef-price-chk").on("change", () => {
@@ -16177,6 +16325,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 							freeze_message: "Actualizando precio...",
 							callback: (res) => {
 								if (!res.exc) {
+									basePrice = priceVal;
+									$row.removeClass("ef-price-row-dirty ef-price-row-noprice").addClass("ef-price-row-saved");
+									$row.find(".ef-price-badge").remove();
+									$btnSave.prop("disabled", true);
 									frappe.show_alert({ message: `Precio actualizado para ${it.item_code} en ${plist}`, indicator: "green" });
 								}
 							}
@@ -16371,16 +16523,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 							{ fieldtype: "Section Break", label: "Costo" },
 							{ fieldtype: "Currency", fieldname: "costo_estandar", label: "Costo Estándar sugerido", read_only: !editable },
 							{ fieldtype: "Section Break", label: "Precios por Lista" },
-							{
-								fieldtype: "Table", fieldname: "precios", label: "Precios",
-								cannot_add_rows: !editable, cannot_delete_rows: !editable, in_place_edit: true,
-								data: (data.precios || []).map((p) => ({ ...p })),
-								get_data: () => (data.precios || []),
-								fields: [
-									{ fieldtype: "Link", fieldname: "price_list", options: "Price List", label: "Lista de Precios", in_list_view: 1, columns: 7, reqd: 1, read_only: !editable },
-									{ fieldtype: "Currency", fieldname: "price_list_rate", label: "Precio", in_list_view: 1, columns: 3, reqd: 1, read_only: !editable },
-								],
-							},
+							{ fieldtype: "HTML", fieldname: "precios_html" },
 						],
 						primary_action_label: editable ? "Guardar" : null,
 						primary_action: editable ? (v) => {
@@ -16417,6 +16560,19 @@ body.facex-fullscreen-mode .ef-main-layout {
 						});
 					}
 					d.show();
+					const precios = data.precios || [];
+					const puedePrecios = !!(this.perms || {}).actualiza_precios;
+					const filas = precios.map((p) => `<tr><td>${_esc(p.price_list)}</td><td>${_fmtCurrency(p.price_list_rate, "GTQ")}</td></tr>`).join("");
+					d.get_field("precios_html").$wrapper.html(`
+						${precios.length
+							? `<table class="ef-fam-prices-list"><thead><tr><th>Lista de precios</th><th>Precio</th></tr></thead><tbody>${filas}</tbody></table>`
+							: `<div class="text-muted" style="font-size:12px; margin-bottom:8px;">Esta familia aún no tiene precios por lista.</div>`}
+						<div class="text-muted" style="font-size:11.5px; margin-bottom:8px;">Referencia solamente: los precios se modifican en Mantenimiento › Precios.</div>
+						${name && puedePrecios ? `<button type="button" class="btn btn-sm btn-default ef-fam-go-precios">Ir a Precios de esta familia →</button>` : ""}`);
+					d.get_field("precios_html").$wrapper.find(".ef-fam-go-precios").on("click", () => {
+						d.hide();
+						this._ir_a_precios_familia(name);
+					});
 					d.set_values({
 						familia: data.familia || "",
 						descripcion: data.descripcion || "",

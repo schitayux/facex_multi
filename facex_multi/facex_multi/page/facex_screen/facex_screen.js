@@ -2970,7 +2970,9 @@ class EFastPOSScreen {
 					method: "facex_multi.api.item.get_price_lists",
 					args: { company: this.doc.company },
 					callback: (rp) => {
-						const price_list = ((rp.message || [])[0] || {}).name || "";
+						const ventas = (rp.message || []).filter((l) => l.selling);
+						// Sin lista propia, el cliente nuevo queda con la general (LP-GEN).
+						const price_list = (ventas.find((l) => l.name.indexOf("(LP-GEN)") !== -1) || ventas[0] || {}).name || "";
 						frappe.call({
 							method: "facex_multi.api.customer.create_or_update_customer",
 							args: {
@@ -4718,7 +4720,7 @@ class EFastPOSScreen {
 				dlg.fields_dict.html.$wrapper.html(`
 					<div class="efs-pago-detail-summary">
 						<span>${__("Total factura")}: <strong>Q ${_efs_fmt(invoice.grand_total)}</strong></span>
-						<span>${__("Saldo pendiente")}: <strong>Q ${_efs_fmt(invoice.outstanding_amount)}</strong></span>
+						<span>${__("Saldo pendiente")}: <strong>Q ${_efs_fmt(invoice.saldo ?? invoice.outstanding_amount)}</strong></span>
 					</div>
 					<table class="efs-stock-table">
 						<thead><tr><th>Forma de Pago</th><th>Fecha</th><th>Referencia</th><th>Monto</th></tr></thead>

@@ -282,6 +282,7 @@ _COMPANY_CONFIG_FIELDS = [
     "maneja_inventario", "tipo_x_defecto",
     "mostrar_almacen", "mostrar_desc_pct", "mostrar_adenda", "mostrar_tipo", "mostrar_uom",
     "exige_pago_completo", "permite_pago_credito", "permite_pago_contra_entrega",
+    "validar_pagos_automaticamente",
     "exige_familia_item",
     "item_flete", "mayusculas_items", "mayusculas_clientes",
     "sin_sufijo_compania_items",
@@ -1087,6 +1088,17 @@ def get_facex_can_administer_transportistas(company: str) -> bool:
 
 def get_facex_can_upload_liquidaciones_transporte(company: str) -> bool:
     return _flag(company, "puede_cargar_liquidaciones_transporte")
+
+
+def get_facex_liquidacion_especial(company: str, user: str = None) -> dict:
+    """Excepción por usuario (no permiso, no viene del perfil): al cargar una
+    liquidación, el abono a la factura se topa en su saldo y lo que sobre queda
+    como excedente en la liquidación en vez de hacer fallar el Payment Entry.
+    Sin fila o sin el check → None (comportamiento normal)."""
+    row = _row(company, user)
+    if not row or not int(row.get("liquidacion_especial") or 0):
+        return None
+    return {"etiqueta": (row.get("etiqueta_liquidacion_especial") or "").strip() or "Liquidación Especial"}
 
 
 def get_facex_can_edit_guias_transporte(company: str) -> bool:

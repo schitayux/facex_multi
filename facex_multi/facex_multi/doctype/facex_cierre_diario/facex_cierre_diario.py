@@ -20,22 +20,41 @@ class FacExCierreDiario(Document):
 		self.calcular_totales()
 
 	def _validate_unique(self):
-		dup = frappe.db.get_value(
+		# Un cierre por (compañía, fecha, usuario, serie), y un día se cierra
+		# O consolidado («Todas») O por serie, nunca mezclado: si no, las
+		# facturas de una serie quedarían contadas en dos cierres.
+		from facex_multi.api.cierre import SERIE_TODAS, _norm_serie, _serie_label
+
+		self.serie = _norm_serie(self.serie)
+		otros = frappe.get_all(
 			"FacEx Cierre Diario",
-			{
+			filters={
 				"company": self.company,
 				"fecha": self.fecha,
 				"usuario": self.usuario,
 				"name": ["!=", self.name],
 			},
-			"name",
+			fields=["name", "serie"],
 		)
-		if dup:
-			frappe.throw(
-				_("Ya existe el cierre {0} para {1} el {2}.").format(
-					dup, self.usuario_nombre or self.usuario, frappe.format(self.fecha, {"fieldtype": "Date"})
+		quien = self.usuario_nombre or self.usuario
+		fecha = frappe.format(self.fecha, {"fieldtype": "Date"})
+		for o in otros:
+			serie = _norm_serie(o.serie)
+			if serie == self.serie:
+				frappe.throw(
+					_("Ya existe el cierre {0} de {1} para {2} el {3}.").format(
+						o.name, _serie_label(serie, self.company), quien, fecha
+					)
 				)
-			)
+			if SERIE_TODAS in (serie, self.serie):
+				frappe.throw(
+					_("El {0} de {1} ya se está cerrando {2} (cierre {3}). Un día se cierra consolidado "
+					  "(«Todas») o por serie, no de ambas formas.").format(
+						fecha, quien,
+						_("consolidado") if serie == SERIE_TODAS else _("por serie ({0})").format(_serie_label(serie, self.company)),
+						o.name,
+					)
+				)
 
 	def _validate_frozen(self):
 		# Un cierre Cerrado es inmutable salvo por la API (flags.facex_cierre_api),

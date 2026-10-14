@@ -12,6 +12,9 @@
   "cliente",
   "column_break_cabecera",
   "total_depositado",
+  "liquidacion_especial",
+  "etiqueta_especial",
+  "total_excedente",
   "sb_comision",
   "total_recargo_cobrado",
   "total_flete_cobrado",
@@ -69,6 +72,28 @@
    "fieldtype": "Currency",
    "in_list_view": 1,
    "label": "Total Depositado",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "liquidacion_especial",
+   "fieldtype": "Check",
+   "label": "Liquidación Especial",
+   "read_only": 1,
+   "description": "Cargada por un usuario con la excepción de FacEx Settings: el abono se topa en el saldo de la factura y el sobrante queda como excedente."
+  },
+  {
+   "depends_on": "liquidacion_especial",
+   "fieldname": "etiqueta_especial",
+   "fieldtype": "Data",
+   "label": "Mensaje Especial",
+   "read_only": 1
+  },
+  {
+   "depends_on": "liquidacion_especial",
+   "fieldname": "total_excedente",
+   "fieldtype": "Currency",
+   "label": "Total Excedente",
    "read_only": 1
   },
   {
@@ -147,7 +172,7 @@
  "index_web_pages_for_search": 0,
  "istable": 0,
  "links": [],
- "modified": "2026-07-27 00:00:00.000000",
+ "modified": "2026-10-08 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Liquidacion Transportista",

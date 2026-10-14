@@ -10,7 +10,18 @@ snapshot del resumen (ventas, fletes, cobros por forma de pago, créditos),
 el detalle de venta por Familia de Precio y los egresos anotados a mano
 para reportar cuánto efectivo se entrega para depósito.
 
-Congelamiento — un cierre en estado «Cerrado» bloquea, para ese usuario:
+Serie — el usuario SIEMPRE elige con qué serie de facturación cierra:
+  * «Todas» (SERIE_TODAS): un solo cierre consolidado con todas sus series,
+    como siempre.
+  * una serie concreta (p.ej. FACT-.ABBR.-R1-A-.####): el día de ese usuario
+    pasa a cerrarse POR SERIE — un cierre por cada serie con movimiento, y ya
+    no admite el consolidado (ni al revés). El día queda completo cuando todas
+    sus series tienen su cierre Cerrado.
+  Con una serie, todo el cálculo (ventas, cobros, devoluciones, recuperación
+  de cartera) y el congelamiento se limitan a las facturas de esa serie.
+
+Congelamiento — un cierre en estado «Cerrado» bloquea, para ese usuario (y
+para la serie del cierre, o todas si es consolidado):
   * cancelar cualquier factura de esa fecha (before_cancel);
   * agregar / quitar / modificar pagos (custom_efast_payments) con fecha
     dentro de un día cerrado, o anteriores o iguales a la fecha de una
@@ -75,6 +86,38 @@ PENDING_LOOKBACK_DAYS = 60
 
 # Egresos con los que arranca un cierre nuevo (según hoja CIERRE VENTA.xlsx).
 DEFAULT_EGRESOS = ["Administración entregado a Gerencia", "Gastos"]
+
+# Valor del campo `serie` de un cierre consolidado (todas las series del usuario).
+SERIE_TODAS = "Todas"
+
+
+def _norm_serie(serie) -> str:
+    """"" / None / «Todas» → SERIE_TODAS; cualquier otra, la serie tal cual."""
+    serie = (serie or "").strip()
+    return SERIE_TODAS if not serie or serie.lower() == SERIE_TODAS.lower() else serie
+
+
+def _es_todas(serie) -> bool:
+    return _norm_serie(serie) == SERIE_TODAS
+
+
+def _serie_sql(col: str = "c.serie") -> str:
+    """La serie de un cierre en SQL; los cierres anteriores al campo son consolidados."""
+    return f"IFNULL(NULLIF({col}, ''), '{SERIE_TODAS}')"
+
+
+def _serie_label(serie: str, company: str = None) -> str:
+    """«FACT-.ABBR.-R1-A-.####» → «FACT-NK-R1-A» (para mostrar)."""
+    if _es_todas(serie):
+        return "Todas las series"
+    s = serie
+    if company:
+        abbr = frappe.db.get_value("Company", company, "abbr") or ""
+        if abbr:
+            s = s.replace(".ABBR.", abbr)
+    s = s.replace(".YYYY.", "AAAA").replace(".YY.", "AA").replace(".MM.", "MM")
+    s = s.rstrip("#").rstrip(".").rstrip("-")
+    return s.replace(".", "") or serie
 
 
 # ---------------------------------------------------------------------------
@@ -213,17 +256,34 @@ def cierre_has_permission(doc, ptype: str = "read", user: str = None) -> bool:
 # Congelamiento
 # ---------------------------------------------------------------------------
 
-def _closed_dates(company: str, owner: str) -> set:
+def _closed_dates(company: str, owner: str, serie: str) -> set:
+    """Días cerrados para las facturas de `owner` con serie `serie`: los que
+    tienen un cierre Cerrado consolidado («Todas») o de esa misma serie."""
     if not company or not owner or not _company_on(company):
         return set()
+    series = {SERIE_TODAS, _norm_serie(serie)}
     return {
-        getdate(d)
-        for d in frappe.get_all(
+        getdate(r.fecha)
+        for r in frappe.get_all(
             DOCTYPE,
             filters={"company": company, "usuario": owner, "estado": "Cerrado"},
-            pluck="fecha",
+            fields=["fecha", "serie"],
         )
+        if _norm_serie(r.serie) in series
     }
+
+
+def _closed_name(company: str, owner: str, fecha, serie: str) -> str:
+    """Nombre del cierre Cerrado que congela (owner, fecha, serie), o ""."""
+    series = {SERIE_TODAS, _norm_serie(serie)}
+    for r in frappe.get_all(
+        DOCTYPE,
+        filters={"company": company, "usuario": owner, "fecha": getdate(fecha), "estado": "Cerrado"},
+        fields=["name", "serie"],
+    ):
+        if _norm_serie(r.serie) in series:
+            return r.name
+    return ""
 
 
 def _row_frozen(row_date, posting_date, closed: set) -> bool:
@@ -246,10 +306,8 @@ def _payment_key(row) -> tuple:
     )
 
 
-def _frozen_msg(company: str, owner: str, fecha) -> str:
-    name = frappe.db.get_value(
-        DOCTYPE, {"company": company, "usuario": owner, "fecha": getdate(fecha), "estado": "Cerrado"}, "name"
-    )
+def _frozen_msg(company: str, owner: str, fecha, serie: str) -> str:
+    name = _closed_name(company, owner, fecha, serie)
     return _(
         "El día {0} ya tiene Cierre Diario de Ventas ({1}) para {2}. "
         "Un usuario de Gerencia debe reabrir ese cierre desde FacEx antes de modificar facturas o pagos de esa fecha."
@@ -260,17 +318,17 @@ def guard_sales_invoice_cancel(doc, method=None):
     """Hook Sales Invoice.before_cancel."""
     if doc.flags.facex_cierre_bypass:
         return
-    closed = _closed_dates(doc.company, doc.owner)
+    closed = _closed_dates(doc.company, doc.owner, doc.naming_series)
     if not closed:
         return
     if getdate(doc.posting_date) in closed:
-        frappe.throw(_frozen_msg(doc.company, doc.owner, doc.posting_date), title=_("Cierre Diario"))
+        frappe.throw(_frozen_msg(doc.company, doc.owner, doc.posting_date, doc.naming_series), title=_("Cierre Diario"))
     for row in doc.get("custom_efast_payments") or []:
         if _row_frozen(row.payment_date, doc.posting_date, closed):
             frappe.throw(
                 _("La factura {0} tiene un pago del {1} incluido en un Cierre Diario ya cerrado. ")
                 .format(doc.name, formatdate(row.payment_date or doc.posting_date))
-                + _frozen_msg(doc.company, doc.owner, row.payment_date or doc.posting_date),
+                + _frozen_msg(doc.company, doc.owner, row.payment_date or doc.posting_date, doc.naming_series),
                 title=_("Cierre Diario"),
             )
 
@@ -281,7 +339,7 @@ def guard_sales_invoice_update_after_submit(doc, method=None):
     cambio de una fila congelada. Filas con fecha posterior al cierre pasan."""
     if doc.flags.facex_cierre_bypass or not doc.meta.has_field("custom_efast_payments"):
         return
-    closed = _closed_dates(doc.company, doc.owner)
+    closed = _closed_dates(doc.company, doc.owner, doc.naming_series)
     if not closed:
         return
     prev = doc.get_doc_before_save()
@@ -297,7 +355,7 @@ def guard_sales_invoice_update_after_submit(doc, method=None):
     fecha = changed[0][1] if changed and changed[0][1] else doc.posting_date
     frappe.throw(
         _("No se pueden modificar los pagos de la factura {0} con fecha {1}: ").format(doc.name, formatdate(fecha))
-        + _frozen_msg(doc.company, doc.owner, fecha),
+        + _frozen_msg(doc.company, doc.owner, fecha, doc.naming_series),
         title=_("Cierre Diario"),
     )
 
@@ -312,17 +370,21 @@ def guard_payment_entry_cancel(doc, method=None):
         if ref.reference_doctype != "Sales Invoice":
             continue
         si = frappe.db.get_value(
-            "Sales Invoice", ref.reference_name, ["company", "owner", "posting_date"], as_dict=True
+            "Sales Invoice", ref.reference_name, ["company", "owner", "posting_date", "naming_series"], as_dict=True
         )
         if not si:
             continue
-        closed = _closed_dates(si.company, si.owner)
+        closed = _closed_dates(si.company, si.owner, si.naming_series)
         if not closed:
             continue
-        if getdate(si.posting_date) in closed or _row_frozen(doc.posting_date, si.posting_date, closed):
+        # Un pago fechado DESPUÉS del cierre de la factura no estaba en ese
+        # cierre: solo se congela el que cae en un día cerrado o es anterior/
+        # igual al día cerrado de la factura (_row_frozen).
+        if _row_frozen(doc.posting_date, si.posting_date, closed):
             frappe.throw(
                 _("El pago {0} pertenece a la factura {1}, incluida en un Cierre Diario cerrado. ").format(doc.name, ref.reference_name)
-                + _frozen_msg(si.company, si.owner, si.posting_date if getdate(si.posting_date) in closed else doc.posting_date),
+                + _frozen_msg(si.company, si.owner, si.posting_date if getdate(si.posting_date) in closed else doc.posting_date,
+                              si.naming_series),
                 title=_("Cierre Diario"),
             )
 
@@ -332,16 +394,16 @@ def get_invoice_freeze_status(invoice_name: str) -> dict:
     """Para el front (Historial / Anular): informa si una factura está
     congelada por un cierre y hasta qué fecha."""
     si = frappe.db.get_value(
-        "Sales Invoice", invoice_name, ["company", "owner", "posting_date"], as_dict=True
+        "Sales Invoice", invoice_name, ["company", "owner", "posting_date", "naming_series"], as_dict=True
     )
     if not si:
         return {"frozen": False}
-    closed = _closed_dates(si.company, si.owner)
+    closed = _closed_dates(si.company, si.owner, si.naming_series)
     frozen = getdate(si.posting_date) in closed
     return {
         "frozen": frozen,
         "closed_dates": sorted(str(d) for d in closed),
-        "message": _frozen_msg(si.company, si.owner, si.posting_date) if frozen else "",
+        "message": _frozen_msg(si.company, si.owner, si.posting_date, si.naming_series) if frozen else "",
     }
 
 
@@ -397,11 +459,14 @@ def _si_fields() -> list:
     return fields
 
 
-def compute_snapshot(company: str, fecha, usuario: str) -> dict:
-    """Calcula el resumen del día para (company, fecha, usuario). Puro: no
-    escribe nada. Devuelve un dict serializable listo para el page y para
-    volcarse en el documento."""
+def compute_snapshot(company: str, fecha, usuario: str, serie: str = SERIE_TODAS) -> dict:
+    """Calcula el resumen del día para (company, fecha, usuario, serie). Puro:
+    no escribe nada. Devuelve un dict serializable listo para el page y para
+    volcarse en el documento. Con una serie concreta solo cuentan las facturas
+    de esa serie; «Todas» consolida todas las del usuario."""
     fecha = getdate(fecha)
+    serie = _norm_serie(serie)
+    serie_filter = {} if serie == SERIE_TODAS else {"naming_series": serie}
     # Corte por inicio de operación: un día anterior al arranque ya no se
     # calcula ni se cierra — sus facturas dejaron de ser consultables.
     from facex_multi.api.corte import get_corte_fecha
@@ -424,7 +489,7 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
 
     invoices = frappe.get_all(
         "Sales Invoice",
-        filters={"company": company, "posting_date": fecha, "owner": usuario, "docstatus": 1},
+        filters={"company": company, "posting_date": fecha, "owner": usuario, "docstatus": 1, **serie_filter},
         fields=_si_fields(),
         order_by="name asc",
     )
@@ -678,7 +743,7 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
     ajuste = venta_neta_dia - sum_lineas
     total_cobros = sum(cobros.values()) + cobro_otros + contado_pendiente
 
-    recup = _recuperacion_cartera(company, fecha, usuario)
+    recup = _recuperacion_cartera(company, fecha, usuario, serie)
 
     # ---- Devoluciones (facturas ANULADAS de este usuario) ---------------------
     # Dos casos según la fecha ORIGINAL de la factura (posting_date), ambos
@@ -705,7 +770,7 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
         filters=[
             ["company", "=", company], ["owner", "=", usuario], ["docstatus", "=", 2],
             ["modified", ">=", fecha], ["modified", "<", add_days(fecha, 1)],
-        ],
+        ] + [[k, "=", v] for k, v in serie_filter.items()],
         fields=cancel_fields,
         order_by="name asc",
     )
@@ -744,6 +809,8 @@ def compute_snapshot(company: str, fecha, usuario: str) -> dict:
         "company": company,
         "fecha": str(fecha),
         "usuario": usuario,
+        "serie": serie,
+        "serie_label": _serie_label(serie, company),
         "flete_item": flete_item,
         "num_facturas": len(invoices),
         "venta_sin_descuento": round(venta_sin_desc, 2),
@@ -795,7 +862,7 @@ _RECUP_TIPOS = OrderedDict([
 ])
 
 
-def _recuperacion_cartera(company: str, fecha, usuario: str) -> dict:
+def _recuperacion_cartera(company: str, fecha, usuario: str, serie: str = SERIE_TODAS) -> dict:
     """Pagos con fecha `fecha` aplicados a facturas de días ANTERIORES del
     usuario: dinero que entra hoy pero no es venta de hoy. Se presenta aparte
     del cuadre de la venta del día para no mezclarlo con ella.
@@ -823,6 +890,7 @@ def _recuperacion_cartera(company: str, fecha, usuario: str) -> dict:
     meta = frappe.get_meta("Sales Invoice")
     ce_col = "si.bfel_pago_contra_entrega" if meta.has_field("bfel_pago_contra_entrega") else "0"
     corte_cond, corte_vals = _corte_si(company)
+    serie_cond = "" if _es_todas(serie) else "AND si.naming_series = %(serie)s"
     rows = frappe.db.sql(
         f"""
         SELECT p.parent AS sales_invoice, si.customer_name, si.posting_date, si.due_date,
@@ -835,10 +903,11 @@ def _recuperacion_cartera(company: str, fecha, usuario: str) -> dict:
           AND si.posting_date < %(fecha)s AND p.payment_date = %(fecha)s
           AND p.parenttype = 'Sales Invoice' AND p.payment_method != %(ce)s
           AND {corte_cond}
+          {serie_cond}
         ORDER BY si.posting_date, p.parent, p.idx
         """,
         {"company": company, "usuario": usuario, "fecha": fecha, "ce": CONTRA_ENTREGA,
-         **corte_vals},
+         "serie": _norm_serie(serie), **corte_vals},
         as_dict=True,
     )
     if not rows:
@@ -1033,9 +1102,32 @@ def _familia_row(es_oferta: int, familia: str, descripcion: str, g: dict | None,
 # Pendientes
 # ---------------------------------------------------------------------------
 
+def _cierres_por_dia(company: str, filters: dict) -> dict:
+    """{(fecha, usuario): {serie: {"name", "estado"}}} — el más reciente por serie."""
+    out = {}
+    for c in frappe.get_all(
+        DOCTYPE,
+        filters={"company": company, **filters},
+        fields=["name", "fecha", "usuario", "serie", "estado"],
+        order_by="modified desc",
+    ):
+        out.setdefault((str(c.fecha), c.usuario), {}).setdefault(
+            _norm_serie(c.serie), {"name": c.name, "estado": c.estado})
+    return out
+
+
+def _modo_dia(cierres: dict) -> str:
+    """"todas" (consolidado), "serie" (por serie) o "" (sin cierres todavía)."""
+    if not cierres:
+        return ""
+    return "todas" if SERIE_TODAS in cierres else "serie"
+
+
 def _pending_days(company: str, usuario: str | None) -> list:
     """Días con ventas validadas (últimos PENDING_LOOKBACK_DAYS, anteriores a
-    hoy) que aún no tienen un cierre Cerrado para ese usuario."""
+    hoy) que aún no están cerrados para ese usuario: sin cierre consolidado
+    Cerrado y, si el día se cierra por serie, con alguna serie sin su cierre
+    Cerrado (`series_pendientes`)."""
     if not company or not _company_on(company):
         return []
     desde = add_days(today(), -PENDING_LOOKBACK_DAYS)
@@ -1048,31 +1140,65 @@ def _pending_days(company: str, usuario: str | None) -> list:
     rows = frappe.db.sql(
         f"""
         SELECT si.posting_date AS fecha, si.owner AS usuario, u.full_name AS usuario_nombre,
+               si.naming_series AS serie,
                COUNT(*) AS num_facturas, SUM(IF(IFNULL(si.disable_rounded_total, 0) = 0 AND IFNULL(si.rounded_total, 0) != 0,
-                       si.rounded_total, si.grand_total)) AS total_venta,
-               (SELECT c.name FROM `tabFacEx Cierre Diario` c
-                 WHERE c.company = si.company AND c.usuario = si.owner AND c.fecha = si.posting_date
-                 ORDER BY c.modified DESC LIMIT 1) AS cierre,
-               (SELECT c.estado FROM `tabFacEx Cierre Diario` c
-                 WHERE c.company = si.company AND c.usuario = si.owner AND c.fecha = si.posting_date
-                 ORDER BY c.modified DESC LIMIT 1) AS estado
+                       si.rounded_total, si.grand_total)) AS total_venta
         FROM `tabSales Invoice` si
         LEFT JOIN `tabUser` u ON u.name = si.owner
         WHERE si.company = %(company)s AND si.docstatus = 1
           AND si.posting_date >= %(desde)s AND si.posting_date < %(hoy)s
           AND {corte_cond}
           {cond}
-        GROUP BY si.posting_date, si.owner
-        HAVING IFNULL(estado, '') != 'Cerrado'
-        ORDER BY si.posting_date DESC, si.owner
+        GROUP BY si.posting_date, si.owner, si.naming_series
+        ORDER BY si.posting_date DESC, si.owner, si.naming_series
         """,
         vals,
         as_dict=True,
     )
+    cfilters = {"fecha": [">=", desde]}
+    if usuario:
+        cfilters["usuario"] = usuario
+    cierres = _cierres_por_dia(company, cfilters)
+
+    dias = OrderedDict()
     for r in rows:
-        r["fecha"] = str(r["fecha"])
-        r["total_venta"] = flt(r["total_venta"])
-    return rows
+        key = (str(r.fecha), r.usuario)
+        d = dias.setdefault(key, {
+            "fecha": key[0], "usuario": r.usuario, "usuario_nombre": r.usuario_nombre,
+            "num_facturas": 0, "total_venta": 0.0, "series": [],
+        })
+        d["num_facturas"] += cint(r.num_facturas)
+        d["total_venta"] += flt(r.total_venta)
+        d["series"].append({
+            "serie": _norm_serie(r.serie), "label": _serie_label(r.serie, company),
+            "num_facturas": cint(r.num_facturas), "total_venta": flt(r.total_venta),
+        })
+
+    out = []
+    for key, d in dias.items():
+        cs = cierres.get(key) or {}
+        modo = _modo_dia(cs)
+        series = d.pop("series")
+        pendientes = []
+        if modo == "todas":
+            if cs[SERIE_TODAS]["estado"] == "Cerrado":
+                continue
+            d.update(cierre=cs[SERIE_TODAS]["name"], estado=cs[SERIE_TODAS]["estado"])
+        elif modo == "serie":
+            for x in series:
+                c = cs.get(x["serie"]) or {}
+                if c.get("estado") != "Cerrado":
+                    pendientes.append({**x, "cierre": c.get("name") or "", "estado": c.get("estado") or ""})
+            if not pendientes:
+                continue
+            d.update(cierre="", estado="Por serie")
+        else:
+            d.update(cierre="", estado="")
+        d["modo"] = modo
+        d["series_pendientes"] = pendientes
+        d["total_venta"] = flt(d["total_venta"])
+        out.append(d)
+    return out
 
 
 @frappe.whitelist()
@@ -1111,8 +1237,9 @@ def guard_sales_invoice_closed_date(doc, method=None):
         return
     if doc.docstatus == 2 or not doc.company or not doc.posting_date or not _company_on(doc.company):
         return
-    if getdate(doc.posting_date) in _closed_dates(doc.company, doc.owner or frappe.session.user):
-        frappe.throw(_frozen_msg(doc.company, doc.owner or frappe.session.user, doc.posting_date),
+    owner = doc.owner or frappe.session.user
+    if getdate(doc.posting_date) in _closed_dates(doc.company, owner, doc.naming_series):
+        frappe.throw(_frozen_msg(doc.company, owner, doc.posting_date, doc.naming_series),
                      title=_("Cierre Diario"))
 
     if not doc.is_new():
@@ -1139,13 +1266,21 @@ def get_work_gate(company: str = None) -> dict:
     """Estado para Clásico: ¿hay que cerrar antes de trabajar? y días ya
     cerrados (para avisar al elegir fecha). No lanza error."""
     company = get_effective_company(company)
-    out = {"modo": "No exigir", "bloquea": 0, "pendientes": [], "cerrados": []}
+    out = {"modo": "No exigir", "bloquea": 0, "pendientes": [], "cerrados": [], "cerrados_serie": {}}
     if not _company_on(company) or not _can_create(company) or _is_gerencia(company):
         return out
     user = frappe.session.user
     modo, gracia = _gate_cfg(company)
     out["modo"] = modo
-    out["cerrados"] = sorted(str(d) for d in _closed_dates(company, user))
+    # cerrados: días con cierre consolidado (toda serie bloqueada);
+    # cerrados_serie: {fecha: [series]} de los días que se cierran por serie.
+    for c in frappe.get_all(DOCTYPE, filters={"company": company, "usuario": user, "estado": "Cerrado"},
+                            fields=["fecha", "serie"]):
+        if _es_todas(c.serie):
+            out["cerrados"].append(str(c.fecha))
+        else:
+            out["cerrados_serie"].setdefault(str(c.fecha), []).append(c.serie)
+    out["cerrados"].sort()
     if modo == "No exigir":
         return out
     vencidos = _overdue_pending(company, user, gracia)
@@ -1209,9 +1344,87 @@ def get_context(company: str = None) -> dict:
     }
 
 
+def _series_usuario(company: str, usuario: str) -> list:
+    """Series de Factura configuradas para el usuario, con la misma resolución
+    que el facturador: las de su FacEx Settings y, si no tiene, las de FacEx
+    Configuracion Compania. Sin ninguna (el sistema le asigna la por defecto)
+    devuelve []: su serie aparece igual en el selector por sus facturas."""
+    from facex_multi.api.series import TIPO_FACTURA, series_configuradas
+
+    series, _origen = series_configuradas(company, TIPO_FACTURA, user=usuario)
+    return series or []
+
+
+def series_del_dia(company: str, fecha, usuario: str) -> dict:
+    """Series entre las que el usuario elige para cerrar el día: las que
+    tienen facturas validadas ese día, las que reciben cobros ese día
+    (recuperación de cartera) y las configuradas en su FacEx Settings. Con el
+    estado de su cierre y el modo en que ya se está cerrando el día."""
+    fecha = getdate(fecha)
+    corte_cond, corte_vals = _corte_si(company)
+    vals = {"company": company, "fecha": fecha, "usuario": usuario, **corte_vals}
+    stats = {
+        r.serie: r for r in frappe.db.sql(
+            f"""
+            SELECT si.naming_series AS serie, COUNT(*) AS num_facturas,
+                   SUM(IF(IFNULL(si.disable_rounded_total, 0) = 0 AND IFNULL(si.rounded_total, 0) != 0,
+                       si.rounded_total, si.grand_total)) AS total_venta
+            FROM `tabSales Invoice` si
+            WHERE si.company = %(company)s AND si.owner = %(usuario)s AND si.docstatus = 1
+              AND si.posting_date = %(fecha)s AND {corte_cond}
+            GROUP BY si.naming_series
+            """,
+            vals, as_dict=True,
+        )
+    }
+    cobros = set()
+    if frappe.db.table_exists("eFast Invoice Payment"):
+        cobros = set(frappe.db.sql_list(
+            f"""
+            SELECT DISTINCT si.naming_series
+            FROM `tabeFast Invoice Payment` p
+            JOIN `tabSales Invoice` si ON si.name = p.parent
+            WHERE si.company = %(company)s AND si.owner = %(usuario)s AND si.docstatus = 1
+              AND si.posting_date < %(fecha)s AND p.payment_date = %(fecha)s
+              AND p.parenttype = 'Sales Invoice' AND p.payment_method != %(ce)s AND {corte_cond}
+            """,
+            {**vals, "ce": CONTRA_ENTREGA},
+        ))
+    cierres = _cierres_por_dia(company, {"fecha": fecha, "usuario": usuario}).get((str(fecha), usuario)) or {}
+
+    orden = list(OrderedDict.fromkeys(
+        [s for s in stats if s] + sorted(s for s in cobros if s and s not in stats)
+        + [s for s in _series_usuario(company, usuario)]
+        + [s for s in cierres if s != SERIE_TODAS]
+    ))
+    series = []
+    for s in orden:
+        st = stats.get(s) or {}
+        c = cierres.get(s) or {}
+        series.append({
+            "serie": s, "label": _serie_label(s, company),
+            "num_facturas": cint(st.get("num_facturas")), "total_venta": flt(st.get("total_venta")),
+            "con_cobros": int(s in cobros),
+            "cierre": c.get("name") or "", "estado": c.get("estado") or "",
+        })
+    todas = cierres.get(SERIE_TODAS) or {}
+    return {
+        "modo": _modo_dia(cierres),
+        "todas": {
+            "serie": SERIE_TODAS, "label": _serie_label(SERIE_TODAS),
+            "num_facturas": sum(cint(r.num_facturas) for r in stats.values()),
+            "total_venta": sum(flt(r.total_venta) for r in stats.values()),
+            "cierre": todas.get("name") or "", "estado": todas.get("estado") or "",
+        },
+        "series": series,
+    }
+
+
 @frappe.whitelist()
-def compute_preview(company: str = None, fecha: str = None, usuario: str = None) -> dict:
-    """Snapshot en vivo (sin guardar) para la pantalla de cierre."""
+def compute_preview(company: str = None, fecha: str = None, usuario: str = None, serie: str = None) -> dict:
+    """Snapshot en vivo (sin guardar) para la pantalla de cierre. Sin `serie`
+    solo devuelve las series del día para que el usuario elija (obligatorio):
+    una serie concreta o «Todas»."""
     company = get_effective_company(company)
     usuario = usuario or frappe.session.user
     _assert_module_access(company)
@@ -1219,17 +1432,21 @@ def compute_preview(company: str = None, fecha: str = None, usuario: str = None)
         frappe.throw(_("Solo puede consultar sus propios cierres."), frappe.PermissionError)
     if not fecha:
         frappe.throw(_("Indique la fecha del cierre."))
-    snap = compute_snapshot(company, fecha, usuario)
-    existing = frappe.db.get_value(
-        DOCTYPE, {"company": company, "fecha": getdate(fecha), "usuario": usuario}, "name"
+    info = series_del_dia(company, fecha, usuario)
+    if not (serie or "").strip():
+        return {"requiere_serie": 1, "fecha": str(getdate(fecha)), "usuario": usuario, "series_dia": info}
+    serie = _norm_serie(serie)
+    snap = compute_snapshot(company, fecha, usuario, serie)
+    snap["existing"] = frappe.db.get_value(
+        DOCTYPE, {"company": company, "fecha": getdate(fecha), "usuario": usuario, "serie": serie}, "name"
     )
-    snap["existing"] = existing
+    snap["series_dia"] = info
     return snap
 
 
 @frappe.whitelist()
 def list_cierres(company: str = None, from_date: str = None, to_date: str = None,
-                 usuario: str = None, estado: str = None) -> list:
+                 usuario: str = None, estado: str = None, serie: str = None) -> list:
     company = get_effective_company(company)
     _assert_module_access(company)
     filters = {"company": company}
@@ -1245,6 +1462,8 @@ def list_cierres(company: str = None, from_date: str = None, to_date: str = None
         filters["fecha"] = ["<=", to_date]
     if estado:
         filters["estado"] = estado
+    if serie:
+        filters["serie"] = _norm_serie(serie)
     # `get_all` ignora los hooks de permisos (cierre_query_conditions), así que
     # el corte por inicio de operación va explícito en los filtros.
     from facex_multi.api.corte import get_corte
@@ -1254,17 +1473,21 @@ def list_cierres(company: str = None, from_date: str = None, to_date: str = None
         or_filters = [["fecha", ">=", conf["fecha"]]]
         if conf["visibles"]:
             or_filters.append(["usuario", "in", list(conf["visibles"])])
-    return frappe.get_all(
+    rows = frappe.get_all(
         DOCTYPE,
         filters=filters,
         or_filters=or_filters,
-        fields=["name", "fecha", "usuario", "usuario_nombre", "almacen", "estado", "num_facturas",
+        fields=["name", "fecha", "usuario", "usuario_nombre", "serie", "almacen", "estado", "num_facturas",
                 "total_venta", "venta_neta", "cargos_pasarela",
                 "total_cobros", "total_egresos", "total_a_depositar", "al_credito",
                 "cobro_efectivo", "cerrado_por", "cerrado_en", "reabierto_por", "reabierto_en", "modified"],
-        order_by="fecha desc, usuario asc",
+        order_by="fecha desc, usuario asc, serie asc",
         limit_page_length=500,
     )
+    for r in rows:
+        r["serie"] = _norm_serie(r.serie)
+        r["serie_label"] = _serie_label(r.serie, company)
+    return rows
 
 
 def upgrade_snapshot(snap: dict) -> dict:
@@ -1303,6 +1526,8 @@ def _doc_to_dict(doc) -> dict:
     d = doc.as_dict()
     d["snapshot"] = upgrade_snapshot(
         json.loads(doc.snapshot_json)) if doc.snapshot_json else None
+    d["serie"] = _norm_serie(doc.serie)
+    d["serie_label"] = _serie_label(d["serie"], doc.company)
     d["puede_reabrir"] = int(_can_reopen(doc.company))
     d["puede_gestionar"] = int(
         _is_gerencia(doc.company) or (_can_create(doc.company) and doc.usuario == frappe.session.user)
@@ -1350,23 +1575,27 @@ def _load_or_new(payload: dict):
     fecha = getdate(fecha)
     if fecha > getdate(today()):
         frappe.throw(_("No se puede cerrar una fecha futura."))
+    if not (payload.get("serie") or "").strip():
+        frappe.throw(_("Elija la serie del cierre, o «Todas» para consolidar todas sus series."))
+    serie = _norm_serie(payload.get("serie"))
     _assert_can_manage(company, usuario)
 
     name = (payload.get("name") or "").strip() or frappe.db.get_value(
-        DOCTYPE, {"company": company, "fecha": fecha, "usuario": usuario}, "name"
+        DOCTYPE, {"company": company, "fecha": fecha, "usuario": usuario, "serie": serie}, "name"
     )
     if name:
         doc = frappe.get_doc(DOCTYPE, name)
         _assert_can_manage(doc.company, doc.usuario)
         if doc.estado == "Cerrado":
             frappe.throw(_("El cierre {0} ya está Cerrado. Gerencia debe reabrirlo para modificarlo.").format(doc.name))
-        if (doc.company, getdate(doc.fecha), doc.usuario) != (company, fecha, usuario):
-            frappe.throw(_("No se puede cambiar la compañía, fecha o usuario de un cierre existente."))
+        if (doc.company, getdate(doc.fecha), doc.usuario, _norm_serie(doc.serie)) != (company, fecha, usuario, serie):
+            frappe.throw(_("No se puede cambiar la compañía, fecha, usuario o serie de un cierre existente."))
     else:
         doc = frappe.new_doc(DOCTYPE)
         doc.company = company
         doc.fecha = fecha
         doc.usuario = usuario
+        doc.serie = serie
         doc.estado = "Borrador"
     return doc
 
@@ -1406,7 +1635,7 @@ def save_cierre(payload) -> dict:
     payload = _parse(payload)
     doc = _load_or_new(payload)
     _apply_payload(doc, payload)
-    _apply_snapshot(doc, compute_snapshot(doc.company, doc.fecha, doc.usuario))
+    _apply_snapshot(doc, compute_snapshot(doc.company, doc.fecha, doc.usuario, doc.serie))
     doc.flags.facex_cierre_api = True
     doc.save(ignore_permissions=True)
     frappe.db.commit()
@@ -1438,7 +1667,7 @@ def cerrar_cierre(payload) -> dict:
     payload = _parse(payload)
     doc = _load_or_new(payload)
     _apply_payload(doc, payload)
-    snap = compute_snapshot(doc.company, doc.fecha, doc.usuario)
+    snap = compute_snapshot(doc.company, doc.fecha, doc.usuario, doc.serie)
     _assert_contado_pagado(snap)
     _apply_snapshot(doc, snap)
     doc.estado = "Cerrado"
@@ -1547,8 +1776,8 @@ def reclasificar_condicion(invoice: str, template: str, motivo: str = None) -> d
         frappe.throw(_("Las notas de crédito / devoluciones no se reclasifican."))
     if _is_certified(si):
         frappe.throw(_("La factura {0} está certificada ante SAT: su condición de pago no se puede cambiar.").format(si.name))
-    if getdate(si.posting_date) in _closed_dates(si.company, si.owner):
-        frappe.throw(_frozen_msg(si.company, si.owner, si.posting_date), title=_("Cierre Diario"))
+    if getdate(si.posting_date) in _closed_dates(si.company, si.owner, si.naming_series):
+        frappe.throw(_frozen_msg(si.company, si.owner, si.posting_date, si.naming_series), title=_("Cierre Diario"))
     motivo = (motivo or "").strip()
     if not motivo:
         frappe.throw(_("Indique el motivo del cambio."))

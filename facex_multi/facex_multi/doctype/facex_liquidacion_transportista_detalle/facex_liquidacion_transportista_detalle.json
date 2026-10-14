@@ -17,6 +17,8 @@
   "diferencia_comision",
   "resultado_comision",
   "monto_liquidado",
+  "monto_aplicado",
+  "excedente",
   "operacion",
   "autorizacion",
   "numero_cuenta",
@@ -113,6 +115,18 @@
    "columns": 2
   },
   {
+   "fieldname": "monto_aplicado",
+   "fieldtype": "Currency",
+   "label": "Monto Aplicado a Factura",
+   "read_only": 1
+  },
+  {
+   "fieldname": "excedente",
+   "fieldtype": "Currency",
+   "label": "Excedente",
+   "read_only": 1
+  },
+  {
    "fieldname": "operacion",
    "fieldtype": "Data",
    "in_list_view": 1,
@@ -173,7 +187,7 @@
  "index_web_pages_for_search": 0,
  "istable": 1,
  "links": [],
- "modified": "2026-07-28 00:00:00.000000",
+ "modified": "2026-10-08 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Liquidacion Transportista Detalle",

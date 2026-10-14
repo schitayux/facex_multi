@@ -13,7 +13,10 @@ from facex_multi.api.invoice import (
 	clean_numero_guia,
 	get_effective_company,
 )
-from facex_multi.api.permissions import get_facex_can_upload_liquidaciones_transporte
+from facex_multi.api.permissions import (
+	get_facex_can_upload_liquidaciones_transporte,
+	get_facex_liquidacion_especial,
+)
 
 
 def _release_or_keep_payment_entry(payment_entry):
@@ -56,6 +59,78 @@ def _assert_payment_entry_reversible(payment_entry, guia, accion):
 		)
 
 
+def _indice_guias_registradas(transportista):
+	"""Guías capturadas en facturas para el transportista, indexadas por número
+	normalizado → lista de {name, parent, monto_cod}. Mismo criterio de
+	comparación que el respaldo normalizado de match_guias, así que «está
+	registrada» aquí equivale a «match_guias la va a encontrar»."""
+	indice = {}
+	for g in frappe.get_all(
+		"FacEx Guia Transportista",
+		filters={"transportista": transportista},
+		fields=["name", "parent", "monto_cod", "numero_guia"],
+	):
+		indice.setdefault(_norm_numero_guia(g.numero_guia), []).append(g)
+	return indice
+
+
+def _problemas_guias(transportista, guias, name=None):
+	"""Revisa una lista de No. de guía contra el sistema y devuelve
+	{guia_normalizada: motivo} solo para las que NO se pueden liquidar:
+
+	  * no registrada: ninguna factura tiene esa guía para el transportista —
+	    la fila nunca haría match ni generaría el abono, solo ensuciaría la
+	    liquidación (y bloquearía cargarla bien después, ver duplicadas).
+	  * en varias facturas: match_guias exige un único resultado.
+	  * ya liquidada: la misma guía está en otra liquidación del transportista.
+	"""
+	numeros = {_norm_numero_guia(g) for g in guias if _norm_numero_guia(g)}
+	if not numeros or not transportista:
+		return {}
+
+	indice = _indice_guias_registradas(transportista)
+	problemas = {}
+	for n in numeros:
+		matches = indice.get(n) or []
+		if not matches:
+			problemas[n] = "No está registrada en ninguna factura para este transportista."
+		elif len(matches) > 1:
+			facturas = ", ".join(sorted({m.parent for m in matches}))
+			problemas[n] = f"Está registrada en más de una factura ({facturas})."
+
+	for c in frappe.db.sql(
+		"""
+		select d.guia, d.parent
+		from `tabFacEx Liquidacion Transportista Detalle` d
+		inner join `tabFacEx Liquidacion Transportista` l on l.name = d.parent
+		where d.parenttype = 'FacEx Liquidacion Transportista'
+		  and l.name != %(name)s
+		  and l.transportista = %(transportista)s
+		  and upper(trim(d.guia)) in %(numeros)s
+		""",
+		{"name": name or "", "transportista": transportista, "numeros": tuple(numeros)},
+		as_dict=True,
+	):
+		n = _norm_numero_guia(c.guia)
+		problemas.setdefault(n, f"Ya fue liquidada en {c.parent}.")
+	return problemas
+
+
+@frappe.whitelist()
+def revisar_guias(transportista, guias, name=None):
+	"""Usado por el editor de Liquidaciones al pegar desde Excel y al salir de
+	cada fila: avisa en el momento qué guías no se van a poder guardar, en vez
+	de esperar al error de validate()."""
+	if not get_facex_can_upload_liquidaciones_transporte(get_effective_company()):
+		frappe.throw(
+			"No tiene permiso para cargar Liquidaciones de Transportistas.",
+			frappe.PermissionError,
+		)
+	if isinstance(guias, str):
+		guias = frappe.parse_json(guias)
+	return _problemas_guias(transportista, guias or [], name)
+
+
 class FacExLiquidacionTransportista(Document):
 	def validate(self):
 		if not get_facex_can_upload_liquidaciones_transporte(get_effective_company()):
@@ -65,10 +140,41 @@ class FacExLiquidacionTransportista(Document):
 			)
 
 		self.validate_guias_no_duplicadas()
+		self.validate_guias_registradas()
+		self.marcar_liquidacion_especial()
 		self.unmatch_removed_guias()
 		self.match_guias()
 		self.total_depositado = sum(flt(row.monto_liquidado) for row in self.detalle)
+		self.total_excedente = sum(flt(row.excedente) for row in self.detalle)
 		self.calcular_diferencia_comision()
+
+	def marcar_liquidacion_especial(self):
+		"""Excepción por usuario (FacEx Settings → Liquidación Especial): el
+		abono a cada factura se topa en su saldo y lo que sobre queda como
+		excedente de la fila, en vez de que el Payment Entry falle por pagar de
+		más. Es pegajosa: una vez especial, sigue siéndolo aunque la re-guarde
+		otro usuario — sus abonos ya sometidos se hicieron topados y un
+		re-guardado normal los vería «desfasados» de comisión + depositado."""
+		config = get_facex_liquidacion_especial(get_effective_company())
+		if config:
+			self.liquidacion_especial = 1
+			self.etiqueta_especial = config["etiqueta"]
+		elif self.liquidacion_especial and not self.etiqueta_especial:
+			self.etiqueta_especial = "Liquidación Especial"
+
+	def _saldo_factura(self, sales_invoice, payment_entry):
+		"""Lo que esta fila puede abonarle a la factura: su saldo actual más lo
+		que ya le abonó el PE sometido de la misma fila (si lo hay), para que un
+		re-guardado vuelva a dar el mismo monto aplicado. Con el redondeo de
+		ERPNext desactivado, el saldo parte del grand_total certificado."""
+		saldo = flt(frappe.db.get_value("Sales Invoice", sales_invoice, "outstanding_amount"))
+		if payment_entry:
+			saldo += flt(frappe.db.get_value(
+				"Payment Entry Reference",
+				{"parent": payment_entry, "reference_doctype": "Sales Invoice", "reference_name": sales_invoice},
+				"allocated_amount",
+			))
+		return max(flt(saldo, 2), 0)
 
 	def _resolver_asiento_al_borrar(self):
 		asiento = getattr(self, "journal_entry", None)
@@ -218,6 +324,32 @@ class FacExLiquidacionTransportista(Document):
 				title="Guía duplicada",
 			)
 
+	def validate_guias_registradas(self):
+		# Solo se liquidan guías que existen capturadas contra una factura: una
+		# fila sin match no genera abono ni marca nada, y además queda tomando el
+		# número para este transportista (validate_guias_no_duplicadas), así que
+		# cuando la guía sí se capture ya no se podría liquidar. Se listan todas
+		# de una vez para que el usuario las corrija juntas.
+		if not self.transportista:
+			return
+		indice = _indice_guias_registradas(self.transportista)
+		faltantes = []
+		for row in self.detalle:
+			if not row.guia:
+				continue
+			matches = indice.get(_norm_numero_guia(row.guia)) or []
+			if not matches:
+				faltantes.append(f"Línea {row.idx}: <b>{frappe.utils.escape_html(row.guia)}</b> — no registrada en ninguna factura")
+			elif len(matches) > 1:
+				faltantes.append(f"Línea {row.idx}: <b>{frappe.utils.escape_html(row.guia)}</b> — registrada en más de una factura")
+		if faltantes:
+			frappe.throw(
+				"Estas guías no se pueden liquidar para "
+				f"<b>{frappe.utils.escape_html(self.transportista)}</b>. Quítelas o "
+				"captúrelas primero en su factura:<br><br>" + "<br>".join(faltantes),
+				title="Guías no registradas",
+			)
+
 	def unmatch_removed_guias(self):
 		# Mismo problema que on_trash pero al EDITAR una liquidación ya
 		# guardada: si una fila que antes tenía match (guía + transportista)
@@ -248,6 +380,8 @@ class FacExLiquidacionTransportista(Document):
 			row.match_encontrado = 0
 			row.sales_invoice = None
 			row.fecha_factura = None
+			row.monto_aplicado = 0
+			row.excedente = 0
 			# Cualquier PE en borrador de un match anterior de ESTA fila se
 			# descarta aquí y, si sigue habiendo match, se recrea abajo con
 			# los montos actuales; uno ya sometido se conserva tal cual.
@@ -297,6 +431,16 @@ class FacExLiquidacionTransportista(Document):
 			cubierto = flt(row.valor_comision) + flt(row.monto_liquidado)
 			pendiente = max(flt(match.monto_cod) - cubierto, 0)
 
+			# Lo que se le abona a la factura. Normalmente todo lo cubierto (si
+			# excede el saldo, el Payment Entry falla y así se detecta el
+			# descuadre). En una liquidación especial se paga solo hasta el 100%
+			# de la factura y el sobrante queda como excedente de la fila.
+			aplicado = cubierto
+			if self.liquidacion_especial:
+				aplicado = min(cubierto, self._saldo_factura(match.parent, row.payment_entry))
+			row.monto_aplicado = aplicado
+			row.excedente = flt(cubierto - aplicado, 2)
+
 			if row.payment_entry:
 				# El PE que sobrevivió arriba (sometido) quedó ligado a OTRA
 				# factura antes de este cambio de guía/transportista — no se
@@ -316,10 +460,10 @@ class FacExLiquidacionTransportista(Document):
 				# reemplazar, así que editar Valor Comisión / Monto Liquidado
 				# dejaría el pago desfasado de lo que dice la liquidación.
 				pagado = flt(frappe.db.get_value("Payment Entry", row.payment_entry, "paid_amount"))
-				if abs(pagado - cubierto) > 0.005:
+				if abs(pagado - aplicado) > 0.005:
 					frappe.throw(
 						f"La guía {row.guia} ya tiene un pago sometido ({row.payment_entry}) por "
-						f"Q{pagado:,.2f}, pero con los montos actuales cubriría Q{cubierto:,.2f}. "
+						f"Q{pagado:,.2f}, pero con los montos actuales cubriría Q{aplicado:,.2f}. "
 						"Revierta ese pago en Contabilidad antes de cambiar los montos de la fila."
 					)
 
@@ -334,10 +478,10 @@ class FacExLiquidacionTransportista(Document):
 			# pero aquí se SOMETE en el acto — al guardar la liquidación la
 			# factura queda realmente pagada (su saldo baja), no solo conciliada.
 			# Si ya quedó un PE sometido (rama de arriba), no se crea otro.
-			if not row.payment_entry and cubierto > 0.005:
+			if not row.payment_entry and aplicado > 0.005:
 				invoice_doc = frappe.get_doc("Sales Invoice", match.parent)
 				row.payment_entry = _create_payment_entry(
-					invoice_doc, FORMA_PAGO_LIQUIDACION, self.fecha, row.guia, cubierto
+					invoice_doc, FORMA_PAGO_LIQUIDACION, self.fecha, row.guia, aplicado
 				)
 				frappe.get_doc("Payment Entry", row.payment_entry).submit()
 
@@ -346,8 +490,8 @@ class FacExLiquidacionTransportista(Document):
 			# sin esto el dinero de la liquidación no aparece en el cierre del
 			# día ni en Recuperación de Cartera. Idempotente: se sincroniza en
 			# cada guardado, también en liquidaciones viejas que se re-guarden.
-			if cubierto > 0.005:
-				_sync_pago_facex(match.parent, self.fecha, row.guia, cubierto)
+			if aplicado > 0.005:
+				_sync_pago_facex(match.parent, self.fecha, row.guia, aplicado)
 
 	def _reset_guia_liquidado(self, numero_guia, transportista):
 		# monto_pendiente es Currency, Frappe lo crea NOT NULL DEFAULT 0 sin

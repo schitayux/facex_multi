@@ -24,6 +24,7 @@
   "exige_pago_completo",
   "permite_pago_credito",
   "permite_pago_contra_entrega",
+  "validar_pagos_automaticamente",
   "sec_flete",
   "item_flete",
   "recargo_es_venta",
@@ -182,6 +183,13 @@
    "fieldname": "permite_pago_contra_entrega",
    "fieldtype": "Check",
    "label": "Permitir Pago Contra Entrega"
+  },
+  {
+   "default": "0",
+   "description": "Si está marcado, cada pago/abono registrado en FacEx valida de una vez su Comprobante de Pago (Payment Entry) en ERPNext, sin pasar por el borrador. Al borrar un abono desde la pestaña Pagos de FacEx, su comprobante se cancela (si el día ya tiene Cierre Diario cerrado, Gerencia debe reabrirlo antes). Sin marcar: los comprobantes quedan en borrador hasta validarlos a mano.",
+   "fieldname": "validar_pagos_automaticamente",
+   "fieldtype": "Check",
+   "label": "Validar pagos automáticamente"
   },
   {
    "fieldname": "sec_flete",

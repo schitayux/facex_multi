@@ -177,6 +177,8 @@
   "puede_cargar_liquidaciones_transporte",
   "puede_ver_reportes_transporte",
   "puede_ver_kpis_transporte",
+  "liquidacion_especial",
+  "etiqueta_liquidacion_especial",
   "sb_familias",
   "consulta_familias",
   "mantiene_familias",
@@ -1280,6 +1282,20 @@
    "label": "Ver KPIs de Transporte"
   },
   {
+   "default": "0",
+   "fieldname": "liquidacion_especial",
+   "fieldtype": "Check",
+   "label": "Liquidación Especial (excedente sin error)",
+   "description": "Excepción para este usuario: al cargar una liquidación, si lo cubierto (comisión + depositado) supera el saldo de la factura, se abona solo el 100% de la factura y la diferencia queda como excedente marcado en la liquidación, en vez de dar error."
+  },
+  {
+   "depends_on": "liquidacion_especial",
+   "fieldname": "etiqueta_liquidacion_especial",
+   "fieldtype": "Data",
+   "label": "Mensaje de Liquidación Especial",
+   "description": "Texto del aviso que muestra la liquidación, p. ej. «Liquidación Especial MISEIKO». Vacío → «Liquidación Especial»."
+  },
+  {
    "fieldname": "sb_familias",
    "fieldtype": "Section Break",
    "label": "Familias de Precio"
@@ -1470,7 +1486,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-06 18:00:00.000000",
+ "modified": "2026-10-08 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Settings",

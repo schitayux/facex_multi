@@ -512,8 +512,12 @@ def validate_customer_on_save(doc, method=None):
                 {"company": company},
                 as_dict=True,
             )
+            # Con varias listas de venta se asigna la general (LP-GEN) si existe.
+            general = [r.name for r in plists if "(LP-GEN)" in r.name]
             if len(plists) == 1:
                 doc.default_price_list = plists[0].name
+            elif general:
+                doc.default_price_list = general[0]
             else:
                 frappe.throw(f"Es obligatorio asignar una 'Lista de Precios' al cliente {doc.name}.")
 
