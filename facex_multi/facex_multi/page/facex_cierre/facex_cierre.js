@@ -23,13 +23,13 @@ frappe.pages["facex-cierre"].on_page_load = function (wrapper) {
 		}
 	});
 	wrapper.facexCierre = new FacexCierreDiario(page, wrapper);
-	facex_multi.setup_back_guard({ to: "/app/facex", is_dirty: () => wrapper.facexCierre.is_dirty() });
+	facex_multi.setup_back_guard({ to: "/app/facex", is_dirty: () => wrapper.facexCierre.is_dirty(), on_back: () => wrapper.facexCierre.on_back() });
 };
 
 frappe.pages["facex-cierre"].on_page_show = function (wrapper) {
 	$("body").addClass("facex-fullscreen-mode");
 	if (!wrapper.facexCierre) return;
-	facex_multi.setup_back_guard({ to: "/app/facex", is_dirty: () => wrapper.facexCierre.is_dirty() });
+	facex_multi.setup_back_guard({ to: "/app/facex", is_dirty: () => wrapper.facexCierre.is_dirty(), on_back: () => wrapper.facexCierre.on_back() });
 	// Ruta profunda: /app/facex-cierre?fecha=YYYY-MM-DD&usuario=...[&serie=...] abre
 	// directamente ese cierre (usado por la alerta de pendientes en FacEx).
 	wrapper.facexCierre.handle_route();
@@ -73,6 +73,16 @@ class FacexCierreDiario {
 		return this._view === "detail" && this._dirty;
 	}
 
+	// «Atrás» del navegador: desde el Cierre General vuelve a la lista de cierres
+	// (sin salir de la page).
+	on_back() {
+		if (this._view === "general") {
+			this._go_list();
+			return true;
+		}
+		return false;
+	}
+
 	// ─────────────────────────── contexto ───────────────────────────
 
 	_load_context(cb) {
@@ -108,6 +118,22 @@ class FacexCierreDiario {
 	handle_route(first) {
 		if (!this.ctx) return;
 		const q = frappe.utils.get_query_params();
+		// /app/facex-cierre?view=general&desde=…&hasta=…&usuarios=a,b — el Cierre
+		// General mantiene su filtro en la URL para que «Atrás» (p. ej. al volver
+		// de abrir una factura) regrese justo aquí. Sin permiso cae en la lista.
+		if (q.view === "general") {
+			if (this._view === "general") return;
+			if (this.ctx.puede_cierre_general) {
+				this._open_general({
+					desde: q.desde || this.ctx.today, hasta: q.hasta || q.desde || this.ctx.today,
+					usuarios: q.usuarios ? String(q.usuarios).split(",").filter(Boolean) : [],
+				});
+				return;
+			}
+			history.replaceState(null, "", "/app/facex-cierre");
+			this._render_list();
+			return;
+		}
 		if (q.name || q.fecha) {
 			history.replaceState(null, "", "/app/facex-cierre");
 			if (q.name) this._open_existing(q.name);
@@ -166,6 +192,7 @@ class FacexCierreDiario {
 	_go_list() {
 		const go = () => {
 			this._dirty = false;
+			if (this._view === "general") history.replaceState(null, "", "/app/facex-cierre");
 			this._reload_pending(() => this._render_list());
 		};
 		if (this.is_dirty()) frappe.confirm(__("Hay cambios sin guardar. ¿Desea salir de todos modos?"), go);
@@ -228,6 +255,10 @@ class FacexCierreDiario {
 		</div>
 	</div>
 
+	${ctx.puede_cierre_general ? `<button type="button" class="cd-general-btn" id="cd-btn-general">
+		<span class="cd-general-ico">📊</span><span>Ir a Cierre Diario General</span><span class="cd-general-arrow">→</span>
+	</button>` : ""}
+
 	<div id="cd-pending" class="cd-alert ${pend.length ? "cd-alert-warn" : "cd-alert-ok"}">
 		${pend.length
 			? `<div class="cd-alert-title">⚠ ${pend.length} día(s) con ventas pendientes de cierre</div>
@@ -253,6 +284,8 @@ class FacexCierreDiario {
 </div>`);
 
 		this.$body.find("#cd-btn-new").on("click", () => this._open_new(ctx.today, ctx.user));
+		// Informe gerencial: se abre aquí mismo (vista interna), por defecto el día de hoy.
+		this.$body.find("#cd-btn-general").on("click", () => this._open_general({ desde: ctx.today, hasta: ctx.today, usuarios: [] }));
 		this.$body.find(".cd-chip").on("click", (e) => {
 			const p = pend[parseInt($(e.currentTarget).data("idx"), 10)];
 			// Día por serie con una sola serie pendiente: directo a esa serie;
@@ -309,6 +342,214 @@ class FacexCierreDiario {
 				$t.find(".cd-row").on("click", (e) => this._open_existing($(e.currentTarget).data("name")));
 			},
 		});
+	}
+
+	// ─────────────────────── CIERRE DIARIO GENERAL ───────────────────────
+	// Informe gerencial (api/cierre_general.py): 3 tablas por tienda/vendedor.
+	// Solo con el permiso reporte_cierre_general; el servidor lo vuelve a exigir.
+
+	_open_general(f) {
+		if (!this.ctx || !this.ctx.puede_cierre_general) return this._render_list();
+		this._view = "general";
+		this.doc = null;
+		this.snap = null;
+		this._gen = { desde: f.desde, hasta: f.hasta, usuarios: f.usuarios || [], data: null };
+		const ctx = this.ctx;
+		const sel = this._gen.usuarios;
+		this.$body.html(`
+<div class="cd-wrap">
+	<div class="cd-head">
+		<div>
+			<button type="button" class="cd-link" id="cd-btn-back">← Cierres</button>
+			<div class="cd-title">Cierre Diario General</div>
+			<div class="cd-subtitle">${_cd_esc(ctx.company)} · consolidado por tienda / vendedor</div>
+		</div>
+		<div class="cd-head-actions"><button type="button" class="cd-btn cd-btn-secondary" id="cd-g-pdf">Ver PDF</button><button type="button" class="cd-btn cd-btn-primary" id="cd-g-export">Exportar a Excel</button></div>
+	</div>
+	<div class="cd-card">
+		<div class="cd-filters">
+			<div class="cd-field"><label>Desde</label><input type="date" id="cd-g-desde" class="cd-input" value="${_cd_esc(f.desde)}" max="${ctx.today}"></div>
+			<div class="cd-field"><label>Hasta</label><input type="date" id="cd-g-hasta" class="cd-input" value="${_cd_esc(f.hasta)}" max="${ctx.today}"></div>
+			<div class="cd-field cd-g-users">
+				<label>Tienda / Vendedor</label>
+				<button type="button" class="cd-input cd-g-users-btn" id="cd-g-users-btn"><span id="cd-g-users-txt"></span><span class="cd-g-caret">▾</span></button>
+				<div class="cd-g-users-panel" id="cd-g-users-panel" style="display:none;">
+					<label class="cd-g-all"><input type="checkbox" id="cd-g-users-all"> <b>Todas</b></label>
+					${(ctx.users || []).map((u) => `<label><input type="checkbox" class="cd-g-user" value="${_cd_esc(u.name)}" ${sel.includes(u.name) ? "checked" : ""}> ${_cd_esc(u.full_name || u.name)}</label>`).join("")}
+				</div>
+			</div>
+			<div class="cd-field" style="align-self:end;"><button type="button" class="cd-btn cd-btn-primary" id="cd-g-run">Generar</button></div>
+		</div>
+		<div id="cd-g-out" class="cd-g-out"><div class="cd-empty">Cargando…</div></div>
+	</div>
+</div>`);
+		const $b = this.$body;
+		$b.find("#cd-btn-back").on("click", () => this._go_list());
+		$b.find("#cd-g-run").on("click", () => this._run_general());
+		$b.find("#cd-g-export").on("click", () => this._export_general("xlsx"));
+		$b.find("#cd-g-pdf").on("click", () => this._export_general("pdf"));
+		const paintUsers = () => {
+			const n = this._gen.usuarios.length;
+			const names = this._gen.usuarios.map((u) => this.user_label(u));
+			$b.find("#cd-g-users-txt").text(!n ? "Todas las tiendas" : (n <= 2 ? names.join(", ") : `${n} seleccionadas`));
+			$b.find("#cd-g-users-all").prop("checked", !n);
+		};
+		paintUsers();
+		$b.find("#cd-g-users-btn").on("click", (e) => { e.stopPropagation(); $b.find("#cd-g-users-panel").toggle(); });
+		$b.find("#cd-g-users-panel").on("click", (e) => e.stopPropagation());
+		$b.find(".cd-g-user").on("change", () => {
+			this._gen.usuarios = $b.find(".cd-g-user:checked").map((_, el) => el.value).get();
+			paintUsers();
+		});
+		$b.find("#cd-g-users-all").on("change", (e) => {
+			if (e.target.checked) { this._gen.usuarios = []; $b.find(".cd-g-user").prop("checked", false); }
+			paintUsers();
+		});
+		$(document).off("click.cdGenUsers").on("click.cdGenUsers", () => $b.find("#cd-g-users-panel").hide());
+		this._run_general();
+	}
+
+	_run_general() {
+		const g = this._gen;
+		g.desde = this.$body.find("#cd-g-desde").val() || this.ctx.today;
+		g.hasta = this.$body.find("#cd-g-hasta").val() || g.desde;
+		this.$body.find("#cd-g-users-panel").hide();
+		const qs = `view=general&desde=${g.desde}&hasta=${g.hasta}${g.usuarios.length ? "&usuarios=" + encodeURIComponent(g.usuarios.join(",")) : ""}`;
+		history.replaceState(null, "", `/app/facex-cierre?${qs}`);
+		const $out = this.$body.find("#cd-g-out");
+		$out.html(`<div class="cd-empty">Calculando…</div>`);
+		frappe.call({
+			method: "facex_multi.api.cierre_general.get_cierre_general",
+			args: { start_date: g.desde, end_date: g.hasta, usuarios: g.usuarios, company: this.ctx.company },
+			callback: (r) => {
+				if (this._view !== "general") return;
+				g.data = r.message;
+				this._render_general_tables(r.message);
+			},
+			error: () => $out.html(`<div class="cd-empty">No se pudo generar el informe (¿sin permiso?).</div>`),
+		});
+	}
+
+	_render_general_tables(data) {
+		const Q = (v) => this.fmt(v);
+		const fd = (d) => this.short_date(d);
+		const rows = data.rows || [];
+		const T = data.totales || {};
+		const multi = !!data.es_rango;
+		const rango = multi ? `${fd(data.start_date)} al ${fd(data.end_date)}` : fd(data.start_date);
+		const cheque = !!data.mostrar_cheque_tc;
+		const eye = (i, sec) => `<button type="button" class="cd-g-eye" data-i="${i}" data-sec="${sec}" title="Ver el detalle"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg></button>`;
+		const num = (v, bold) => `<td class="r ${(v || 0) < 0 ? "cd-g-neg" : ""}">${bold ? `<b>${Q(v)}</b>` : Q(v)}</td>`;
+		const cnt = (v) => `<td class="r"><b>${v || 0}</b></td>`;
+		const name = (r, i, sec) => `<td class="cd-g-name">${_cd_esc(r.nombre)}${r.en_vivo ? ' <span class="cd-g-live" title="Sin cierre presentado: datos en tiempo real">EN VIVO</span>' : ""}${eye(i, sec)}</td>`;
+		const tot = (cells) => `<tr class="cd-g-total">${cells}</tr>`;
+		const box = (t, b, note) => `<div class="cd-g-box"><div class="cd-g-box-title">${t}</div><div class="cd-table-wrap">${b}</div>${note ? `<div class="cd-g-note">${note}</div>` : ""}</div>`;
+
+		let html = `<div class="cd-g-banner">
+			<div><div class="cd-g-h1">CIERRE DIARIO GENERAL</div>
+			<div class="cd-g-range ${multi ? "multi" : ""}">${multi ? "Del " + rango : "Fecha: " + rango}</div></div>
+			<div class="cd-muted">${multi ? "Agrupado por tienda / vendedor" : ""}</div></div>`;
+		// Dos cuadros compactos lado a lado (no crecen hacia abajo): días con venta
+		// que aún no tienen cierre, y días sin venta por usuario.
+		const lista = (arr) => arr.map((x) => `<li><b>${_cd_esc(x.nombre)}</b>: ${x.fechas.map(fd).join(", ")}</li>`).join("");
+		const sc = data.sin_cierre || [];
+		const sv = data.sin_venta || [];
+		html += `<div class="cd-g-notes">
+			<div class="cd-g-note-box cd-g-note-warn"><div class="cd-g-note-t">⚠ Fechas aún sin cierre diario <small>(con facturas emitidas · datos en tiempo real)</small></div>
+				${sc.length ? `<ul>${lista(sc)}</ul>` : '<div class="cd-g-note-ok">✓ Todos los días con venta tienen cierre.</div>'}</div>
+			<div class="cd-g-note-box"><div class="cd-g-note-t">Días sin venta para usuarios</div>
+				${sv.length ? `<ul>${lista(sv)}</ul>` : '<div class="cd-g-note-ok">Todos los usuarios vendieron en todas las fechas.</div>'}</div>
+		</div>`;
+		if (!rows.length) {
+			this.$body.find("#cd-g-out").html(html + `<div class="cd-empty">Sin movimiento en ${multi ? "el rango" : "la fecha"} seleccionada.</div>`);
+			return;
+		}
+		const right = (r) => `${num(r.transfer)}${num(r.efectivo)}${cheque ? num(r.cheque_tc) : ""}${num(r.gastos)}${num(r.liquido, true)}${num(r.transfer_fletes, true)}`;
+		html += box("TABLA 1 · VENTAS DEL DÍA", `
+<table class="cd-table cd-g-table">
+	<thead>
+		<tr><th colspan="5" class="cd-g-grp cd-g-grp-v">VENTAS DEL DÍA <small>(sin flete ni recargo)</small></th>
+			<th colspan="${cheque ? 6 : 5}" class="cd-g-grp cd-g-grp-p">ANEXO · PAGOS</th></tr>
+		<tr><th>Tienda / Vendedor</th><th class="r">Venta del día</th><th class="r">Créditos</th><th class="r">Mercadería COD</th><th class="r">Total</th>
+			<th class="r cd-g-sep">Transfer / Depo</th><th class="r">Efectivo</th>${cheque ? '<th class="r">Cheques / TC</th>' : ""}<th class="r">Gastos</th><th class="r">Líquido x Recibir</th><th class="r">Transfer/Depo + Fletes previo depo</th></tr>
+	</thead>
+	<tbody>
+		${rows.map((r, i) => `<tr>${name(r, i, "ventas")}${num(r.venta)}${num(r.creditos)}${num(r.cod)}${num(r.total, true)}${right(r)}</tr>`).join("")}
+		${tot(`<td>TOTAL</td>${num(T.venta, true)}${num(T.creditos, true)}${num(T.cod, true)}${num(T.total, true)}${right(T)}`)}
+	</tbody>
+</table>`, "Venta, créditos y COD sin flete ni recargo (los toma del pie de la factura). Líquido x Recibir = Efectivo − Gastos.");
+		html += box("TABLA 2 · LIQUIDACIÓN DE CXC", `
+<table class="cd-table cd-g-table">
+	<thead><tr><th>Tienda / Vendedor</th><th class="r">Clientes al Crédito</th><th class="r">Clientes COD x Liquidaciones</th><th class="r">Total</th></tr></thead>
+	<tbody>
+		${rows.map((r, i) => `<tr>${name(r, i, "cxc")}${num(r.cxc_credito)}${num(r.cxc_cod)}${num(r.cxc_total, true)}</tr>`).join("")}
+		${tot(`<td>TOTAL</td>${num(T.cxc_credito, true)}${num(T.cxc_cod, true)}${num(T.cxc_total, true)}`)}
+	</tbody>
+</table>`, "Cobros del período de facturas de días anteriores, sin flete ni recargo.");
+		html += box("TABLA 3 · COBROS DE FLETES DEL DÍA", `
+<table class="cd-table cd-g-table">
+	<thead><tr><th>Tienda / Vendedor</th><th class="r">Cant. PD</th><th class="r">Fletes Previo Depo Q</th><th class="r">Cant. Liq</th><th class="r">Fletes COD x Liquidación Q</th><th class="r">Total Cant.</th><th class="r">Total Q</th></tr></thead>
+	<tbody>
+		${rows.map((r, i) => `<tr>${name(r, i, "fletes")}${cnt(r.fletes_pd_cant)}${num(r.fletes_pd_q)}${cnt(r.fletes_liq_cant)}${num(r.fletes_liq_q)}${cnt(r.fletes_total_cant)}${num(r.fletes_total_q, true)}</tr>`).join("")}
+		${tot(`<td>TOTAL</td>${cnt(T.fletes_pd_cant)}${num(T.fletes_pd_q, true)}${cnt(T.fletes_liq_cant)}${num(T.fletes_liq_q, true)}${cnt(T.fletes_total_cant)}${num(T.fletes_total_q, true)}`)}
+	</tbody>
+</table>`, "PD = flete de facturas pagadas el mismo día de la venta por transferencia/depósito. Liq = flete de clientes COD conciliados con la carga de guías.");
+
+		const $out = this.$body.find("#cd-g-out");
+		$out.html(html);
+		$out.find(".cd-g-eye").on("click", (e) => this._general_detalle($(e.currentTarget).data("i"), $(e.currentTarget).data("sec"), rango));
+	}
+
+	// Ojo: detalle de una tienda para resolver dudas sin salir del informe.
+	_general_detalle(i, sec, rango) {
+		const r = ((this._gen.data || {}).rows || [])[i];
+		if (!r) return;
+		const Q = (v) => this.fmt(v);
+		const d = r.detalle || {};
+		const COND = { contado: "Contado", credito: "Crédito", contra_entrega: "Contra Entrega" };
+		const link = (n) => `<a href="#" class="cd-g-inv" data-inv="${_cd_esc(n)}">${_cd_esc(n)}</a>`;
+		const td = (v, b) => `<td class="r">${b ? `<b>${Q(v)}</b>` : Q(v)}</td>`;
+		const table = (head, body, empty) => body
+			? `<div class="cd-table-wrap"><table class="cd-table"><thead><tr>${head.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table></div>`
+			: `<div class="cd-empty">${empty}</div>`;
+		let title, html;
+		if (sec === "cxc") {
+			title = "Liquidación de CXC";
+			html = table(["Fecha cobro", "Factura", "Cliente", "Tipo", "Forma", "Cobrado", "Flete/Recargo", "Neto"],
+				(d.recuperaciones || []).map((x) => `<tr><td>${this.short_date(x.fecha)}</td><td>${link(x.factura)}</td><td>${_cd_esc(x.cliente || "")}</td><td>${x.tipo === "cod" ? "COD x liquidación" : "Crédito"}</td><td>${_cd_esc(x.forma || "")}</td>${td(x.cobrado)}${td(-x.cargos)}${td(x.neto, true)}</tr>`).join(""),
+				"Sin cobros de cartera en el período.");
+		} else if (sec === "fletes") {
+			title = "Cobros de fletes";
+			html = table(["Fecha", "Factura", "Cliente", "Tipo", "Guía", "Flete"],
+				(d.fletes || []).map((x) => `<tr><td>${this.short_date(x.fecha)}</td><td>${link(x.factura)}</td><td>${_cd_esc(x.cliente || "")}</td><td>${x.tipo === "PD" ? "Previo depósito" : "COD x liquidación"}</td><td>${_cd_esc(x.guia || "")}</td>${td(x.monto, true)}</tr>`).join(""),
+				"Sin fletes cobrados en el período.");
+		} else {
+			title = "Ventas del día";
+			html = table(["Fecha", "Factura", "Cliente", "Condición", "Total fact.", "Flete/Recargo", "Venta", "Crédito", "COD", "Formas de pago"],
+				(d.facturas || []).map((x) => `<tr><td>${this.short_date(x.fecha)}</td><td>${link(x.factura)}${x.devolucion ? ' <small class="cd-g-neg">DEV</small>' : ""}</td><td>${_cd_esc(x.cliente || "")}</td><td>${COND[x.clasificacion] || ""}</td>${td(x.total)}${td(-x.cargos)}${td(x.venta, true)}${td(x.credito)}${td(x.cod)}<td class="cd-muted">${_cd_esc(x.formas_pago || "")}</td></tr>`).join(""),
+				"Sin facturas en el período.");
+		}
+		const dlg = new frappe.ui.Dialog({ title: `${title} · ${r.nombre} · ${rango}`, size: "extra-large", fields: [{ fieldtype: "HTML", fieldname: "h" }] });
+		dlg.fields_dict.h.$wrapper.html(`<style>${CD_STYLES}</style>${html}`);
+		dlg.show();
+		// Abrir la factura sale de esta page; la URL del informe ya quedó guardada
+		// (replaceState), así que «Atrás» regresa a este mismo informe y filtro.
+		dlg.$wrapper.on("click", ".cd-g-inv", (e) => {
+			e.preventDefault();
+			window.location.href = `/app/facex?invoice=${encodeURIComponent($(e.currentTarget).data("inv"))}`;
+		});
+	}
+
+	// Excel (descarga) o PDF (se abre en otra pestaña para verlo), con los filtros
+	// actuales; el servidor vuelve a exigir el permiso.
+	_export_general(formato) {
+		const g = this._gen || {};
+		const qs = [
+			`start_date=${encodeURIComponent(g.desde)}`, `end_date=${encodeURIComponent(g.hasta)}`,
+			`company=${encodeURIComponent(this.ctx.company)}`, `formato=${formato}`,
+			g.usuarios && g.usuarios.length ? `usuarios=${encodeURIComponent(JSON.stringify(g.usuarios))}` : "",
+		].filter(Boolean).join("&");
+		window.open(`/api/method/facex_multi.api.cierre_general.export_cierre_general?${qs}`, "_blank");
 	}
 
 	// ─────────────────────────── DETALLE ───────────────────────────
@@ -1201,6 +1442,43 @@ body.facex-fullscreen-mode .layout-container, body.facex-fullscreen-mode #space-
 .cd-head { display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:14px; }
 .cd-head-actions { display:flex;gap:8px;flex-wrap:wrap; }
 .cd-title { font-size:22px;font-weight:800;color:#0f172a;display:flex;align-items:center;gap:10px;flex-wrap:wrap; }
+.cd-general-btn { display:flex;align-items:center;justify-content:center;gap:14px;width:100%;margin:0 0 14px;padding:18px 24px;border:0;border-radius:12px;cursor:pointer;
+  font-size:20px;font-weight:800;letter-spacing:.4px;color:#fff;background:linear-gradient(135deg,#153375,#1f6f54);box-shadow:0 0 0 0 rgba(31,111,84,.55);animation:cd-general-pulse 3.6s ease-in-out infinite; }
+.cd-general-btn:hover { filter:brightness(1.12);animation-play-state:paused; }
+.cd-general-ico,.cd-general-arrow { font-size:24px; }
+@keyframes cd-general-pulse { 0%{box-shadow:0 0 0 0 rgba(31,111,84,.5);opacity:1;} 50%{opacity:.9;} 75%{box-shadow:0 0 0 12px rgba(31,111,84,0);} 100%{box-shadow:0 0 0 0 rgba(31,111,84,0);opacity:1;} }
+@media (prefers-reduced-motion: reduce) { .cd-general-btn { animation:none; } }
+.cd-g-users { position:relative;min-width:240px; }
+.cd-g-users-btn { display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:240px;height:auto;min-height:36px;text-align:left;cursor:pointer;background:#fff; }
+.cd-g-users-panel { position:absolute;z-index:30;top:100%;left:0;min-width:280px;max-height:300px;overflow:auto;margin-top:4px;padding:6px;background:#fff;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 8px 24px rgba(15,23,42,.18); }
+.cd-g-users-panel label { display:flex;align-items:center;gap:8px;padding:6px 8px;margin:0;font-size:13px;font-weight:500;cursor:pointer;border-radius:6px; }
+.cd-g-users-panel label:hover { background:#f1f5f9; }
+.cd-g-users-panel .cd-g-all { border-bottom:1px solid #e2e8f0;border-radius:0;margin-bottom:4px; }
+.cd-g-banner { display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:8px;margin:14px 0;padding-bottom:10px;border-bottom:2px solid #153375; }
+.cd-g-h1 { font-size:18px;font-weight:800;color:#153375; }
+.cd-g-range { font-size:13px;font-weight:600;color:#6c757d; }
+.cd-g-range.multi { font-size:16px;font-weight:800;color:#1f6f54; }
+.cd-g-box { margin-bottom:22px; }
+.cd-g-box-title { font-size:13px;font-weight:800;color:#153375;margin-bottom:8px;letter-spacing:.3px; }
+.cd-g-note { font-size:11px;color:#6c757d;margin-top:4px; }
+.cd-g-table { min-width:640px; }
+.cd-g-grp { text-align:center;color:#fff !important; }
+.cd-g-grp-v { background:#153375 !important; } .cd-g-grp-p { background:#1f6f54 !important;border-left:3px solid #fff; }
+.cd-g-sep { border-left:3px solid #fff; }
+.cd-g-name { font-weight:700;white-space:nowrap; }
+.cd-g-total td { background:#eef2fb;font-weight:800;border-top:2px solid #153375; }
+.cd-g-neg { color:#b91c1c; }
+.cd-g-live { display:inline-block;font-size:10px;font-weight:700;color:#8a5a00;background:#fff3d6;border:1px solid #f0c36a;border-radius:10px;padding:1px 7px;margin-left:4px; }
+.cd-g-eye { border:0;background:transparent;color:#153375;cursor:pointer;padding:2px 4px;margin-left:4px;border-radius:6px; }
+.cd-g-eye:hover { background:#e2e8f0; }
+.cd-g-notes { display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px; }
+@media (max-width:760px) { .cd-g-notes { grid-template-columns:1fr; } }
+.cd-g-note-box { background:#f8fafc;border:1px solid #d1d8dd;border-radius:8px;padding:8px 12px;max-height:140px;overflow:auto;font-size:12px; }
+.cd-g-note-warn { background:#fff8e6;border-color:#f0c36a;border-left:4px solid #e0a100;color:#6b4a00; }
+.cd-g-note-t { font-weight:800;margin-bottom:4px; } .cd-g-note-t small { font-weight:500; }
+.cd-g-note-box ul { margin:0;padding-left:18px;line-height:1.55; }
+.cd-g-note-ok { color:#15803d;font-weight:600; }
+.cd-g-inv { color:#153375;font-weight:700;text-decoration:underline; }
 .cd-subtitle { font-size:13px;color:#6c757d;margin-top:2px;font-weight:600;letter-spacing:.3px; }
 .cd-link { background:none;border:none;color:#5e64ff;font-size:13px;padding:0;cursor:pointer;font-weight:600; }
 .cd-card { background:#fff;border:1px solid #d1d8dd;border-radius:8px;padding:16px 18px;margin-bottom:14px; }

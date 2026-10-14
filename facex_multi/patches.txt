@@ -53,3 +53,4 @@ facex_multi.patches.v1_0.fac_certifi_compacto_neko
 facex_multi.patches.v1_0.add_permite_navegar_erp
 facex_multi.patches.v1_0.cierre_serie_todas
 facex_multi.patches.v1_0.validar_pagos_neko
+facex_multi.patches.v1_0.cierre_general_neko

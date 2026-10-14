@@ -56,6 +56,7 @@
   "reporte_analisis_utilidad",
   "reporte_auditoria_sistema",
   "reporte_ventas_vendedor",
+  "reporte_cierre_general",
   "sec_3",
   "puede_compras",
   "sb_compras_docs",
@@ -467,6 +468,13 @@
    "fieldname": "reporte_ventas_vendedor",
    "fieldtype": "Check",
    "label": "Ventas por Vendedor (Gerencia)"
+  },
+  {
+   "default": "0",
+   "description": "Informe gerencial «Cierre Diario General»: por tienda/vendedor, ventas del día, créditos, mercadería COD, pagos, liquidación de CXC y cobro de fletes, por rango de fechas (aun sin cierre presentado, en tiempo real). Denegado por defecto.",
+   "fieldname": "reporte_cierre_general",
+   "fieldtype": "Check",
+   "label": "Cierre Diario General (Gerencia)"
   },
   {
    "fieldname": "sec_3",

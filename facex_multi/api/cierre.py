@@ -55,6 +55,7 @@ from facex_multi.api.invoice import get_effective_company
 from facex_multi.api.permissions import (
     get_facex_can_create_cierres,
     get_facex_company_config,
+    get_facex_permissions_for_company,
     get_facex_can_reclassify_terms,
     get_facex_can_reopen_cierres,
     get_facex_can_supervise_cierres,
@@ -652,6 +653,7 @@ def compute_snapshot(company: str, fecha, usuario: str, serie: str = SERIE_TODAS
         cargos_pasarela += pas_inv
         paid_non_ce = 0.0
         ce_rows = 0.0
+        pagado_dia = transfer_dia = 0.0
         by_method = Counter()
         for p in pay_by_inv.get(inv.name, []):
             if p.payment_date and getdate(p.payment_date) > fecha:
@@ -664,6 +666,12 @@ def compute_snapshot(company: str, fecha, usuario: str, serie: str = SERIE_TODAS
             paid_non_ce += amt
             by_method[p.payment_method or "Efectivo"] += amt
             field = _METHOD_FIELD.get(p.payment_method)
+            # Pagado el MISMO día de la venta (informe Cierre General: fletes
+            # previo depósito).
+            if not p.payment_date or getdate(p.payment_date) == fecha:
+                pagado_dia += amt
+                if field == "cobro_transferencia":
+                    transfer_dia += amt
             if field:
                 cobros[field] += amt
             else:
@@ -715,6 +723,8 @@ def compute_snapshot(company: str, fecha, usuario: str, serie: str = SERIE_TODAS
             "customer_name": inv.customer_name or inv.customer,
             "grand_total": gt,
             "pagado": paid_non_ce,
+            "pagado_dia": round(pagado_dia, 2),
+            "transfer_dia": round(transfer_dia, 2),
             "contra_entrega": ce,
             "credito": credito,
             "flete": inv_flete.get(inv.name, 0.0),
@@ -1016,7 +1026,14 @@ def _recuperacion_cartera(company: str, fecha, usuario: str, serie: str = SERIE_
             cod_facturas.add(r.sales_invoice)
         neto_total += neto
 
+        # Flete y recargo que van DENTRO de este cobro (prorrateo por el total
+        # cobrable de la factura): el informe Cierre General los separa de la
+        # mercadería recuperada.
+        cc = cargos_inv.get(r.sales_invoice) or {}
+        f_cobro = min(amt / cobrable_inv, 1.0) if cobrable_inv else 0.0
         r.update({
+            "flete_cobrado": round(flt(cc.get("flete")) * f_cobro, 2),
+            "recargo_cobrado": round(flt(cc.get("recargo")) * f_cobro, 2),
             "posting_date": str(r.posting_date),
             "tipo": tipo,
             "tipo_label": _RECUP_TIPOS[tipo],
@@ -1319,6 +1336,11 @@ def get_context(company: str = None) -> dict:
             as_dict=True,
         )
     me = frappe.session.user
+    # Cuentas de soporte/administración ocultas en los selectores (config del
+    # sitio); el propio usuario siempre se conserva.
+    from facex_multi.api.permissions import get_usuarios_ocultos
+    ocultos = set(get_usuarios_ocultos()) - {me}
+    users = [u for u in users if u.name not in ocultos]
     me_fullname = frappe.db.get_value("User", me, "full_name") or me
     if not any(u.name == me for u in users):
         users.insert(0, frappe._dict(name=me, full_name=me_fullname))
@@ -1333,6 +1355,9 @@ def get_context(company: str = None) -> dict:
         "puede_reclasificar": int(_can_reclassify(company)),
         "condiciones": _terms_options() if _can_reclassify(company) else [],
         "puede_crear_cierres": int(_can_create(company)),
+        # Acceso al informe gerencial «Cierre Diario General» (api/cierre_general.py).
+        "puede_cierre_general": int(bool(
+            get_facex_permissions_for_company(company).get("reporte_cierre_general"))),
         "today": today(),
         "users": users,
         "warehouses": frappe.get_all(

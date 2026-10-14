@@ -5266,6 +5266,22 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 /* Menú de reportes comprimido (escritorio/tablet): columna de íconos */
 .ef-rep-layout { transition: grid-template-columns .2s ease; }
+/* Filtros multi-selección de reportes (Usuario Creador, Vendedor, Bodega…): el
+   control de Frappe traía márgenes/alto propios y el flex del contenedor lo
+   comprimía; se les da ancho mínimo, caja visible y lista desplegable amplia. */
+#ef-report-filters .ef-filter-owners, #ef-report-filters .ef-filter-sales-partner,
+#ef-report-filters .ef-filter-warehouse, #ef-report-filters .ef-filter-customer { flex: 0 0 auto; min-width: 240px; }
+#ef-report-filters .ef-link-ctrl { width: 100%; }
+#ef-report-filters .ef-link-ctrl .form-group { margin: 0; width: 100%; }
+#ef-report-filters .ef-link-ctrl .control-label, #ef-report-filters .ef-link-ctrl .help-box { display: none; }
+#ef-report-filters .ef-link-ctrl .multiselect-list { position: relative; width: 100%; }
+#ef-report-filters .ef-link-ctrl .multiselect-list .form-control,
+#ef-report-filters .ef-link-ctrl .multiselect-list .status-text {
+  display: block; width: 100%; min-height: 34px; height: auto; padding: 6px 10px; line-height: 1.4;
+  white-space: normal; background: #fff; border: 1px solid var(--ef-border); border-radius: 6px; font-size: 13px;
+}
+#ef-report-filters .ef-link-ctrl .multiselect-list .dropdown-menu { min-width: 300px; max-height: 320px; overflow-y: auto; z-index: 1060; }
+#ef-report-filters .ef-link-ctrl .multiselect-list .selectable-items { max-height: 260px; overflow-y: auto; }
 .ef-rep-nav-heading { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .ef-rep-collapse-btn {
   flex: 0 0 auto; width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center;

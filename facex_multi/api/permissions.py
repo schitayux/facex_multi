@@ -27,16 +27,27 @@ _ALL_PERM_FIELDS = [
     "reporte_antiguedad_saldos", "reporte_cotizaciones",
     "reporte_recibos_pagos", "reporte_crecimiento_ventas",
     "reporte_imprimir_recibo", "reporte_analisis_utilidad",
-    "reporte_auditoria_sistema", "reporte_ventas_vendedor",
+    "reporte_auditoria_sistema", "reporte_ventas_vendedor", "reporte_cierre_general",
 ]
 
 # Flags de _ALL_PERM_FIELDS que NO se conceden a un usuario sin fila de FacEx
 # Settings (acceso total heredado): solo con el check marcado o System Manager.
 _DENY_BY_DEFAULT_FIELDS = (
-    "reporte_ventas_vendedor",
+    "reporte_ventas_vendedor", "reporte_cierre_general",
     # Pagos a proveedores: sale dinero de caja/banco → solo con el check marcado.
     "pago_proveedor_grabar_borrador", "pago_proveedor_validar", "pago_proveedor_cancelar",
 )
+
+def get_usuarios_ocultos() -> tuple:
+    """Usuarios que NO deben aparecer en los selectores de usuario/vendedor de
+    FacEx en este sitio (cuentas de soporte/administración). Se configura por
+    sitio en site_config.json: "facex_usuarios_ocultos": ["a@x.com", ...].
+    Solo oculta del listado: sus permisos y su información no cambian."""
+    val = frappe.conf.get("facex_usuarios_ocultos") or []
+    if isinstance(val, str):
+        val = [v.strip() for v in val.split(",")]
+    return tuple(v for v in val if v)
+
 
 def _full_access() -> dict:
     return {f: 1 for f in _ALL_PERM_FIELDS}
@@ -194,6 +205,7 @@ PROFILE_PERM_FIELDS = [
     "reporte_analisis_utilidad",
     "reporte_auditoria_sistema",
     "reporte_ventas_vendedor",
+    "reporte_cierre_general",
     "puede_compras",
     "puede_validar_compras",
     "puede_cancelar_compras",
