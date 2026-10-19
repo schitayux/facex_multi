@@ -82,9 +82,44 @@ def _tiene_items_inventario_sin_despacho(doc):
     for row in doc.items:
         if not row.item_code or row.get("delivery_note") or row.get("dn_detail"):
             continue
-        if frappe.get_cached_value("Item", row.item_code, "is_stock_item"):
+        if frappe.get_cached_value("Item", row.item_code, "is_stock_item") or _bundle_con_inventario(row.item_code):
             return True
     return False
+
+
+def anular_salidas_bundle(doc, method=None):
+    """Sales Invoice > on_cancel: las facturas de puros Product Bundle que se
+    validaron con Actualizar Existencias apagado (ver _bundle_con_inventario)
+    se corrigieron con una Salida de Inventario manual que lleva el número de la
+    factura en sus observaciones. ERPNext no la liga a la factura, así que al
+    anular esta se anula también la salida: el kardex muestra el reverso con la
+    fecha de la anulación (ver stock_reports._parear_anulaciones)."""
+    if doc.update_stock:
+        return
+    for name in frappe.get_all(
+        "Stock Entry",
+        filters={"docstatus": 1, "purpose": "Material Issue",
+                 "remarks": ["like", f"Descuento de inventario del Product Bundle de la factura {doc.name} (%"]},
+        pluck="name",
+    ):
+        frappe.get_doc("Stock Entry", name).cancel()
+
+
+def _bundle_con_inventario(item_code):
+    """¿Es un Product Bundle activo con algún componente de inventario? El
+    ítem padre del bundle no es de inventario, pero al vender ERPNext lo expande
+    en Packed Items y rebaja los hijos, y eso solo ocurre con update_stock=1.
+    Sin esto, una factura de puros bundles se validaba sin mover el stock."""
+    return bool(frappe.db.sql(
+        """
+        SELECT 1 FROM `tabProduct Bundle` pb
+        JOIN `tabProduct Bundle Item` pbi ON pbi.parent = pb.name
+        JOIN `tabItem` i ON i.name = pbi.item_code
+        WHERE pb.new_item_code = %s AND pb.disabled = 0 AND i.is_stock_item = 1
+        LIMIT 1
+        """,
+        item_code,
+    ))
 
 
 def guard_guias_transporte_permission(doc, method=None):
@@ -2277,7 +2312,9 @@ def submit_invoice(name: str):
 def _cancel_linked_payment_entries(invoice_name: str):
     """Cancela (sin eliminar) los Payment Entry presentados que referencian
     esta factura — ERPNext no permite cancelar una Sales Invoice mientras
-    tenga Payment Entries activos apuntándola."""
+    tenga Payment Entries activos apuntándola. Sin el congelamiento del Cierre
+    Diario: los cobros siguen contando en su día (el cierre lee los pagos de la
+    factura, no los Payment Entry) y la anulación cae en el cierre de hoy."""
     for pe_name in frappe.get_all(
         "Payment Entry Reference",
         filters={"reference_doctype": "Sales Invoice", "reference_name": invoice_name},

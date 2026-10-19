@@ -114,6 +114,8 @@ doc_events = {
         # Cierre Diario: una factura / sus pagos quedan congelados una vez que
         # el día del usuario está Cerrado (ver facex_multi.api.cierre).
         "before_cancel": "facex_multi.api.cierre.guard_sales_invoice_cancel",
+        # Bundles corregidos con salida manual: se anula junto con la factura.
+        "on_cancel": "facex_multi.api.invoice.anular_salidas_bundle",
         "before_update_after_submit": "facex_multi.api.cierre.guard_sales_invoice_update_after_submit"
     },
     "Payment Entry": {
