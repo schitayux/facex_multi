@@ -15,6 +15,7 @@ from facex_multi.api.permissions import (
     get_facex_allowed_warehouses,
     get_facex_can_maintain_item_costs,
     get_facex_can_view_costs,
+    get_facex_company_config,
     get_facex_permissions_for_company,
 )
 
@@ -301,6 +302,16 @@ def export_items_excel(names_json: str, company: str = None):
     frappe.response["filename"] = "productos.xlsx"
     frappe.response["filecontent"] = xlsx_file.getvalue()
     frappe.response["type"] = "binary"
+
+
+@frappe.whitelist()
+def get_new_item_defaults(company: str = None):
+    """Valores por defecto para el Quick Entry nativo de Item. «Es inventariable»
+    sigue a «Manejar Inventario» de FacEx Configuracion Compania (compañía sin
+    inventario → desmarcado)."""
+    company = get_effective_company(company)
+    cfg = get_facex_company_config(company)
+    return {"company": company, "is_stock_item": 1 if cint(cfg.get("maneja_inventario")) else 0}
 
 
 @frappe.whitelist()
@@ -593,7 +604,25 @@ def create_or_update_item(data_json: str, company: str = None):
     if not is_new and not _perms.get("modifica_items", 1):
         frappe.throw("No tiene permiso para modificar productos.", frappe.PermissionError)
 
+    # Imagen principal subida desde el form de ítem nuevo (solo al crear).
+    new_image = (data.get("image") or "").strip() if is_new else ""
+    image_file = None
+    if new_image:
+        image_file = frappe.db.get_value(
+            "File", {"file_url": new_image, "owner": frappe.session.user},
+            ["name", "attached_to_name"], as_dict=True,
+        )
+        if not image_file:
+            frappe.throw("La imagen adjunta no es válida. Vuelva a adjuntarla.")
+        doc.image = new_image
+
     doc.save(ignore_permissions=False)
+    if image_file and not image_file.attached_to_name:
+        frappe.db.set_value("File", image_file.name, {
+            "attached_to_doctype": "Item",
+            "attached_to_name": doc.name,
+            "attached_to_field": "image",
+        })
     frappe.db.commit()
 
     # Si se especificó un precio y lista de precios, actualizarlo/crearlo

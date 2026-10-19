@@ -54,39 +54,62 @@ def _estado_dia(cs: dict, series: set) -> str:
 
 
 def _pares(company, start, end, usuarios) -> tuple:
-    """{(fecha, usuario)} con actividad en el rango + series con venta por par."""
+    """({(fecha, usuario)} con actividad en el rango, series que requieren cierre
+    por par, pares con venta). Un cobro de cartera (CxC) también obliga a cierre."""
     corte_cond, corte_vals = _c._corte_si(company)
     user_cond = "AND si.owner IN %(usuarios)s" if usuarios else ""
     base = {"company": company, "start": start, "end": end, "ce": _c.CONTRA_ENTREGA,
             "usuarios": tuple(usuarios or ()), **corte_vals}
-    series = {}
+    series = {}   # series que necesitan cierre (con venta o con cobros de cartera)
+    ventas = set()  # (fecha, usuario) con al menos una factura emitida
     pares = set()
     for r in frappe.db.sql(
         f"""
         SELECT DISTINCT si.owner, si.posting_date, si.naming_series
         FROM `tabSales Invoice` si
-        WHERE si.company = %(company)s AND si.docstatus = 1
+        WHERE si.company = %(company)s AND {_c._vigente_sql("si", "si.posting_date")}
           AND si.posting_date BETWEEN %(start)s AND %(end)s
           AND {corte_cond} {user_cond}
         """, base, as_dict=True,
     ):
         key = (getdate(r.posting_date), r.owner)
         pares.add(key)
+        ventas.add(key)
         series.setdefault(key, set()).add(_c._norm_serie(r.naming_series))
     if frappe.db.table_exists("eFast Invoice Payment"):
         for r in frappe.db.sql(
             f"""
-            SELECT DISTINCT si.owner, p.payment_date
+            SELECT DISTINCT si.owner, p.payment_date, si.naming_series
             FROM `tabeFast Invoice Payment` p
             JOIN `tabSales Invoice` si ON si.name = p.parent
-            WHERE si.company = %(company)s AND si.docstatus = 1
+            WHERE si.company = %(company)s AND {_c._vigente_sql("si", "p.payment_date")}
               AND p.parenttype = 'Sales Invoice' AND p.payment_method != %(ce)s
               AND p.payment_date BETWEEN %(start)s AND %(end)s
               AND si.posting_date < p.payment_date
               AND {corte_cond} {user_cond}
             """, base, as_dict=True,
         ):
-            pares.add((getdate(r.payment_date), r.owner))
+            key = (getdate(r.payment_date), r.owner)
+            pares.add(key)
+            series.setdefault(key, set()).add(_c._norm_serie(r.naming_series))
+    # Devoluciones: la factura de otro día anulada hoy obliga a cerrar el día de
+    # su creador (ver cierre «Anulación»). No cambia las cifras de venta.
+    fa, por = _c._anul_cols("si")
+    for r in frappe.db.sql(
+        f"""
+        SELECT DISTINCT {por} AS usuario, {fa} AS fecha, si.naming_series
+        FROM `tabSales Invoice` si
+        WHERE si.company = %(company)s AND si.docstatus = 2
+          AND {fa} BETWEEN %(start)s AND %(end)s AND si.posting_date < {fa}
+          AND {corte_cond} {f"AND {por} IN %(usuarios)s" if usuarios else ""}
+        """, base, as_dict=True,
+    ):
+        if not r.usuario:
+            continue
+        key = (getdate(r.fecha), r.usuario)
+        pares.add(key)
+        if getdate(r.fecha) >= getdate(_c.ANULACION_DESDE):
+            series.setdefault(key, set()).add(_c._norm_serie(r.naming_series))
     # Cierres con egresos aunque ese día no haya movimiento.
     for r in frappe.db.sql(
         """
@@ -95,7 +118,7 @@ def _pares(company, start, end, usuarios) -> tuple:
         """ + ("AND usuario IN %(usuarios)s" if usuarios else ""), base, as_dict=True,
     ):
         pares.add((getdate(r.fecha), r.usuario))
-    return pares, series
+    return pares, series, ventas
 
 
 def _blank(usuario, nombre) -> dict:
@@ -107,7 +130,8 @@ def _blank(usuario, nombre) -> dict:
         "cxc_credito": 0.0, "cxc_cod": 0.0, "cxc_total": 0.0,
         "fletes_pd_cant": 0, "fletes_pd_q": 0.0, "fletes_liq_cant": 0, "fletes_liq_q": 0.0,
         "fletes_total_cant": 0, "fletes_total_q": 0.0,
-        "detalle": {"facturas": [], "recuperaciones": [], "fletes": []},
+        "dev_cant": 0, "dev_contado": 0.0, "dev_credito": 0.0, "dev_cod": 0.0, "dev_total": 0.0,
+        "detalle": {"facturas": [], "recuperaciones": [], "fletes": [], "devoluciones": []},
     }
 
 
@@ -116,6 +140,7 @@ _SUMAS = (
     "liquido", "transfer_fletes", "cxc_credito", "cxc_cod", "cxc_total",
     "fletes_pd_cant", "fletes_pd_q", "fletes_liq_cant", "fletes_liq_q",
     "fletes_total_cant", "fletes_total_q",
+    "dev_cant", "dev_contado", "dev_credito", "dev_cod", "dev_total",
 )
 
 
@@ -146,7 +171,7 @@ def get_cierre_general(start_date: str = None, end_date: str = None,
         return _vacio(company, start, end)
 
     usuarios = _parse_multi(usuarios)
-    pares, series = _pares(company, start, end, usuarios)
+    pares, series, ventas = _pares(company, start, end, usuarios)
     if len(pares) > MAX_PARES:
         frappe.throw("Demasiados días/tiendas para calcular de una vez. Reduzca el rango o filtre por usuario.")
 
@@ -171,8 +196,8 @@ def get_cierre_general(start_date: str = None, end_date: str = None,
         fila = filas.setdefault(usuario, _blank(usuario, nombres.get(usuario, usuario)))
         snap = _c.compute_snapshot(company, fecha, usuario, _c.SERIE_TODAS)
         _acumular(fila, snap, fecha, egresos.get((fecha, usuario), 0.0))
-        # «Aún sin cierre» y «EN VIVO» aplican solo a días con venta (al menos una
-        # factura emitida); un día sin venta no necesita cierre.
+        # «Aún sin cierre» y «EN VIVO» aplican a días con venta (al menos una
+        # factura emitida) o con cobros de CxC: ambos obligan a cerrar el día.
         if series.get((fecha, usuario)) and _estado_dia(
                 cierres.get((str(fecha), usuario)) or {}, series[(fecha, usuario)]) != "cerrado":
             fila["dias_sin_cierre"].append(str(fecha))
@@ -180,7 +205,7 @@ def get_cierre_general(start_date: str = None, end_date: str = None,
     # Días sin venta por usuario (los que aparecen en el informe y los que se
     # eligieron en el filtro aunque no tengan movimiento).
     fechas = [add_days(start, i) for i in range((end - start).days + 1)]
-    con_venta = {k for k, v in series.items() if v}
+    con_venta = ventas
     for u in usuarios:
         filas.setdefault(u, _blank(u, nombres.get(u) or frappe.db.get_value("User", u, "full_name") or u))
     sin_venta = []
@@ -193,6 +218,14 @@ def get_cierre_general(start_date: str = None, end_date: str = None,
             sin_venta.append({"usuario": usuario, "nombre": f["nombre"], "fechas": dias})
 
     rows = [f for f in filas.values() if f["dias"]]
+    # Quién anuló cada devolución, con nombre.
+    quienes = {d["anulado_por"] for f in rows for d in f["detalle"]["devoluciones"] if d["anulado_por"]}
+    quien_nombre = {u.name: u.full_name or u.name for u in frappe.get_all(
+        "User", filters={"name": ["in", list(quienes) or [""]]}, fields=["name", "full_name"])}
+    for f in rows:
+        f["detalle"]["devoluciones"].sort(key=lambda d: (d["fecha"], d["factura"]))
+        for d in f["detalle"]["devoluciones"]:
+            d["anulado_por_nombre"] = quien_nombre.get(d["anulado_por"]) or d["anulado_por"]
     tot = _blank("", "TOTAL")
     for f in rows:
         for k in _SUMAS:
@@ -215,6 +248,7 @@ def get_cierre_general(start_date: str = None, end_date: str = None,
             for f in rows if f["dias_sin_cierre"]
         ],
         "sin_venta": sin_venta,
+        "hay_devoluciones": int(any(f["dev_cant"] for f in rows)),
         "hoy": today(),
     }
 
@@ -269,6 +303,22 @@ def _acumular(fila: dict, snap: dict, fecha, gastos: float) -> None:
             "formas_pago": f.get("formas_pago"), "devolucion": cint(f.get("es_devolucion")),
         })
 
+    # Devoluciones: facturas de otro día de este usuario anuladas este día. Solo
+    # informativo (tabla 4): no cambian venta, créditos ni COD de las tablas 1-3.
+    clase_dev = {"contado": "dev_contado", "credito": "dev_credito", "contra_entrega": "dev_cod"}
+    for d in snap.get("devoluciones") or []:
+        merc = flt(d.get("mercaderia"))
+        fila["dev_cant"] += 1
+        fila["dev_total"] += merc
+        fila[clase_dev.get(d.get("clasificacion"), "dev_contado")] += merc
+        fila["detalle"]["devoluciones"].append({
+            "fecha": f_str, "factura": d["sales_invoice"], "cliente": d.get("customer_name"),
+            "emision": d.get("posting_date"), "clasificacion": d.get("clasificacion"),
+            "total": round(flt(d.get("grand_total")), 2),
+            "cargos": round(flt(d.get("flete")) + flt(d.get("recargo")), 2),
+            "mercaderia": round(merc, 2), "anulado_por": d.get("anulado_por") or "",
+        })
+
     fila["fletes_pd_q"] += flete_pd_total
     transfer_real = flt(snap.get("cobro_transferencia"))
     fila["transfer"] += max(transfer_real - flete_pd_total, 0.0)
@@ -320,7 +370,8 @@ def _acumular(fila: dict, snap: dict, fecha, gastos: float) -> None:
 # ---------------------------------------------------------------------------
 
 def _tablas(data: dict) -> list:
-    """[(título, encabezados, filas, columnas_numéricas)] de las 3 tablas."""
+    """[(título, encabezados, filas, columnas_de_texto, con_total)] de las tablas
+    (la 4, de devoluciones, solo si hay)."""
     rows = (data.get("rows") or []) + [dict(data.get("totales") or {}, nombre="TOTAL")]
     cheque = bool(data.get("mostrar_cheque_tc"))
     h1 = ["Tienda / Vendedor", "Venta del día", "Créditos", "Mercadería COD", "Total",
@@ -335,11 +386,24 @@ def _tablas(data: dict) -> list:
           "Fletes COD x Liquidación Q", "Total Cant.", "Total Q"]
     r3 = [[r["nombre"], r["fletes_pd_cant"], r["fletes_pd_q"], r["fletes_liq_cant"],
            r["fletes_liq_q"], r["fletes_total_cant"], r["fletes_total_q"]] for r in rows]
-    return [
-        ("VENTAS DEL DÍA (sin flete ni recargo) · ANEXO PAGOS", h1, r1),
-        ("LIQUIDACIÓN DE CXC", h2, r2),
-        ("COBROS DE FLETES DEL DÍA", h3, r3),
+    out = [
+        ("VENTAS DEL DÍA (sin flete ni recargo) · ANEXO PAGOS", h1, r1, {0}, True),
+        ("LIQUIDACIÓN DE CXC", h2, r2, {0}, True),
+        ("COBROS DE FLETES DEL DÍA", h3, r3, {0}, True),
     ]
+    if data.get("hay_devoluciones"):
+        con = [r for r in rows if r.get("dev_cant") or r.get("nombre") == "TOTAL"]
+        h4 = ["Tienda / Vendedor", "Cant. facturas", "Contado", "Crédito", "Contra Entrega", "Total mercadería"]
+        r4 = [[r["nombre"], r["dev_cant"], r["dev_contado"], r["dev_credito"], r["dev_cod"], r["dev_total"]] for r in con]
+        out.append(("DEVOLUCIONES (solo mercadería, anuladas en el período)", h4, r4, {0}, True))
+        h5 = ["Tienda / Vendedor", "Anulada el", "Factura", "Cliente", "Emitida", "Condición", "Total factura",
+              "Flete / Recargo", "Mercadería", "Anulada por"]
+        cond = {"contado": "Contado", "credito": "Crédito", "contra_entrega": "Contra Entrega"}
+        r5 = [[r["nombre"], d["fecha"], d["factura"], d["cliente"] or "", d["emision"], cond.get(d["clasificacion"], ""),
+               d["total"], d["cargos"], d["mercaderia"], d.get("anulado_por_nombre") or ""]
+              for r in data.get("rows") or [] for d in r["detalle"]["devoluciones"]]
+        out.append(("DEVOLUCIONES · DETALLE", h5, r5, {0, 1, 2, 3, 4, 5, 9}, False))
+    return out
 
 
 def _rango_txt(data: dict) -> str:
@@ -373,13 +437,13 @@ def export_cierre_general(start_date: str = None, end_date: str = None, usuarios
         esc = lambda v: frappe.utils.escape_html("" if v is None else str(v))  # noqa: E731
         Q = lambda v: f"Q {flt(v):,.2f}"  # noqa: E731
         blocks = ""
-        for t, head, filas in tablas:
+        for t, head, filas, txt, con_total in tablas:
             cnt_cols = {i for i, h in enumerate(head) if h.startswith("Cant.") or h == "Total Cant."}
             body = ""
             for k, row in enumerate(filas):
-                last = k == len(filas) - 1
+                last = con_total and k == len(filas) - 1
                 tds = "".join(
-                    f'<td class="{"num" if i else ""}">{esc(c) if i == 0 else (int(c) if i in cnt_cols else Q(c))}</td>'
+                    f'<td class="{"" if i in txt else "num"}">{esc(c) if i in txt else (int(c) if i in cnt_cols else Q(c))}</td>'
                     for i, c in enumerate(row))
                 body += f'<tr class="{"tot" if last else ""}">{tds}</tr>'
             blocks += (f'<div class="t">{esc(t)}</div><table><thead><tr>'
@@ -417,8 +481,8 @@ def export_cierre_general(start_date: str = None, end_date: str = None, usuarios
 
     wb = Workbook()
     wb.remove(wb.active)
-    nombres = ["Ventas del día", "Liquidación CXC", "Cobros de fletes"]
-    for (t, head, filas), nombre in zip(tablas, nombres):
+    nombres = ["Ventas del día", "Liquidación CXC", "Cobros de fletes", "Devoluciones", "Devoluciones detalle"]
+    for (t, head, filas, txt, con_total), nombre in zip(tablas, nombres):
         ws = wb.create_sheet(nombre)
         ws.append([titulo.upper()])
         ws.append([rango + " · " + data["company"]])
@@ -434,11 +498,12 @@ def export_cierre_general(start_date: str = None, end_date: str = None, usuarios
         for r_i in range(6, 6 + len(filas)):
             for c_i, h in enumerate(head, start=1):
                 cell = ws.cell(row=r_i, column=c_i)
-                if c_i > 1:
+                if (c_i - 1) not in txt:
                     cell.number_format = "0" if (h.startswith("Cant.") or h == "Total Cant.") else '#,##0.00'
-        for cell in ws[5 + len(filas)]:
-            cell.font = Font(bold=True)
-            cell.fill = PatternFill("solid", fgColor="EEF2FB")
+        if con_total:
+            for cell in ws[5 + len(filas)]:
+                cell.font = Font(bold=True)
+                cell.fill = PatternFill("solid", fgColor="EEF2FB")
         ws["A1"].font = Font(bold=True, size=14, color="153375")
         ws["A2"].font = Font(bold=True, color="1F6F54")
         ws["A3"].font = Font(bold=True)

@@ -186,6 +186,41 @@ def _establecimiento_condition(company: str, establecimiento, alias: str = "sle"
 # 1. Kardex de Movimientos (Entradas + Salidas + Transferencias)
 # ---------------------------------------------------------------------------
 
+def _parear_anulaciones(canceladas: list) -> dict:
+    """{sle_name: {"fecha", "reverso", "separado"}} para los asientos de stock
+    CANCELADOS.
+
+    ERPNext deja dos asientos por cada línea anulada, ambos con la fecha del
+    documento original y ambos is_cancelled = 1: el original y su reverso (el
+    más reciente). El reverso se creó el día de la anulación (`creation`).
+      * Anulado OTRO día: el original cuenta en su fecha y el reverso en la
+        fecha de la anulación, con signo contrario (`separado`): así el
+        kardex muestra el + y el − donde ocurrieron.
+      * Anulado el mismo día: netean a cero y se listan sin contar.
+    `canceladas` necesita sle_name, sle_creation, posting_date, voucher_type,
+    voucher_no, voucher_detail_no, item_code y warehouse."""
+    grupos = {}
+    for r in sorted(canceladas, key=lambda x: (x.sle_creation, x.sle_name)):
+        k = (r.voucher_type, r.voucher_no, r.voucher_detail_no or "", r.item_code, r.warehouse)
+        grupos.setdefault(k, []).append(r)
+    out = {}
+    for filas in grupos.values():
+        for i in range(0, len(filas), 2):
+            orig = filas[i]
+            rev = filas[i + 1] if i + 1 < len(filas) else None
+            out[orig.sle_name] = {"fecha": getdate(orig.posting_date), "reverso": False, "separado": False}
+            if not rev:
+                continue
+            fecha_anul = getdate(rev.sle_creation)
+            separado = fecha_anul > getdate(orig.posting_date)
+            out[orig.sle_name]["separado"] = separado
+            out[rev.sle_name] = {
+                "fecha": fecha_anul if separado else getdate(rev.posting_date),
+                "reverso": True, "separado": separado,
+            }
+    return out
+
+
 @frappe.whitelist()
 def get_kardex(
     company: str = None,
@@ -264,15 +299,17 @@ def get_kardex(
     open_qty = {(o.warehouse, o.item_code): flt(o.qty) for o in opening}
     open_val = {(o.warehouse, o.item_code): flt(o.val) for o in opening}
 
-    # Los movimientos anulados dejan dos asientos (el original y su reverso) que
-    # netean a cero: se listan como «Anulación …» y no cuentan en Entradas/Salidas.
-    raw = frappe.db.sql(
-        f"""
+    # Los movimientos anulados dejan dos asientos (el original y su reverso). Si
+    # se anularon el mismo día netean a cero: se listan como «Anulación …» y no
+    # cuentan en Entradas/Salidas. Si se anularon OTRO día, el original cuenta en
+    # su fecha y el reverso en la de la anulación (ver _parear_anulaciones).
+    sel = f"""
         SELECT
             sle.name AS sle_name, sle.voucher_type, sle.voucher_no, sle.voucher_detail_no,
             sle.posting_date, sle.item_code, i.item_name, sle.owner,
             sle.actual_qty, sle.stock_uom, sle.warehouse, sle.company, sle.valuation_rate,
             sle.stock_value_difference, sle.is_cancelled, sle.creation AS sle_creation,
+            sle.posting_datetime,
             w.bfel_establecimiento,
             sed.expense_account, sed.s_warehouse AS sed_source, sed.t_warehouse AS sed_target,
             se.purpose AS se_purpose, se.remarks AS se_remarks
@@ -282,12 +319,40 @@ def get_kardex(
         LEFT JOIN `tabStock Entry` se ON se.name = sle.voucher_no AND sle.voucher_type = 'Stock Entry'
         LEFT JOIN `tabStock Entry Detail` sed ON sed.name = sle.voucher_detail_no AND sle.voucher_type = 'Stock Entry'
         WHERE {scope_sql}
-          AND sle.posting_date BETWEEN %(from_date)s AND %(to_date)s
-        ORDER BY sle.posting_date ASC, sle.posting_datetime ASC, sle.creation ASC
-        """,
-        params,
-        as_dict=True,
+    """
+    raw = list(frappe.db.sql(
+        sel + " AND sle.is_cancelled = 0 AND sle.posting_date BETWEEN %(from_date)s AND %(to_date)s",
+        params, as_dict=True,
+    ))
+    canceladas = frappe.db.sql(
+        sel + " AND sle.is_cancelled = 1 AND sle.posting_date <= %(to_date)s", params, as_dict=True,
     )
+    pares = _parear_anulaciones(canceladas)
+    f_desde, f_hasta = getdate(from_date), getdate(to_date)
+    for r in raw:
+        r["posting_datetime"] = r.posting_datetime or r.sle_creation
+    for r in canceladas:
+        info = pares[r.sle_name]
+        r["posting_datetime"] = r.sle_creation if (info["separado"] and info["reverso"]) else (r.posting_datetime or r.sle_creation)
+        if info["separado"]:
+            # Anulado otro día: ambos asientos cuentan, cada uno en su fecha.
+            r["posting_date_original"] = r.posting_date
+            r["posting_date"] = info["fecha"]
+            r["is_cancelled"] = 0
+            if not (f_desde <= info["fecha"] <= f_hasta):
+                continue
+        elif not (f_desde <= getdate(r.posting_date) <= f_hasta):
+            continue
+        raw.append(r)
+    raw.sort(key=lambda x: (getdate(x.posting_date), x.posting_datetime, x.sle_creation))
+    # Saldo inicial: lo anulado otro día ya contaba antes de «Desde» si su
+    # original o su reverso caen antes.
+    for r in canceladas:
+        info = pares[r.sle_name]
+        if info["separado"] and info["fecha"] < f_desde:
+            key = (r.warehouse, r.item_code)
+            open_qty[key] = open_qty.get(key, 0.0) + flt(r.actual_qty)
+            open_val[key] = open_val.get(key, 0.0) + flt(r.stock_value_difference)
 
     est_map = {e["id"]: e["nombre"] for e in _get_establishments(company)}
 
@@ -300,14 +365,7 @@ def get_kardex(
                 returns[(dt, d.name)] = bool(d.is_return)
 
     # Asiento de anulación = el más reciente de los asientos cancelados de una misma línea.
-    reversal = set()
-    seen_c = {}
-    for r in sorted((x for x in raw if x.is_cancelled), key=lambda x: (x.sle_creation, x.sle_name)):
-        k = (r.voucher_type, r.voucher_no, r.voucher_detail_no or "", r.item_code, r.warehouse)
-        if k in seen_c:
-            reversal.add(r.sle_name)
-        else:
-            seen_c[k] = r.sle_name
+    reversal = {n for n, i in pares.items() if i["reverso"]}
 
     def _tipo(r):
         vt, qty = r.voucher_type, flt(r.actual_qty)
@@ -985,7 +1043,6 @@ def get_kardex_producto(company: str = None, item_code: str = None, from_date: s
     conditions = [
         "sle.company = %(company)s",
         "sle.item_code = %(item_code)s",
-        "sle.posting_date BETWEEN %(from_date)s AND %(to_date)s",
     ]
     params = {"company": company, "item_code": item_code, "from_date": from_date, "to_date": to_date}
 
@@ -1026,21 +1083,46 @@ def get_kardex_producto(company: str = None, item_code: str = None, from_date: s
         f"SELECT COALESCE(SUM(sle.actual_qty), 0) FROM `tabStock Ledger Entry` sle "
         f"WHERE {' AND '.join(open_conditions)}", open_params)[0][0])
 
-    rows = frappe.db.sql(
-        f"""
-        SELECT sle.name AS sle_name, sle.voucher_type, sle.voucher_no, sle.posting_date,
-               sle.actual_qty, sle.stock_uom, sle.warehouse, sle.valuation_rate,
-               sle.stock_value_difference, sle.is_cancelled,
+    sel = f"""
+        SELECT sle.name AS sle_name, sle.voucher_type, sle.voucher_no, sle.voucher_detail_no,
+               sle.posting_date, sle.item_code, sle.actual_qty, sle.stock_uom, sle.warehouse,
+               sle.valuation_rate, sle.stock_value_difference, sle.is_cancelled,
+               sle.creation AS sle_creation, sle.posting_datetime,
                se.purpose AS se_purpose, se.remarks AS se_remarks
         FROM `tabStock Ledger Entry` sle
         LEFT JOIN `tabStock Entry` se ON se.name = sle.voucher_no AND sle.voucher_type = 'Stock Entry'
         WHERE {" AND ".join(conditions)}
-        ORDER BY sle.posting_date ASC, sle.posting_datetime ASC, sle.creation ASC
-        LIMIT 2000
-        """,
-        params,
-        as_dict=True,
+    """
+    rows = list(frappe.db.sql(
+        sel + " AND sle.is_cancelled = 0 AND sle.posting_date BETWEEN %(from_date)s AND %(to_date)s",
+        params, as_dict=True,
+    ))
+    # Anulado OTRO día: el original cuenta en su fecha y el reverso en la de la
+    # anulación; el mismo día se lista sin contar (ver _parear_anulaciones).
+    canceladas = frappe.db.sql(
+        sel + " AND sle.is_cancelled = 1 AND sle.posting_date <= %(to_date)s", params, as_dict=True,
     )
+    pares = _parear_anulaciones(canceladas)
+    f_desde, f_hasta = getdate(from_date), getdate(to_date)
+    for r in rows:
+        r["posting_datetime"] = r.posting_datetime or r.sle_creation
+    for r in canceladas:
+        info = pares[r.sle_name]
+        r["posting_datetime"] = r.sle_creation if (info["separado"] and info["reverso"]) else (r.posting_datetime or r.sle_creation)
+        r["es_reverso"] = info["reverso"]
+        if info["separado"]:
+            r["posting_date_original"] = r.posting_date
+            r["posting_date"] = info["fecha"]
+            r["is_cancelled"] = 0
+            if info["fecha"] < f_desde:
+                opening_qty += flt(r.actual_qty)
+            if not (f_desde <= info["fecha"] <= f_hasta):
+                continue
+        elif not (f_desde <= getdate(r.posting_date) <= f_hasta):
+            continue
+        rows.append(r)
+    rows.sort(key=lambda x: (getdate(x.posting_date), x.posting_datetime, x.sle_creation))
+    rows = rows[:2000]
 
     running_qty = opening_qty
     running_val = opening_qty * unit_cost
@@ -1048,7 +1130,7 @@ def get_kardex_producto(company: str = None, item_code: str = None, from_date: s
     for r in rows:
         is_transfer = r.voucher_type == "Stock Entry" and r.se_purpose == "Material Transfer"
         r["movement_type_label"] = "Transferencia" if is_transfer else ("Entrada" if r.actual_qty > 0 else "Salida")
-        r["status_label"] = "Anulado" if r.is_cancelled else "Activo"
+        r["status_label"] = "Anulado" if r.is_cancelled else ("Anulación" if r.get("es_reverso") else "Activo")
         r["qty_in"] = r.actual_qty if r.actual_qty > 0 else 0
         r["qty_out"] = -r.actual_qty if r.actual_qty < 0 else 0
         if not r.is_cancelled:

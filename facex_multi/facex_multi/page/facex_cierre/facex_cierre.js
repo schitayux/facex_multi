@@ -265,7 +265,7 @@ class FacexCierreDiario {
 			   <div class="cd-alert-chips">${pend.map((p, i) => `
 					<button type="button" class="cd-chip" data-idx="${i}">
 						<b>${this.short_date(p.fecha)}</b>${ctx.es_gerencia ? ` · ${_cd_esc(p.usuario_nombre || p.usuario)}` : ""}
-						<span class="cd-chip-meta">${p.num_facturas} fact. · ${this.fmt(p.total_venta)}${p.estado ? ` · ${_cd_esc(p.estado)}` : ""}</span>
+						<span class="cd-chip-meta">${p.num_facturas ? `${p.num_facturas} fact. · ${this.fmt(p.total_venta)}` : "sin ventas"}${p.num_cobros ? ` · ${p.num_cobros} cobro(s) de CxC ${this.fmt(p.total_cobros)}` : ""}${p.num_devoluciones ? ` · ${p.num_devoluciones} devolución(es)` : ""}${p.estado ? ` · ${_cd_esc(p.estado)}` : ""}</span>
 						${(p.series_pendientes || []).length ? `<span class="cd-chip-meta">Falta: ${p.series_pendientes.map((x) => _cd_esc(x.label)).join(", ")}</span>` : ""}
 					</button>`).join("")}</div>`
 			: `<div class="cd-alert-title">✓ Sin días pendientes de cierre (últimos 60 días)</div>`}
@@ -345,7 +345,7 @@ class FacexCierreDiario {
 	}
 
 	// ─────────────────────── CIERRE DIARIO GENERAL ───────────────────────
-	// Informe gerencial (api/cierre_general.py): 3 tablas por tienda/vendedor.
+	// Informe gerencial (api/cierre_general.py): 3 tablas por tienda/vendedor (+ una 4.ª de devoluciones si las hay).
 	// Solo con el permiso reporte_cierre_general; el servidor lo vuelve a exigir.
 
 	_open_general(f) {
@@ -495,6 +495,32 @@ class FacexCierreDiario {
 	</tbody>
 </table>`, "PD = flete de facturas pagadas el mismo día de la venta por transferencia/depósito. Liq = flete de clientes COD conciliados con la carga de guías.");
 
+		// Tabla 4: solo si hay devoluciones (facturas de otro día anuladas en el
+		// período). Resumen por usuario creador y, debajo, cada devolución. Es
+		// informativa: no entra en la venta, créditos ni COD de las tablas 1-3.
+		if (data.hay_devoluciones) {
+			const conDev = rows.filter((r) => r.dev_cant);
+			const COND = { contado: "Contado", credito: "Crédito", contra_entrega: "Contra Entrega" };
+			const link = (n) => `<a href="/app/facex?invoice=${encodeURIComponent(n)}" target="_blank">${_cd_esc(n)}</a>`;
+			const detalle = conDev.flatMap((r) => (r.detalle.devoluciones || []).map((d) => `<tr>
+				<td class="cd-g-name">${_cd_esc(r.nombre)}</td><td>${fd(d.fecha)}</td><td>${link(d.factura)}</td><td>${_cd_esc(d.cliente || "")}</td>
+				<td>${fd(d.emision)}</td><td>${COND[d.clasificacion] || ""}</td>${num(d.total)}${num(-d.cargos)}${num(d.mercaderia, true)}
+				<td class="cd-muted">${_cd_esc(d.anulado_por_nombre || "")}</td></tr>`)).join("");
+			html += box("TABLA 4 · DEVOLUCIONES", `
+<table class="cd-table cd-g-table">
+	<thead><tr><th>Tienda / Vendedor</th><th class="r">Cant. facturas</th><th class="r">Contado</th><th class="r">Crédito</th><th class="r">Contra Entrega</th><th class="r">Total mercadería</th></tr></thead>
+	<tbody>
+		${conDev.map((r) => `<tr><td class="cd-g-name">${_cd_esc(r.nombre)}</td>${cnt(r.dev_cant)}${num(r.dev_contado)}${num(r.dev_credito)}${num(r.dev_cod)}${num(r.dev_total, true)}</tr>`).join("")}
+		${tot(`<td>TOTAL</td>${cnt(T.dev_cant)}${num(T.dev_contado, true)}${num(T.dev_credito, true)}${num(T.dev_cod, true)}${num(T.dev_total, true)}`)}
+	</tbody>
+</table>
+<div class="cd-g-box-title" style="margin-top:14px">Detalle de devoluciones</div>
+<table class="cd-table cd-g-table">
+	<thead><tr><th>Tienda / Vendedor</th><th>Anulada el</th><th>Factura</th><th>Cliente</th><th>Emitida</th><th>Condición</th><th class="r">Total factura</th><th class="r">Flete/Recargo</th><th class="r">Mercadería</th><th>Anulada por</th></tr></thead>
+	<tbody>${detalle}</tbody>
+</table>`, "Facturas de otro día anuladas en el período, a nombre del usuario que las emitió; solo mercadería (sin flete ni recargo). No se restan de la venta de la tabla 1.");
+		}
+
 		const $out = this.$body.find("#cd-g-out");
 		$out.html(html);
 		$out.find(".cd-g-eye").on("click", (e) => this._general_detalle($(e.currentTarget).data("i"), $(e.currentTarget).data("sec"), rango));
@@ -569,7 +595,7 @@ class FacexCierreDiario {
 					// Día sin cierres y una sola serie con movimiento: «Todas» y esa serie
 					// dan lo mismo, así que se abre directo el cierre de esa serie.
 					const sd = snap.series_dia || {};
-					const activas = (sd.series || []).filter((o) => o.num_facturas > 0 || o.con_cobros);
+					const activas = (sd.series || []).filter((o) => o.num_facturas > 0 || o.con_cobros || o.con_devoluciones);
 					if (!sd.modo && activas.length === 1) {
 						this._open_new(fecha, usuario, keep_egresos, activas[0].serie);
 						return;
@@ -637,14 +663,14 @@ class FacexCierreDiario {
 		const opt = (o, disabled, why) => `
 			<button type="button" class="cd-serie-opt ${o.serie === "Todas" ? "cd-serie-todas" : ""}" data-serie="${_cd_esc(o.serie)}" data-name="${_cd_esc(o.cierre || "")}" ${disabled ? "disabled" : ""} title="${_cd_esc(why || o.serie)}">
 				<div class="cd-serie-head"><b>${_cd_esc(o.label)}</b>${o.estado ? this.badge(o.estado) : ""}</div>
-				<div class="cd-serie-meta">${o.num_facturas || 0} fact. · ${this.fmt(o.total_venta)}${o.con_cobros ? " · con cobros de cartera" : ""}</div>
+				<div class="cd-serie-meta">${o.num_facturas || 0} fact. · ${this.fmt(o.total_venta)}${o.con_cobros ? " · con cobros de cartera" : ""}${o.con_devoluciones ? " · con devoluciones" : ""}</div>
 				${o.serie !== "Todas" ? `<div class="cd-serie-code">${_cd_esc(o.serie)}</div>` : `<div class="cd-serie-code">Consolidado, como hasta ahora</div>`}
 				${why ? `<div class="cd-serie-why">${_cd_esc(why)}</div>` : ""}
 			</button>`;
 		// Solo las series del día (con movimiento o con cierre); las configuradas
 		// sin uso se ocultan, salvo que no haya ninguna con movimiento.
 		const todas_series = info.series || [];
-		const en_uso = todas_series.filter((o) => o.num_facturas > 0 || o.con_cobros || o.cierre);
+		const en_uso = todas_series.filter((o) => o.num_facturas > 0 || o.con_cobros || o.con_devoluciones || o.cierre);
 		const series = en_uso.length ? en_uso : todas_series;
 		this.$body.html(`
 <div class="cd-wrap">
@@ -803,7 +829,7 @@ class FacexCierreDiario {
 	_series_dia_html(s) {
 		const info = s.series_dia;
 		if (!info || !this.form.serie || this.form.serie === "Todas") return "";
-		const otras = (info.series || []).filter((o) => o.serie !== this.form.serie && (o.num_facturas || o.con_cobros || o.cierre));
+		const otras = (info.series || []).filter((o) => o.serie !== this.form.serie && (o.num_facturas || o.con_cobros || o.con_devoluciones || o.cierre));
 		const chips = otras.map((o) => `<span class="cd-tag" title="${_cd_esc(o.serie)}">${_cd_esc(o.label)} · ${o.estado ? _cd_esc(o.estado) : "sin cierre"}</span>`).join(" ");
 		return `<div class="cd-alert cd-alert-warn"><b>Cierre por serie:</b> solo cuentan las facturas de ${_cd_esc(s.serie_label || this.form.serie)} (ventas, cobros, devoluciones y recuperación de cartera).
 			${otras.length ? `<div style="margin-top:4px;">Otras series del día: ${chips}</div>` : ""}</div>`;
@@ -926,8 +952,7 @@ class FacexCierreDiario {
 				<div class="cd-line"><span>Piezas en oferta (con descuento)</span><b>${this.fmt(s.venta_con_descuento)}</b></div>
 				${_cd_flt(s.cargos_venta) ? `<div class="cd-line"><span>Cargos que sí son venta <span class="cd-muted">(flete/recargo propio)</span></span><b>${this.fmt(s.cargos_venta)}</b></div>` : ""}
 				${Math.abs(_cd_flt(s.ajuste_impuestos)) >= 0.01 ? `<div class="cd-line"><span>Ajustes (descuento global / redondeo)</span><b>${this.fmt(s.ajuste_impuestos)}</b></div>` : ""}
-				<div class="cd-line"><span class="cd-devol-label">Devoluciones <span class="cd-muted">(facturas de otra fecha anuladas hoy)</span></span><b class="cd-devol-label">− ${this.fmt(s.total_devoluciones)}</b></div>
-				<div class="cd-line cd-line-total"><span>VENTA DEL DÍA</span><b>${this.fmt(_cd_flt(s.venta_neta) - _cd_flt(s.total_devoluciones))}</b></div>
+				<div class="cd-line cd-line-total"><span>VENTA DEL DÍA</span><b>${this.fmt(s.venta_neta)}</b></div>
 				<div class="cd-hint">Esta es la cifra de ingresos del día: la misma que suman los informes de venta y el tablero.</div>
 			</div>
 			<div class="cd-block">
@@ -937,7 +962,7 @@ class FacexCierreDiario {
 				<div class="cd-line cd-line-total"><span>TOTAL DE TERCEROS</span><b>${this.fmt(s.cargos_pasarela)}</b></div>
 				<div class="cd-hint">NO es ingreso: el cliente lo paga por usar el servicio de entrega y el transportista lo descuenta en su liquidación. Por eso no suma en la venta del día ni en los informes.</div>
 				${s.snapshot_reconstruido ? `<div class="cd-hint">Este cierre se cerró antes de separar los cargos de terceros, así que el desglose se reconstruyó del recargo y el flete que guardó (entonces todos eran pasarela). El total a depositar es el que se congeló y no cambió.</div>` : ""}
-				<div class="cd-line cd-line-total"><span>TOTAL FACTURADO <span class="cd-muted">(cobrado al cliente)</span></span><b>${this.fmt(_cd_flt(s.total_venta) - _cd_flt(s.total_devoluciones))}</b></div>
+				<div class="cd-line cd-line-total"><span>TOTAL FACTURADO <span class="cd-muted">(cobrado al cliente)</span></span><b>${this.fmt(s.total_venta)}</b></div>
 				${!s.flete_item ? `<div class="cd-hint">Sin Ítem de Flete configurado en FacEx Settings — los fletes se contarán como venta.</div>` : ""}
 			</div>
 			<div class="cd-block">
@@ -957,8 +982,8 @@ class FacexCierreDiario {
 				<div class="cd-line"><span>Contra Entrega</span><b>${this.fmt(s.devoluciones_contra_entrega)}</b></div>
 				<div class="cd-line"><span>Al Crédito</span><b>${this.fmt(s.devoluciones_credito)}</b></div>
 				<div class="cd-line"><span>Contado</span><b>${this.fmt(s.devoluciones_contado)}</b></div>
-				<div class="cd-line cd-line-total"><span>TOTAL DEVOLUCIONES</span><b>${this.fmt(s.total_devoluciones)}</b></div>
-				${(s.devoluciones || []).length ? `<div class="cd-hint">${s.devoluciones.map((d) => `<a href="/app/facex?invoice=${encodeURIComponent(d.sales_invoice)}" target="_blank">${_cd_esc(d.sales_invoice)}</a> (${this.short_date(d.posting_date)})`).join(", ")}</div>` : `<div class="cd-hint">Sin devoluciones.</div>`}
+				<div class="cd-line cd-line-total"><span>TOTAL DEVOLUCIONES <span class="cd-muted">(solo mercadería)</span></span><b>${this.fmt(s.total_devoluciones)}</b></div>
+				${(s.devoluciones || []).length ? `<div class="cd-hint">${s.devoluciones.map((d) => `<a href="/app/facex?invoice=${encodeURIComponent(d.sales_invoice)}" target="_blank">${_cd_esc(d.sales_invoice)}</a> (emitida ${this.short_date(d.posting_date)}${d.mercaderia != null && Math.abs(_cd_flt(d.mercaderia) - _cd_flt(d.grand_total)) > 0.004 ? ` · mercadería ${this.fmt(d.mercaderia)} de ${this.fmt(d.grand_total)}` : ` · ${this.fmt(d.mercaderia != null ? d.mercaderia : d.grand_total)}`})`).join(", ")}</div>` : `<div class="cd-hint">Sin devoluciones.</div>`}
 			</div>
 		</div>
 	</div>
@@ -1033,7 +1058,7 @@ class FacexCierreDiario {
 					const creditoReal = f.clasificacion === "credito" ? f.credito : 0;
 					return `
 					<tr class="${f.alerta_contado ? "cd-row-alert" : ""}">
-						<td><a href="/app/facex?invoice=${encodeURIComponent(f.sales_invoice)}" target="_blank">${_cd_esc(f.sales_invoice)}</a>${f.es_devolucion ? ` <span class="cd-tag">DEV</span>` : ""}${f.tiene_descuento ? ` <span class="cd-tag cd-tag-oferta">OFERTA</span>` : ""}</td>
+						<td><a href="/app/facex?invoice=${encodeURIComponent(f.sales_invoice)}" target="_blank">${_cd_esc(f.sales_invoice)}</a>${f.es_devolucion ? ` <span class="cd-tag">DEV</span>` : ""}${f.anulada_el ? ` <span class="cd-tag" title="Sigue siendo venta de este día; su devolución se resta en el cierre del día de la anulación">ANULADA ${this.short_date(f.anulada_el)}</span>` : ""}${f.tiene_descuento ? ` <span class="cd-tag cd-tag-oferta">OFERTA</span>` : ""}</td>
 						<td>${_cd_esc(f.customer_name)}</td>
 						<td><span class="cd-tag cd-tag-clase-${f.clasificacion}" title="${_cd_esc(f.condicion || "")}">${CD_CLASE_LABEL[f.clasificacion] || ""}</span>${f.alerta_contado ? ` <span class="cd-tag cd-tag-alerta" title="Contado sin pagar">⚠</span>` : ""}${canReclass && !f.es_devolucion ? (f.certificada ? ` <span class="cd-muted" title="Certificada ante SAT: la condición de pago no se puede cambiar">🔒</span>` : ` <a href="#" class="cd-reclass" data-inv="${_cd_esc(f.sales_invoice)}" title="Cambiar condición de pago">✎</a>`) : ""}</td>
 						<td class="r">${this.fmt(f.grand_total)}</td>
@@ -1353,13 +1378,12 @@ class FacexCierreDiario {
 <tr><td>Piezas en oferta (líneas con descuento)</td><td class="r">${money(s.venta_con_descuento)}</td></tr>
 ${_cd_flt(s.cargos_venta) ? `<tr><td>Cargos que sí son venta (flete/recargo propio)</td><td class="r">${money(s.cargos_venta)}</td></tr>` : ""}
 ${Math.abs(_cd_flt(s.ajuste_impuestos)) >= 0.01 ? `<tr><td>Ajustes (descuento global / redondeo)</td><td class="r">${money(s.ajuste_impuestos)}</td></tr>` : ""}
-<tr><td>Devoluciones (facturas de otra fecha anuladas hoy)</td><td class="r">− ${money(s.total_devoluciones)}</td></tr>
-<tr class="tot"><td>VENTA DEL DÍA</td><td class="r">${money(_cd_flt(s.venta_neta) - _cd_flt(s.total_devoluciones))}</td></tr>
+<tr class="tot"><td>VENTA DEL DÍA</td><td class="r">${money(s.venta_neta)}</td></tr>
 <tr><td colspan="2" class="sec" style="background:#3b82c4;">CARGOS POR CUENTA DE TERCEROS (no es ingreso)</td></tr>
 <tr><td>Flete (servicio de entrega)</td><td class="r">${money(s.flete_pasarela)}</td></tr>
 <tr><td>Recargo por entrega (listas Contra Entrega)</td><td class="r">${money(s.recargo_pasarela)}</td></tr>
 <tr class="tot"><td>TOTAL DE TERCEROS</td><td class="r">${money(s.cargos_pasarela)}</td></tr>
-<tr class="tot"><td>TOTAL FACTURADO (cobrado al cliente)</td><td class="r">${money(_cd_flt(s.total_venta) - _cd_flt(s.total_devoluciones))}</td></tr>
+<tr class="tot"><td>TOTAL FACTURADO (cobrado al cliente)</td><td class="r">${money(s.total_venta)}</td></tr>
 <tr><td colspan="2" class="sec" style="background:#3b82c4;">COBROS Y CRÉDITOS</td></tr>
 <tr><td>Transferencia</td><td class="r">${money(s.cobro_transferencia)}</td></tr>
 <tr><td>Cheques</td><td class="r">${money(s.cobro_cheque)}</td></tr>
@@ -1386,7 +1410,7 @@ ${_cd_flt(s.cod_ejecutado_recargo) || _cd_flt(s.cod_proyectado_recargo) ? `<tr><
 <tr><td>Contra Entrega</td><td class="r">${money(s.devoluciones_contra_entrega)}</td></tr>
 <tr><td>Al Crédito</td><td class="r">${money(s.devoluciones_credito)}</td></tr>
 <tr><td>Contado</td><td class="r">${money(s.devoluciones_contado)}</td></tr>
-<tr class="tot"><td>TOTAL DEVOLUCIONES</td><td class="r">${money(s.total_devoluciones)}</td></tr>
+<tr class="tot"><td>TOTAL DEVOLUCIONES (solo mercadería)</td><td class="r">${money(s.total_devoluciones)}</td></tr>
 <tr><td colspan="2" class="sec" style="background:#3b82c4;">EGRESOS</td></tr>
 ${this.form.egresos.map((e) => `<tr><td>${_cd_esc(e.concepto)}${e.referencia ? ` <span class="muted">(${_cd_esc(e.referencia)})</span>` : ""}${e.observaciones ? ` <span class="muted">${_cd_esc(e.observaciones)}</span>` : ""}</td><td class="r">${money(e.monto)}</td></tr>`).join("")}
 <tr class="tot"><td>TOTAL EGRESOS</td><td class="r">${money(t.egresos)}</td></tr>

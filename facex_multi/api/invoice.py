@@ -2328,7 +2328,13 @@ def _cancel_linked_payment_entries(invoice_name: str):
     ):
         pe = frappe.get_doc("Payment Entry", pe_name)
         if pe.docstatus == 1:
+            pe.flags.facex_cierre_bypass = True
             pe.cancel()
+
+
+# Aviso al usuario: la anulación no cambia el día de la factura (ver
+# facex_multi.api.cierre, «Anulación»).
+MSG_ANULACION_CIERRE = "Su anulación se reflejará como devolución en el cierre diario de hoy del usuario que emitió la factura."
 
 
 @frappe.whitelist()
@@ -2341,6 +2347,7 @@ def cancel_invoice(name: str):
     Requiere permiso puede_anular_facturas (deny-by-default).
     """
     from facex_multi.api.permissions import get_facex_can_cancel_invoices
+    from facex_multi.api.cierre import guard_sales_invoice_cancel
 
     name = (name or "").strip()
     doc = frappe.get_doc("Sales Invoice", name)
@@ -2353,6 +2360,7 @@ def cancel_invoice(name: str):
     if doc.bfel_uuid:
         frappe.throw("Esta factura ya fue certificada en FEL — debe anularse ante la SAT, no cancelarse localmente.")
 
+    guard_sales_invoice_cancel(doc)
     _cancel_linked_payment_entries(doc.name)
     doc.cancel()
     frappe.db.commit()
@@ -2361,6 +2369,7 @@ def cancel_invoice(name: str):
         "success": True,
         "name": doc.name,
         "docstatus": doc.docstatus,
+        "message": MSG_ANULACION_CIERRE,
     }
 
 
@@ -2399,6 +2408,7 @@ def cancel_certified_invoice_fel(name: str, motivo_anulacion: str):
     """
     from facex_multi.api.permissions import get_facex_can_cancel_invoices
     from brainfel.api.certify_sales_invoice import cancel_sales_invoice_fel
+    from facex_multi.api.cierre import guard_sales_invoice_cancel
 
     name = (name or "").strip()
     doc = frappe.get_doc("Sales Invoice", name)
@@ -2409,6 +2419,9 @@ def cancel_certified_invoice_fel(name: str, motivo_anulacion: str):
         frappe.throw("Solo se puede anular una factura Validada.")
     if not doc.bfel_uuid:
         frappe.throw("Esta factura no ha sido certificada en FEL — use la cancelación interna.")
+    # Antes de tocar la SAT: si el cierre de hoy ya está Cerrado, la anulación
+    # quedaría hecha en la SAT pero no en ERPNext.
+    guard_sales_invoice_cancel(doc)
 
     cancel_sales_invoice_fel(name, motivo_anulacion)
 
@@ -2418,7 +2431,7 @@ def cancel_certified_invoice_fel(name: str, motivo_anulacion: str):
     doc.cancel()
     frappe.db.commit()
 
-    return {"success": True, "name": doc.name, "docstatus": doc.docstatus}
+    return {"success": True, "name": doc.name, "docstatus": doc.docstatus, "message": MSG_ANULACION_CIERRE}
 
 
 # ---------------------------------------------------------------------------

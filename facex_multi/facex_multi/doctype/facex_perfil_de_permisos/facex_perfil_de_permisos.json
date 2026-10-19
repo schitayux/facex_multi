@@ -57,6 +57,7 @@
   "reporte_auditoria_sistema",
   "reporte_ventas_vendedor",
   "reporte_cierre_general",
+  "comisionador",
   "sec_3",
   "puede_compras",
   "sb_compras_docs",
@@ -475,6 +476,13 @@
    "fieldname": "reporte_cierre_general",
    "fieldtype": "Check",
    "label": "Cierre Diario General (Gerencia)"
+  },
+  {
+   "default": "0",
+   "description": "Módulo «Comisionador» (Gerencia): reporte de comisiones por vendedor sobre pagos recibidos y ventas del período (contado y recuperación de créditos, FEL / Recibo de Compra, anulaciones y notas de crédito), con porcentajes por período, liquidaciones guardadas y firmas. Denegado por defecto.",
+   "fieldname": "comisionador",
+   "fieldtype": "Check",
+   "label": "Comisionador (Gerencia)"
   },
   {
    "fieldname": "sec_3",

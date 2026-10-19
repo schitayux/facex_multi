@@ -4069,10 +4069,27 @@ ${rows.map(r => `<tr>
 				description: "Agrupa los ítems que comparten precio y costo. Al crear un ítem nuevo con familia se le generan solos sus precios.",
 			},
 			{ fieldtype: "Link", fieldname: "stock_uom", label: "UOM (unidad)", options: "UOM", only_select: 1 },
-			{ fieldtype: "Select", fieldname: "gestionado_por", label: "Gestión de stock", options: "General\nLote\nSerie", default: "General" },
+			{
+				fieldtype: "Select", fieldname: "gestionado_por", label: "Gestión de stock", options: "General\nLote\nSerie", default: "General",
+				// Serie/Lote siempre son inventariables.
+				change: () => {
+					if (!dlg) return;
+					const forced = ["Serie", "Lote"].includes(dlg.get_value("gestionado_por"));
+					if (forced) dlg.set_value("is_stock_item", 1);
+					dlg.set_df_property("is_stock_item", "read_only", forced ? 1 : 0);
+				},
+			},
+			{
+				// Producto nuevo: sigue a «Manejar Inventario» de la compañía.
+				fieldtype: "Check", fieldname: "is_stock_item", label: "Inventariable",
+				default: item_code ? 0 : (parseInt(((this.defaults || {}).company_config || {}).maneja_inventario || 0, 10) ? 1 : 0),
+			},
+			// Imagen principal: solo al crear (las demás se agregan desde FacEx Clásico / Item).
+			...(item_code ? [] : [{ fieldtype: "Attach Image", fieldname: "image", label: "Imagen principal" }]),
 		];
 		if (cc) fields.push({ fieldtype: "Currency", fieldname: "costo_estandar", label: "Costo Estándar (FacEx)" });
-		const dlg = new frappe.ui.Dialog({
+		let dlg = null;
+		dlg = new frappe.ui.Dialog({
 			title: item_code ? "Editar producto" : "Nuevo producto",
 			fields,
 			// e-Imprimir (eTIBA) solo sobre productos ya guardados.
@@ -4112,6 +4129,7 @@ ${rows.map(r => `<tr>
 						familia: it.familia || "",
 						stock_uom: it.stock_uom || "",
 						gestionado_por: it.has_serial_no ? "Serie" : (it.has_batch_no ? "Lote" : "General"),
+						is_stock_item: it.is_stock_item ? 1 : 0,
 						costo_estandar: it.costo_estandar || 0,
 					});
 				},

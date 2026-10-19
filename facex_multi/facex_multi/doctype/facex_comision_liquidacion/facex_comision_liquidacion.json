@@ -1,0 +1,232 @@
+{
+ "actions": [],
+ "creation": "2026-10-19 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "company",
+  "fecha_desde",
+  "fecha_hasta",
+  "estado",
+  "cb_1",
+  "base_calculo",
+  "ejecutada_el",
+  "ejecutada_por",
+  "sb_tot",
+  "total_base_con_iva",
+  "total_base_sin_iva",
+  "cb_tot",
+  "total_comision",
+  "sb_cierre",
+  "cerrada_el",
+  "cerrada_por",
+  "cb_cierre",
+  "elaboro",
+  "reviso",
+  "autorizo",
+  "observaciones",
+  "sb_vend",
+  "vendedores",
+  "sb_det",
+  "detalle",
+  "advertencias"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Serie",
+   "hidden": 1,
+   "options": "COM-.YYYY.-"
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Compañía",
+   "options": "Company",
+   "reqd": 1,
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "fecha_desde",
+   "fieldtype": "Date",
+   "label": "Desde",
+   "reqd": 1,
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "fecha_hasta",
+   "fieldtype": "Date",
+   "label": "Hasta",
+   "reqd": 1,
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "estado",
+   "fieldtype": "Select",
+   "label": "Estado",
+   "options": "Borrador\nCerrada",
+   "default": "Borrador",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_1",
+   "fieldtype": "Column Break",
+   "label": ""
+  },
+  {
+   "fieldname": "base_calculo",
+   "fieldtype": "Select",
+   "label": "Base de cálculo",
+   "options": "Sin IVA\nCon IVA",
+   "default": "Sin IVA",
+   "reqd": 1,
+   "description": "Monto sobre el que se aplica el porcentaje de comisión."
+  },
+  {
+   "fieldname": "ejecutada_el",
+   "fieldtype": "Datetime",
+   "label": "Ejecutada el",
+   "read_only": 1
+  },
+  {
+   "fieldname": "ejecutada_por",
+   "fieldtype": "Link",
+   "label": "Ejecutada por",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_tot",
+   "fieldtype": "Section Break",
+   "label": "Totales"
+  },
+  {
+   "fieldname": "total_base_con_iva",
+   "fieldtype": "Currency",
+   "label": "Base neta con IVA",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_base_sin_iva",
+   "fieldtype": "Currency",
+   "label": "Base neta sin IVA",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_tot",
+   "fieldtype": "Column Break",
+   "label": ""
+  },
+  {
+   "fieldname": "total_comision",
+   "fieldtype": "Currency",
+   "label": "Comisión total",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "sb_cierre",
+   "fieldtype": "Section Break",
+   "label": "Cierre y firmas"
+  },
+  {
+   "fieldname": "cerrada_el",
+   "fieldtype": "Datetime",
+   "label": "Cerrada el",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cerrada_por",
+   "fieldtype": "Link",
+   "label": "Cerrada por",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_cierre",
+   "fieldtype": "Column Break",
+   "label": ""
+  },
+  {
+   "fieldname": "elaboro",
+   "fieldtype": "Data",
+   "label": "Elaboró"
+  },
+  {
+   "fieldname": "reviso",
+   "fieldtype": "Data",
+   "label": "Revisó"
+  },
+  {
+   "fieldname": "autorizo",
+   "fieldtype": "Data",
+   "label": "Autorizó"
+  },
+  {
+   "fieldname": "observaciones",
+   "fieldtype": "Small Text",
+   "label": "Observaciones"
+  },
+  {
+   "fieldname": "sb_vend",
+   "fieldtype": "Section Break",
+   "label": "Vendedores y porcentajes"
+  },
+  {
+   "fieldname": "vendedores",
+   "fieldtype": "Table",
+   "label": "Vendedores",
+   "options": "FacEx Comision Liquidacion Vendedor"
+  },
+  {
+   "fieldname": "sb_det",
+   "fieldtype": "Section Break",
+   "label": "Facturas que componen la liquidación"
+  },
+  {
+   "fieldname": "detalle",
+   "fieldtype": "Table",
+   "label": "Detalle",
+   "options": "FacEx Comision Liquidacion Detalle"
+  },
+  {
+   "fieldname": "advertencias",
+   "fieldtype": "Long Text",
+   "label": "Advertencias (JSON)",
+   "read_only": 1,
+   "hidden": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-19 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FacEx Multi",
+ "name": "FacEx Comision Liquidacion",
+ "owner": "Administrator",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "autoname": "naming_series:",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "track_changes": 1,
+ "title_field": "company"
+}

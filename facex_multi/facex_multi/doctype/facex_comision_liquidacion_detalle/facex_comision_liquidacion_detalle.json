@@ -1,0 +1,140 @@
+{
+ "actions": [],
+ "creation": "2026-10-19 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "vendedor",
+  "concepto",
+  "mes_origen",
+  "tipo_documento",
+  "condicion",
+  "factura",
+  "factura_origen",
+  "fecha_factura",
+  "cliente",
+  "fecha_pago",
+  "forma_pago",
+  "referencia",
+  "monto_con_iva",
+  "monto_sin_iva",
+  "base",
+  "pct",
+  "comision",
+  "nota"
+ ],
+ "fields": [
+  {
+   "fieldname": "vendedor",
+   "fieldtype": "Data",
+   "label": "Vendedor",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "concepto",
+   "fieldtype": "Data",
+   "label": "Concepto",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "mes_origen",
+   "fieldtype": "Data",
+   "label": "Mes de la factura",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "tipo_documento",
+   "fieldtype": "Data",
+   "label": "Tipo de documento",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "condicion",
+   "fieldtype": "Data",
+   "label": "Condición"
+  },
+  {
+   "fieldname": "factura",
+   "fieldtype": "Data",
+   "label": "Documento",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "factura_origen",
+   "fieldtype": "Data",
+   "label": "Factura original"
+  },
+  {
+   "fieldname": "fecha_factura",
+   "fieldtype": "Date",
+   "label": "Fecha factura"
+  },
+  {
+   "fieldname": "cliente",
+   "fieldtype": "Data",
+   "label": "Cliente"
+  },
+  {
+   "fieldname": "fecha_pago",
+   "fieldtype": "Date",
+   "label": "Fecha de pago"
+  },
+  {
+   "fieldname": "forma_pago",
+   "fieldtype": "Data",
+   "label": "Forma de pago"
+  },
+  {
+   "fieldname": "referencia",
+   "fieldtype": "Data",
+   "label": "Referencia"
+  },
+  {
+   "fieldname": "monto_con_iva",
+   "fieldtype": "Currency",
+   "label": "Monto con IVA",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "monto_sin_iva",
+   "fieldtype": "Currency",
+   "label": "Monto sin IVA",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "base",
+   "fieldtype": "Currency",
+   "label": "Base de comisión"
+  },
+  {
+   "fieldname": "pct",
+   "fieldtype": "Percent",
+   "label": "%",
+   "precision": "4"
+  },
+  {
+   "fieldname": "comision",
+   "fieldtype": "Currency",
+   "label": "Comisión",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "nota",
+   "fieldtype": "Data",
+   "label": "Nota"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-19 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FacEx Multi",
+ "name": "FacEx Comision Liquidacion Detalle",
+ "owner": "Administrator",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "istable": 1,
+ "editable_grid": 1,
+ "permissions": []
+}

@@ -56,6 +56,7 @@ ALLOWED_PAGES = (
     "facex-cierre",
     "facex-pagos",
     "facex-compras",
+    "facex-comisiones",
 )
 DEFAULT_PAGE = "facex"
 

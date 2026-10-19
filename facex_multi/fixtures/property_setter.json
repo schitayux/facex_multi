@@ -110,5 +110,37 @@
   "property_type": "Select",
   "row_name": null,
   "value": "Select"
+ },
+ {
+  "default_value": null,
+  "doc_type": "Item",
+  "docstatus": 0,
+  "doctype": "Property Setter",
+  "doctype_or_field": "DocField",
+  "is_system_generated": 0,
+  "modified": "2026-10-15 12:00:00.000000",
+  "module": null,
+  "property": "allow_in_quick_entry",
+  "property_type": "Check",
+  "row_name": null,
+  "value": "1",
+  "field_name": "is_stock_item",
+  "name": "Item-is_stock_item-allow_in_quick_entry"
+ },
+ {
+  "default_value": null,
+  "doc_type": "Item",
+  "docstatus": 0,
+  "doctype": "Property Setter",
+  "doctype_or_field": "DocField",
+  "is_system_generated": 0,
+  "modified": "2026-10-15 12:00:00.000000",
+  "module": null,
+  "property": "allow_in_quick_entry",
+  "property_type": "Check",
+  "row_name": null,
+  "value": "1",
+  "field_name": "image",
+  "name": "Item-image-allow_in_quick_entry"
  }
 ]

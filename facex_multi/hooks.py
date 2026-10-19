@@ -44,6 +44,7 @@ app_include_js = [
     "/assets/facex_multi/js/wa.js",
     "/assets/facex_multi/js/pwa.js",
     "/assets/facex_multi/js/scanner.js",
+    "/assets/facex_multi/js/item_quick_entry.js",
 ]
 
 doctype_js = {
@@ -116,8 +117,13 @@ doc_events = {
         # Cierre Diario: una factura / sus pagos quedan congelados una vez que
         # el día del usuario está Cerrado (ver facex_multi.api.cierre).
         "before_cancel": "facex_multi.api.cierre.guard_sales_invoice_cancel",
-        # Bundles corregidos con salida manual: se anula junto con la factura.
-        "on_cancel": "facex_multi.api.invoice.anular_salidas_bundle",
+        # Fecha y usuario de la anulación: la devolución cae en ese día y en esa
+        # caja del Cierre Diario.
+        "on_cancel": [
+            "facex_multi.api.compras.common.set_cancelado_por",
+            # Bundles corregidos con salida manual: se anula junto con la factura.
+            "facex_multi.api.invoice.anular_salidas_bundle",
+        ],
         "before_update_after_submit": "facex_multi.api.cierre.guard_sales_invoice_update_after_submit"
     },
     "Payment Entry": {
@@ -155,6 +161,7 @@ after_migrate = [
     "facex_multi.api.compras.common.ensure_compras_custom_fields",
     "facex_multi.api.compras.pagos.ensure_pagos_setup",
     "facex_multi.api.corte.ensure_corte_fields",
+    "facex_multi.api.cierre.ensure_anulacion_fields",
 ]
 
 fixtures = [
@@ -202,6 +209,16 @@ fixtures = [
         "dt": "Property Setter",
         "filters": [
             ["field_name", "like", "bfel_%"]
+        ]
+    },
+    {
+        # Quick Entry nativo de Item: checks «Es inventariable» e Imagen
+        # (ver docs/item_quick_entry.md).
+        "dt": "Property Setter",
+        "filters": [
+            ["doc_type", "=", "Item"],
+            ["field_name", "in", ["is_stock_item", "image"]],
+            ["property", "=", "allow_in_quick_entry"]
         ]
     },
     {

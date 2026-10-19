@@ -22,7 +22,9 @@ Serie — el usuario SIEMPRE elige con qué serie de facturación cierra:
 
 Congelamiento — un cierre en estado «Cerrado» bloquea, para ese usuario (y
 para la serie del cierre, o todas si es consolidado):
-  * cancelar cualquier factura de esa fecha (before_cancel);
+  * anular una factura si el cierre de HOY de su creador ya está Cerrado
+    (before_cancel). Anular una factura de un día cerrado sí se puede: ese
+    día no cambia y la devolución cae en el cierre de hoy del creador;
   * agregar / quitar / modificar pagos (custom_efast_payments) con fecha
     dentro de un día cerrado, o anteriores o iguales a la fecha de una
     factura ya cerrada (before_update_after_submit);
@@ -85,6 +87,10 @@ CONTRA_ENTREGA = "Contra Entrega"
 
 # Días hacia atrás que se revisan para la alerta de "cierres pendientes".
 PENDING_LOOKBACK_DAYS = 60
+
+# Desde esta fecha una anulación (devolución) obliga a cerrar el día de quien
+# anuló aunque no haya tenido ventas ni cobros.
+ANULACION_DESDE = "2026-10-14"
 
 # Egresos con los que arranca un cierre nuevo (según hoja CIERRE VENTA.xlsx).
 DEFAULT_EGRESOS = ["Administración entregado a Gerencia", "Gastos"]
@@ -317,22 +323,76 @@ def _frozen_msg(company: str, owner: str, fecha, serie: str) -> str:
 
 
 def guard_sales_invoice_cancel(doc, method=None):
-    """Hook Sales Invoice.before_cancel."""
+    """Hook Sales Invoice.before_cancel.
+
+    Anular NO toca el día de la factura: sigue siendo venta de su fecha (esté
+    ese día cerrado o no) y la devolución cae en el cierre de HOY de su
+    CREADOR (ver «Anulación» más abajo). Por eso solo se bloquea si ese cierre
+    de hoy ya está Cerrado."""
     if doc.flags.facex_cierre_bypass:
         return
-    closed = _closed_dates(doc.company, doc.owner, doc.naming_series)
-    if not closed:
-        return
-    if getdate(doc.posting_date) in closed:
-        frappe.throw(_frozen_msg(doc.company, doc.owner, doc.posting_date, doc.naming_series), title=_("Cierre Diario"))
-    for row in doc.get("custom_efast_payments") or []:
-        if _row_frozen(row.payment_date, doc.posting_date, closed):
-            frappe.throw(
-                _("La factura {0} tiene un pago del {1} incluido en un Cierre Diario ya cerrado. ")
-                .format(doc.name, formatdate(row.payment_date or doc.posting_date))
-                + _frozen_msg(doc.company, doc.owner, row.payment_date or doc.posting_date, doc.naming_series),
-                title=_("Cierre Diario"),
-            )
+    hoy = getdate(today())
+    if hoy in _closed_dates(doc.company, doc.owner, doc.naming_series):
+        frappe.throw(
+            _("La anulación se registra como devolución en el Cierre Diario de hoy de {0}, y ese cierre ya está Cerrado. ")
+            .format(doc.owner)
+            + _frozen_msg(doc.company, doc.owner, hoy, doc.naming_series),
+            title=_("Cierre Diario"),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Anulación — la devolución cae en el día de la anulación y en la caja del creador
+# ---------------------------------------------------------------------------
+# Una factura anulada sigue contando como venta de SU día (con sus pagos de los
+# días anteriores a la anulación) y se resta como devolución, solo por la
+# mercadería, en el cierre del día en que se anuló y del usuario CREADOR de la
+# factura, solo como informativo en el recuadro Devoluciones: NO se resta de la
+# Venta (ingreso propio). Anulada el mismo día de su emisión no es venta ni
+# devolución. La fecha y el usuario que anula quedan en facex_cancelado_el /
+# facex_cancelado_por
+# (ensure_anulacion_fields + on_cancel compras.common.set_cancelado_por).
+
+def _has_anulacion() -> bool:
+    return frappe.get_meta("Sales Invoice").has_field("facex_cancelado_el")
+
+
+def _anul_cols(alias: str = "si") -> tuple:
+    """(fecha de la anulación, usuario al que se le atribuye) como SQL: el
+    creador de la factura. Sitio sin migrar: la fecha sale de `modified`."""
+    if _has_anulacion():
+        return f"DATE({alias}.facex_cancelado_el)", f"{alias}.owner"
+    return f"DATE({alias}.modified)", f"{alias}.owner"
+
+
+def _vigente_sql(alias: str, fecha_expr: str) -> str:
+    """La factura contaba como venta en `fecha_expr`: validada, o anulada después."""
+    if not _has_anulacion():
+        return f"{alias}.docstatus = 1"
+    return (f"({alias}.docstatus = 1 OR ({alias}.docstatus = 2"
+            f" AND DATE({alias}.facex_cancelado_el) > {fecha_expr}))")
+
+
+def ensure_anulacion_fields():
+    """after_migrate: «Anulado por / el» en Sales Invoice (mismos campos que en
+    Compras). Las facturas anuladas antes de existir los campos se completan con
+    lo que el cierre usaba hasta ahora (`modified` y el dueño), para que su
+    devolución no cambie de día ni de caja."""
+    from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
+
+    base = {"read_only": 1, "no_copy": 1, "allow_on_submit": 1, "print_hide": 1}
+    create_custom_fields({"Sales Invoice": [
+        {"fieldname": "facex_cancelado_por", "label": "Anulado por", "fieldtype": "Link",
+         "options": "User", "insert_after": "amended_from", **base},
+        {"fieldname": "facex_cancelado_el", "label": "Anulado el", "fieldtype": "Datetime",
+         "insert_after": "facex_cancelado_por", **base},
+    ]}, update=True)
+    frappe.db.sql(
+        """
+        UPDATE `tabSales Invoice` SET facex_cancelado_el = modified, facex_cancelado_por = owner
+        WHERE docstatus = 2 AND facex_cancelado_el IS NULL
+        """
+    )
 
 
 def guard_sales_invoice_update_after_submit(doc, method=None):
@@ -455,7 +515,7 @@ def _si_fields() -> list:
     fields = ["name", "customer", "customer_name", "bfel_nombre", "posting_date", "due_date", "grand_total", "rounded_total",
               "disable_rounded_total", "total", "net_total", "discount_amount", "is_return", "outstanding_amount", "owner"]
     for f in ("bfel_status", "bfel_uuid", "bfel_pago_contra_entrega", "custom_pagado", "set_warehouse",
-              "payment_terms_template"):
+              "payment_terms_template", "facex_cancelado_el"):
         if meta.has_field(f):
             fields.append(f)
     return fields
@@ -489,12 +549,18 @@ def compute_snapshot(company: str, fecha, usuario: str, serie: str = SERIE_TODAS
         and frappe.get_meta("FacEx Configuracion Compania").has_field("fraccion_uom") else None
     ) or ""
 
-    invoices = frappe.get_all(
-        "Sales Invoice",
-        filters={"company": company, "posting_date": fecha, "owner": usuario, "docstatus": 1, **serie_filter},
-        fields=_si_fields(),
-        order_by="name asc",
-    )
+    # Las anuladas DESPUÉS de este día siguen siendo venta del día (su
+    # devolución se resta en el cierre del día de la anulación).
+    invoices = [
+        i for i in frappe.get_all(
+            "Sales Invoice",
+            filters={"company": company, "posting_date": fecha, "owner": usuario,
+                     "docstatus": ["in", [1, 2] if _has_anulacion() else [1]], **serie_filter},
+            fields=_si_fields() + ["docstatus"],
+            order_by="name asc",
+        )
+        if i.docstatus == 1 or (i.get("facex_cancelado_el") and getdate(i.facex_cancelado_el) > fecha)
+    ]
     names = [i.name for i in invoices]
 
     items, payments = [], []
@@ -741,6 +807,8 @@ def compute_snapshot(company: str, fecha, usuario: str, serie: str = SERIE_TODAS
             "alerta_contado": 1 if alerta_contado else 0,
             "condicion": inv.get("payment_terms_template") or "",
             "certificada": 1 if _is_certified(inv) else 0,
+            # Anulada en un día posterior: aquí sigue siendo venta.
+            "anulada_el": str(getdate(inv.facex_cancelado_el)) if inv.docstatus == 2 else "",
         })
 
     # Tres cifras distintas, que antes venían mezcladas en una sola:
@@ -756,34 +824,37 @@ def compute_snapshot(company: str, fecha, usuario: str, serie: str = SERIE_TODAS
 
     recup = _recuperacion_cartera(company, fecha, usuario, serie)
 
-    # ---- Devoluciones (facturas ANULADAS de este usuario) ---------------------
-    # Dos casos según la fecha ORIGINAL de la factura (posting_date), ambos
-    # detectados por "se anuló hoy" (proxy: `modified` cae en `fecha`, ya que
-    # Sales Invoice no tiene un campo nativo de fecha de anulación):
-    #   * posting_date != fecha → una venta de OTRO día que se anuló hoy: sí
-    #     tuvo impacto real en la caja de hoy (reembolso), así que se resta del
-    #     Total Venta del Día y se clasifica en el KPI "Devoluciones".
-    #   * posting_date == fecha → se facturó y se anuló el mismo día: nunca
-    #     llegó a contar en el total (solo se leen docstatus=1), se lista aparte
-    #     únicamente para trazabilidad ("Devoluciones - Detalle").
+    # ---- Devoluciones (facturas ANULADAS hoy) --------------------------------
+    # Ver «Anulación»: la devolución cae en el día de la anulación y en la caja
+    # del creador de la factura.
+    #   * factura de OTRO día de este usuario anulada hoy → devolución: se
+    #     muestra SOLO la mercadería (total − flete − recargo), por condición
+    #     (contado / crédito / contra entrega). No se resta de la Venta ni del
+    #     dinero: lo cobrado ya entró en su día.
+    #   * factura de este usuario facturada y anulada hoy mismo → nunca contó
+    #     como venta; se lista aparte solo para trazabilidad.
     devoluciones = []
     devoluciones_hoy = []
     total_devoluciones = 0.0
     dev_clasif = {"contado": 0.0, "contra_entrega": 0.0, "credito": 0.0}
 
-    cancel_fields = ["name", "customer", "customer_name", "posting_date", "due_date", "grand_total",
-                     "rounded_total", "disable_rounded_total"]
-    if frappe.get_meta("Sales Invoice").has_field("bfel_pago_contra_entrega"):
-        cancel_fields.append("bfel_pago_contra_entrega")
-
-    cancelados = frappe.get_all(
-        "Sales Invoice",
-        filters=[
-            ["company", "=", company], ["owner", "=", usuario], ["docstatus", "=", 2],
-            ["modified", ">=", fecha], ["modified", "<", add_days(fecha, 1)],
-        ] + [[k, "=", v] for k, v in serie_filter.items()],
-        fields=cancel_fields,
-        order_by="name asc",
+    fa, por = _anul_cols("si")
+    ce_col = ("si.bfel_pago_contra_entrega" if frappe.get_meta("Sales Invoice").has_field("bfel_pago_contra_entrega")
+              else "0")
+    cancelados = frappe.db.sql(
+        f"""
+        SELECT si.name, si.customer, si.customer_name, si.bfel_nombre, si.posting_date, si.due_date, si.grand_total,
+               si.rounded_total, si.disable_rounded_total, {ce_col} AS bfel_pago_contra_entrega,
+               {"si.facex_cancelado_por" if _has_anulacion() else "si.owner"} AS anulado_por
+        FROM `tabSales Invoice` si
+        WHERE si.company = %(company)s AND si.docstatus = 2 AND {fa} = %(fecha)s
+          AND (({por} = %(usuario)s AND si.posting_date < %(fecha)s)
+               OR (si.owner = %(usuario)s AND si.posting_date = %(fecha)s))
+          {"" if serie == SERIE_TODAS else "AND si.naming_series = %(serie)s"}
+        ORDER BY si.name
+        """,
+        {"company": company, "fecha": fecha, "usuario": usuario, "serie": serie},
+        as_dict=True,
     )
     if cancelados:
         cnames = [c.name for c in cancelados]
@@ -796,25 +867,45 @@ def compute_snapshot(company: str, fecha, usuario: str, serie: str = SERIE_TODAS
                 order_by="parent asc, idx asc",
             ):
                 cpay_by_inv.setdefault(p.parent, []).append(p)
+        # Cargos que NO son mercadería: filas de flete/recargo y, en facturas
+        # viejas, la línea del Ítem de Flete.
+        dev_cargos = cargos_facex_por_factura(cnames)
+        dev_flete_linea = Counter()
+        if flete_item:
+            for r in frappe.get_all(
+                "Sales Invoice Item",
+                filters={"parent": ["in", cnames], "parenttype": "Sales Invoice", "item_code": flete_item},
+                fields=["parent", "amount"],
+            ):
+                dev_flete_linea[r.parent] += flt(r.amount)
 
         for c in cancelados:
             gt = _inv_total(c)
             clasificacion, ce, credito = _clasificar_por_pagos(
                 gt, cpay_by_inv.get(c.name, []), fecha, c.get("bfel_pago_contra_entrega"), c.get("due_date"),
             )
+            cg = dev_cargos.get(c.name) or {}
+            flete = flt(cg.get("flete")) + dev_flete_linea[c.name]
+            recargo = flt(cg.get("recargo"))
             row = {
                 "sales_invoice": c.name,
                 "customer_name": display_name(c.customer, c.customer_name, c.bfel_nombre),
                 "grand_total": gt,
+                "flete": round(flete, 2),
+                "recargo": round(recargo, 2),
+                "mercaderia": round(gt - flete - recargo, 2),
+                "credito": round(credito, 2),
+                "contra_entrega": round(ce, 2),
                 "posting_date": str(c.posting_date),
                 "clasificacion": clasificacion,
+                "anulado_por": c.anulado_por or "",
             }
             if getdate(c.posting_date) == fecha:
                 devoluciones_hoy.append(row)
             else:
                 devoluciones.append(row)
-                total_devoluciones += gt
-                dev_clasif[clasificacion] = dev_clasif.get(clasificacion, 0.0) + gt
+                total_devoluciones += row["mercaderia"]
+                dev_clasif[clasificacion] = dev_clasif.get(clasificacion, 0.0) + row["mercaderia"]
 
     return {
         "company": company,
@@ -910,7 +1001,7 @@ def _recuperacion_cartera(company: str, fecha, usuario: str, serie: str = SERIE_
                p.payment_method, p.reference, p.amount
         FROM `tabeFast Invoice Payment` p
         JOIN `tabSales Invoice` si ON si.name = p.parent
-        WHERE si.company = %(company)s AND si.owner = %(usuario)s AND si.docstatus = 1
+        WHERE si.company = %(company)s AND si.owner = %(usuario)s AND {_vigente_sql("si", "p.payment_date")}
           AND si.posting_date < %(fecha)s AND p.payment_date = %(fecha)s
           AND p.parenttype = 'Sales Invoice' AND p.payment_method != %(ce)s
           AND {corte_cond}
@@ -1142,19 +1233,30 @@ def _modo_dia(cierres: dict) -> str:
 
 
 def _pending_days(company: str, usuario: str | None) -> list:
-    """Días con ventas validadas (últimos PENDING_LOOKBACK_DAYS, anteriores a
-    hoy) que aún no están cerrados para ese usuario: sin cierre consolidado
-    Cerrado y, si el día se cierra por serie, con alguna serie sin su cierre
-    Cerrado (`series_pendientes`)."""
+    """Días con ventas validadas O con cobros de cuentas por cobrar (últimos
+    PENDING_LOOKBACK_DAYS, anteriores a hoy) que aún no están cerrados para ese
+    usuario: sin cierre consolidado Cerrado y, si el día se cierra por serie, con
+    alguna serie sin su cierre Cerrado (`series_pendientes`).
+
+    Tocar una CxC (abono de crédito, cobro COD, saldo de contado) obliga a cerrar
+    ese día aunque no haya habido ventas — p. ej. un fin de semana solo con
+    cobros — porque ese dinero se cuadra y deposita en el cierre."""
     if not company or not _company_on(company):
         return []
     desde = add_days(today(), -PENDING_LOOKBACK_DAYS)
     cond = ""
     corte_cond, corte_vals = _corte_si(company)
-    vals = {"company": company, "desde": desde, "hoy": today(), **corte_vals}
+    vals = {"company": company, "desde": desde, "hoy": today(), **corte_vals,
+            "anul_desde": max(getdate(desde), getdate(ANULACION_DESDE))}
     if usuario:
         cond = "AND si.owner = %(usuario)s"
         vals["usuario"] = usuario
+    # Anulaciones (ver «Anulación»): la factura anulada sigue siendo venta / cobro
+    # de su día, y la anulación obliga a cerrar el día de quien anuló. Solo desde
+    # ANULACION_DESDE: las anteriores no lo exigían y no deben aparecer de golpe
+    # como pendientes (ni bloquear la facturación).
+    anul_nuevas = ("AND (si.docstatus = 1 OR si.facex_cancelado_el >= %(anul_desde)s)"
+                   if _has_anulacion() else "")
     rows = frappe.db.sql(
         f"""
         SELECT si.posting_date AS fecha, si.owner AS usuario, u.full_name AS usuario_nombre,
@@ -1163,12 +1265,53 @@ def _pending_days(company: str, usuario: str | None) -> list:
                        si.rounded_total, si.grand_total)) AS total_venta
         FROM `tabSales Invoice` si
         LEFT JOIN `tabUser` u ON u.name = si.owner
-        WHERE si.company = %(company)s AND si.docstatus = 1
+        WHERE si.company = %(company)s AND {_vigente_sql("si", "si.posting_date")} {anul_nuevas}
           AND si.posting_date >= %(desde)s AND si.posting_date < %(hoy)s
           AND {corte_cond}
           {cond}
         GROUP BY si.posting_date, si.owner, si.naming_series
         ORDER BY si.posting_date DESC, si.owner, si.naming_series
+        """,
+        vals,
+        as_dict=True,
+    )
+    # Cobros de cartera: pagos con fecha del día aplicados a facturas de días
+    # anteriores (la misma definición que _recuperacion_cartera).
+    cobros = []
+    if frappe.db.table_exists("eFast Invoice Payment"):
+        cobros = frappe.db.sql(
+            f"""
+            SELECT p.payment_date AS fecha, si.owner AS usuario, u.full_name AS usuario_nombre,
+                   si.naming_series AS serie, COUNT(DISTINCT p.parent) AS num_cobros,
+                   SUM(p.amount) AS total_cobros
+            FROM `tabeFast Invoice Payment` p
+            JOIN `tabSales Invoice` si ON si.name = p.parent
+            LEFT JOIN `tabUser` u ON u.name = si.owner
+            WHERE si.company = %(company)s AND {_vigente_sql("si", "p.payment_date")} {anul_nuevas}
+              AND p.parenttype = 'Sales Invoice' AND p.payment_method != %(ce)s
+              AND p.payment_date >= %(desde)s AND p.payment_date < %(hoy)s
+              AND si.posting_date < p.payment_date
+              AND {corte_cond}
+              {cond}
+            GROUP BY p.payment_date, si.owner, si.naming_series
+            """,
+            {**vals, "ce": CONTRA_ENTREGA},
+            as_dict=True,
+        )
+    # Devoluciones: una anulación de una factura de otro día cambia el cierre
+    # del día y la caja de quien anuló, así que ese día también hay que cerrarlo.
+    fa, por = _anul_cols("si")
+    devols = frappe.db.sql(
+        f"""
+        SELECT {fa} AS fecha, {por} AS usuario, u.full_name AS usuario_nombre,
+               si.naming_series AS serie, COUNT(*) AS num_devoluciones
+        FROM `tabSales Invoice` si
+        LEFT JOIN `tabUser` u ON u.name = {por}
+        WHERE si.company = %(company)s AND si.docstatus = 2
+          AND {fa} >= %(anul_desde)s AND {fa} < %(hoy)s AND si.posting_date < {fa}
+          AND {corte_cond}
+          {f"AND {por} = %(usuario)s" if usuario else ""}
+        GROUP BY {fa}, {por}, si.naming_series
         """,
         vals,
         as_dict=True,
@@ -1179,18 +1322,45 @@ def _pending_days(company: str, usuario: str | None) -> list:
     cierres = _cierres_por_dia(company, cfilters)
 
     dias = OrderedDict()
-    for r in rows:
-        key = (str(r.fecha), r.usuario)
-        d = dias.setdefault(key, {
-            "fecha": key[0], "usuario": r.usuario, "usuario_nombre": r.usuario_nombre,
-            "num_facturas": 0, "total_venta": 0.0, "series": [],
+
+    def _dia(fecha, user, nombre):
+        return dias.setdefault((str(fecha), user), {
+            "fecha": str(fecha), "usuario": user, "usuario_nombre": nombre,
+            "num_facturas": 0, "total_venta": 0.0, "num_cobros": 0, "total_cobros": 0.0,
+            "num_devoluciones": 0, "series": [],
         })
+
+    for r in rows:
+        d = _dia(r.fecha, r.usuario, r.usuario_nombre)
         d["num_facturas"] += cint(r.num_facturas)
         d["total_venta"] += flt(r.total_venta)
         d["series"].append({
             "serie": _norm_serie(r.serie), "label": _serie_label(r.serie, company),
             "num_facturas": cint(r.num_facturas), "total_venta": flt(r.total_venta),
+            "num_cobros": 0, "total_cobros": 0.0,
         })
+    for r in cobros:
+        d = _dia(r.fecha, r.usuario, r.usuario_nombre)
+        d["num_cobros"] += cint(r.num_cobros)
+        d["total_cobros"] += flt(r.total_cobros)
+        serie = _norm_serie(r.serie)
+        x = next((x for x in d["series"] if x["serie"] == serie), None)
+        if not x:
+            x = {"serie": serie, "label": _serie_label(r.serie, company), "num_facturas": 0,
+                 "total_venta": 0.0, "num_cobros": 0, "total_cobros": 0.0}
+            d["series"].append(x)
+        x["num_cobros"] += cint(r.num_cobros)
+        x["total_cobros"] += flt(r.total_cobros)
+    for r in devols:
+        if not r.usuario:
+            continue
+        d = _dia(r.fecha, r.usuario, r.usuario_nombre)
+        d["num_devoluciones"] += cint(r.num_devoluciones)
+        serie = _norm_serie(r.serie)
+        if not any(x["serie"] == serie for x in d["series"]):
+            d["series"].append({"serie": serie, "label": _serie_label(r.serie, company), "num_facturas": 0,
+                                "total_venta": 0.0, "num_cobros": 0, "total_cobros": 0.0})
+    dias = OrderedDict(sorted(dias.items(), key=lambda kv: (kv[0][0], kv[0][1]), reverse=True))
 
     out = []
     for key, d in dias.items():
@@ -1215,6 +1385,7 @@ def _pending_days(company: str, usuario: str | None) -> list:
         d["modo"] = modo
         d["series_pendientes"] = pendientes
         d["total_venta"] = flt(d["total_venta"])
+        d["total_cobros"] = flt(d["total_cobros"])
         out.append(d)
     return out
 
@@ -1396,7 +1567,7 @@ def series_del_dia(company: str, fecha, usuario: str) -> dict:
                    SUM(IF(IFNULL(si.disable_rounded_total, 0) = 0 AND IFNULL(si.rounded_total, 0) != 0,
                        si.rounded_total, si.grand_total)) AS total_venta
             FROM `tabSales Invoice` si
-            WHERE si.company = %(company)s AND si.owner = %(usuario)s AND si.docstatus = 1
+            WHERE si.company = %(company)s AND si.owner = %(usuario)s AND {_vigente_sql("si", "si.posting_date")}
               AND si.posting_date = %(fecha)s AND {corte_cond}
             GROUP BY si.naming_series
             """,
@@ -1410,16 +1581,26 @@ def series_del_dia(company: str, fecha, usuario: str) -> dict:
             SELECT DISTINCT si.naming_series
             FROM `tabeFast Invoice Payment` p
             JOIN `tabSales Invoice` si ON si.name = p.parent
-            WHERE si.company = %(company)s AND si.owner = %(usuario)s AND si.docstatus = 1
+            WHERE si.company = %(company)s AND si.owner = %(usuario)s AND {_vigente_sql("si", "p.payment_date")}
               AND si.posting_date < %(fecha)s AND p.payment_date = %(fecha)s
               AND p.parenttype = 'Sales Invoice' AND p.payment_method != %(ce)s AND {corte_cond}
             """,
             {**vals, "ce": CONTRA_ENTREGA},
         ))
+    # Series de las facturas de otro día que este usuario anuló hoy (devoluciones).
+    fa, por = _anul_cols("si")
+    devols = set(frappe.db.sql_list(
+        f"""
+        SELECT DISTINCT si.naming_series FROM `tabSales Invoice` si
+        WHERE si.company = %(company)s AND si.docstatus = 2 AND {por} = %(usuario)s
+          AND {fa} = %(fecha)s AND si.posting_date < %(fecha)s AND {corte_cond}
+        """,
+        vals,
+    ))
     cierres = _cierres_por_dia(company, {"fecha": fecha, "usuario": usuario}).get((str(fecha), usuario)) or {}
 
     orden = list(OrderedDict.fromkeys(
-        [s for s in stats if s] + sorted(s for s in cobros if s and s not in stats)
+        [s for s in stats if s] + sorted(s for s in (cobros | devols) if s and s not in stats)
         + [s for s in _series_usuario(company, usuario)]
         + [s for s in cierres if s != SERIE_TODAS]
     ))
@@ -1431,6 +1612,7 @@ def series_del_dia(company: str, fecha, usuario: str) -> dict:
             "serie": s, "label": _serie_label(s, company),
             "num_facturas": cint(st.get("num_facturas")), "total_venta": flt(st.get("total_venta")),
             "con_cobros": int(s in cobros),
+            "con_devoluciones": int(s in devols),
             "cierre": c.get("name") or "", "estado": c.get("estado") or "",
         })
     todas = cierres.get(SERIE_TODAS) or {}

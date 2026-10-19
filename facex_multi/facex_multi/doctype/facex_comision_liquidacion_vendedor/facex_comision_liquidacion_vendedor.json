@@ -1,0 +1,150 @@
+{
+ "actions": [],
+ "creation": "2026-10-19 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "vendedor",
+  "pct_contado",
+  "pct_recuperacion",
+  "cb_contado",
+  "contado_con_iva",
+  "contado_sin_iva",
+  "recuperacion_con_iva",
+  "recuperacion_sin_iva",
+  "cb_anul",
+  "anulaciones_con_iva",
+  "anulaciones_sin_iva",
+  "neto_con_iva",
+  "neto_sin_iva",
+  "cb_com",
+  "comision_contado",
+  "comision_recuperacion",
+  "comision_anulaciones",
+  "comision_total"
+ ],
+ "fields": [
+  {
+   "fieldname": "vendedor",
+   "fieldtype": "Data",
+   "label": "Vendedor",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "pct_contado",
+   "fieldtype": "Percent",
+   "label": "% Contado",
+   "in_list_view": 1,
+   "precision": "4"
+  },
+  {
+   "fieldname": "pct_recuperacion",
+   "fieldtype": "Percent",
+   "label": "% Recuperación",
+   "in_list_view": 1,
+   "precision": "4"
+  },
+  {
+   "fieldname": "cb_contado",
+   "fieldtype": "Column Break",
+   "label": ""
+  },
+  {
+   "fieldname": "contado_con_iva",
+   "fieldtype": "Currency",
+   "label": "Contado con IVA",
+   "read_only": 1
+  },
+  {
+   "fieldname": "contado_sin_iva",
+   "fieldtype": "Currency",
+   "label": "Contado sin IVA",
+   "read_only": 1
+  },
+  {
+   "fieldname": "recuperacion_con_iva",
+   "fieldtype": "Currency",
+   "label": "Recuperación con IVA",
+   "read_only": 1
+  },
+  {
+   "fieldname": "recuperacion_sin_iva",
+   "fieldtype": "Currency",
+   "label": "Recuperación sin IVA",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_anul",
+   "fieldtype": "Column Break",
+   "label": ""
+  },
+  {
+   "fieldname": "anulaciones_con_iva",
+   "fieldtype": "Currency",
+   "label": "Anulaciones / NC con IVA",
+   "read_only": 1
+  },
+  {
+   "fieldname": "anulaciones_sin_iva",
+   "fieldtype": "Currency",
+   "label": "Anulaciones / NC sin IVA",
+   "read_only": 1
+  },
+  {
+   "fieldname": "neto_con_iva",
+   "fieldtype": "Currency",
+   "label": "Neto con IVA",
+   "read_only": 1
+  },
+  {
+   "fieldname": "neto_sin_iva",
+   "fieldtype": "Currency",
+   "label": "Neto sin IVA",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_com",
+   "fieldtype": "Column Break",
+   "label": ""
+  },
+  {
+   "fieldname": "comision_contado",
+   "fieldtype": "Currency",
+   "label": "Comisión contado",
+   "read_only": 1
+  },
+  {
+   "fieldname": "comision_recuperacion",
+   "fieldtype": "Currency",
+   "label": "Comisión recuperación",
+   "read_only": 1
+  },
+  {
+   "fieldname": "comision_anulaciones",
+   "fieldtype": "Currency",
+   "label": "Comisión anulaciones / NC",
+   "read_only": 1
+  },
+  {
+   "fieldname": "comision_total",
+   "fieldtype": "Currency",
+   "label": "Comisión total",
+   "read_only": 1,
+   "in_list_view": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-19 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FacEx Multi",
+ "name": "FacEx Comision Liquidacion Vendedor",
+ "owner": "Administrator",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "istable": 1,
+ "editable_grid": 1,
+ "permissions": []
+}

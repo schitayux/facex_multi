@@ -3128,6 +3128,12 @@ class EFastSalePage {
 				badge_id: "ef-home-cierre-badge",
 				action: () => { window.location.href = "/app/facex-cierre"; },
 			},
+			p.comisionador && {
+				label: "Comisionador",
+				desc: "Comisiones de vendedores sobre cobros y ventas del período.",
+				icon: icon(`<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>`),
+				action: () => { window.location.href = "/app/facex-comisiones"; },
+			},
 			p.puede_ver_menu_inventario && {
 				label: "Inventario",
 				desc: "Entradas, salidas y transferencias de stock.",
@@ -3235,6 +3241,9 @@ class EFastSalePage {
 		}
 		if (this._has_cierre_access()) {
 			cmds.push({ group: "Pantallas", label: "Cierre Diario", run: () => { window.location.href = "/app/facex-cierre"; } });
+		}
+		if (p.comisionador) {
+			cmds.push({ group: "Pantallas", label: "Comisionador", run: () => { window.location.href = "/app/facex-comisiones"; } });
 		}
 
 		// Las etiquetas se leen de los botones del panel de Reportes para no
@@ -8563,7 +8572,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 			if (!isCertified && d.bfel_status !== "00 No enviar") {
 				show("#ef-btn-certify"); enable("#ef-btn-certify");
 				if (_canCancel) { show("#ef-btn-cancel-doc"); enable("#ef-btn-cancel-doc"); } // Permitir anular desde ERPNext si aún no es FEL
-			} else if (isCertified && d.bfel_uuid && !d.bfel_documento_anulado) {
+			} else if (isCertified && d.bfel_uuid) {
+				// También si ya está anulada en la SAT pero sigue validada en
+				// ERPNext: el mismo botón completa la anulación.
 				if (_canCancel) { show("#ef-btn-cancel-fel"); enable("#ef-btn-cancel-fel"); }
 			} else if (!isCertified && d.bfel_status === "00 No enviar") {
 				if (_canCancel) { show("#ef-btn-cancel-doc"); enable("#ef-btn-cancel-doc"); }
@@ -8865,7 +8876,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		frappe.confirm(
 			`¿Seguro que desea <strong>Anular</strong> la factura <strong>${this.doc.name}</strong> en ERPNext?<br><br>
-			 <span style="color:red; font-weight:bold;">Nota: Dado que este documento aún no ha sido certificado en FEL (SAT), únicamente se anulará de forma local en ERPNext, revirtiendo asientos contables e inventario.</span>`,
+			 <span style="color:red; font-weight:bold;">Nota: Dado que este documento aún no ha sido certificado en FEL (SAT), únicamente se anulará de forma local en ERPNext, revirtiendo asientos contables e inventario.</span><br><br>
+			 <b>Su anulación se reflejará como devolución en el cierre diario de hoy del usuario que emitió la factura.</b>`,
 			() => {
 				frappe.call({
 					method: "facex_multi.api.invoice.cancel_invoice",
@@ -8874,7 +8886,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					freeze_message: "Anulando factura...",
 					callback: (r) => {
 						if (!r.exc && r.message && r.message.success) {
-							frappe.show_alert({ message: `Factura <strong>${this.doc.name}</strong> Anulada localmente con éxito (sin afectación FEL).`, indicator: "green" });
+							frappe.show_alert({ message: `Factura <strong>${this.doc.name}</strong> Anulada localmente con éxito (sin afectación FEL).<br>${frappe.utils.escape_html(r.message.message || "")}`, indicator: "green" }, 8);
 							this.load_invoice(this.doc.name);
 						}
 					},
@@ -11203,16 +11215,21 @@ body.facex-fullscreen-mode .ef-main-layout {
 	_action_cancel_fel() {
 		if (!this.doc.name || this.doc.name === "new") return;
 
-		frappe.prompt({
+		// Anula ante la SAT Y cancela en ERPNext (antes solo se anulaba en la
+		// SAT y la factura seguía validada: seguía contando como venta).
+		frappe.prompt([{
+			fieldtype: 'HTML',
+			options: '<p><b>Su anulación se reflejará como devolución en el cierre diario de hoy del usuario que emitió la factura.</b></p>'
+		}, {
 			label: 'Motivo de anulación FEL',
 			fieldname: 'motivo_anulacion',
 			fieldtype: 'Data',
 			reqd: 1
-		}, (values) => {
+		}], (values) => {
 			frappe.call({
-				method: 'brainfel.api.certify_sales_invoice.cancel_sales_invoice_fel',
+				method: 'facex_multi.api.invoice.cancel_certified_invoice_fel',
 				args: {
-					sales_invoice_name: this.doc.name,
+					name: this.doc.name,
 					motivo_anulacion: values.motivo_anulacion
 				},
 				freeze: true,
@@ -11220,9 +11237,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 				callback: (r) => {
 					if (!r.exc && r.message && r.message.success) {
 						frappe.show_alert({
-							message: r.message.message || "Documento anulado correctamente en FEL.",
+							message: `Documento anulado correctamente en FEL.<br>${frappe.utils.escape_html(r.message.message || "")}`,
 							indicator: 'green'
-						});
+						}, 8);
 						// Reload to reflect cancelled state
 						this.load_invoice(this.doc.name);
 					}
@@ -15687,12 +15704,34 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const $addBtn = this.$body.find("#ef-maint-item-images-add-btn");
 
 		if (!item_code) {
-			$wrapper.html('<div style="padding:8px 0; color:#94a3b8; font-size:12px;">Guarde el producto para poder agregar imágenes.</div>');
-			$addBtn.hide();
+			// Producto nuevo: solo la imagen principal, que se envía al guardar.
+			this._maint_new_image = null;
+			const render_new = () => {
+				const url = this._maint_new_image;
+				if (!url) {
+					$wrapper.html('<div style="padding:8px 0; color:#94a3b8; font-size:12px;">Sin imagen. Puede adjuntar la imagen principal (opcional); las demás se agregan después de guardar.</div>');
+					return;
+				}
+				$wrapper.html(`<div style="display:flex; align-items:center; gap:12px; padding:6px 0;">
+					<img src="${_esc(url)}" style="max-height:120px; max-width:200px; object-fit:contain; border-radius:8px; background:#fff; box-shadow:0 1px 6px rgba(0,0,0,.15);" />
+					<button type="button" class="ef-btn ef-btn-sm ef-btn-secondary ef-maint-new-image-remove">Quitar</button>
+				</div>`);
+				$wrapper.find(".ef-maint-new-image-remove").on("click", () => { this._maint_new_image = null; render_new(); });
+			};
+			render_new();
+			$addBtn.text("Adjuntar Imagen").show().off("click").on("click", () => {
+				new frappe.ui.FileUploader({
+					restrictions: { allowed_file_types: ["image/*"] },
+					on_success: (file_doc) => {
+						this._maint_new_image = file_doc && file_doc.file_url ? file_doc.file_url : null;
+						render_new();
+					},
+				});
+			});
 			return;
 		}
 
-		$addBtn.show().off("click").on("click", () => {
+		$addBtn.text("Agregar Imagen").show().off("click").on("click", () => {
 			new frappe.ui.FileUploader({
 				doctype: "Item",
 				docname: item_code,
@@ -15768,7 +15807,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 		}
 		this.$body.find("#ef-maint-item-desc").val("");
 		this.$body.find("#ef-maint-item-gestionado-por").val("General");
-		this.$body.find("#ef-maint-item-is-stock").prop("checked", false).prop("disabled", false);
+		// «Inventariable» de un producto nuevo sigue a «Manejar Inventario» de la compañía.
+		this.$body.find("#ef-maint-item-is-stock")
+			.prop("checked", !!parseInt((this.company_config || {}).maneja_inventario || 0, 10))
+			.prop("disabled", false);
 		this.$body.find("#ef-maint-item-btn-delete").hide();
 		this.$body.find("#ef-maint-item-btn-print-label, #ef-maint-item-btn-preview-label").hide();
 		this.$body.find("#ef-maint-item-keywords").val("");
@@ -15810,6 +15852,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			palabras_busqueda: this.$body.find("#ef-maint-item-keywords").val() || "",
 			costo_estandar: parseFloat(this.$body.find("#ef-maint-item-costo-estandar").val()) || 0,
 		};
+		if (is_new && this._maint_new_image) data.image = this._maint_new_image;
 
 		frappe.call({
 			method: "facex_multi.api.item.create_or_update_item",

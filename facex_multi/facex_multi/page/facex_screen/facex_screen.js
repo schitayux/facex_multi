@@ -4009,20 +4009,24 @@ class EFastPOSScreen {
 				args,
 				freeze: true,
 				freeze_message: __("Anulando factura…"),
-				callback: () => {
+				callback: (r) => {
+					const aviso = (r.message && r.message.message) || "";
 					frappe.show_alert({
-						message: __("Factura {0} anulada correctamente.", [this.doc.name]),
+						message: __("Factura {0} anulada correctamente.", [this.doc.name])
+							+ (aviso ? "<br>" + frappe.utils.escape_html(aviso) : ""),
 						indicator: "green",
-					}, 6);
+					}, 8);
 					this._new_sale();
 				},
 			});
 		};
 
+		const avisoCierre = __("Su anulación se reflejará como devolución en el cierre diario de hoy del usuario que emitió la factura.");
 		if (isCertified) {
 			const dlg = new frappe.ui.Dialog({
 				title: __("Anular Factura FEL"),
 				fields: [
+					{ fieldtype: "HTML", options: `<p><b>${avisoCierre}</b></p>` },
 					{
 						fieldtype: "Small Text",
 						fieldname: "motivo_anulacion",
@@ -4038,7 +4042,8 @@ class EFastPOSScreen {
 					}
 					dlg.hide();
 					frappe.confirm(
-						__("Esta acción es irreversible: se anulará el documento ante la SAT y se revertirá la contabilidad/inventario en ERPNext. ¿Confirma continuar?"),
+						__("Esta acción es irreversible: se anulará el documento ante la SAT y se revertirá la contabilidad/inventario en ERPNext. ¿Confirma continuar?")
+							+ `<br><br><b>${avisoCierre}</b>`,
 						() => doCancel(values.motivo_anulacion)
 					);
 				},
@@ -4046,7 +4051,8 @@ class EFastPOSScreen {
 			dlg.show();
 		} else {
 			frappe.confirm(
-				__("¿Confirma cancelar internamente la factura {0}? Esta acción revertirá la contabilidad/inventario en ERPNext y no se puede deshacer.", [this.doc.name]),
+				__("¿Confirma cancelar internamente la factura {0}? Esta acción revertirá la contabilidad/inventario en ERPNext y no se puede deshacer.", [this.doc.name])
+					+ `<br><br><b>${avisoCierre}</b>`,
 				() => doCancel()
 			);
 		}
