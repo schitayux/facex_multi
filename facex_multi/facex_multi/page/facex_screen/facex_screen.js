@@ -1379,7 +1379,7 @@ class EFastPOSScreen {
 				</select>
 			</div>
 			<div class="efs-cust-detail-row">
-				<label>No. Identificador</label>
+				<label>Número de NIT</label>
 				<input type="text" id="efs-cust-fld-id-receptor" class="efs-cust-detail-input" value="${_efs_esc(cd.bfel_id_receptor || "")}" placeholder="NIT / CUI / CF" />
 			</div>
 			<div class="efs-cust-detail-row"><label>Dirección</label><span>${_efs_esc(direccion || "—")}</span></div>
@@ -2962,7 +2962,7 @@ class EFastPOSScreen {
 			fields: [
 				{ fieldname: "customer_name", fieldtype: "Data", label: __("Nombre"), reqd: 1 },
 				{ fieldname: "bfel_identificacion", fieldtype: "Select", label: __("Tipo Identificación"), options: "NIT\nCUI\nPASAPORTE\nCF", default: "CF" },
-				{ fieldname: "bfel_id_receptor", fieldtype: "Data", label: __("NIT / CUI") },
+				{ fieldname: "bfel_id_receptor", fieldtype: "Data", label: __("Número de NIT") },
 			],
 			primary_action_label: __("Guardar"),
 			primary_action: (values) => {

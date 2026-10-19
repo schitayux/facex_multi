@@ -533,7 +533,7 @@ class FacexTransporteModule {
 				dlg.$body.html(`
 					<div class="efs-mini-ticket">
 						<div class="efs-mini-ticket-head">
-							<span>${_eft_esc(doc.customer_name || doc.customer || "")}</span>
+							<span>${_eft_esc(doc._display_customer_name || doc.customer_name || doc.customer || "")}</span>
 							<span>${_eft_esc(doc.posting_date || "")}</span>
 						</div>
 						<div class="efs-mini-ticket-items">${rows}</div>

@@ -665,7 +665,7 @@ class EFastSalePage {
                   </select>
                 </div>
                 <div class="ef-field-group">
-                  <label class="ef-label">ID Receptor (FEL)</label>
+                  <label class="ef-label">Número de NIT</label>
                   <input id="ef-bfel-nit" type="text" class="ef-input" placeholder="CF" maxlength="20" tabindex="5" />
                 </div>
               </div>
@@ -1516,7 +1516,7 @@ class EFastSalePage {
               </select>
             </div>
             <div class="ef-field-group">
-              <label class="ef-label">ID Receptor (FEL)</label>
+              <label class="ef-label">Número de NIT</label>
               <input type="text" id="ef-maint-cust-receptor" class="ef-input" style="width:100%" />
             </div>
             <div class="ef-field-group">
@@ -3705,7 +3705,7 @@ class EFastSalePage {
 							const row_html = `
 								<tr class="ef-tr-interactive" data-name="${inv.name}" data-customer="${inv.customer}">
 									<td class="ef-td"><a class="ef-inv-link" href="#" style="color:var(--ef-primary); font-weight:700; text-decoration:underline;">${inv.name}</a></td>
-									<td class="ef-td"><a class="ef-cust-link" href="#" style="color:var(--ef-primary); font-weight:500; text-decoration:underline;">${inv.customer_name || inv.customer}</a></td>
+									<td class="ef-td"><a class="ef-cust-link" href="#" style="color:var(--ef-primary); font-weight:500; text-decoration:underline;">${_esc(inv.customer_name || inv.customer)}</a></td>
 									<td class="ef-td">${inv.posting_date}</td>
 									<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700;">${format_currency(inv.grand_total, "GTQ")}</td>
 									<td class="ef-td">${bfel_badge}</td>
@@ -5782,6 +5782,15 @@ body.facex-fullscreen-mode .ef-main-layout {
 		// Nombre para factura
 		this.$body.find("#ef-bfel-nombre").on("change input", (e) => {
 			this.doc.bfel_nombre = e.target.value;
+			this._mark_dirty();
+		});
+		// Nunca en blanco: mismo default que el servidor (cliente_generico.default_bfel_nombre).
+		this.$body.find("#ef-bfel-nombre").on("blur", (e) => {
+			if (e.target.value.trim()) return;
+			const nit = (this.$body.find("#ef-bfel-nit").val() || "").trim().toUpperCase();
+			const nombre = (!nit || nit === "CF" || nit === "C/F") ? "Consumidor Final" : (this.doc.customer_name || "Consumidor Final");
+			e.target.value = nombre;
+			this.doc.bfel_nombre = nombre;
 			this._mark_dirty();
 		});
 
@@ -10285,7 +10294,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 				{ fieldtype: "Section Break", label: "General" },
 				{ fieldname: "customer_name",       fieldtype: "Data", label: "Nombre Cliente", reqd: 1 },
 				{ fieldname: "bfel_identificacion", fieldtype: "Select", label: "Identificación (FEL)", options: "\nNIT\nCUI\nPASAPORTE\nCF" },
-				{ fieldname: "bfel_id_receptor",    fieldtype: "Data", label: "ID Receptor (FEL)" },
+				{ fieldname: "bfel_id_receptor",    fieldtype: "Data", label: "Número de NIT" },
 				{ fieldtype: "Column Break" },
 				{ fieldname: "custom_direccion",    fieldtype: "Data", label: "Dirección" },
 				{ fieldname: "custom_departamento", fieldtype: "Data", label: "Departamento" },
@@ -12040,7 +12049,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					<tr>
 						<td class="ef-td"><a class="ef-inv-load-link" title="Clic: abrir aquí · Ctrl+clic: abrir en pestaña nueva" href="/app/facex?invoice=${encodeURIComponent(inv.name)}" data-name="${inv.name}" style="color:var(--ef-primary); font-weight:700; text-decoration:underline; cursor:pointer;">${inv.name}</a>${_peekBtn(inv.name)}</td>
 						<td class="ef-td">${inv.posting_date}</td>
-						<td class="ef-td">${inv.customer_name || inv.customer}</td>
+						<td class="ef-td">${_esc(inv.customer_name || inv.customer)}</td>
 						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(inv.total, "GTQ")}</td>
 						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(inv.total_taxes_and_charges, "GTQ")}</td>
 						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700;">${_fmtCurrency(inv.grand_total, "GTQ")}</td>
@@ -12136,7 +12145,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					<tr>
 						<td class="ef-td"><a class="ef-inv-load-link" title="Clic: abrir aquí · Ctrl+clic: abrir en pestaña nueva" href="/app/facex?invoice=${encodeURIComponent(inv.name)}" data-name="${inv.name}" style="color:var(--ef-primary); font-weight:700; text-decoration:underline; cursor:pointer;">${inv.name}</a>${_peekBtn(inv.name)}</td>
 						<td class="ef-td">${inv.posting_date}</td>
-						<td class="ef-td">${inv.customer_name || inv.customer}</td>
+						<td class="ef-td">${_esc(inv.customer_name || inv.customer)}</td>
 						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700; color:var(--ef-danger);">${_fmtCurrency(inv.grand_total, "GTQ")}</td>
 						<td class="ef-td" style="text-align:center;">${anulado_badge}</td>
 						<td class="ef-td">${inv.modified_by}</td>
@@ -12254,7 +12263,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 						<td class="ef-td" style="text-align: center;">
 							<span class="ef-aging-toggle-icon" style="display: inline-block; transition: transform 0.2s; font-size: 10px;">▶</span>
 						</td>
-						<td class="ef-td" style="font-weight:700;">${row.customer_name}</td>
+						<td class="ef-td" style="font-weight:700;">${_esc(row.customer_name)}</td>
 						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700; color:var(--ef-danger);">${_fmtCurrency(row.total_outstanding, "GTQ")}</td>
 						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(row.range_0_30, "GTQ")}</td>
 						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(row.range_31_60, "GTQ")}</td>
@@ -12351,7 +12360,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					<tr>
 						<td class="ef-td"><a class="ef-inv-load-link" title="Clic: abrir aquí · Ctrl+clic: abrir en pestaña nueva" href="/app/facex?invoice=${encodeURIComponent(inv.name)}" data-name="${inv.name}" style="color:var(--ef-primary); font-weight:700; text-decoration:underline; cursor:pointer;">${inv.name}</a>${_peekBtn(inv.name)}</td>
 						<td class="ef-td">${inv.posting_date}</td>
-						<td class="ef-td">${inv.customer_name || inv.customer}</td>
+						<td class="ef-td">${_esc(inv.customer_name || inv.customer)}</td>
 						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700;">${_fmtCurrency(inv.grand_total, "GTQ")}</td>
 						<td class="ef-td"><span class="ef-badge ef-badge-draft">${inv.bfel_status}</span></td>
 						<td class="ef-td">
@@ -12421,7 +12430,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					<tr>
 						<td class="ef-td">${pay.payment_date}</td>
 						<td class="ef-td"><a class="ef-inv-load-link" title="Clic: abrir aquí · Ctrl+clic: abrir en pestaña nueva" href="/app/facex?invoice=${encodeURIComponent(pay.invoice)}" data-name="${pay.invoice}" style="color:var(--ef-primary); font-weight:700; text-decoration:underline; cursor:pointer;">${pay.invoice}</a>${_peekBtn(pay.invoice)}</td>
-						<td class="ef-td">${pay.customer_name || pay.customer}</td>
+						<td class="ef-td">${_esc(pay.customer_name || pay.customer)}</td>
 						<td class="ef-td" style="font-weight:600;">${pay.payment_method}</td>
 						<td class="ef-td" style="font-family:monospace; font-size:11px;">${pay.reference || '—'}</td>
 						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700; color:var(--ef-success);">${_fmtCurrency(pay.amount, "GTQ")}</td>
@@ -12481,7 +12490,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					<tr>
 						<td class="ef-td"><a class="ef-inv-load-link" title="Clic: abrir aquí · Ctrl+clic: abrir en pestaña nueva" href="/app/facex?invoice=${encodeURIComponent(inv.name)}" data-name="${inv.name}" style="color:var(--ef-primary); font-weight:700; text-decoration:underline; cursor:pointer;">${inv.name}</a>${_peekBtn(inv.name)}</td>
 						<td class="ef-td">${inv.posting_date}</td>
-						<td class="ef-td">${inv.customer_name || inv.customer}</td>
+						<td class="ef-td">${_esc(inv.customer_name || inv.customer)}</td>
 						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700;">${_fmtCurrency(inv.grand_total, "GTQ")}</td>
 						<td class="ef-td">${errorSnippet}</td>
 					</tr>
@@ -13161,7 +13170,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 				${aging.map(row => `
 					<div style="margin-top: 25px; border-bottom: 2px solid #cbd5e1; padding-bottom: 5px; page-break-inside: avoid;">
 						<div style="display: flex; justify-content: space-between; align-items: center;">
-							<h3 style="margin: 0; color: #1e293b;">${row.customer_name}</h3>
+							<h3 style="margin: 0; color: #1e293b;">${_esc(row.customer_name)}</h3>
 							<span style="font-weight: bold; color: #e63946; font-size: 14px;">Total Saldo: ${_fmtCurrency(row.total_outstanding, "GTQ")}</span>
 						</div>
 						<div style="display: flex; gap: 20px; font-size: 11px; margin-top: 5px; color: #64748b;">
@@ -13401,6 +13410,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 			}
 
 			this.$body.find("#ef-receipt-cust-name").text(res.customer_name || "");
+			frappe.xcall("facex_multi.api.cliente_generico.get_invoice_display_name", { invoice: inv_name })
+				.then((nombre) => { if (nombre) this.$body.find("#ef-receipt-cust-name").text(nombre); });
 			this.$body.find("#ef-receipt-grand-total").text(_fmtCurrency(res.grand_total, "GTQ"));
 
 			frappe.call({

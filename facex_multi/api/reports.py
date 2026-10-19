@@ -10,6 +10,7 @@ import frappe
 from frappe.utils import today, getdate, add_days, flt
 import datetime
 from facex_multi.api.invoice import get_effective_company
+from facex_multi.api.cliente_generico import display_name_sql, nombre_cambiado_sql
 
 
 def _build_company_condition(company: str) -> tuple:
@@ -305,7 +306,7 @@ def get_sales_by_date(start_date: str, end_date: str, customer: str = None, ware
     neta = venta_neta_sql("tabSales Invoice")
     cobrable = total_cobrable_sql("tabSales Invoice")
     query = f"""
-        SELECT name, posting_date, customer, customer_name, total, total_taxes_and_charges, grand_total,
+        SELECT name, posting_date, customer, {display_name_sql()} AS customer_name, total, total_taxes_and_charges, grand_total,
             {pas} AS cargos_pasarela,
             {neta} AS venta_neta,
             {cobrable} AS total_cobrable,
@@ -436,7 +437,7 @@ def get_cancelled_invoices(start_date: str, end_date: str, customer: str = None,
         values["establecimiento"] = establecimiento
         
     query = f"""
-        SELECT name, posting_date, customer, customer_name, grand_total, modified_by, modified, bfel_documento_anulado
+        SELECT name, posting_date, customer, {display_name_sql()} AS customer_name, grand_total, modified_by, modified, bfel_documento_anulado
         FROM `tabSales Invoice`
         WHERE { " AND ".join(conditions) }
         ORDER BY posting_date DESC, name DESC
@@ -591,7 +592,8 @@ def get_aging_receivables(customer: str = None, owners=None, company: str = None
         SELECT 
             name,
             customer,
-            customer_name,
+            {display_name_sql()} AS customer_name,
+            {nombre_cambiado_sql()} AS nombre_cambiado,
             posting_date,
             due_date,
             bfel_docto_serie,
@@ -620,11 +622,12 @@ def get_aging_receivables(customer: str = None, owners=None, company: str = None
         if outstanding <= 0.009:
             continue
             
-        cust_id = inv.customer
+        # Cliente genérico con nombre propio en la factura: grupo aparte por nombre.
+        cust_id = f"{inv.customer}::{inv.customer_name}" if inv.nombre_cambiado else inv.customer
         if cust_id not in aging_data:
             aging_data[cust_id] = {
-                "customer": cust_id,
-                "customer_name": inv.customer_name or cust_id,
+                "customer": inv.customer,
+                "customer_name": inv.customer_name or inv.customer,
                 "total_outstanding": 0.0,
                 "range_0_30": 0.0,
                 "range_31_60": 0.0,
@@ -716,7 +719,7 @@ def get_quotations_report(start_date: str = None, end_date: str = None, customer
         values["establecimiento"] = establecimiento
         
     query = f"""
-        SELECT name, company, posting_date, customer, customer_name, grand_total, bfel_status, creation
+        SELECT name, company, posting_date, customer, {display_name_sql()} AS customer_name, grand_total, bfel_status, creation
         FROM `tabSales Invoice`
         WHERE { " AND ".join(conditions) }
         ORDER BY posting_date DESC, creation DESC
@@ -759,7 +762,7 @@ def get_payments_report(start_date: str, end_date: str, payment_method: str = No
         values["establecimiento"] = establecimiento
         
     query = f"""
-        SELECT ip.payment_date, ip.parent AS invoice, p.company, p.customer, p.customer_name, ip.payment_method, ip.reference, ip.amount
+        SELECT ip.payment_date, ip.parent AS invoice, p.company, p.customer, {display_name_sql('p')} AS customer_name, ip.payment_method, ip.reference, ip.amount
         FROM `tabeFast Invoice Payment` ip
         JOIN `tabSales Invoice` p ON ip.parent = p.name AND ip.parenttype = 'Sales Invoice' AND ip.parentfield = 'custom_efast_payments'
         WHERE { " AND ".join(conditions) }
@@ -818,7 +821,8 @@ def get_uncertified_invoices(owners=None, company: str = None, establecimiento: 
         values["establecimiento"] = establecimiento
         
     query = f"""
-        SELECT name, posting_date, customer, customer_name, grand_total, bfel_status, bfel_error_log
+        SELECT name, posting_date, customer, {display_name_sql()} AS customer_name, grand_total, bfel_status,
+            bfel_mensaje AS bfel_error_log
         FROM `tabSales Invoice`
         WHERE { " AND ".join(conditions) }
         ORDER BY posting_date DESC, name DESC
@@ -1051,7 +1055,8 @@ def get_sales_by_seller(start_date: str, end_date: str, sales_partners=None,
                 if meta.has_field(f)]
     invoices = frappe.db.sql(
         f"""
-        SELECT name, posting_date, due_date, customer, customer_name, sales_partner,
+        SELECT name, posting_date, due_date, customer, {display_name_sql()} AS customer_name,
+            {nombre_cambiado_sql()} AS nombre_cambiado, sales_partner,
             bfel_establecimiento, company, owner, is_return, grand_total, rounded_total,
             disable_rounded_total, total_taxes_and_charges
             {"".join(", " + f for f in optional)}
@@ -1105,6 +1110,8 @@ def get_sales_by_seller(start_date: str, end_date: str, sales_partners=None,
         pagado = sum(flt(p.amount) for p in pays)
         pendiente = max(gt - pagado, 0.0) if not inv.is_return else 0.0
         seller = inv.sales_partner or SIN_VENDEDOR
+        # Cliente genérico con nombre propio en la factura: cuenta como cliente aparte.
+        cliente = (inv.customer, inv.customer_name) if inv.nombre_cambiado else inv.customer
         s = sellers.setdefault(seller, {
             "vendedor": seller, "facturas": 0, "clientes": set(), "venta_bruta": 0.0,
             "devoluciones": 0.0, "saldo": 0.0, "cargos_pasarela": 0.0, **{c: 0.0 for c in _CLASES},
@@ -1117,7 +1124,7 @@ def get_sales_by_seller(start_date: str, end_date: str, sales_partners=None,
             clase = "devolucion"
             devoluciones["monto"] += abs(venta)
             devoluciones["facturas"] += 1
-            devoluciones["clientes"].add(inv.customer)
+            devoluciones["clientes"].add(cliente)
             s["devoluciones"] += abs(venta)
         else:
             clase, _ce, _cred = _clasificar_por_pagos(
@@ -1126,13 +1133,13 @@ def get_sales_by_seller(start_date: str, end_date: str, sales_partners=None,
             b = clases[clase]
             b["monto"] += venta
             b["facturas"] += 1
-            b["clientes"].add(inv.customer)
+            b["clientes"].add(cliente)
             s[clase] += venta
             s["venta_bruta"] += venta
             s["facturas"] += 1
-            s["clientes"].add(inv.customer)
+            s["clientes"].add(cliente)
             s["saldo"] += pendiente
-            customers.add(inv.customer)
+            customers.add(cliente)
             cobrado += min(pagado, gt)
             saldo += pendiente
             cobrable += gt
@@ -1203,7 +1210,7 @@ def get_sales_by_seller(start_date: str, end_date: str, sales_partners=None,
                 GROUP BY customer
             ) t WHERE t.primera BETWEEN %(start)s AND %(end)s
             """,
-            {"customers": tuple(customers), "start": start_date, "end": end_date,
+            {"customers": tuple({c[0] if isinstance(c, tuple) else c for c in customers}), "start": start_date, "end": end_date,
              **company_vals, **corte_vals},
         )[0][0]
 
@@ -1276,7 +1283,7 @@ def get_invoice_peek(name: str, company: str = None) -> dict:
 
     rows = frappe.db.sql(
         f"""
-        SELECT name, posting_date, due_date, customer, customer_name, bfel_nit,
+        SELECT name, posting_date, due_date, customer, {display_name_sql()} AS customer_name, bfel_nit,
             company, currency, docstatus, status, total, total_taxes_and_charges,
             discount_amount, grand_total, bfel_status, bfel_uuid, bfel_docto_serie,
             bfel_docto_no, bfel_establecimiento, owner,

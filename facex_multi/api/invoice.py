@@ -845,10 +845,12 @@ def get_invoice_history(company: str = None, from_date: str = None, to_date: str
         "Sales Invoice",
         filters=_si_filters,
         or_filters=invoice_corte_filters(company) or None,
-        fields=["name", "customer_name", "posting_date", "grand_total", "docstatus", "bfel_status", "bfel_uuid", "custom_pagado"],
+        fields=["name", "customer", "customer_name", "bfel_nombre", "posting_date", "grand_total", "docstatus", "bfel_status", "bfel_uuid", "custom_pagado"],
         order_by="posting_date desc, creation desc",
         limit_page_length=500,
     )
+    from facex_multi.api.cliente_generico import apply_display
+    apply_display(rows)
 
     if rows:
         guia_parents = frappe.get_all(
@@ -923,10 +925,12 @@ def get_held_sales(company: str = None):
         "Sales Invoice",
         filters=_held_filters,
         or_filters=invoice_corte_filters(company) or None,
-        fields=["name", "customer_name", "posting_date", "grand_total", "sales_partner", "owner"],
+        fields=["name", "customer", "customer_name", "bfel_nombre", "posting_date", "grand_total", "sales_partner", "owner"],
         order_by="modified desc",
         limit_page_length=200,
     )
+    from facex_multi.api.cliente_generico import apply_display
+    apply_display(rows)
     owners = list({r["owner"] for r in rows if r.get("owner")})
     fullnames = {}
     if owners:
@@ -1026,9 +1030,10 @@ def get_pending_guias(company: str = None):
         sp_filter += f" and {co_cond}"
         sp_params = {**sp_params, **co_params}
 
+    from facex_multi.api.cliente_generico import display_name_sql
     return frappe.db.sql(
         f"""
-        select si.name, si.customer_name, si.posting_date, si.grand_total
+        select si.name, {display_name_sql("si")} as customer_name, si.posting_date, si.grand_total
         from `tabSales Invoice` si
         where si.docstatus = 1
           and si.company = %(company)s
@@ -1113,12 +1118,13 @@ def get_guias_transporte(company: str = None, estado_entrega: str = None, transp
 
     where_clause = " and ".join(conditions)
 
+    from facex_multi.api.cliente_generico import display_name_sql
     return frappe.db.sql(
         f"""
         select
             g.name as guia_name, g.parent as sales_invoice, g.numero_guia, g.transportista,
             g.estado_entrega, g.piezas, g.destino, g.monto_cod, g.fecha_envio,
-            g.liquidado, si.customer_name
+            g.liquidado, {display_name_sql("si")} as customer_name
         from `tabFacEx Guia Transportista` g
         inner join `tabSales Invoice` si on si.name = g.parent
         where g.parenttype = 'Sales Invoice' and {where_clause}
@@ -2460,6 +2466,9 @@ def get_invoice(name: str):
     doc.check_permission("read")
     d = _safe_doc_dict(doc)
     d["_payment_entries"] = _payment_entries_summary(name, doc.docstatus)
+    # Nombre a mostrar en vistas de lectura (cliente genérico → nombre de la factura).
+    from facex_multi.api.cliente_generico import display_name
+    d["_display_customer_name"] = display_name(doc.customer, doc.customer_name, doc.get("bfel_nombre"))
     return d
 
 
@@ -3223,11 +3232,13 @@ def get_dashboard_stats(start_date=None, end_date=None, customer=None, item_code
         "Sales Invoice",
         filters=filters,
         or_filters=invoice_corte_filters(company) or None,
-        fields=["name", "customer", "customer_name", "posting_date", "grand_total",
+        fields=["name", "customer", "customer_name", "bfel_nombre", "posting_date", "grand_total",
                 "rounded_total", "disable_rounded_total",
                 "bfel_status", "bfel_uuid", "docstatus", "bfel_documento_anulado"],
         order_by="posting_date desc, creation desc"
     )
+    from facex_multi.api.cliente_generico import apply_display
+    apply_display(raw_invoices)
 
     # Filtrar facturas: si está cancelada (docstatus=2), solo mostrar si tiene UUID o está anulada en FEL
     invoices = [

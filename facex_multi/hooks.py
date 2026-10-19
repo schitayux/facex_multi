@@ -102,6 +102,8 @@ doc_events = {
         "before_validate": [
             "facex_multi.api.invoice.enforce_update_stock",
             "facex_multi.api.recargo.apply_recargo_y_flete",
+            # "Nombre para Factura" nunca en blanco (default Consumidor Final).
+            "facex_multi.api.cliente_generico.default_bfel_nombre",
         ],
         "before_submit": "facex_multi.api.invoice.enforce_update_stock",
         "validate": [

@@ -51,6 +51,7 @@ import frappe
 from frappe import _
 from frappe.utils import add_days, cint, flt, formatdate, getdate, now_datetime, today
 
+from facex_multi.api.cliente_generico import display_name, display_name_sql
 from facex_multi.api.invoice import get_effective_company
 from facex_multi.api.permissions import (
     get_facex_can_create_cierres,
@@ -451,7 +452,7 @@ def _inv_total(inv) -> float:
 
 def _si_fields() -> list:
     meta = frappe.get_meta("Sales Invoice")
-    fields = ["name", "customer", "customer_name", "posting_date", "due_date", "grand_total", "rounded_total",
+    fields = ["name", "customer", "customer_name", "bfel_nombre", "posting_date", "due_date", "grand_total", "rounded_total",
               "disable_rounded_total", "total", "net_total", "discount_amount", "is_return", "outstanding_amount", "owner"]
     for f in ("bfel_status", "bfel_uuid", "bfel_pago_contra_entrega", "custom_pagado", "set_warehouse",
               "payment_terms_template"):
@@ -720,7 +721,7 @@ def compute_snapshot(company: str, fecha, usuario: str, serie: str = SERIE_TODAS
 
         facturas.append({
             "sales_invoice": inv.name,
-            "customer_name": inv.customer_name or inv.customer,
+            "customer_name": display_name(inv.customer, inv.customer_name, inv.bfel_nombre),
             "grand_total": gt,
             "pagado": paid_non_ce,
             "pagado_dia": round(pagado_dia, 2),
@@ -803,7 +804,7 @@ def compute_snapshot(company: str, fecha, usuario: str, serie: str = SERIE_TODAS
             )
             row = {
                 "sales_invoice": c.name,
-                "customer_name": c.customer_name or c.customer,
+                "customer_name": display_name(c.customer, c.customer_name, c.bfel_nombre),
                 "grand_total": gt,
                 "posting_date": str(c.posting_date),
                 "clasificacion": clasificacion,
@@ -903,7 +904,7 @@ def _recuperacion_cartera(company: str, fecha, usuario: str, serie: str = SERIE_
     serie_cond = "" if _es_todas(serie) else "AND si.naming_series = %(serie)s"
     rows = frappe.db.sql(
         f"""
-        SELECT p.parent AS sales_invoice, si.customer_name, si.posting_date, si.due_date,
+        SELECT p.parent AS sales_invoice, {display_name_sql("si")} AS customer_name, si.posting_date, si.due_date,
                si.grand_total, si.rounded_total, si.disable_rounded_total,
                {ce_col} AS bfel_pago_contra_entrega,
                p.payment_method, p.reference, p.amount
