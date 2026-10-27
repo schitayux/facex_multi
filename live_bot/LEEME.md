@@ -1,7 +1,9 @@
 # Bot de Ventas por Live (PC de la tienda)
 
-Lee el WhatsApp del negocio y pasa a la bandeja «Mío» de FacEx cada mensaje con
-**mío / mía** que llegue mientras hay una sesión de Live **Abierta**. Toma el teléfono,
+Un bot por número de WhatsApp. Lee ese WhatsApp y pasa a la bandeja «Mío» de FacEx cada mensaje con
+**mío / mía** que llegue mientras la sesión de Live **de ese número** está **Abierta**
+(campo «WhatsApp del live» de la sesión). Cada vendedor transmite desde su número y
+su bot solo llena su sesión: dos lives al mismo tiempo no se mezclan. Toma el teléfono,
 el nombre, la hora del mensaje (que decide el orden de la cola), el personaje
 mencionado en el texto y la captura del live. **Solo lee:** no envía mensajes ni los
 marca como leídos.
@@ -21,6 +23,20 @@ marca como leídos.
    ```
    (descarga Chromium, unos 150 MB).
 4. Copiar `config.example.json` como `config.json` y pegar la API key y el secret.
+5. En FacEx Settings de cada vendedor llenar **WhatsApp de mis lives** (se precarga
+   en sus sesiones), o escribirlo en la sesión.
+
+### Varios números en la misma PC
+
+Un archivo de config por número (la misma API key sirve para todos) y una terminal
+por número:
+```
+npm start                      (usa config.json)
+node index.js config-ana.json
+node index.js config-luis.json
+```
+Cada uno guarda su vinculación aparte en `.sesion_wa/<nombre del config>` y pide su
+propio QR la primera vez. También puede correr cada vendedor el bot en su propia PC.
 
 ## Cada día
 
@@ -31,8 +47,9 @@ npm start
 La primera vez sale un QR: en el teléfono del negocio, *WhatsApp → Dispositivos
 vinculados → Vincular un dispositivo*. La sesión queda guardada en `.sesion_wa/`.
 
-- Abra la sesión de Live en FacEx **antes** de empezar el live: solo cuentan los
-  mensajes que llegan después de abrirla.
+- Abra la sesión de Live en FacEx, con su WhatsApp, **antes** de empezar el live:
+  solo cuentan los mensajes que llegan después de abrirla. Un número solo puede
+  tener una sesión abierta a la vez.
 - Si el bot arranca tarde, revisa los chats recientes y registra los «mío» que ya
   llegaron (no duplica).
 - Si el mensaje no menciona un personaje de la sesión, queda **Por revisar** en la

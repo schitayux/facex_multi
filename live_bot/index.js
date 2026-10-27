@@ -1,10 +1,14 @@
 // Bot de Ventas por Live — corre en una PC de la tienda (ver LEEME.md).
 //
+// Un bot por número de WhatsApp: `node index.js` usa config.json y
+// `node index.js config-ana.json` usa otro archivo, cada uno con su propia
+// sesión de WhatsApp (.sesion_wa/<nombre del config>) y su propio QR.
+//
 // Abre WhatsApp Web en Chromium (se vincula con el QR, como un dispositivo
-// más) y SOLO LEE: cada mensaje con «mío» que llega mientras hay una sesión de
-// Live abierta en FacEx se manda a facex_multi.api.live.recibir_mio con el
-// teléfono, el texto, la hora del mensaje y la captura del live. Nunca envía
-// mensajes ni los marca como leídos.
+// más) y SOLO LEE: cada mensaje con «mío» que llega mientras la sesión de Live
+// de SU número está abierta en FacEx se manda a facex_multi.api.live.recibir_mio
+// con su línea, el teléfono, el texto, la hora del mensaje y la captura del
+// live. Nunca envía mensajes ni los marca como leídos.
 //
 // La captura suele llegar como imagen aparte del texto «mío Luffy»: se junta
 // la última imagen del mismo chat (hasta VENTANA_MS antes) o se espera
@@ -15,13 +19,16 @@ const path = require("path");
 const qrcode = require("qrcode-terminal");
 const { Client, LocalAuth } = require("whatsapp-web.js");
 
-const CFG = JSON.parse(fs.readFileSync(path.join(__dirname, "config.json"), "utf8"));
+const CFG_FILE = path.resolve(__dirname, process.argv[2] || "config.json");
+const CFG = JSON.parse(fs.readFileSync(CFG_FILE, "utf8"));
+const PERFIL = path.basename(CFG_FILE, ".json"); // carpeta de la sesión de WhatsApp de este número
+let LINEA = ""; // número propio, se conoce al conectar
 const VENTANA_MS = (CFG.ventana_imagen_seg || 180) * 1000;
 const ESPERA_IMAGEN_MS = (CFG.espera_imagen_seg || 30) * 1000;
 const MIO_RE = /\b(mio|mia|mios|mias)\b/;
 
 const norm = (s) => String(s || "").normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase();
-const log = (...a) => console.log(new Date().toLocaleTimeString(), ...a);
+const log = (...a) => console.log(new Date().toLocaleTimeString(), LINEA ? `[${LINEA}]` : `[${PERFIL}]`, ...a);
 const pad = (n) => String(n).padStart(2, "0");
 // Hora local de la PC (Guatemala), como la espera Frappe.
 const fecha = (unix) => {
@@ -44,8 +51,9 @@ async function api(method, body) {
 let sesion = { sesion: "", abierta_desde: "" };
 async function refrescarSesion() {
 	try {
-		const s = await api("estado_bot" + (CFG.company ? `?company=${encodeURIComponent(CFG.company)}` : ""));
-		if (s.sesion !== sesion.sesion) log(s.sesion ? `Sesión abierta: ${s.sesion} (desde ${s.abierta_desde}) · ${s.personajes.join(", ")}` : "No hay sesión de Live abierta: los mensajes se ignoran.");
+		const q = new URLSearchParams({ linea: LINEA, ...(CFG.company ? { company: CFG.company } : {}) });
+		const s = await api(`estado_bot?${q}`);
+		if (s.sesion !== sesion.sesion) log(s.sesion ? `Sesión abierta: ${s.sesion} (desde ${s.abierta_desde}) · ${s.personajes.join(", ")}` : `El WhatsApp ${s.linea} no tiene sesión de Live abierta: los mensajes se ignoran.`);
 		sesion = s;
 	} catch (e) {
 		log("No se pudo consultar FacEx:", e.message);
@@ -75,7 +83,7 @@ async function enviar(msg, texto, imgMsg) {
 	const contacto = await msg.getContact();
 	const telefono = contacto.number || msg.from.split("@")[0];
 	const body = {
-		telefono, texto, nombre: contacto.pushname || contacto.name || "",
+		linea: LINEA, telefono, texto, nombre: contacto.pushname || contacto.name || "",
 		llegada: fecha(msg.timestamp), msg_id: id, company: CFG.company || undefined,
 	};
 	const fuente = imgMsg || (msg.hasMedia && msg.type === "image" ? msg : null);
@@ -125,11 +133,12 @@ async function barrer(client) {
 }
 
 const client = new Client({
-	authStrategy: new LocalAuth({ dataPath: path.join(__dirname, ".sesion_wa") }),
+	authStrategy: new LocalAuth({ dataPath: path.join(__dirname, ".sesion_wa", PERFIL) }),
 	puppeteer: { headless: !!CFG.headless, args: ["--no-sandbox"] },
 });
 client.on("qr", (qr) => { log("Escanee este QR con el WhatsApp del negocio (Dispositivos vinculados):"); qrcode.generate(qr, { small: true }); });
 client.on("ready", async () => {
+	LINEA = client.info.wid.user.replace(/\D/g, "").slice(-8);
 	log("WhatsApp conectado (solo lectura).");
 	await refrescarSesion();
 	await barrer(client).catch((e) => log("Barrido:", e.message));

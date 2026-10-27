@@ -16,8 +16,12 @@ con todos sus conjuntos y el flete de la lista; se envía con el diálogo de
 WhatsApp de siempre. «Facturar listos» valida, certifica y registra el pago
 con las mismas funciones del POS (submit → certify → save_payments).
 
-Entrada automática: un bot en una PC de la tienda (live_bot/, whatsapp-web.js)
-llama a `recibir_mio` con el usuario de API del bot. Solo lee, nunca envía.
+Entrada automática: un bot POR NÚMERO de WhatsApp (live_bot/, whatsapp-web.js)
+llama a `recibir_mio` con el usuario de API del bot y su propio número
+(`linea`). Cada vendedor hace su live desde su número: la sesión guarda esa
+línea (`linea_whatsapp`, precargada de FacEx Settings → `live_whatsapp`) y el
+servidor manda cada «mío» a la sesión abierta de esa línea, nunca a la de otro.
+Solo lee, nunca envía.
 
 Permisos (FacEx Settings / Perfil → «Ventas por Live», deny-by-default):
   live_acceso   — página, bandeja, cotizaciones y guías.
@@ -169,7 +173,7 @@ def get_contexto(company: str = None) -> dict:
     from facex_multi.api.permissions import (
         get_facex_allowed_price_lists, get_facex_allowed_warehouses, get_facex_can_edit_price,
         get_facex_default_price_list, get_facex_default_sales_partner, get_facex_default_warehouse,
-        get_facex_flete_item, get_facex_user_sales_partner,
+        get_facex_flete_item, get_facex_user_sales_partner, _value,
     )
     from facex_multi.api.recargo import get_flete_rate
     from facex_multi.api.whatsapp import get_wa_for_user
@@ -182,7 +186,7 @@ def get_contexto(company: str = None) -> dict:
     lista = get_facex_default_price_list(company) or ""
     sesiones = frappe.get_all(
         SESION, filters={"company": company},
-        fields=["name", "titulo", "fecha", "estado", "lista_precios", "vendedor", "bodega"],
+        fields=["name", "titulo", "fecha", "estado", "lista_precios", "vendedor", "bodega", "linea_whatsapp"],
         order_by="fecha desc, creation desc", limit_page_length=40,
     )
     return {
@@ -199,6 +203,7 @@ def get_contexto(company: str = None) -> dict:
             "bodega": get_facex_default_warehouse(company) or "",
             "lista_precios": lista,
             "incluir_flete": 1,
+            "linea_whatsapp": _tel8(_value(company, "live_whatsapp")),
         },
         "listas_permitidas": get_facex_allowed_price_lists(company),
         "bodegas_permitidas": get_facex_allowed_warehouses(company, "venta"),
@@ -233,6 +238,11 @@ def guardar_sesion(data_json: str) -> dict:
         if f in data:
             doc.set(f, data.get(f) or None)
     doc.fecha = doc.fecha or today()
+    if "linea_whatsapp" in data:
+        linea = _tel8(data.get("linea_whatsapp"))
+        if linea and len(linea) != 8:
+            frappe.throw("El WhatsApp del live debe tener 8 dígitos.")
+        doc.linea_whatsapp = linea or None
 
     # Vendedor bloqueado en el perfil: siempre el suyo.
     fijo = get_facex_user_sales_partner(company)
@@ -253,6 +263,14 @@ def guardar_sesion(data_json: str) -> dict:
     if estado == "Abierta" and (doc.estado != "Abierta" or not doc.abierta_desde):
         doc.abierta_desde = now_datetime()
     doc.estado = estado
+    # Una línea, un live abierto: si no, el bot no sabría a cuál mandar el «mío».
+    if doc.estado == "Abierta" and doc.linea_whatsapp:
+        otra = frappe.db.get_value(SESION, {"company": company, "estado": "Abierta",
+                                            "linea_whatsapp": doc.linea_whatsapp, "name": ["!=", doc.name or ""]},
+                                   ["name", "titulo"], as_dict=True)
+        if otra:
+            frappe.throw(f"El WhatsApp {doc.linea_whatsapp} ya tiene abierta la sesión «{otra.titulo or otra.name}». "
+                         "Ciérrela primero.")
 
     if "personajes" in data:
         doc.personajes = []
@@ -341,7 +359,7 @@ def get_sesion(name: str) -> dict:
 
     d = ses.as_dict()
     return {
-        "sesion": {k: d.get(k) for k in ("name", "titulo", "company", "fecha", "estado", "abierta_desde",
+        "sesion": {k: d.get(k) for k in ("name", "titulo", "company", "fecha", "estado", "abierta_desde", "linea_whatsapp",
                                           "vendedor", "bodega", "lista_precios", "incluir_flete")},
         "personajes": list(personajes.values()),
         "prendas": [{"alias": r.alias, "item_code": r.item_code, "item_name": r.item_name, "qty": r.qty}
@@ -761,12 +779,17 @@ def _msg(e) -> str:
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist(methods=["POST"])
-def recibir_mio(telefono: str, texto: str = "", nombre: str = "", llegada: str = None, msg_id: str = None,
-                imagen: str = None, imagen_nombre: str = "captura.jpg", company: str = None) -> dict:
-    """Entrada del bot. Solo se toman mensajes con «mío» que llegan mientras
-    hay una sesión Abierta y después de que se abrió (abierta_desde)."""
+def recibir_mio(linea: str, telefono: str, texto: str = "", nombre: str = "", llegada: str = None,
+                msg_id: str = None, imagen: str = None, imagen_nombre: str = "captura.jpg",
+                company: str = None) -> dict:
+    """Entrada del bot de la línea `linea` (su propio número). Solo se toman
+    mensajes con «mío» que llegan mientras esa línea tiene una sesión Abierta y
+    después de que se abrió (abierta_desde)."""
     company = _company(company)
     _require(company, "live_acceso")
+    linea = _tel8(linea)
+    if len(linea) != 8:
+        frappe.throw("El bot debe indicar su número de WhatsApp (linea).")
     if not _MIO_RE.search(_norm(texto)):
         return {"ignorado": "sin «mío»"}
     if msg_id and frappe.db.exists(PEDIDO, {"wa_msg_id": msg_id}):
@@ -774,10 +797,11 @@ def recibir_mio(telefono: str, texto: str = "", nombre: str = "", llegada: str =
 
     llegada_dt = get_datetime(llegada) if llegada else now_datetime()
     name = frappe.db.get_value(
-        SESION, {"company": company, "estado": "Abierta", "abierta_desde": ["<=", llegada_dt]},
+        SESION, {"company": company, "estado": "Abierta", "linea_whatsapp": linea,
+                 "abierta_desde": ["<=", llegada_dt]},
         "name", order_by="abierta_desde desc")
     if not name:
-        return {"ignorado": "no hay sesión abierta"}
+        return {"ignorado": f"la línea {linea} no tiene sesión abierta"}
     ses = frappe.get_doc(SESION, name)
 
     alias = _alias_en_texto(texto, _personajes(ses))
@@ -790,15 +814,17 @@ def recibir_mio(telefono: str, texto: str = "", nombre: str = "", llegada: str =
 
 
 @frappe.whitelist()
-def estado_bot(company: str = None) -> dict:
-    """Para el bot al arrancar: compañía, sesión abierta y sus personajes."""
+def estado_bot(linea: str, company: str = None) -> dict:
+    """Para el bot de la línea `linea`: compañía, su sesión abierta y sus personajes."""
     company = _company(company)
     _require(company, "live_acceso")
-    name = frappe.db.get_value(SESION, {"company": company, "estado": "Abierta"}, "name",
-                               order_by="abierta_desde desc")
+    linea = _tel8(linea)
+    name = frappe.db.get_value(SESION, {"company": company, "estado": "Abierta", "linea_whatsapp": linea},
+                               "name", order_by="abierta_desde desc") if len(linea) == 8 else None
     ses = frappe.get_doc(SESION, name) if name else None
     return {
         "company": company,
+        "linea": linea,
         "sesion": name or "",
         "abierta_desde": str(ses.abierta_desde) if ses else "",
         "personajes": [p.alias for p in ses.personajes] if ses else [],

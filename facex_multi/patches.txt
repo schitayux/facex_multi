@@ -57,3 +57,4 @@ facex_multi.patches.v1_0.cierre_general_neko
 facex_multi.patches.v1_0.comisionador
 facex_multi.patches.v1_0.compras_reportes
 facex_multi.patches.v1_0.ventas_live
+facex_multi.patches.v1_0.ventas_live_lineas

@@ -1,4 +1,5 @@
-config.json
+config*.json
+!config.example.json
 .sesion_wa/
 .wwebjs_cache/
 node_modules/

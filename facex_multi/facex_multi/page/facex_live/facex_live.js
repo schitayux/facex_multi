@@ -3,7 +3,8 @@
 //
 // Rutas: facex-live (lista de sesiones) · facex-live/<sesión>/<sesion|bandeja|clientes>.
 // 1) Sesión: personajes (conjuntos) y sus prendas; vendedor, bodega, lista y
-//    flete salen del perfil del usuario. 2) Bandeja «Mío»: lo que llega por
+//    flete salen del perfil del usuario, igual que el WhatsApp del live (cada
+//    vendedor transmite desde su número y su bot solo llena su sesión). 2) Bandeja «Mío»: lo que llega por
 //    WhatsApp (a mano o por el bot de la tienda), con la captura del live y la
 //    cola por personaje. 3) Clientes: cotización, envío por WhatsApp, guía y
 //    «Facturar listos».
@@ -186,9 +187,9 @@ class FacexLive {
 		const c = this.ctx;
 		const filas = (c.sesiones || []).map((s) => `<tr class="lv-click" data-n="${_lv_esc(s.name)}" style="cursor:pointer">
 			<td>${_lv_fecha(s.fecha)}</td><td><b>${_lv_esc(s.titulo || s.name)}</b><div class="lv-muted">${_lv_esc(s.name)}</div></td>
-			<td>${_lv_esc(s.lista_precios || "")}</td><td>${_lv_esc(s.vendedor || "")}</td><td>${_lv_badge(s.estado)}</td></tr>`).join("");
+			<td>${_lv_esc(s.linea_whatsapp || "—")}</td><td>${_lv_esc(s.lista_precios || "")}</td><td>${_lv_esc(s.vendedor || "")}</td><td>${_lv_badge(s.estado)}</td></tr>`).join("");
 		this.$el.html(`${this.header("", c.permisos.live_sesiones ? `<button class="lv-btn pri" data-act="nueva">+ Nueva sesión</button>` : "")}
-			<div class="lv-card lv-scroll">${filas ? `<table><thead><tr><th>Fecha</th><th>Sesión</th><th>Lista</th><th>Vendedor</th><th>Estado</th></tr></thead><tbody>${filas}</tbody></table>`
+			<div class="lv-card lv-scroll">${filas ? `<table><thead><tr><th>Fecha</th><th>Sesión</th><th>WhatsApp</th><th>Lista</th><th>Vendedor</th><th>Estado</th></tr></thead><tbody>${filas}</tbody></table>`
 				: `<div class="lv-muted">${__("Todavía no hay sesiones de Live.")}</div>`}</div>`);
 		this.bind_back(false);
 		this.$el.find("[data-act=nueva]").on("click", () => this.go("nueva"));
@@ -198,7 +199,7 @@ class FacexLive {
 	// ───────────────────────── sesión ─────────────────────────
 	draw_sesion() {
 		const s = this.data.sesion;
-		this.$el.html(`${this.header(`${_lv_esc(s.titulo || s.name)} · ${_lv_fecha(s.fecha)} ${_lv_badge(s.estado)}`)}
+		this.$el.html(`${this.header(`${_lv_esc(s.titulo || s.name)} · ${_lv_fecha(s.fecha)}${s.linea_whatsapp ? ` · WA ${_lv_esc(s.linea_whatsapp)}` : ""} ${_lv_badge(s.estado)}`)}
 			<div class="lv-tabs">
 				<button class="lv-tab" data-t="bandeja">Bandeja «Mío»</button>
 				<button class="lv-tab" data-t="clientes">Clientes</button>
@@ -220,6 +221,7 @@ class FacexLive {
 		const s = data ? data.sesion : {
 			titulo: "", fecha: frappe.datetime.get_today(), estado: "Abierta",
 			vendedor: c.defaults.vendedor, bodega: c.defaults.bodega, lista_precios: c.defaults.lista_precios, incluir_flete: 1,
+			linea_whatsapp: c.defaults.linea_whatsapp,
 		};
 		// Cada personaje lleva una llave `k` y sus prendas la misma: así siguen
 		// juntas aunque se le cambie el alias (o mientras todavía no tiene).
@@ -242,6 +244,7 @@ class FacexLive {
 			<div class="lv-card"><div class="lv-row">
 				<div class="lv-f" style="flex:2 1 240px"><label>Título</label><input id="lv-titulo" value="${_lv_esc(s.titulo || "")}" placeholder="Live del jueves noche"></div>
 				<div class="lv-f"><label>Fecha</label><input id="lv-fecha" type="date" value="${_lv_esc(s.fecha || "")}"></div>
+				<div class="lv-f"><label>WhatsApp del live</label><input id="lv-linea" inputmode="tel" value="${_lv_esc(s.linea_whatsapp || "")}" placeholder="8 dígitos" title="El bot de este número llena esta sesión"></div>
 				<div class="lv-f"><label>Estado</label><select id="lv-estado"><option>Abierta</option><option>Cerrada</option></select></div>
 			</div><div class="lv-row" style="margin-top:10px">
 				<div class="lv-f" id="lv-c-vendedor"><label>Vendedor</label></div>
@@ -387,7 +390,7 @@ class FacexLive {
 		const data = {
 			name, company: this.ctx.company,
 			titulo: this.$el.find("#lv-titulo").val(), fecha: this.$el.find("#lv-fecha").val(),
-			estado: this.$el.find("#lv-estado").val(),
+			estado: this.$el.find("#lv-estado").val(), linea_whatsapp: this.$el.find("#lv-linea").val(),
 			vendedor: this.ctl.vendedor.get_value(), bodega: this.ctl.bodega.get_value(), lista_precios: this.ctl.lista.get_value(),
 			incluir_flete: this.$el.find("#lv-flete").is(":checked") ? 1 : 0,
 			personajes: f.personajes.map(({ alias, unidades, foto, notas }) => ({ alias, unidades, foto, notas })),
@@ -434,6 +437,7 @@ class FacexLive {
 				<button class="lv-btn pri" data-act="registrar">Registrar «Mío»</button>
 			</div><div class="lv-muted" id="lv-cli-hint" style="margin-top:6px"></div></div>`
 			: `<div class="lv-warn">${__("La sesión está cerrada: no entran pedidos nuevos.")}</div>`}
+			${abierta && !d.sesion.linea_whatsapp ? `<div class="lv-warn">${__("La sesión no tiene WhatsApp del live: el bot no la llena, solo entra lo que se registre a mano.")}</div>` : ""}
 			${por_revisar ? `<div class="lv-warn">${__("{0} mensaje(s) por revisar: asigne cliente y personaje.", [por_revisar])}</div>` : ""}
 			<div class="lv-card lv-scroll"><table><thead><tr>
 				<th>Llegada</th><th>Captura</th><th>Cliente</th><th>Personaje</th><th class="n">Conj.</th><th>Estado</th><th>Acciones</th>

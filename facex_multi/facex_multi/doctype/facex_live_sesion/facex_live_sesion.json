@@ -10,6 +10,7 @@
   "fecha",
   "estado",
   "abierta_desde",
+  "linea_whatsapp",
   "cb_1",
   "vendedor",
   "bodega",
@@ -67,6 +68,13 @@
    "description": "El bot de WhatsApp solo toma los «mío» que llegan desde este momento."
   },
   {
+   "fieldname": "linea_whatsapp",
+   "fieldtype": "Data",
+   "label": "WhatsApp del live",
+   "in_list_view": 1,
+   "description": "Número que recibe los «mío» de este live (8 dígitos). El bot de ese número solo llena esta sesión."
+  },
+  {
    "fieldname": "cb_1",
    "fieldtype": "Column Break"
   },
@@ -119,7 +127,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-27 00:00:00.000000",
+ "modified": "2026-10-27 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Live Sesion",

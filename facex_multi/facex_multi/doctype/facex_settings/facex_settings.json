@@ -206,6 +206,7 @@
   "live_sesiones",
   "cb_live",
   "live_facturar",
+  "live_whatsapp",
   "sb_flete",
   "item_flete",
   "cb_flete",
@@ -1456,6 +1457,12 @@
    "description": "Además exige Validar y Certificar."
   },
   {
+   "fieldname": "live_whatsapp",
+   "fieldtype": "Data",
+   "label": "WhatsApp de mis lives",
+   "description": "Se precarga en las sesiones de Live que crea este usuario."
+  },
+  {
    "fieldname": "sb_flete",
    "fieldtype": "Section Break",
    "label": "Flete",
@@ -1561,7 +1568,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-27 00:00:00.000000",
+ "modified": "2026-10-27 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Settings",
