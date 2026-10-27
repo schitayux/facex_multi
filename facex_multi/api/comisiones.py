@@ -740,14 +740,29 @@ def _f(d) -> str:
 
 
 @frappe.whitelist()
-def export_liquidacion(name: str, formato: str = "xlsx") -> None:
+def export_liquidacion(name: str, formato: str = "xlsx", vendedores=None) -> None:
+    """`vendedores` (lista o JSON) limita el documento a esos vendedores — para
+    imprimir la hoja de firmas de uno solo; vacío = todos."""
     rep = get_reporte(name)
     if not rep["ejecutada_el"]:
         frappe.throw("Ejecute el reporte antes de exportarlo.")
+    if isinstance(vendedores, str):
+        vendedores = frappe.parse_json(vendedores) if vendedores.startswith("[") else [vendedores]
+    elegidos = [v for v in (vendedores or []) if v]
+    if elegidos:
+        validos = {v["vendedor"] for v in rep["vendedores"]}
+        if set(elegidos) - validos:
+            frappe.throw("Vendedor no incluido en la liquidación.")
+        rep["vendedores"] = [v for v in rep["vendedores"] if v["vendedor"] in elegidos]
+        rep["lineas"] = [l for l in rep["lineas"] if l["vendedor"] in elegidos]
+        rep["totales"] = {k: round(sum(flt(v.get(k)) for v in rep["vendedores"]), 2) for k in (
+            "contado_con_iva", "contado_sin_iva", "recuperacion_con_iva", "recuperacion_sin_iva",
+            "anulaciones_con_iva", "anulaciones_sin_iva", "neto_con_iva", "neto_sin_iva", "comision_total")}
     con = rep["base_calculo"] == "Con IVA"
-    fname = f"comisiones_{rep['desde']}_{rep['hasta']}"
+    fname = f"comisiones_{rep['desde']}_{rep['hasta']}" + (f"_{elegidos[0]}" if len(elegidos) == 1 else "")
     titulo = f"Liquidación de Comisiones · {rep['name']}"
-    rango = f"Del {_f(rep['desde'])} al {_f(rep['hasta'])} · {rep['company']} · Base: {rep['base_calculo']} · {rep['estado']}"
+    rango = f"Del {_f(rep['desde'])} al {_f(rep['hasta'])} · {rep['company']} · Base: {rep['base_calculo']} · {rep['estado']}" \
+        + (f" · Vendedor(es): {', '.join(elegidos)}" if elegidos else "")
 
     h_res = ["Vendedor", "% Contado", "% Recuperación", "Contado", "Recuperación", "Anulaciones / NC",
              "Neto con IVA", "Neto sin IVA", "Comisión a pagar", "Recibí conforme (firma)"]

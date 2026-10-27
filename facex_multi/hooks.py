@@ -114,6 +114,8 @@ doc_events = {
             "facex_multi.api.recargo.set_totales_con_recargo",
             "facex_multi.api.cierre.guard_sales_invoice_closed_date",
         ],
+        # Inventario validado por fecha, no por hora (ver api/stock_fecha.py).
+        "on_submit": "facex_multi.api.stock_fecha.validar_saldo_por_fecha",
         # Cierre Diario: una factura / sus pagos quedan congelados una vez que
         # el día del usuario está Cerrado (ver facex_multi.api.cierre).
         "before_cancel": "facex_multi.api.cierre.guard_sales_invoice_cancel",
@@ -123,6 +125,7 @@ doc_events = {
             "facex_multi.api.compras.common.set_cancelado_por",
             # Bundles corregidos con salida manual: se anula junto con la factura.
             "facex_multi.api.invoice.anular_salidas_bundle",
+            "facex_multi.api.stock_fecha.validar_saldo_por_fecha",
         ],
         "before_update_after_submit": "facex_multi.api.cierre.guard_sales_invoice_update_after_submit"
     },
@@ -137,12 +140,58 @@ doc_events = {
         "on_cancel": "facex_multi.api.compras.common.set_cancelado_por",
     },
     "Purchase Receipt": {
-        "on_submit": "facex_multi.api.compras.common.set_validado_por",
-        "on_cancel": "facex_multi.api.compras.common.set_cancelado_por",
+        # Entrada pura: se asienta a las 00:00:01 de su fecha para que la
+        # mercadería exista todo el día (ver api/stock_fecha.py).
+        "before_validate": "facex_multi.api.stock_fecha.normalizar_hora_entrada",
+        "on_submit": [
+            "facex_multi.api.compras.common.set_validado_por",
+            "facex_multi.api.stock_fecha.validar_saldo_por_fecha",
+        ],
+        "on_cancel": [
+            "facex_multi.api.compras.common.set_cancelado_por",
+            "facex_multi.api.stock_fecha.validar_saldo_por_fecha",
+        ],
     },
     "Purchase Invoice": {
-        "on_submit": "facex_multi.api.compras.common.set_validado_por",
-        "on_cancel": "facex_multi.api.compras.common.set_cancelado_por",
+        "before_validate": "facex_multi.api.stock_fecha.normalizar_hora_entrada",
+        "on_submit": [
+            "facex_multi.api.compras.common.set_validado_por",
+            "facex_multi.api.stock_fecha.validar_saldo_por_fecha",
+        ],
+        "on_cancel": [
+            "facex_multi.api.compras.common.set_cancelado_por",
+            "facex_multi.api.stock_fecha.validar_saldo_por_fecha",
+        ],
+    },
+    # Inventario validado por fecha y no por hora (ver api/stock_fecha.py):
+    # las entradas de inventario se asientan al inicio del día y el saldo se
+    # valida al cierre de cada fecha, no en el instante de cada documento.
+    "Stock Entry": {
+        "before_validate": "facex_multi.api.stock_fecha.normalizar_hora_entrada",
+        "on_submit": "facex_multi.api.stock_fecha.validar_saldo_por_fecha",
+        "on_cancel": "facex_multi.api.stock_fecha.validar_saldo_por_fecha",
+    },
+    "Stock Reconciliation": {
+        "on_submit": "facex_multi.api.stock_fecha.validar_saldo_por_fecha",
+        "on_cancel": "facex_multi.api.stock_fecha.validar_saldo_por_fecha",
+    },
+    "Delivery Note": {
+        "on_submit": "facex_multi.api.stock_fecha.validar_saldo_por_fecha",
+        "on_cancel": "facex_multi.api.stock_fecha.validar_saldo_por_fecha",
+    },
+    # Los tres doctypes de inventario que FacEx no usa hoy, enganchados igual
+    # para que ninguna salida de mercadería se escape de la validación.
+    "POS Invoice": {
+        "on_submit": "facex_multi.api.stock_fecha.validar_saldo_por_fecha",
+        "on_cancel": "facex_multi.api.stock_fecha.validar_saldo_por_fecha",
+    },
+    "Subcontracting Receipt": {
+        "on_submit": "facex_multi.api.stock_fecha.validar_saldo_por_fecha",
+        "on_cancel": "facex_multi.api.stock_fecha.validar_saldo_por_fecha",
+    },
+    "Asset Capitalization": {
+        "on_submit": "facex_multi.api.stock_fecha.validar_saldo_por_fecha",
+        "on_cancel": "facex_multi.api.stock_fecha.validar_saldo_por_fecha",
     },
 }
 
@@ -162,6 +211,7 @@ after_migrate = [
     "facex_multi.api.compras.pagos.ensure_pagos_setup",
     "facex_multi.api.corte.ensure_corte_fields",
     "facex_multi.api.cierre.ensure_anulacion_fields",
+    "facex_multi.api.stock_fecha.ensure_validacion_por_fecha",
 ]
 
 fixtures = [

@@ -268,6 +268,7 @@ def get_compras_defaults(company: str = None) -> dict:
         "nc_compra_grabar_borrador", "nc_compra_validar", "nc_compra_cancelar",
         "pago_proveedor_grabar_borrador", "pago_proveedor_validar", "pago_proveedor_cancelar",
         "crea_proveedores", "modifica_proveedores", "puede_facturar",
+        "reporte_compras_antiguedad", "reporte_compras_periodo", "reporte_compras_pagos",
     )}
     # Accesos de la barra superior (otras Pages de FacEx).
     perms["puede_ver_pos"] = int(get_facex_can_access_pos(company))

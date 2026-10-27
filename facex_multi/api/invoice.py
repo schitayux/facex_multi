@@ -2362,6 +2362,9 @@ def cancel_invoice(name: str):
 
     guard_sales_invoice_cancel(doc)
     _cancel_linked_payment_entries(doc.name)
+    # Cancelar el Payment Entry actualiza la factura (saldo, modified): sin
+    # recargar, doc.cancel() choca con "has been modified after you have opened it".
+    doc.reload()
     doc.cancel()
     frappe.db.commit()
 
@@ -2425,9 +2428,10 @@ def cancel_certified_invoice_fel(name: str, motivo_anulacion: str):
 
     cancel_sales_invoice_fel(name, motivo_anulacion)
 
+    _cancel_linked_payment_entries(doc.name)
+    # Recargar después de cancelar los pagos (ver cancel_invoice).
     doc.reload()
     doc.flags.ignore_validate_update_after_submit = True
-    _cancel_linked_payment_entries(doc.name)
     doc.cancel()
     frappe.db.commit()
 
@@ -2656,6 +2660,16 @@ def rebill_with_new_customer(invoice_name: str, new_customer: str, payments_json
     new_data = duplicate_invoice(invoice_name)
     new_data["customer"] = new_customer
     new_data["name"] = "new"
+    # El NIT/nombre de factura de la original (p. ej. los que el cajero escribió
+    # para un Consumidor Final) no aplican al cliente nuevo: se toman de su ficha.
+    if new_customer != src.customer:
+        cust = frappe.db.get_value(
+            "Customer", new_customer,
+            ["customer_name", "tax_id", "bfel_id_receptor", "bfel_identificacion"], as_dict=True,
+        ) or frappe._dict()
+        new_data["bfel_nit"] = cust.bfel_id_receptor or cust.tax_id or "CF"
+        new_data["bfel_identificacion"] = cust.bfel_identificacion or ""
+        new_data["bfel_nombre"] = cust.customer_name or ""
     # duplicate_invoice deja due_date en None (due_date es obligatorio en save_draft)
     new_data["due_date"] = new_data.get("posting_date")
     # duplicate_invoice copia naming_series ya resuelto (p. ej. "FACT-.EMS.-.#####"

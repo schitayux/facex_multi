@@ -361,9 +361,13 @@ def get_customer(name: str, company: str = None):
     contact_name = _get_linked_contact(doc.name)
     contact = frappe.get_doc("Contact", contact_name) if contact_name else None
 
+    from facex_multi.api.cliente_generico import generic_customers
+
     return {
         "name": doc.name,
         "customer_name": doc.customer_name or "",
+        # Consumidor Final: el POS edita NIT/nombre de la factura, no de la ficha.
+        "cliente_generico": 1 if doc.name in generic_customers() else 0,
         "bfel_identificacion": doc.get("bfel_identificacion") or "",
         "bfel_id_receptor": nit,
         "direccion": addr.address_line1 if addr else "",

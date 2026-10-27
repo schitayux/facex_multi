@@ -89,6 +89,9 @@
   "pago_proveedor_grabar_borrador",
   "pago_proveedor_validar",
   "pago_proveedor_cancelar",
+  "reporte_compras_antiguedad",
+  "reporte_compras_periodo",
+  "reporte_compras_pagos",
   "sb_digecam",
   "maneja_series",
   "maneja_adendas",
@@ -1498,6 +1501,27 @@
    "fieldtype": "Check",
    "label": "No concatenar el sufijo de la compañía al Código de Ítems (GLOBAL)",
    "hidden": 1
+  },
+  {
+   "default": "0",
+   "description": "Reporte de cuentas por pagar por rangos de vencimiento, con el detalle de facturas por proveedor. Denegado por defecto.",
+   "fieldname": "reporte_compras_antiguedad",
+   "fieldtype": "Check",
+   "label": "Compras · Antigüedad de saldos de proveedores"
+  },
+  {
+   "default": "0",
+   "description": "Reporte de compras (facturas y notas de crédito) por proveedor, mes o producto, con totales con y sin IVA. Denegado por defecto.",
+   "fieldname": "reporte_compras_periodo",
+   "fieldtype": "Check",
+   "label": "Compras · Compras por período"
+  },
+  {
+   "default": "0",
+   "description": "Reporte de pagos realizados a proveedores por forma de pago, con las facturas que cubren. Denegado por defecto.",
+   "fieldname": "reporte_compras_pagos",
+   "fieldtype": "Check",
+   "label": "Compras · Pagos a proveedores"
   }
  ],
  "index_web_pages_for_search": 0,

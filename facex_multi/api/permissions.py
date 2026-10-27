@@ -29,6 +29,7 @@ _ALL_PERM_FIELDS = [
     "reporte_imprimir_recibo", "reporte_analisis_utilidad",
     "reporte_auditoria_sistema", "reporte_ventas_vendedor", "reporte_cierre_general",
     "comisionador",
+    "reporte_compras_antiguedad", "reporte_compras_periodo", "reporte_compras_pagos",
 ]
 
 # Flags de _ALL_PERM_FIELDS que NO se conceden a un usuario sin fila de FacEx
@@ -37,6 +38,8 @@ _DENY_BY_DEFAULT_FIELDS = (
     "reporte_ventas_vendedor", "reporte_cierre_general",
     # Comisiones de vendedores: dato sensible de pago → solo con el check marcado.
     "comisionador",
+    # Reportes de Compras (cuentas por pagar y pagos): solo con el check marcado.
+    "reporte_compras_antiguedad", "reporte_compras_periodo", "reporte_compras_pagos",
     # Pagos a proveedores: sale dinero de caja/banco → solo con el check marcado.
     "pago_proveedor_grabar_borrador", "pago_proveedor_validar", "pago_proveedor_cancelar",
 )
@@ -229,6 +232,9 @@ PROFILE_PERM_FIELDS = [
     "pago_proveedor_grabar_borrador",
     "pago_proveedor_validar",
     "pago_proveedor_cancelar",
+    "reporte_compras_antiguedad",
+    "reporte_compras_periodo",
+    "reporte_compras_pagos",
     "puede_ver_inventario",
     "puede_hacer_entradas",
     "puede_hacer_salidas",

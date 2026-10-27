@@ -105,6 +105,11 @@ class EFastPOSScreen {
 			items: [],
 			facex_incluir_flete: 0,
 			facex_flete_amount: 0,
+			// Cliente genérico: NIT/nombre escritos en el POS (ver _render_generic_fiscal_panel)
+			bfel_nit: "",
+			bfel_identificacion: "",
+			bfel_nombre: "",
+			_bfel_for: "",
 		};
 	}
 
@@ -1282,7 +1287,7 @@ class EFastPOSScreen {
 	}
 
 	_render_cliente_card() {
-		this.$body.find("#efs-sec-cliente-summary").text(this.doc.customer_name || "Sin cliente seleccionado");
+		this.$body.find("#efs-sec-cliente-summary").text(this._display_customer_name() || "Sin cliente seleccionado");
 
 		const $body = this.$body.find("#efs-sec-cliente-body");
 		$body.html(`
@@ -1371,6 +1376,10 @@ class EFastPOSScreen {
 
 		const cd = this.customerDetails;
 		const direccion = [cd.direccion, cd.departamento].filter(Boolean).join(", ");
+		if (cd.cliente_generico) {
+			this._render_generic_fiscal_panel($panel, cd, direccion);
+			return;
+		}
 		$panel.html(`
 			<div class="efs-cust-detail-row">
 				<label>Identificación</label>
@@ -1401,6 +1410,125 @@ class EFastPOSScreen {
 
 		$panel.find("#efs-cust-fld-identificacion").on("change", (e) => saveField("bfel_identificacion", e.target.value));
 		$panel.find("#efs-cust-fld-id-receptor").on("change", (e) => saveField("bfel_id_receptor", e.target.value));
+	}
+
+	// Cliente genérico (Consumidor Final): NIT y nombre se editan en la factura
+	// (bfel_nit / bfel_nombre / bfel_identificacion), igual que "Nombre para
+	// Factura" del Facturador clásico — la ficha compartida no se toca.
+	// `_bfel_for` ata esos datos al cliente: si el cajero cambia de cliente, ya
+	// no se envían (ver _build_save_payload).
+	_render_generic_fiscal_panel($panel, cd, direccion) {
+		const d = this.doc;
+		if (d._bfel_for !== d.customer) {
+			d._bfel_for = d.customer;
+			d.bfel_identificacion = cd.bfel_identificacion || "CF";
+			d.bfel_nit = cd.bfel_id_receptor || "CF";
+			d.bfel_nombre = cd.customer_name || "Consumidor Final";
+		}
+		// Venta retomada que se grabó sin estos datos.
+		d.bfel_nit = d.bfel_nit || "CF";
+		if (!d.bfel_identificacion) d.bfel_identificacion = d.bfel_nit.toUpperCase() === "CF" ? "CF" : "NIT";
+		$panel.html(`
+			<div class="efs-cust-detail-row">
+				<label>Identificación</label>
+				<select id="efs-cust-fld-identificacion" class="efs-cust-detail-input">
+					${["NIT", "CUI", "PASAPORTE", "CF"].map((v) => `<option value="${v}" ${v === d.bfel_identificacion ? "selected" : ""}>${v}</option>`).join("")}
+				</select>
+			</div>
+			<div class="efs-cust-detail-row">
+				<label>Número de NIT</label>
+				<input type="text" id="efs-cust-fld-id-receptor" class="efs-cust-detail-input" value="${_efs_esc(d.bfel_nit || "")}" placeholder="NIT / CUI / CF" />
+			</div>
+			<div class="efs-cust-detail-row">
+				<label>Nombre para Factura</label>
+				<input type="text" id="efs-cust-fld-bfel-nombre" class="efs-cust-detail-input" value="${_efs_esc(d.bfel_nombre || "")}" placeholder="Consumidor Final" />
+			</div>
+			<div class="efs-cust-detail-row"><label>Dirección</label><span>${_efs_esc(direccion || "—")}</span></div>
+		`);
+
+		const $tipo = $panel.find("#efs-cust-fld-identificacion");
+		const $nit = $panel.find("#efs-cust-fld-id-receptor");
+		const $nombre = $panel.find("#efs-cust-fld-bfel-nombre");
+		const setNombre = (nombre) => {
+			d.bfel_nombre = nombre;
+			$nombre.val(nombre);
+			this._render_customer_bar();
+			this.$body.find("#efs-sec-cliente-summary").text(this._display_customer_name());
+		};
+		// Mismo flujo que el clásico (_lookup_bfel_identificacion_name): el
+		// nombre registrado para el NIT/CUI llena "Nombre para Factura".
+		const lookup = () => {
+			const identificacion = (d.bfel_nit || "").trim();
+			if (!identificacion || (d.bfel_identificacion !== "NIT" && d.bfel_identificacion !== "CUI")) return;
+			frappe.call({
+				method: "facex_multi.api.customer.lookup_identificacion_name",
+				args: { identificacion, tipo: d.bfel_identificacion, company: d.company },
+				callback: (r) => {
+					const res = r.message || {};
+					if (res.found && res.customer_name && d._bfel_for === d.customer) setNombre(res.customer_name);
+				},
+			});
+		};
+
+		$tipo.on("change", (e) => {
+			d.bfel_identificacion = e.target.value;
+			lookup();
+		});
+		$nit.on("input", (e) => { d.bfel_nit = e.target.value.trim(); });
+		$nit.on("change", (e) => {
+			const nit = e.target.value.trim().toUpperCase();
+			const esCF = !nit || nit === "CF" || nit === "C/F";
+			d.bfel_nit = esCF ? "CF" : e.target.value.trim();
+			$nit.val(d.bfel_nit);
+			// Escribir un NIT con el tipo en CF no consultaría nada: pasar a NIT.
+			if (!esCF && d.bfel_identificacion === "CF") {
+				d.bfel_identificacion = "NIT";
+				$tipo.val("NIT");
+			} else if (esCF) {
+				d.bfel_identificacion = "CF";
+				$tipo.val("CF");
+				setNombre("Consumidor Final");
+			}
+			lookup();
+		});
+		$nombre.on("input", (e) => {
+			d.bfel_nombre = e.target.value;
+			this._render_customer_bar();
+		});
+		// Nunca en blanco: mismo default que el servidor (cliente_generico.default_bfel_nombre).
+		$nombre.on("blur", (e) => {
+			if (e.target.value.trim()) return;
+			setNombre("Consumidor Final");
+		});
+	}
+
+	// Identificación a mostrar: la de la factura para un cliente genérico, la
+	// de la ficha (`cd`, de get_customer) para los demás.
+	_fiscal_id_str(cd) {
+		const d = this.doc;
+		if (cd.cliente_generico && (d.bfel_nit || d.bfel_identificacion)) {
+			return [d.bfel_identificacion, d.bfel_nit].filter(Boolean).join(" ");
+		}
+		return [cd.bfel_identificacion, cd.bfel_id_receptor].filter(Boolean).join(" ");
+	}
+
+	_generic_override_active() {
+		const d = this.doc;
+		return !!(d.customer && d._bfel_for === d.customer
+			&& this.customerDetails && this.customerDetails.name === d.customer
+			&& this.customerDetails.cliente_generico);
+	}
+
+	// Nombre a mostrar: el "Nombre para Factura" si el cliente es genérico y el
+	// cajero lo cambió; si no, el de la ficha.
+	_display_customer_name() {
+		const d = this.doc;
+		const original = d.customer_name || d.customer || "";
+		// Factura validada recargada del servidor: ya trae el nombre resuelto (get_invoice).
+		if (!this._generic_override_active()) return (d.docstatus === 1 && d._display_customer_name) || original;
+		const nombre = (d.bfel_nombre || "").trim();
+		if (!nombre || ["consumidor final", "cf", "c/f"].includes(nombre.toLowerCase())) return original;
+		return nombre;
 	}
 
 	_render_documento_card() {
@@ -1661,7 +1789,7 @@ class EFastPOSScreen {
 	}
 
 	_render_customer_bar() {
-		this.$body.find("#efs-customer-name").text(`Cliente: ${this.doc.customer_name || this.doc.customer || "—"}`);
+		this.$body.find("#efs-customer-name").text(`Cliente: ${this._display_customer_name() || "—"}`);
 		this._render_company_badge();
 		this._render_vendor_bar();
 	}
@@ -3033,6 +3161,12 @@ class EFastPOSScreen {
 			selling_price_list: d.selling_price_list || "",
 			sales_partner: d.sales_partner || "",
 			bfel_establecimiento: String(d.bfel_establecimiento || ""),
+			// Solo para cliente genérico; los demás siguen como hoy (sin enviarlos).
+			...(this._generic_override_active() ? {
+				bfel_nit: d.bfel_nit || "CF",
+				bfel_identificacion: d.bfel_identificacion || "",
+				bfel_nombre: d.bfel_nombre || "",
+			} : {}),
 			bfel_status: this.defaults.bfel_status_default || "01 Enviar",
 			bfel_venta_suspendida: suspend === null ? (d.bfel_venta_suspendida ? 1 : 0) : (suspend ? 1 : 0),
 			// Flete como cargo del documento (ver facex_multi.api.recargo)
@@ -4067,8 +4201,8 @@ class EFastPOSScreen {
 			args: { name: this.doc.customer, company: this.doc.company },
 			callback: (r) => {
 				const cd = r.message || {};
-				const idStr = [cd.bfel_identificacion, cd.bfel_id_receptor].filter(Boolean).join(" ");
-				const label = this.doc.customer_name || this.doc.customer;
+				const idStr = this._fiscal_id_str(cd);
+				const label = this._display_customer_name();
 				const text = idStr ? __("Cliente: {0} — {1}", [label, idStr]) : __("Cliente: {0}", [label]);
 				let $locked = $view.find("#efs-confirm-customer-locked");
 				if (!$locked.length) {
@@ -4105,7 +4239,7 @@ class EFastPOSScreen {
 		return `
 			<div class="efs-mini-ticket">
 				<div class="efs-mini-ticket-head">
-					<span>${_efs_esc(this.doc.customer_name || this.doc.customer || "")}</span>
+					<span>${_efs_esc(this._display_customer_name())}</span>
 					<span>${_efs_esc(this.doc.posting_date || "")}</span>
 				</div>
 				<div class="efs-mini-ticket-items">${rows}</div>
@@ -4143,8 +4277,8 @@ class EFastPOSScreen {
 				});
 				dlg.$body.html(`
 					<div class="efs-cust-details">
-						<div class="efs-cust-detail-row"><label>Cliente</label><span>${_efs_esc(this.doc.customer_name || this.doc.customer)}</span></div>
-						<div class="efs-cust-detail-row"><label>Identificación</label><span>${_efs_esc(cd.bfel_identificacion || "—")} ${_efs_esc(cd.bfel_id_receptor || "")}</span></div>
+						<div class="efs-cust-detail-row"><label>Cliente</label><span>${_efs_esc(this._display_customer_name())}</span></div>
+						<div class="efs-cust-detail-row"><label>Identificación</label><span>${_efs_esc(this._fiscal_id_str(cd) || "—")}</span></div>
 						<div class="efs-cust-detail-row"><label>Dirección</label><span>${_efs_esc(direccion || "—")}</span></div>
 					</div>
 					<p style="margin-top:14px;">${__("¿Desea actualizar los datos de facturación de esta venta a otro cliente?")}</p>
@@ -4490,6 +4624,8 @@ class EFastPOSScreen {
 				callback: (r) => {
 					if (!r.message) return;
 					this.doc = r.message;
+					// NIT/nombre ya grabados en la factura: el panel los respeta.
+					this.doc._bfel_for = this.doc.customer;
 					// Venta retomada: sin lectura previa con la que comparar.
 					this._last_scan_item_code = null;
 					// Los marcadores _has_serial_no/_custom_tiene_adenda/_item_group son

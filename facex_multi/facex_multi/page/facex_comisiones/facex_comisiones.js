@@ -13,16 +13,33 @@ frappe.pages["facex-comisiones"].on_page_load = function (wrapper) {
 		if (frappe.get_route()[0] !== "facex-comisiones") $("body").removeClass("facex-fullscreen-mode");
 	});
 	wrapper.facexComisiones = new FacexComisionador(page, wrapper);
-	facex_multi.setup_back_guard({ to: "/app/facex", is_dirty: () => false, on_back: () => false });
 };
 
 frappe.pages["facex-comisiones"].on_page_show = function (wrapper) {
 	$("body").addClass("facex-fullscreen-mode");
-	if (wrapper.facexComisiones) facex_multi.setup_back_guard({ to: "/app/facex", is_dirty: () => false, on_back: () => false });
+	// Atrás / Adelante del navegador: cada vista es una ruta real de Frappe
+	// (facex-comisiones/config/<desde>/<hasta>, /reporte/<liquidación>, /historial),
+	// así que no hace falta el guardia de historial de las otras pantallas.
+	if (wrapper.facexComisiones) wrapper.facexComisiones.handle_route();
 };
 
 const CM_CSS = `
-.cm{max-width:1280px;margin:0 auto;padding:12px 8px;font-size:13px;color:#1f2937}
+/* Modo Enfoque: sin navbar ni panel izquierdo del Desk (igual que Cierre Diario). */
+body.facex-fullscreen-mode .navbar, body.facex-fullscreen-mode .page-head,
+body.facex-fullscreen-mode .layout-side-section, body.facex-fullscreen-mode .standard-sidebar-wrapper,
+body.facex-fullscreen-mode .standard-sidebar, body.facex-fullscreen-mode .desk-sidebar,
+body.facex-fullscreen-mode .sidebar-left, body.facex-fullscreen-mode .left-sidebar, body.facex-fullscreen-mode .sidebar,
+body.facex-fullscreen-mode .page-sidebar, body.facex-fullscreen-mode .body-sidebar-container,
+body.facex-fullscreen-mode .body-sidebar, body.facex-fullscreen-mode .footer {
+  display:none !important; width:0 !important; min-width:0 !important; max-width:0 !important; margin:0 !important; padding:0 !important;
+}
+body.facex-fullscreen-mode .layout-main-section, body.facex-fullscreen-mode .page-content, body.facex-fullscreen-mode .page-container,
+body.facex-fullscreen-mode .layout-main, body.facex-fullscreen-mode .page-body, body.facex-fullscreen-mode .workspace-layout,
+body.facex-fullscreen-mode .layout-container, body.facex-fullscreen-mode #space-layout, body.facex-fullscreen-mode .main-section {
+  width:100% !important; max-width:100% !important; margin:0 !important; padding:0 !important; display:block !important;
+}
+.cm-back{border:0;background:none;color:#153375;font-weight:700;cursor:pointer;padding:4px 8px;border-radius:6px}.cm-back:hover{background:#eef2ff}
+.cm{width:100%;max-width:none;margin:0;padding:12px 16px;min-height:calc(100vh - 110px);font-size:13px;color:#1f2937}
 .cm *{box-sizing:border-box}
 .cm-top{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px}
 .cm-top h2{margin:0;font-size:20px;color:#153375}
@@ -83,7 +100,7 @@ class FacexComisionador {
 		this.$el = this.$root.find("#cm-root");
 		frappe.call({
 			method: "facex_multi.api.comisiones.get_context",
-			callback: (r) => { this.ctx = r.message; this.draw(); },
+			callback: (r) => { this.ctx = r.message; this.draw(); this.handle_route(); },
 			error: () => this.$el.html(`<div class="cm-card">${__("No tiene permiso para el Comisionador. Solicite el permiso «Comisionador (Gerencia)» en FacEx Settings.")}</div>`),
 		});
 	}
@@ -92,19 +109,65 @@ class FacexComisionador {
 	draw() {
 		const c = this.ctx;
 		this.$el.html(`
-			<div class="cm-top"><div><h2>Comisionador</h2>
-				<div class="cm-sub">${_cm_esc(c.company)} · ${_cm_esc(c.user_fullname)}</div></div>
+			<div class="cm-top"><div style="display:flex;align-items:center;gap:10px">
+				<button class="cm-back" id="cm-volver" title="Volver a FacEx">← FacEx</button>
+				<div><h2>Comisionador</h2><div class="cm-sub">${_cm_esc(c.company)} · ${_cm_esc(c.user_fullname)}</div></div></div>
 				<div id="cm-estado"></div></div>
 			<div class="cm-tabs">
 				<button class="cm-tab" data-t="config">1 · Configuración</button>
 				<button class="cm-tab" data-t="reporte">2 · Reporte</button>
 				<button class="cm-tab" data-t="hist">Liquidaciones guardadas</button>
 			</div><div id="cm-body"></div>`);
-		this.$el.find(".cm-tab").on("click", (e) => this.show($(e.currentTarget).data("t")));
+		this.$el.find("#cm-volver").on("click", () => { window.location.href = "/app/facex"; });
+		this.$el.find(".cm-tab").on("click", (e) => {
+			const t = $(e.currentTarget).data("t");
+			if (t === "reporte") this.go("reporte", this.rep && this.rep.name);
+			else if (t === "hist") this.go("historial");
+			else this.go("config", this.filters && this.filters.desde, this.filters && this.filters.hasta);
+		});
+	}
+
+	// ───────────────────────── rutas (Atrás / Adelante) ─────────────────────────
+	go(...parts) {
+		frappe.set_route("facex-comisiones", ...parts.filter(Boolean));
+	}
+
+	handle_route() {
+		if (!this.ctx || !this.$el.find("#cm-body").length) return;
+		const [, tab, a, b] = frappe.get_route();
+		if (tab === "historial") return this.show("hist");
+		if (tab === "reporte" && a) {
+			if (this.rep && this.rep.name === a) return this.show("reporte");
+			return frappe.call({
+				method: "facex_multi.api.comisiones.get_reporte", args: { name: a }, freeze: true,
+				callback: (r) => {
+					const m = r.message;
+					this.name = m.name; this.estado = m.estado; this.filters = { desde: m.desde, hasta: m.hasta, base: m.base_calculo };
+					if (m.ejecutada_el) { this.rep = m; this.show("reporte"); }
+					else { this.rep = null; this.cfg = null; this.go("config", m.desde, m.hasta); }
+				},
+			});
+		}
+		// Configuración, con el período en la ruta cuando ya se cargó uno.
+		if (a && b && (!this.filters || this.filters.desde !== a || this.filters.hasta !== b)) {
+			this.filters = { desde: a, hasta: b, base: (this.filters && this.filters.base) || "Sin IVA" };
+			this.cfg = null; this.name = null; this.saved_sig = null;
+		}
 		this.show("config");
+		if (a && b && !this.cfg) this.cargar(true);
+	}
+
+	// Conserva lo capturado en la tabla al salir de Configuración (p. ej. con Atrás).
+	stash() {
+		if (this.tab !== "config" || !this.cfg || !this.$body || !this.$body.find("#cm-cfg tbody tr[data-i]").length) return;
+		this.collect().forEach((r, i) => {
+			Object.assign(this.cfg.vendedores[i], { incluido: r.incluido ? 1 : 0, pct_contado: r.pct_contado, pct_recuperacion: r.pct_recuperacion });
+		});
+		this.filters.base = this.$body.find("#cm-base").val() || this.filters.base;
 	}
 
 	show(t) {
+		this.stash();
 		this.tab = t;
 		this.$el.find(".cm-tab").each((_, b) => $(b).toggleClass("on", $(b).data("t") === t));
 		this.$el.find('.cm-tab[data-t="reporte"]').prop("disabled", !this.rep);
@@ -158,7 +221,7 @@ class FacexComisionador {
 		else this.refresh_buttons();
 	}
 
-	cargar() {
+	cargar(desde_ruta) {
 		const f = this.filters;
 		if (!f.desde || !f.hasta) return frappe.msgprint(__("Indique Desde y Hasta."));
 		frappe.call({
@@ -171,6 +234,8 @@ class FacexComisionador {
 				this.saved_sig = this.name ? this.sig() : null;
 				this.refresh_buttons();
 				if (this.name && this.estado !== "Nuevo") this.open_saved(false);
+				// El período queda en la URL: Atrás/Adelante lo restauran.
+				if (!desde_ruta) this.go("config", f.desde, f.hasta);
 			},
 		});
 	}
@@ -280,7 +345,7 @@ class FacexComisionador {
 		frappe.call({
 			method: "facex_multi.api.comisiones.ejecutar", freeze: true, freeze_message: __("Calculando comisiones…"),
 			args: { name: this.name },
-			callback: (r) => { this.rep = r.message; this.show("reporte"); },
+			callback: (r) => { this.rep = r.message; this.go("reporte", r.message.name); },
 		});
 	}
 
@@ -350,7 +415,7 @@ class FacexComisionador {
 			${r.observaciones ? `<div class="cm-card cm-sub">${_cm_esc(r.observaciones)}</div>` : ""}`);
 		this.$body.find("tr.click").on("click", (e) => { const d = $(e.currentTarget).data(); this.detalle(d.v, d.c, String(d.m || "")); });
 		this.$body.find("#cm-xlsx").on("click", () => this.exportar("xlsx"));
-		this.$body.find("#cm-pdf").on("click", () => this.exportar("pdf"));
+		this.$body.find("#cm-pdf").on("click", () => this.pdf_firmas());
 		this.$body.find("#cm-cerrar").on("click", () => this.cerrar());
 		this.$body.find("#cm-reabrir").on("click", () => this.reabrir());
 	}
@@ -360,8 +425,8 @@ class FacexComisionador {
 		const ls = r.lineas.filter((l) => l.vendedor === vend && l.concepto !== "Excluida"
 			&& (!concepto || l.concepto === concepto) && (!mes || l.mes_origen === mes));
 		const sum = (k) => ls.reduce((a, l) => a + (+l[k] || 0), 0);
-		const rows = ls.map((l) => `<tr><td>${_cm_esc(l.concepto)}</td><td><a href="/app/sales-invoice/${encodeURIComponent(l.factura)}" target="_blank">${_cm_esc(l.factura)}</a>
-			${l.factura_origen ? `<div class="cm-sub">de ${_cm_esc(l.factura_origen)}</div>` : ""}</td>
+		const rows = ls.map((l) => `<tr><td>${_cm_esc(l.concepto)}</td><td><a href="/app/facex?invoice=${encodeURIComponent(l.factura)}" target="_blank">${_cm_esc(l.factura)}</a>
+			${l.factura_origen ? `<div class="cm-sub">de <a href="/app/facex?invoice=${encodeURIComponent(l.factura_origen)}" target="_blank">${_cm_esc(l.factura_origen)}</a></div>` : ""}</td>
 			<td>${_cm_esc(l.tipo_documento)}</td><td>${_cm_fecha(l.fecha_factura)}</td><td>${_cm_esc(l.cliente)}</td><td>${_cm_esc(l.condicion)}</td>
 			<td>${_cm_fecha(l.fecha_pago)} ${_cm_esc(l.forma_pago)}</td>
 			<td class="n">${_cm_n(l.monto_con_iva)}</td><td class="n">${_cm_n(l.monto_sin_iva)}</td><td class="n">${_cm_n(l.pct)}%</td><td class="n">${_cm_n(l.comision)}</td>
@@ -374,8 +439,33 @@ class FacexComisionador {
 		d.show();
 	}
 
-	exportar(formato) {
-		window.open(`/api/method/facex_multi.api.comisiones.export_liquidacion?name=${encodeURIComponent(this.rep.name)}&formato=${formato}`, "_blank");
+	exportar(formato, vendedores) {
+		let url = `/api/method/facex_multi.api.comisiones.export_liquidacion?name=${encodeURIComponent(this.rep.name)}&formato=${formato}`;
+		if (vendedores && vendedores.length) url += `&vendedores=${encodeURIComponent(JSON.stringify(vendedores))}`;
+		window.open(url, "_blank");
+	}
+
+	// PDF para firmas: de todos los vendedores o solo de los que se elijan.
+	pdf_firmas() {
+		const vs = this.rep.vendedores.map((v) => v.vendedor);
+		const d = new frappe.ui.Dialog({
+			title: __("PDF para firmas"),
+			fields: [
+				{ fieldname: "todos", fieldtype: "Check", label: __("Todos los vendedores"), default: 1,
+					onchange: () => d.fields_dict.lista.$wrapper.toggle(!d.get_value("todos")) },
+				{ fieldname: "lista", fieldtype: "HTML" },
+			],
+			primary_action_label: __("Generar PDF"),
+			primary_action: (v) => {
+				const sel = v.todos ? [] : d.fields_dict.lista.$wrapper.find("input:checked").map((_, i) => $(i).val()).get();
+				if (!v.todos && !sel.length) return frappe.msgprint(__("Elija al menos un vendedor."));
+				d.hide();
+				this.exportar("pdf", sel);
+			},
+		});
+		d.fields_dict.lista.$wrapper.html(vs.map((x) => `<div class="checkbox" style="margin:4px 0"><label>
+			<input type="checkbox" value="${_cm_esc(x)}"> ${_cm_esc(x)}</label></div>`).join("")).hide();
+		d.show();
 	}
 
 	cerrar() {
@@ -421,18 +511,7 @@ class FacexComisionador {
 				this.$body.html(`<div class="cm-card cm-scroll"><table><thead><tr><th>Liquidación</th><th>Período</th><th>Estado</th><th>Base</th>
 					<th class="n">Vendedores</th><th class="n">Comisión total</th><th>Cerrada por</th><th></th></tr></thead>
 					<tbody>${rows || `<tr><td colspan="8" class="cm-sub">Aún no hay liquidaciones guardadas.</td></tr>`}</tbody></table></div>`);
-				this.$body.find("tr.click").on("click", (e) => {
-					this.name = $(e.currentTarget).data("n");
-					frappe.call({
-						method: "facex_multi.api.comisiones.get_reporte", args: { name: this.name },
-						callback: (res) => {
-							const m = res.message;
-							this.filters = { desde: m.desde, hasta: m.hasta, base: m.base_calculo };
-							this.rep = m.ejecutada_el ? m : null; this.estado = m.estado; this.cfg = null; this.saved_sig = null;
-							if (this.rep) this.show("reporte"); else { this.show("config"); this.cargar(); }
-						},
-					});
-				});
+				this.$body.find("tr.click").on("click", (e) => this.go("reporte", $(e.currentTarget).data("n")));
 				this.$body.find(".del").on("click", (e) => {
 					e.stopPropagation();
 					const n = $(e.currentTarget).data("n");

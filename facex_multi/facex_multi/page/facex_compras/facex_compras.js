@@ -11,6 +11,16 @@
 //   list       lista de un documento (arg: kind)
 //   form       formulario (arg: {kind, name} o {kind, pending})
 //   fc-staging previsualización de una factura cargada desde Excel
+//   reportes   menú de reportes (según permisos)
+//   report     un reporte (arg: antiguedad | compras | pagos)
+//
+// Cada vista es una ruta real de Frappe (Atrás / Adelante del navegador):
+//   /app/facex-compras                      menú
+//   /app/facex-compras/<tipo>               lista (oc | en | dv | fc | nc)
+//   /app/facex-compras/<tipo>/nuevo         documento nuevo
+//   /app/facex-compras/<tipo>/<nombre>      documento
+//   /app/facex-compras/fc/carga             previsualización de Excel
+//   /app/facex-compras/reportes[/<reporte>] reportes
 //
 // Responsive: las tablas marcadas .cp-cards se muestran como tarjetas bajo
 // 720px (cada <td> lleva data-label) y la barra de acciones queda fija abajo.
@@ -24,13 +34,15 @@ frappe.pages["facex-compras"].on_page_load = function (wrapper) {
 		if (frappe.get_route()[0] !== "facex-compras") $("body").removeClass("facex-fullscreen-mode");
 	});
 	wrapper.facexCompras = new FacexCompras(page, wrapper);
-	wrapper.facexCompras.setup_back_guard();
+	// Cada vista es una ruta: el router de Frappe (Atrás / Adelante) la resuelve.
+	frappe.router.on("change", () => {
+		if (frappe.get_route()[0] === "facex-compras" && wrapper.facexCompras) wrapper.facexCompras.handle_route();
+	});
 };
 
 frappe.pages["facex-compras"].on_page_show = function (wrapper) {
 	$("body").addClass("facex-fullscreen-mode");
-	// on_page_load corre una vez por pestaña: rearmar el guard en cada entrada.
-	if (wrapper.facexCompras) wrapper.facexCompras.setup_back_guard();
+	if (wrapper.facexCompras) wrapper.facexCompras.handle_route();
 };
 
 // Catálogo de Tipo FEL para compras (bfel_multi_tipo en Purchase Invoice /
@@ -85,6 +97,26 @@ const CP_KINDS = {
 	},
 };
 const CP_ORDER = ["oc", "en", "dv", "fc", "nc"];
+
+// Reportes de Compras (api/compras/reportes.py). Cada uno tiene su permiso.
+const CP_REPORTS = {
+	antiguedad: {
+		perm: "reporte_compras_antiguedad", title: "Antigüedad de saldos",
+		desc: "Cuentas por pagar a proveedores por rangos de vencimiento, con anticipos y notas de crédito.",
+		periodo: false,
+	},
+	compras: {
+		perm: "reporte_compras_periodo", title: "Compras por período",
+		desc: "Facturas de compra menos notas de crédito, por proveedor, mes o producto, con y sin IVA.",
+		periodo: true, agrupar: true,
+	},
+	pagos: {
+		perm: "reporte_compras_pagos", title: "Pagos a proveedores",
+		desc: "Pagos realizados por forma de pago y las facturas que cubren.",
+		periodo: true,
+	},
+};
+const CP_REPORT_ORDER = ["antiguedad", "compras", "pagos"];
 
 // Status nativos → etiqueta + color.
 const CP_STATUS = {
@@ -177,6 +209,40 @@ function cpDateTime(d) {
 	return d ? frappe.datetime.str_to_user(String(d).split(".")[0]) : "";
 }
 
+// Valor de una celda de reporte según su tipo: t texto · n importe · i entero · d fecha.
+function cpFmt(v, t) {
+	if (t === "n") return cpFlt(v).toLocaleString("es-GT", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+	if (t === "i") return String(Math.round(cpFlt(v)));
+	if (t === "d") return cpDate(v);
+	return cpEsc(v);
+}
+
+// Ordenar una tabla haciendo clic en su encabezado (texto, números o fechas).
+// La última fila con clase .cp-tot-row (totales) no se mueve.
+function cpSortable($table) {
+	const val = ($td) => {
+		const t = $td.text().trim();
+		const num = parseFloat(t.replace(/[^\d.\-]/g, ""));
+		return /^[Qq$\s\-\d.,%]+$/.test(t) && !isNaN(num) ? num : t.toLowerCase();
+	};
+	$table.find("thead th").css("cursor", "pointer").attr("title", "Ordenar").on("click", function () {
+		const i = $(this).index();
+		const dir = $(this).data("dir") === "asc" ? "desc" : "asc";
+		$table.find("th").removeData("dir").find(".cp-sort").remove();
+		$(this).data("dir", dir).append(`<span class="cp-sort"> ${dir === "asc" ? "▲" : "▼"}</span>`);
+		const $body = $table.find("tbody");
+		const rows = $body.find("tr").not(".cp-tot-row").get();
+		rows.sort((a, b) => {
+			const x = val($(a).children().eq(i)), y = val($(b).children().eq(i));
+			const c = typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y), "es");
+			return dir === "asc" ? c : -c;
+		});
+		const $tot = $body.find("tr.cp-tot-row");
+		rows.forEach((r) => $body.append(r));
+		$body.append($tot);
+	});
+}
+
 function cpTipoOptions(selected) {
 	return `<option value="">-</option>` + CP_TIPO_FEL.map(([v, l]) =>
 		`<option value="${v}"${selected === v ? " selected" : ""}>${cpEsc(l)}</option>`).join("");
@@ -197,35 +263,102 @@ class FacexCompras {
 	}
 
 	// ──────────────────────────────────────────────
-	// Navegación / botón Atrás
+	// Navegación por rutas (Atrás / Adelante del navegador)
 	// ──────────────────────────────────────────────
 
-	setup_back_guard() {
-		facex_multi.setup_back_guard({
-			to: "/app/facex",
-			is_dirty: () => this.dirty,
-			on_back: () => this._internal_back(),
-		});
+	get dirty() {
+		return !!this._dirty;
 	}
 
-	// Atrás del navegador resuelto por dentro: formulario/staging → lista →
-	// menú principal. Solo desde el menú principal se sale del page.
-	_internal_back() {
-		if (!this.view || this.view === "hub") return false;
-		const go = () => (this.view === "list" ? this._go("hub") : this._go("list", this.kind));
+	set dirty(v) {
+		this._dirty = !!v;
+		if (this.$body) this.$body.find(".cp-dirty").prop("hidden", !this._dirty);
+		// Recargar / cerrar la pestaña con un documento sin grabar.
+		window.onbeforeunload = this._dirty ? () => "Hay cambios sin guardar." : null;
+	}
+
+	// Partes de la ruta después de «facex-compras», del router de Frappe (que ya
+	// la tiene resuelta cuando dispara el cambio; window.location aún puede
+	// traer la ruta anterior en ese momento).
+	_route_parts() {
+		return (frappe.get_route() || []).slice(1).map(String).filter(Boolean);
+	}
+
+	_route_for(view, arg) {
+		if (view === "list") return [arg || this.kind];
+		if (view === "form") return arg.name ? [arg.kind, arg.name] : [arg.kind, "nuevo"];
+		if (view === "fc-staging") return ["fc", "carga"];
+		if (view === "reportes") return ["reportes"];
+		if (view === "report") return ["reportes", arg];
+		return [];
+	}
+
+	// Ir a una vista = cambiar la ruta (queda en el historial). Con
+	// {replace: true} se reemplaza la entrada actual (p. ej. al grabar un
+	// documento nuevo, que pasa de «nuevo» a su nombre).
+	_nav(view, arg, opts = {}) {
+		const proceed = () => {
+			if (view === "form" && !arg.name) this._pending = arg.pending ? { kind: arg.kind, pending: arg.pending } : null;
+			if (view === "fc-staging") this._staging = arg;
+			this.dirty = false;
+			const parts = this._route_for(view, arg);
+			// Frappe v16 sirve el Desk en /desk (antes /app): se usa el prefijo vigente.
+			const base = "/" + (window.location.pathname.split("/")[1] || "desk");
+			const url = `${base}/facex-compras` + parts.map((x) => "/" + encodeURIComponent(x)).join("");
+			if (opts.replace || window.location.pathname === url) {
+				history.replaceState(null, "", url);
+				this._go(view, arg);
+			} else {
+				frappe.set_route("facex-compras", ...parts);
+			}
+		};
+		if (this.dirty && !opts.replace) frappe.confirm("Hay cambios sin guardar. ¿Desea salir de todos modos?", proceed);
+		else proceed();
+	}
+
+	// Pinta la vista que dice la URL. La llaman on_page_show y el router.
+	handle_route() {
+		if (!this.defaults) return;
+		const parts = this._route_parts();
+		const key = parts.join("/");
+		if (key === this._cur_key) return;
+		const render = () => {
+			const [a, b] = parts;
+			if (!a) return this._go("hub");
+			if (a === "reportes") return b && CP_REPORTS[b] ? this._go("report", b) : this._go("reportes");
+			if (!CP_KINDS[a]) return this._go("hub");
+			if (!b) return this._go("list", a);
+			if (a === "fc" && b === "carga") {
+				if (this._staging) return this._go("fc-staging", this._staging);
+				return this._nav("list", "fc", { replace: true });
+			}
+			if (b === "nuevo") {
+				const pend = this._pending && this._pending.kind === a ? this._pending.pending : undefined;
+				this._pending = null;
+				return this._go("form", { kind: a, pending: pend });
+			}
+			this._go("form", { kind: a, name: b });
+		};
 		if (this.dirty) {
-			frappe.confirm("Hay cambios sin guardar. ¿Desea salir de todos modos?", () => {
-				this.dirty = false;
-				go();
-			});
-			return true;
+			// Atrás/Adelante con cambios sin grabar: preguntar; si se queda, volver a la ruta actual.
+			frappe.confirm("Hay cambios sin guardar. ¿Desea salir de todos modos?",
+				() => { this.dirty = false; render(); },
+				() => { const cur = this._cur_key ? this._cur_key.split("/") : []; frappe.set_route("facex-compras", ...cur); });
+			return;
 		}
-		go();
-		return true;
+		render();
+	}
+
+	// Botón «←» de cada vista: un nivel hacia arriba.
+	_internal_back() {
+		if (this.view === "form" || this.view === "fc-staging") return this._nav("list", this.kind);
+		if (this.view === "report") return this._nav("reportes");
+		return this._nav("hub");
 	}
 
 	_go(view, arg) {
 		this.view = view;
+		this._cur_key = this._route_for(view, arg).join("/");
 		this.dirty = false;
 		this.$body.off();
 		$(document).off(".cpView");
@@ -234,6 +367,8 @@ class FacexCompras {
 		else if (view === "list") this._render_list(arg);
 		else if (view === "form") this._render_form(arg);
 		else if (view === "fc-staging") this._render_fc_staging(arg);
+		else if (view === "reportes") this._render_reportes();
+		else if (view === "report") this._render_report(arg);
 	}
 
 	// ──────────────────────────────────────────────
@@ -276,11 +411,7 @@ class FacexCompras {
 
 		this.$root.find("#cp-logo").on("click", () => {
 			if (!this.defaults) return;
-			if (this.dirty) {
-				frappe.confirm("Hay cambios sin guardar. ¿Desea salir de todos modos?", () => this._go("hub"));
-			} else {
-				this._go("hub");
-			}
+			this._nav("hub");
 		});
 
 		const $menu = this.$root.find("#cp-user-menu");
@@ -382,9 +513,10 @@ class FacexCompras {
 				const kind = CP_ORDER.find((k) => params.get(CP_KINDS[k].param));
 				if (kind && this.perms.puede_compras) {
 					this.kind = kind;
-					this._go("form", { kind, name: params.get(CP_KINDS[kind].param) });
+					// Enlace directo ?factura=… → ruta del documento (sin recargar).
+					this._nav("form", { kind, name: params.get(CP_KINDS[kind].param) }, { replace: true });
 				} else {
-					this._go("hub");
+					this.handle_route();
 				}
 			},
 			error: () => {
@@ -443,8 +575,153 @@ class FacexCompras {
 	</div>
 	<div class="cp-section-title">Documentos · Orden → Entrada → Factura · Devoluciones y notas de crédito</div>
 	<div class="cp-hub-grid">${CP_ORDER.map(card).join("")}</div>
+	${this._reports_html()}
 </div>`);
-		this.$body.on("click", ".cp-hub-card", (e) => this._go("list", $(e.currentTarget).data("kind")));
+		this.$body.on("click", ".cp-hub-card[data-kind]", (e) => this._nav("list", $(e.currentTarget).data("kind")));
+		this.$body.on("click", ".cp-hub-card[data-report]", (e) => this._nav("report", $(e.currentTarget).data("report")));
+	}
+
+	_reports_allowed() {
+		return CP_REPORT_ORDER.filter((r) => this.perms.puede_compras && this.perms[CP_REPORTS[r].perm]);
+	}
+
+	_reports_html() {
+		const allowed = this._reports_allowed();
+		if (!allowed.length) return "";
+		return `<div class="cp-section-title">Reportes</div>
+	<div class="cp-hub-grid">${allowed.map((r) => `
+		<button type="button" class="cp-hub-card" data-report="${r}">
+			<div class="cp-hub-title">${cpEsc(CP_REPORTS[r].title)}</div>
+			<div class="cp-hub-desc">${cpEsc(CP_REPORTS[r].desc)}</div>
+			<div class="cp-hub-tag">Ver reporte →</div>
+		</button>`).join("")}</div>`;
+	}
+
+	// ──────────────────────────────────────────────
+	// Reportes
+	// ──────────────────────────────────────────────
+
+	_render_reportes() {
+		const html = this._reports_html();
+		this.$body.html(`<div class="cp-wrap">
+	<div class="cp-page-head"><button type="button" class="cp-back" data-back="hub">← Compras</button><div class="cp-h1">Reportes de Compras</div></div>
+	${html || `<div class="cp-card cp-empty">No tiene permiso para ningún reporte de Compras.<br><span style="font-size:13px;">Solicítelo a un administrador (FacEx Settings).</span></div>`}
+</div>`);
+		this.$body.on("click", "[data-back]", () => this._nav("hub"));
+		this.$body.on("click", ".cp-hub-card[data-report]", (e) => this._nav("report", $(e.currentTarget).data("report")));
+	}
+
+	_render_report(rep) {
+		const R = CP_REPORTS[rep];
+		if (!R || !this.perms.puede_compras || !this.perms[R.perm]) {
+			this.$body.html(`<div class="cp-wrap"><div class="cp-card cp-empty">No tiene permiso para este reporte.<br>
+				<button type="button" class="cp-back" data-back="reportes" style="margin-top:10px;">← Reportes</button></div></div>`);
+			this.$body.on("click", "[data-back]", () => this._nav("reportes"));
+			return;
+		}
+		this._rf = this._rf || {};
+		const f = this._rf[rep] = this._rf[rep] || {
+			desde: frappe.datetime.month_start(), hasta: frappe.datetime.get_today(),
+			agrupar: "proveedor", supplier: "", supplier_label: "",
+		};
+		this.$body.html(`
+<div class="cp-wrap">
+	<div class="cp-page-head">
+		<button type="button" class="cp-back" data-back="reportes">← Reportes</button>
+		<div class="cp-h1">${cpEsc(R.title)}</div>
+		<div class="cp-head-actions">
+			<button type="button" class="cp-btn cp-btn-secondary" id="cp-r-xlsx" disabled>Excel</button>
+			<button type="button" class="cp-btn cp-btn-secondary" id="cp-r-pdf" disabled>PDF</button>
+		</div>
+	</div>
+	<div class="cp-card cp-filters">
+		${R.periodo ? `<div class="cp-field"><label class="cp-label">Desde</label><input type="date" class="cp-input" id="cp-r-desde" value="${cpEsc(f.desde)}"></div>
+		<div class="cp-field"><label class="cp-label">Hasta</label><input type="date" class="cp-input" id="cp-r-hasta" value="${cpEsc(f.hasta)}"></div>` : ""}
+		${R.agrupar ? `<div class="cp-field"><label class="cp-label">Agrupar por</label><select class="cp-input" id="cp-r-agrupar">
+			${[["proveedor", "Proveedor"], ["mes", "Mes"], ["producto", "Producto"]].map(([v, l]) => `<option value="${v}"${f.agrupar === v ? " selected" : ""}>${l}</option>`).join("")}</select></div>` : ""}
+		<div class="cp-field cp-field-wide"><label class="cp-label">Proveedor</label>
+			<div class="cp-ac"><input type="text" class="cp-input" id="cp-r-supplier" placeholder="Todos" value="${cpEsc(f.supplier_label)}" data-value="${cpEsc(f.supplier)}"></div></div>
+		<div class="cp-field cp-field-btn"><button type="button" class="cp-btn cp-btn-primary cp-block" id="cp-r-run">Ver reporte</button></div>
+	</div>
+	<div id="cp-r-out"></div>
+</div>`);
+		this.$body.on("click", "[data-back]", () => this._nav("reportes"));
+		this.$body.on("click", "#cp-r-run", () => this._run_report(rep));
+		this.$body.on("click", "#cp-r-xlsx", () => this._export_report(rep, "xlsx"));
+		this.$body.on("click", "#cp-r-pdf", () => this._export_report(rep, "pdf"));
+		this._bind_supplier_ac(this.$body.find("#cp-r-supplier"));
+		this._run_report(rep);
+	}
+
+	_report_filters(rep) {
+		const R = CP_REPORTS[rep], f = this._rf[rep], $b = this.$body;
+		const $s = $b.find("#cp-r-supplier");
+		if (R.periodo) { f.desde = $b.find("#cp-r-desde").val(); f.hasta = $b.find("#cp-r-hasta").val(); }
+		if (R.agrupar) f.agrupar = $b.find("#cp-r-agrupar").val();
+		f.supplier = $s.val().trim() ? ($s.attr("data-value") || "") : "";
+		f.supplier_label = f.supplier ? $s.val() : "";
+		const out = { supplier: f.supplier };
+		if (R.periodo) Object.assign(out, { desde: f.desde, hasta: f.hasta });
+		if (R.agrupar) out.agrupar = f.agrupar;
+		return out;
+	}
+
+	_run_report(rep) {
+		const filters = this._report_filters(rep);
+		const $out = this.$body.find("#cp-r-out").html(`<div class="cp-empty">Calculando...</div>`);
+		this.$body.find("#cp-r-xlsx, #cp-r-pdf").prop("disabled", true);
+		frappe.call({
+			method: "facex_multi.api.compras.reportes.get_report",
+			args: { report: rep, company: this.company, filters },
+			callback: (r) => {
+				if (this.view !== "report") return;
+				const d = this._rdata = r.message;
+				const th = d.head.map((h, i) => `<th class="${d.tipos[i] === "t" ? "" : "cp-num"}">${cpEsc(h)}</th>`).join("");
+				const rows = d.rows.map((x, k) => `<tr class="cp-row-link" data-k="${k}">${x.v.map((c, i) =>
+					`<td data-label="${cpEsc(d.head[i])}" class="${d.tipos[i] === "t" ? "cp-strong" : "cp-num"}">${cpFmt(c, d.tipos[i])}</td>`).join("")}</tr>`).join("");
+				const tot = `<tr class="cp-tot-row">${d.total.map((c, i) => `<td class="${i ? "cp-num" : ""}"><b>${i ? cpFmt(c, d.tipos[i]) : cpEsc(c)}</b></td>`).join("")}</tr>`;
+				$out.html(d.rows.length ? `
+<div class="cp-card cp-table-card">
+	<table class="cp-table cp-cards"><thead><tr>${th}</tr></thead><tbody>${rows}${tot}</tbody></table>
+	<div class="cp-list-foot">${d.rows.length} fila(s) · ${cpEsc(d.periodo)} · ${cpEsc(d.nota || "")} <b>Toque una fila para ver sus documentos.</b></div>
+</div>` : `<div class="cp-card cp-empty">Sin datos con estos filtros.</div>`);
+				cpSortable($out.find("table"));
+				$out.find("tr[data-k]").on("click", (e) => this._report_detail(d.rows[$(e.currentTarget).data("k")]));
+				this.$body.find("#cp-r-xlsx, #cp-r-pdf").prop("disabled", !d.rows.length);
+			},
+			error: () => $out.html(`<div class="cp-card cp-empty" style="color:#b91c1c;">No se pudo generar el reporte.</div>`),
+		});
+	}
+
+	_report_detail(row) {
+		const d = this._rdata;
+		const lines = d.detalle.filter((x) => x.clave === row.clave);
+		const num = d.dtipos.map((t, i) => (t === "n" || t === "i" ? lines.reduce((s, x) => s + cpFlt(x.v[i]), 0) : null));
+		const body = lines.map((x) => `<tr>${x.v.map((c, i) => {
+			const cell = cpFmt(c, d.dtipos[i]);
+			const link = x.doc && String(c) === x.doc ? `<a href="#" class="cp-doc" data-kind="${x.kind}" data-doc="${cpEsc(x.doc)}">${cell}</a>` : cell;
+			return `<td class="${d.dtipos[i] === "n" || d.dtipos[i] === "i" ? "cp-num" : ""}">${link}</td>`;
+		}).join("")}</tr>`).join("");
+		const foot = `<tr class="cp-tot-row">${num.map((n, i) => `<td class="${n === null ? "" : "cp-num"}"><b>${i === 0 ? "TOTAL (" + lines.length + ")" : n === null ? "" : cpFmt(n, d.dtipos[i])}</b></td>`).join("")}</tr>`;
+		const dlg = new frappe.ui.Dialog({ title: `${row.v[0]}`, size: "extra-large" });
+		dlg.$body.html(`<style>${CP_STYLES}</style><div class="cp-wrap" style="overflow-x:auto;"><table class="cp-table">
+			<thead><tr>${d.dhead.map((h, i) => `<th class="${d.dtipos[i] === "n" || d.dtipos[i] === "i" ? "cp-num" : ""}">${cpEsc(h)}</th>`).join("")}</tr></thead>
+			<tbody>${body}${foot}</tbody></table></div>`);
+		// Los documentos se abren dentro de FacEx (nunca en el ERP).
+		dlg.$body.on("click", ".cp-doc", (e) => {
+			e.preventDefault();
+			const $a = $(e.currentTarget);
+			dlg.hide();
+			if ($a.data("kind") === "pago") window.location.href = `/app/facex-pagos?pago=${encodeURIComponent($a.data("doc"))}`;
+			else this._nav("form", { kind: $a.data("kind"), name: $a.data("doc") });
+		});
+		dlg.show();
+	}
+
+	_export_report(rep, formato) {
+		const filters = this._report_filters(rep);
+		window.open(`/api/method/facex_multi.api.compras.reportes.export_report?report=${rep}&company=${encodeURIComponent(this.company)}`
+			+ `&filters=${encodeURIComponent(JSON.stringify(filters))}&formato=${formato}`, "_blank");
 	}
 
 	// ──────────────────────────────────────────────
@@ -482,16 +759,31 @@ class FacexCompras {
 			</select></div>
 		<div class="cp-field cp-field-btn"><button type="button" class="cp-btn cp-btn-secondary cp-block" id="cp-f-apply">Filtrar</button></div>
 	</div>
+	<div class="cp-card cp-searchbar"><input type="search" class="cp-input" id="cp-f-q" placeholder="Buscar en los resultados: documento, proveedor, no. de factura, estado…"></div>
 	<div id="cp-list"></div>
 </div>`);
 
-		this.$body.on("click", "[data-back]", () => this._go("hub"));
-		this.$body.on("click", "#cp-new", () => this._go("form", { kind }));
+		this.$body.on("click", "[data-back]", () => this._nav("hub"));
+		this.$body.on("click", "#cp-new", () => this._nav("form", { kind }));
 		this.$body.on("click", "#cp-excel", () => this._excel_dialog());
 		this.$body.on("click", "#cp-f-apply", () => this._load_list());
-		this.$body.on("click", "tr[data-name]", (e) => this._go("form", { kind, name: $(e.currentTarget).data("name") }));
+		this.$body.on("click", "tr[data-name]", (e) => this._nav("form", { kind, name: $(e.currentTarget).data("name") }));
+		this.$body.on("input", "#cp-f-q", () => this._filter_list_rows());
 		this._bind_supplier_ac(this.$body.find("#cp-f-supplier"));
 		this._load_list();
+	}
+
+	// Buscador de la lista: filtra en el navegador las filas ya cargadas.
+	_filter_list_rows() {
+		const q = (this.$body.find("#cp-f-q").val() || "").trim().toLowerCase();
+		const $rows = this.$body.find("#cp-list tr[data-name]");
+		let n = 0;
+		$rows.each((i, tr) => {
+			const show = !q || $(tr).text().toLowerCase().includes(q);
+			$(tr).toggle(show);
+			if (show) n++;
+		});
+		if ($rows.length) this.$body.find("#cp-list-count").text(q ? `${n} de ${$rows.length} documento(s)` : `${$rows.length} documento(s)`);
 	}
 
 	_list_columns(kind) {
@@ -555,8 +847,10 @@ class FacexCompras {
 			</tr>`).join("")}
 		</tbody>
 	</table>
-	<div class="cp-list-foot">${rows.length} documento(s) · Validados: <b>${cpMoney(total)}</b>${kind === "fc" ? ` · Saldo: <b>${cpMoney(saldo)}</b>` : ""}</div>
+	<div class="cp-list-foot"><span id="cp-list-count">${rows.length} documento(s)</span> · Validados: <b>${cpMoney(total)}</b>${kind === "fc" ? ` · Saldo: <b>${cpMoney(saldo)}</b>` : ""}${rows.length >= 100 ? ` · <span style="color:#b45309;">Se muestran los 100 más recientes: acote las fechas o el proveedor.</span>` : ""}</div>
 </div>`);
+				cpSortable($list.find("table"));
+				this._filter_list_rows();
 			},
 		});
 	}
@@ -643,7 +937,7 @@ class FacexCompras {
 				});
 				this._paint_form();
 			},
-			error: () => this._go("list", kind),
+			error: () => this._nav("list", kind, { replace: true }),
 		});
 	}
 
@@ -766,7 +1060,8 @@ class FacexCompras {
 <div class="cp-wrap cp-has-actionbar">
 	<div class="cp-page-head">
 		<button type="button" class="cp-back" id="cp-form-back">← ${cpEsc(c.many)}</button>
-		<div class="cp-h1">${cpEsc(title)} ${doc.name ? cpStatusBadge(doc.status, doc.docstatus) : `<span class="cp-badge" style="color:#1d4ed8;background:#dbeafe;">Nueva</span>`}</div>
+		<div class="cp-h1">${cpEsc(title)} ${doc.name ? cpStatusBadge(doc.status, doc.docstatus) : `<span class="cp-badge" style="color:#1d4ed8;background:#dbeafe;">Nueva</span>`}
+			<span class="cp-dirty" hidden title="Hay cambios sin grabar">● Sin grabar</span></div>
 		${meta ? `<div class="cp-muted cp-head-meta">${meta}</div>` : ""}
 	</div>
 	${this._related_html()}
@@ -799,6 +1094,7 @@ class FacexCompras {
 		this._render_items();
 		this._bind_form();
 		this._show_tab(this.tab || "doc");
+		this.$body.find(".cp-dirty").prop("hidden", !this.dirty);
 	}
 
 	// ──────────────────────────────────────────────
@@ -863,7 +1159,6 @@ class FacexCompras {
 		const btn = (id, label, cls) => `<button type="button" class="cp-btn ${cls}" id="${id}">${label}</button>`;
 		const out = [];
 		if (doc.name) {
-			if (!facex_multi.nav_restricted()) out.push(`<a class="cp-btn cp-btn-ghost" href="/app/${c.route}/${encodeURIComponent(doc.name)}" target="_blank">Abrir en ERP</a>`);
 			out.push(btn("cp-print", "Imprimir", "cp-btn-secondary"));
 		}
 		if (doc.name && editable && this._can(kind, "draft")) out.push(btn("cp-delete", "Eliminar", "cp-btn-danger"));
@@ -925,6 +1220,13 @@ class FacexCompras {
 		this._bind_anexos();
 
 		if (this.doc.docstatus !== 0) return;
+		// Ctrl+S = Grabar Borrador (si el usuario puede).
+		$(document).on("keydown.cpView", (e) => {
+			if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === "s") {
+				e.preventDefault();
+				if (this._can(this.doc.kind, "draft")) this._save(false);
+			}
+		});
 		this._bind_supplier_ac($b.find("#cp-h-supplier"), {
 			on_pick: (s) => {
 				this.doc.supplier = s.value;
@@ -1034,9 +1336,7 @@ class FacexCompras {
 	}
 
 	_open_related(kind, name) {
-		const go = () => this._go("form", { kind, name });
-		if (this.dirty) frappe.confirm("Hay cambios sin guardar. ¿Desea salir de todos modos?", go);
-		else go();
+		this._nav("form", { kind, name });
 	}
 
 	_source_tag(it) {
@@ -1348,7 +1648,7 @@ class FacexCompras {
 					this.dirty = false;
 					if (!then_submit) {
 						frappe.show_alert({ message: `Borrador grabado: <b>${cpEsc(name)}</b>`, indicator: "green" });
-						this._go("form", { kind, name });
+						this._nav("form", { kind, name }, { replace: true });
 						return;
 					}
 					frappe.call({
@@ -1358,10 +1658,10 @@ class FacexCompras {
 						freeze_message: "Validando...",
 						callback: (r2) => {
 							if (r2.message) frappe.show_alert({ message: `${cpEsc(c.one)} <b>${cpEsc(name)}</b> validada.`, indicator: "green" });
-							this._go("form", { kind, name });
+							this._nav("form", { kind, name }, { replace: true });
 						},
 						// El borrador sí quedó grabado: recargarlo para no perder el nombre.
-						error: () => this._go("form", { kind, name }),
+						error: () => this._nav("form", { kind, name }, { replace: true }),
 					});
 				},
 			});
@@ -1398,7 +1698,7 @@ class FacexCompras {
 				freeze_message: "Cancelando...",
 				callback: (r) => {
 					if (r.message) frappe.show_alert({ message: `${cpEsc(c.one)} cancelada.`, indicator: "blue" });
-					this._go("form", { kind: this.doc.kind, name: this.doc.name });
+					this._nav("form", { kind: this.doc.kind, name: this.doc.name }, { replace: true });
 				},
 			});
 		});
@@ -1414,7 +1714,7 @@ class FacexCompras {
 					if (!r.message) return;
 					frappe.show_alert({ message: "Borrador eliminado.", indicator: "blue" });
 					this.dirty = false;
-					this._go("list", this.doc.kind);
+					this._nav("list", this.doc.kind, { replace: true });
 				},
 			});
 		});
@@ -1429,7 +1729,7 @@ class FacexCompras {
 				method: "facex_multi.api.compras.documentos.set_order_closed",
 				args: { name: this.doc.name, closed },
 				freeze: true,
-				callback: () => this._go("form", { kind: "oc", name: this.doc.name }),
+				callback: () => this._nav("form", { kind: "oc", name: this.doc.name }, { replace: true }),
 			});
 		});
 	}
@@ -1445,7 +1745,7 @@ class FacexCompras {
 				if (!r.message) return;
 				const m = r.message;
 				const hoy = m.date || frappe.datetime.get_today();
-				this._go("form", {
+				this._nav("form", {
 					kind: target,
 					pending: {
 						supplier: m.supplier, supplier_name: m.supplier_name, currency: m.currency,
@@ -1819,7 +2119,7 @@ class FacexCompras {
 							frappe.msgprint({ title: "Sin datos", message: (r.message.errors || []).map(cpEsc).join("<br>") || "El archivo no contiene líneas válidas.", indicator: "orange" });
 							return;
 						}
-						this._go("fc-staging", r.message);
+						this._nav("fc-staging", r.message);
 					},
 				});
 			},
@@ -1913,8 +2213,7 @@ class FacexCompras {
 				this._paint_staging();
 				return;
 			}
-			this._go("form", { kind: "fc", pending: fc });
-			this.dirty = true;
+			this._nav("form", { kind: "fc", pending: fc }, { replace: true });
 			frappe.show_alert({ message: `${fc.items.length} línea(s) importadas. Revise el encabezado y grabe.`, indicator: "green" });
 		});
 	}
@@ -2195,4 +2494,9 @@ input.cp-num { max-width:120px;margin-left:auto;display:block; }
   .cp-actionbar .cp-spacer { display:none; }
   .cp-actionbar .cp-btn { flex:1 1 auto; }
 }
+.cp-dirty { font-size:12px;font-weight:700;color:#b45309;background:#fef3c7;border-radius:10px;padding:2px 10px; }
+.cp-searchbar { padding:8px 12px; }
+.cp-searchbar .cp-input { width:100%; }
+.cp-tot-row td { background:#eef2fb;font-weight:700; }
+.cp-sort { color:#153375;font-size:10px; }
 `;
