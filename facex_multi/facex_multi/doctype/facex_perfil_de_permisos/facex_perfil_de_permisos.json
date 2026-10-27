@@ -151,7 +151,12 @@
   "sb_wa",
   "wa_factura",
   "wa_cotizacion",
-  "wa_pago"
+  "wa_pago",
+  "sb_live",
+  "live_acceso",
+  "live_sesiones",
+  "cb_live",
+  "live_facturar"
  ],
  "fields": [
   {
@@ -1060,6 +1065,36 @@
    "description": "Requiere «Enviar por WhatsApp» habilitado y este documento activo en la Configuración de la Compañía."
   },
   {
+   "fieldname": "sb_live",
+   "fieldtype": "Section Break",
+   "label": "Ventas por Live"
+  },
+  {
+   "fieldname": "live_acceso",
+   "fieldtype": "Check",
+   "label": "Ver página Live y registrar «Mío»",
+   "default": "0",
+   "description": "Bandeja de pedidos del live, armar cotizaciones y enviarlas por WhatsApp."
+  },
+  {
+   "fieldname": "live_sesiones",
+   "fieldtype": "Check",
+   "label": "Crear y editar sesiones de Live",
+   "default": "0",
+   "description": "Catálogo de personajes, prendas y conjuntos disponibles."
+  },
+  {
+   "fieldname": "cb_live",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "live_facturar",
+   "fieldtype": "Check",
+   "label": "Facturar pedidos listos en lote",
+   "default": "0",
+   "description": "Además exige Validar y Certificar."
+  },
+  {
    "default": "0",
    "description": "Reporte de cuentas por pagar por rangos de vencimiento, con el detalle de facturas por proveedor. Denegado por defecto.",
    "fieldname": "reporte_compras_antiguedad",
@@ -1082,7 +1117,7 @@
   }
  ],
  "links": [],
- "modified": "2026-10-06 18:00:00.000000",
+ "modified": "2026-10-27 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Perfil de Permisos",

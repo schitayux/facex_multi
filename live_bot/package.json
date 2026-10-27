@@ -1,0 +1,13 @@
+{
+  "name": "facex-live-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Lee los «mío» del WhatsApp del negocio y los manda a FacEx (Ventas por Live). Solo lectura.",
+  "main": "index.js",
+  "scripts": { "start": "node index.js" },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.26.0"
+  }
+}

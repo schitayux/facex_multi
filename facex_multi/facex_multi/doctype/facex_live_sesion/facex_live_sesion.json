@@ -1,0 +1,146 @@
+{
+ "actions": [],
+ "creation": "2026-10-27 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "titulo",
+  "company",
+  "fecha",
+  "estado",
+  "abierta_desde",
+  "cb_1",
+  "vendedor",
+  "bodega",
+  "lista_precios",
+  "incluir_flete",
+  "sb_personajes",
+  "personajes",
+  "sb_prendas",
+  "prendas"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Serie",
+   "options": "LIVE-.YYYY.-.####",
+   "default": "LIVE-.YYYY.-.####",
+   "hidden": 1
+  },
+  {
+   "fieldname": "titulo",
+   "fieldtype": "Data",
+   "label": "Título",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Compañía",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "fieldname": "fecha",
+   "fieldtype": "Date",
+   "label": "Fecha",
+   "default": "Today",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "estado",
+   "fieldtype": "Select",
+   "label": "Estado",
+   "options": "Abierta\nCerrada",
+   "default": "Abierta",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "abierta_desde",
+   "fieldtype": "Datetime",
+   "label": "Abierta desde",
+   "read_only": 1,
+   "description": "El bot de WhatsApp solo toma los «mío» que llegan desde este momento."
+  },
+  {
+   "fieldname": "cb_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "vendedor",
+   "fieldtype": "Link",
+   "label": "Vendedor",
+   "options": "Sales Partner"
+  },
+  {
+   "fieldname": "bodega",
+   "fieldtype": "Link",
+   "label": "Bodega",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "lista_precios",
+   "fieldtype": "Link",
+   "label": "Lista de Precios",
+   "options": "Price List"
+  },
+  {
+   "fieldname": "incluir_flete",
+   "fieldtype": "Check",
+   "label": "Incluir Flete",
+   "default": "1"
+  },
+  {
+   "fieldname": "sb_personajes",
+   "fieldtype": "Section Break",
+   "label": "Personajes (conjuntos)"
+  },
+  {
+   "fieldname": "personajes",
+   "fieldtype": "Table",
+   "label": "Personajes",
+   "options": "FacEx Live Personaje"
+  },
+  {
+   "fieldname": "sb_prendas",
+   "fieldtype": "Section Break",
+   "label": "Prendas de cada personaje"
+  },
+  {
+   "fieldname": "prendas",
+   "fieldtype": "Table",
+   "label": "Prendas",
+   "options": "FacEx Live Prenda"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-27 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FacEx Multi",
+ "name": "FacEx Live Sesion",
+ "owner": "Administrator",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "track_changes": 1,
+ "autoname": "naming_series:",
+ "title_field": "titulo"
+}

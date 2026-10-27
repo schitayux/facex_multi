@@ -3134,6 +3134,12 @@ class EFastSalePage {
 				icon: icon(`<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>`),
 				action: () => { window.location.href = "/app/facex-comisiones"; },
 			},
+			p.live_acceso && {
+				label: "Ventas por Live",
+				desc: "Pedidos «mío» del live por WhatsApp, cotizaciones y facturación en lote.",
+				icon: icon(`<circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49"/><path d="M7.76 16.24a6 6 0 0 1 0-8.49"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M4.93 19.07a10 10 0 0 1 0-14.14"/>`),
+				action: () => { window.location.href = "/app/facex-live"; },
+			},
 			p.puede_ver_menu_inventario && {
 				label: "Inventario",
 				desc: "Entradas, salidas y transferencias de stock.",
@@ -3244,6 +3250,9 @@ class EFastSalePage {
 		}
 		if (p.comisionador) {
 			cmds.push({ group: "Pantallas", label: "Comisionador", run: () => { window.location.href = "/app/facex-comisiones"; } });
+		}
+		if (p.live_acceso) {
+			cmds.push({ group: "Pantallas", label: "Ventas por Live", run: () => { window.location.href = "/app/facex-live"; } });
 		}
 
 		// Las etiquetas se leen de los botones del panel de Reportes para no

@@ -1,0 +1,4 @@
+config.json
+.sesion_wa/
+.wwebjs_cache/
+node_modules/

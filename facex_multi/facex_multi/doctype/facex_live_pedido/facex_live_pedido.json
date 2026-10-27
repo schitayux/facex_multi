@@ -1,0 +1,210 @@
+{
+ "actions": [],
+ "creation": "2026-10-27 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "sesion",
+  "company",
+  "llegada",
+  "estado",
+  "origen",
+  "cb_1",
+  "telefono",
+  "nombre_wa",
+  "cliente",
+  "cliente_nombre",
+  "sb_pedido",
+  "alias",
+  "cantidad",
+  "mensaje",
+  "cb_2",
+  "captura",
+  "wa_msg_id",
+  "sb_cobro",
+  "cotizacion",
+  "referencia_pago",
+  "metodo_pago",
+  "cb_3",
+  "numero_guia",
+  "notas"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Serie",
+   "options": "LIVEP-.YYYY.-.#####",
+   "default": "LIVEP-.YYYY.-.#####",
+   "hidden": 1
+  },
+  {
+   "fieldname": "sesion",
+   "fieldtype": "Link",
+   "label": "Sesión",
+   "options": "FacEx Live Sesion",
+   "reqd": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Compañía",
+   "options": "Company",
+   "fetch_from": "sesion.company",
+   "read_only": 1
+  },
+  {
+   "fieldname": "llegada",
+   "fieldtype": "Datetime",
+   "label": "Llegada del mensaje",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "estado",
+   "fieldtype": "Select",
+   "label": "Estado",
+   "options": "Por revisar\nMío\nEn espera\nConfirmado\nPagado\nContra entrega\nFacturado\nCancelado",
+   "default": "Mío",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "origen",
+   "fieldtype": "Select",
+   "label": "Origen",
+   "options": "Manual\nBot WhatsApp",
+   "default": "Manual"
+  },
+  {
+   "fieldname": "cb_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "telefono",
+   "fieldtype": "Data",
+   "label": "Teléfono",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "nombre_wa",
+   "fieldtype": "Data",
+   "label": "Nombre en WhatsApp"
+  },
+  {
+   "fieldname": "cliente",
+   "fieldtype": "Link",
+   "label": "Cliente",
+   "options": "Customer"
+  },
+  {
+   "fieldname": "cliente_nombre",
+   "fieldtype": "Data",
+   "label": "Nombre del cliente",
+   "fetch_from": "cliente.customer_name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_pedido",
+   "fieldtype": "Section Break",
+   "label": "Pedido"
+  },
+  {
+   "fieldname": "alias",
+   "fieldtype": "Data",
+   "label": "Alias / Personaje",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "cantidad",
+   "fieldtype": "Int",
+   "label": "Conjuntos",
+   "default": "1"
+  },
+  {
+   "fieldname": "mensaje",
+   "fieldtype": "Small Text",
+   "label": "Mensaje recibido"
+  },
+  {
+   "fieldname": "cb_2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "captura",
+   "fieldtype": "Attach Image",
+   "label": "Captura del live"
+  },
+  {
+   "fieldname": "wa_msg_id",
+   "fieldtype": "Data",
+   "label": "ID del mensaje de WhatsApp",
+   "read_only": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "sb_cobro",
+   "fieldtype": "Section Break",
+   "label": "Cobro y envío"
+  },
+  {
+   "fieldname": "cotizacion",
+   "fieldtype": "Link",
+   "label": "Cotización / Factura",
+   "options": "Sales Invoice",
+   "read_only": 1
+  },
+  {
+   "fieldname": "referencia_pago",
+   "fieldtype": "Data",
+   "label": "Referencia del pago"
+  },
+  {
+   "fieldname": "metodo_pago",
+   "fieldtype": "Select",
+   "label": "Método de pago",
+   "options": "\nTransferencia\nDepósito\nEfectivo\nTarjeta de Crédito"
+  },
+  {
+   "fieldname": "cb_3",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "numero_guia",
+   "fieldtype": "Data",
+   "label": "Número de guía"
+  },
+  {
+   "fieldname": "notas",
+   "fieldtype": "Small Text",
+   "label": "Notas"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-27 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FacEx Multi",
+ "name": "FacEx Live Pedido",
+ "owner": "Administrator",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "track_changes": 1,
+ "autoname": "naming_series:"
+}

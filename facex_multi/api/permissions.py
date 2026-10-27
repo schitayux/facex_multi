@@ -30,6 +30,7 @@ _ALL_PERM_FIELDS = [
     "reporte_auditoria_sistema", "reporte_ventas_vendedor", "reporte_cierre_general",
     "comisionador",
     "reporte_compras_antiguedad", "reporte_compras_periodo", "reporte_compras_pagos",
+    "live_acceso", "live_sesiones", "live_facturar",
 ]
 
 # Flags de _ALL_PERM_FIELDS que NO se conceden a un usuario sin fila de FacEx
@@ -42,6 +43,8 @@ _DENY_BY_DEFAULT_FIELDS = (
     "reporte_compras_antiguedad", "reporte_compras_periodo", "reporte_compras_pagos",
     # Pagos a proveedores: sale dinero de caja/banco → solo con el check marcado.
     "pago_proveedor_grabar_borrador", "pago_proveedor_validar", "pago_proveedor_cancelar",
+    # Ventas por Live: módulo nuevo, solo donde Gerencia lo active.
+    "live_acceso", "live_sesiones", "live_facturar",
 )
 
 def get_usuarios_ocultos() -> tuple:
@@ -144,11 +147,29 @@ def get_facex_permissions_for_company(company: str) -> dict:
     Sin compañía, System Manager o sin fila → acceso total (legacy).
     """
     if not company or _is_sm():
-        return _full_access()
-    row = _row(company)
-    if not row:
-        return {**_full_access(), **{f: 0 for f in _DENY_BY_DEFAULT_FIELDS}}
-    return {k: int(row.get(k) or 0) for k in _ALL_PERM_FIELDS}
+        perms = _full_access()
+    else:
+        row = _row(company)
+        if not row:
+            perms = {**_full_access(), **{f: 0 for f in _DENY_BY_DEFAULT_FIELDS}}
+        else:
+            perms = {k: int(row.get(k) or 0) for k in _ALL_PERM_FIELDS}
+    if not _live_habilitado():
+        perms.update({f: 0 for f in _LIVE_FIELDS})
+    return perms
+
+
+_LIVE_FIELDS = ("live_acceso", "live_sesiones", "live_facturar")
+
+
+def _live_habilitado(user: str = None) -> bool:
+    """Ventas por Live se enciende por sitio en site_config.json:
+    "facex_live_usuarios": ["Administrator", ...] (solo esos usuarios, aun siendo
+    System Manager) o "*" (todos, según sus permisos). Sin la clave, apagado."""
+    usuarios = frappe.conf.get("facex_live_usuarios")
+    if usuarios == "*":
+        return True
+    return (user or frappe.session.user) in (usuarios or [])
 
 
 def require_facex_permission(company: str, *flags: str, msg: str = None) -> None:
@@ -283,6 +304,9 @@ PROFILE_PERM_FIELDS = [
     "wa_factura",
     "wa_cotizacion",
     "wa_pago",
+    "live_acceso",
+    "live_sesiones",
+    "live_facturar",
     "reportes_todas_bodegas",
     "puede_autorellenar_recepcion",
 ]
