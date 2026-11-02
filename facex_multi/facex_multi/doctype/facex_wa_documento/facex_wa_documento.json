@@ -11,7 +11,7 @@
   {"default": "1", "fieldname": "activo", "fieldtype": "Check", "in_list_view": 1, "label": "Activo", "columns": 1},
   {"default": "1", "fieldname": "adjuntar_pdf", "fieldtype": "Check", "in_list_view": 1, "label": "Adjuntar impresión", "columns": 1},
   {"fieldname": "mensaje", "fieldtype": "Small Text", "in_list_view": 1, "label": "Mensaje",
-   "description": "Variables: {cliente} {documento} {tipo_doc} {total} {saldo} {monto} {fecha} {empresa}", "columns": 6}
+   "description": "Variables: {cliente} {documento} {tipo_doc} {total} {saldo} {monto} (lo pagado; en cotización = {total}) {fecha} {empresa}", "columns": 6}
  ],
  "index_web_pages_for_search": 0,
  "istable": 1,

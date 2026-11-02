@@ -2571,6 +2571,9 @@ class EFastSalePage {
 		// cuando la vista de Reportes ya creó sus controles.
 		if (params.view === "reports" && this._can_run_report(params.report)) {
 			this._active_report = params.report;
+			if (params.report === "quotations_report" && !params.desde && !params.hasta) {
+				Object.assign(params, this._quotations_default_range());
+			}
 			this._pending_report_filters = params;
 		}
 		this._new_invoice();
@@ -3147,6 +3150,7 @@ class EFastSalePage {
 				icon: icon(`<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>`),
 				action: () => {
 					this._active_report = "quotations_report";
+					this._set_quotations_default_dates("quotations_report");
 					this._switch_view("reports");
 				},
 			},
@@ -3247,6 +3251,7 @@ class EFastSalePage {
 					const kpi = kpis[$(e.currentTarget).data("idx")];
 					if (!kpi || !kpi.report) return;
 					this._active_report = kpi.report;
+					this._set_quotations_default_dates(kpi.report);
 					this._switch_view("reports");
 				});
 			},
@@ -3299,7 +3304,7 @@ class EFastSalePage {
 			cmds.push({
 				group: "Reportes",
 				label: ($el.text() || "").trim(),
-				run: () => { this._active_report = id; this._switch_view("reports"); },
+				run: () => { this._active_report = id; this._set_quotations_default_dates(id); this._switch_view("reports"); },
 			});
 		});
 
@@ -7865,6 +7870,22 @@ body.facex-fullscreen-mode .ef-main-layout {
 		};
 	}
 
+	// Al entrar a «Cotizaciones» (Inicio, Screen, panel de Reportes, KPI,
+	// Ctrl+M) el rango arranca en 1 de enero del año actual → hoy. Solo se
+	// aplica al hacer clic: volver a Reportes desde una factura conserva lo que
+	// el usuario haya ajustado, y un link con ?desde=/?hasta= manda.
+	_quotations_default_range() {
+		const today = frappe.datetime.get_today();
+		return { desde: `${today.slice(0, 4)}-01-01`, hasta: today };
+	}
+
+	_set_quotations_default_dates(report_id) {
+		if (report_id !== "quotations_report") return;
+		const r = this._quotations_default_range();
+		this.$body.find("#ef-rep-start-date").val(r.desde);
+		this.$body.find("#ef-rep-end-date").val(r.hasta);
+	}
+
 	_any_report_access() {
 		const p = this.perms || {};
 		return Object.values(this._report_perm_map()).some((f) => p[f]);
@@ -11454,6 +11475,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 	_setup_report_events() {
 		this.$body.find(".ef-report-nav-btn").off("click").on("click", (e) => {
 			const report_id = $(e.currentTarget).data("report");
+			this._set_quotations_default_dates(report_id);
 			this._switch_report(report_id);
 		});
 

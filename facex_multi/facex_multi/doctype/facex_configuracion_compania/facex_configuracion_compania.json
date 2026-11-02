@@ -485,7 +485,7 @@
    "fieldtype": "Table",
    "options": "FacEx WA Documento",
    "label": "Documentos y mensajes",
-   "description": "Qué documentos se pueden enviar, su mensaje y si se adjunta el formato de impresión. Variables: {cliente} {documento} {tipo_doc} {total} {saldo} {monto} {fecha} {empresa}."
+   "description": "Qué documentos se pueden enviar, su mensaje y si se adjunta el formato de impresión. Variables: {cliente} {documento} {tipo_doc} {total} {saldo} {monto} (lo pagado; en cotización = {total}) {fecha} {empresa}."
   },
   {
    "fieldname": "sb_navegacion",

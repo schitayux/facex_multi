@@ -242,6 +242,10 @@ def get_context(invoice: str, tipo: str) -> dict:
         "fecha": formatdate(doc.posting_date),
         "empresa": frappe.get_cached_value("Company", doc.company, "company_name") or doc.company,
     }
+    # {monto} es lo pagado; una cotización no tiene pagos y salía «Q 0.00» en
+    # plantillas que lo usaban como el monto del documento (Neko, FACEX).
+    if tipo == "cotizacion":
+        values["monto"] = values["total"]
     return {
         "invoice": doc.name,
         "tipo": tipo,
