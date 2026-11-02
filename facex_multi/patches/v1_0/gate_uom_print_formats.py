@@ -29,7 +29,9 @@ def _patch(html):
 
 
 def execute():
-    backup_dir = frappe.get_site_path("private", "backups")
+    # Fuera de private/backups: Frappe trata esa carpeta como temporal (borra lo
+    # que tenga más de 24 h) y una subcarpeta ahí hace fallar `bench backup`.
+    backup_dir = frappe.get_site_path("private", "respaldos_formatos")
     os.makedirs(backup_dir, exist_ok=True)
     names = frappe.get_all("Print Format", filters={"doc_type": "Sales Invoice", "custom_format": 1}, pluck="name")
     for pf in names:

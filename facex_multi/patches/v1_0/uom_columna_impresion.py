@@ -56,7 +56,7 @@ def apply_movimiento(html: str) -> str:
 
 
 def execute():
-    backup_dir = frappe.get_site_path("private", "backups")
+    backup_dir = frappe.get_site_path("private", "respaldos_formatos")  # no en private/backups: Frappe la limpia a las 24 h
     os.makedirs(backup_dir, exist_ok=True)
     rows = frappe.get_all("Print Format", filters={"custom_format": 1, "doc_type": ["in", ["Sales Invoice", "Stock Entry"]]},
                           fields=["name", "doc_type"])

@@ -47,7 +47,7 @@ def execute():
 
 
 def _patch_print_formats():
-    backup_dir = frappe.get_site_path("private", "backups")
+    backup_dir = frappe.get_site_path("private", "respaldos_formatos")  # no en private/backups: Frappe la limpia a las 24 h
     os.makedirs(backup_dir, exist_ok=True)
     for pf in PRINT_FORMATS:
         html = frappe.db.get_value("Print Format", pf, "html")

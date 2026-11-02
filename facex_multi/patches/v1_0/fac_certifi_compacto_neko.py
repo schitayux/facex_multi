@@ -18,7 +18,7 @@ def execute():
     old = frappe.db.get_value("Print Format", PF, ["html", "css", "margin_top", "margin_bottom", "margin_left", "margin_right"], as_dict=True)
     if old.html == html:
         return
-    bdir = frappe.get_site_path("private", "backups")
+    bdir = frappe.get_site_path("private", "respaldos_formatos")  # no en private/backups: Frappe la limpia a las 24 h
     os.makedirs(bdir, exist_ok=True)
     with open(os.path.join(bdir, "print_format_fac_certifi_neko_pre_compacto_2026-10-06.json"), "w") as f:
         json.dump(old, f, ensure_ascii=False, default=str)

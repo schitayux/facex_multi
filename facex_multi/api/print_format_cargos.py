@@ -43,7 +43,7 @@ def patch_fixture(path):
 
 def patch_site(names=("FAC CERTIFI - NEKO", "FAC FEL - NEKO")):
     """bench --site X execute facex_multi.api.print_format_cargos.patch_site"""
-    bdir = frappe.get_site_path("private", "backups")
+    bdir = frappe.get_site_path("private", "respaldos_formatos")  # no en private/backups: Frappe la limpia a las 24 h
     os.makedirs(bdir, exist_ok=True)
     for name in names:
         if not frappe.db.exists("Print Format", name):
