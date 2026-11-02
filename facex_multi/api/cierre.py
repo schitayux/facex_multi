@@ -120,7 +120,7 @@ def _serie_label(serie: str, company: str = None) -> str:
         return "Todas las series"
     s = serie
     if company:
-        abbr = frappe.db.get_value("Company", company, "abbr") or ""
+        abbr = frappe.get_cached_value("Company", company, "abbr") or ""
         if abbr:
             s = s.replace(".ABBR.", abbr)
     s = s.replace(".YYYY.", "AAAA").replace(".YY.", "AA").replace(".MM.", "MM")
