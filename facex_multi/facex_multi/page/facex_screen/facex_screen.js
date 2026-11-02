@@ -154,6 +154,7 @@ class EFastPOSScreen {
 				// permite que el default más específico del Cliente reemplace al del
 				// usuario en vez de quedar tapado por él.
 				this._sales_partner_is_default = true;
+				this._sales_partner_from_customer = false;
 
 				this._load_walkin_customer();
 				this._load_warehouses();
@@ -180,6 +181,34 @@ class EFastPOSScreen {
 		});
 	}
 
+	// Vendedor al elegir cliente (mismo criterio que FacEx Clásico): con
+	// vendedor bloqueado no se toca; si el cliente trae Socio de Ventas y el
+	// actual es un default, se toma el del cliente; si no trae y el actual venía
+	// del cliente anterior, se vuelve al default del usuario (o vacío) en vez
+	// de arrastrar el vendedor de otro cliente.
+	_apply_customer_sales_partner(customer_sp) {
+		if (this.defaults && this.defaults.default_sales_partner_locked) return;
+		let next = null;
+		if (customer_sp) {
+			if (!this.doc.sales_partner || this._sales_partner_is_default) {
+				next = customer_sp;
+				this._sales_partner_from_customer = true;
+			}
+		} else if (this._sales_partner_is_default && this._sales_partner_from_customer) {
+			next = (this.defaults && this.defaults.default_sales_partner) || "";
+			this._sales_partner_from_customer = false;
+		}
+		if (next === null) return;
+		this.doc.sales_partner = next;
+		this._sales_partner_is_default = true;
+	}
+
+	// Venta retomada / releída: el vendedor guardado es una elección.
+	_reset_sales_partner_origin() {
+		this._sales_partner_is_default = !this.doc.sales_partner;
+		this._sales_partner_from_customer = false;
+	}
+
 	_load_walkin_customer() {
 		frappe.call({
 			method: "facex_multi.api.customer.get_or_create_walkin_customer",
@@ -189,10 +218,7 @@ class EFastPOSScreen {
 					this.walkinCustomer = r.message;
 					this.doc.customer = r.message.name;
 					this.doc.customer_name = r.message.customer_name;
-					if (r.message.default_sales_partner && (!this.doc.sales_partner || this._sales_partner_is_default)) {
-						this.doc.sales_partner = r.message.default_sales_partner;
-						this._sales_partner_is_default = true;
-					}
+					this._apply_customer_sales_partner(r.message.default_sales_partner || "");
 					if (r.message.default_price_list && !this.doc.selling_price_list) {
 						this.doc.selling_price_list = r.message.default_price_list;
 						// El catálogo (get_pos_data) puede haber arrancado en paralelo
@@ -501,6 +527,7 @@ class EFastPOSScreen {
 		this.$body.find("#efs-vendor-select").on("change", (e) => {
 			this.doc.sales_partner = e.target.value;
 			this._sales_partner_is_default = false;
+			this._sales_partner_from_customer = false;
 			this._render_vendor_bar();
 		});
 		this.$body.find("#efs-btn-suspend").on("click", () => this._suspend_sale());
@@ -1322,11 +1349,7 @@ class EFastPOSScreen {
 						const $row = $(e.currentTarget);
 						this.doc.customer = $row.data("name");
 						this.doc.customer_name = $row.data("label");
-						const defaultPartner = $row.data("sales-partner");
-						if (defaultPartner && (!this.doc.sales_partner || this._sales_partner_is_default)) {
-							this.doc.sales_partner = defaultPartner;
-							this._sales_partner_is_default = true;
-						}
+						this._apply_customer_sales_partner($row.data("sales-partner") || "");
 						this._apply_customer_price_list($row.data("price-list") || "");
 						// Ya seleccionado: ocultar la lista de búsqueda y limpiar el
 						// campo de texto en vez de re-renderizar toda la tarjeta
@@ -1622,6 +1645,7 @@ class EFastPOSScreen {
 			if (this.defaults.default_sales_partner_locked) return;
 			this.doc.sales_partner = e.target.value;
 			this._sales_partner_is_default = false;
+			this._sales_partner_from_customer = false;
 			this._render_vendor_bar();
 		});
 
@@ -3055,11 +3079,7 @@ class EFastPOSScreen {
 						}
 						this.doc.customer = name;
 						this.doc.customer_name = label;
-						const defaultPartner = $row.data("sales-partner");
-						if (defaultPartner && (!this.doc.sales_partner || this._sales_partner_is_default)) {
-							this.doc.sales_partner = defaultPartner;
-							this._sales_partner_is_default = true;
-						}
+						this._apply_customer_sales_partner($row.data("sales-partner") || "");
 						this._render_customer_bar();
 						d.hide();
 					});
@@ -4624,6 +4644,7 @@ class EFastPOSScreen {
 				callback: (r) => {
 					if (!r.message) return;
 					this.doc = r.message;
+					this._reset_sales_partner_origin();
 					// NIT/nombre ya grabados en la factura: el panel los respeta.
 					this.doc._bfel_for = this.doc.customer;
 					// Venta retomada: sin lectura previa con la que comparar.
@@ -4971,12 +4992,11 @@ class EFastPOSScreen {
 		this.doc.payment_terms_template = this.defaults.default_payment_terms_template || "";
 		this.doc.sales_partner = this.defaults.default_sales_partner || "";
 		this._sales_partner_is_default = true;
+		this._sales_partner_from_customer = false;
 		if (this.walkinCustomer) {
 			this.doc.customer = this.walkinCustomer.name;
 			this.doc.customer_name = this.walkinCustomer.customer_name;
-			if (this.walkinCustomer.default_sales_partner && (!this.doc.sales_partner || this._sales_partner_is_default)) {
-				this.doc.sales_partner = this.walkinCustomer.default_sales_partner;
-			}
+			this._apply_customer_sales_partner(this.walkinCustomer.default_sales_partner || "");
 		}
 		this._flete_manual = false;
 		this._sync_flete_ui();

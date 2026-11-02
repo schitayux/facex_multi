@@ -184,6 +184,29 @@ def _norm_numero_guia(value) -> str:
     return clean_numero_guia(value).upper()
 
 
+def validate_vendedor_obligatorio(doc, method=None):
+    """Hook validate de Sales Invoice: con «Exigir Vendedor» activo en la
+    compañía, una venta no se valida sin Socio de Ventas. Es la red final para
+    todas las vías (FacEx Clásico, Screen, Live, Historial, Desk); los
+    borradores/cotizaciones sí pueden quedar sin vendedor.
+
+    No aplica a devoluciones (heredan el vendedor de la factura original) ni a
+    la carga histórica de facturas (si_carga, flag facex_cierre_bypass).
+    """
+    if doc.docstatus != 1 or doc.is_return or doc.flags.get("facex_cierre_bypass"):
+        return
+    if (doc.sales_partner or "").strip():
+        return
+    from facex_multi.api.permissions import get_facex_company_config
+    if not int(get_facex_company_config(doc.company).get("exige_vendedor") or 0):
+        return
+    frappe.throw(
+        f"La factura <b>{frappe.utils.escape_html(doc.name or '')}</b> no tiene Vendedor. "
+        "Seleccione el Socio de Ventas antes de validarla.",
+        title="Vendedor obligatorio",
+    )
+
+
 def validate_guias_transporte_unicas(doc, method=None):
     """
     Se activa via doc_events Sales Invoice > validate: el mismo No. de guía no
@@ -2670,6 +2693,12 @@ def rebill_with_new_customer(invoice_name: str, new_customer: str, payments_json
         new_data["bfel_nit"] = cust.bfel_id_receptor or cust.tax_id or "CF"
         new_data["bfel_identificacion"] = cust.bfel_identificacion or ""
         new_data["bfel_nombre"] = cust.customer_name or ""
+        # La copia conserva el vendedor de la original; si esta no tenía, se
+        # toma el Socio de Ventas por defecto del cliente nuevo.
+        if not new_data.get("sales_partner"):
+            sp = frappe.db.get_value("Customer", new_customer, "default_sales_partner")
+            if sp:
+                new_data["sales_partner"] = sp
     # duplicate_invoice deja due_date en None (due_date es obligatorio en save_draft)
     new_data["due_date"] = new_data.get("posting_date")
     # duplicate_invoice copia naming_series ya resuelto (p. ej. "FACT-.EMS.-.#####"

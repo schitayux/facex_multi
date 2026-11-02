@@ -234,6 +234,9 @@ class EFastSalePage {
 		// de una elección manual del cajero — permite que el default más específico
 		// del Cliente (ver _on_customer_change) reemplace al default del usuario.
 		this._sales_partner_is_default = true;
+		// true cuando el vendedor actual lo puso el default del Cliente: si se
+		// cambia a un cliente sin vendedor, no se arrastra el del anterior.
+		this._sales_partner_from_customer = false;
 		this.doc.bfel_status = this.defaults.bfel_status_default || "01 Enviar";
 		this.doc.posting_date = frappe.datetime.get_today();
 		this.doc.due_date = frappe.datetime.get_today();
@@ -5936,7 +5939,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 				if (fieldname === "customer") this._on_customer_change(val);
 				if (fieldname === "payment_terms_template") this._on_payment_terms_change(val);
 				if (fieldname === "taxes_and_charges") this._on_taxes_change(val);
-				if (fieldname === "sales_partner") this._sales_partner_is_default = false;
+				if (fieldname === "sales_partner") {
+					this._sales_partner_is_default = false;
+					this._sales_partner_from_customer = false;
+				}
 				this._mark_dirty();
 			}, 50);
 		};
@@ -5969,18 +5975,48 @@ body.facex-fullscreen-mode .ef-main-layout {
 		});
 	}
 
+	// Vendedor al elegir cliente. Con vendedor bloqueado no se toca. Si el
+	// cliente trae Socio de Ventas y el actual es un default (no elegido a
+	// mano), se toma el del cliente. Si no trae y el actual venía del cliente
+	// anterior, se vuelve al default del usuario (o vacío, y la validación
+	// obliga a elegirlo) en lugar de arrastrar el vendedor de otro cliente.
+	_apply_customer_sales_partner(customer_sp) {
+		if (this.defaults && this.defaults.default_sales_partner_locked) return;
+		let next = null;
+		if (customer_sp) {
+			if (!this.doc.sales_partner || this._sales_partner_is_default) {
+				next = customer_sp;
+				this._sales_partner_from_customer = true;
+			}
+		} else if (this._sales_partner_is_default && this._sales_partner_from_customer) {
+			next = (this.defaults && this.defaults.default_sales_partner) || "";
+			this._sales_partner_from_customer = false;
+		}
+		if (next === null) return;
+		this.doc.sales_partner = next;
+		this._sales_partner_is_default = true;
+		if (this.controls.sales_partner) this.controls.sales_partner.set_value(next);
+	}
+
+	// Documento cargado o duplicado: el vendedor guardado es una elección y no
+	// se reemplaza al cambiar de cliente; sin vendedor, se acepta el del cliente.
+	_reset_sales_partner_origin() {
+		this._sales_partner_is_default = !this.doc.sales_partner;
+		this._sales_partner_from_customer = false;
+	}
+
 	_on_customer_change(customer) {
 
 		if (!customer) {
+			// El vendedor NO se borra: vaciar el cliente para escribir o crear
+			// otro dejaba la venta sin vendedor (FACT-NEKO-BC-A-0173). Al elegir
+			// el cliente nuevo se decide en la rama de abajo.
 			this.doc.customer_name = "";
 			this.doc.bfel_nombre = "";
-			this.doc.sales_partner = "";
-			this._sales_partner_is_default = true;
 			this.doc.bfel_identificacion = "";
 			this.$body.find("#ef-customer-name").val("");
 			this.$body.find("#ef-bfel-nombre").val("");
 			this.$body.find("#ef-bfel-identificacion").val("");
-			if (this.controls.sales_partner) this.controls.sales_partner.set_value("");
 			this._update_header_sections();
 			return;
 		}
@@ -6036,13 +6072,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 						this._on_payment_terms_change(r.message.payment_terms);
 					}
 
-					if (r.message.default_sales_partner && (!this.doc.sales_partner || this._sales_partner_is_default)) {
-						this.doc.sales_partner = r.message.default_sales_partner;
-						this._sales_partner_is_default = true;
-						if (this.controls.sales_partner) {
-							this.controls.sales_partner.set_value(r.message.default_sales_partner);
-						}
-					}
+					this._apply_customer_sales_partner(r.message.default_sales_partner || "");
 
 					if (!this.doc.taxes_and_charges && this.defaults.default_taxes_and_charges) {
 						this.doc.taxes_and_charges = this.defaults.default_taxes_and_charges;
@@ -8729,6 +8759,16 @@ body.facex-fullscreen-mode .ef-main-layout {
 			return;
 		}
 		if (this._request_pending) return;
+		// Vendedor obligatorio (Configuración de Compañía «Exigir Vendedor»);
+		// el servidor lo vuelve a exigir (validate_vendedor_obligatorio).
+		if ((this.company_config || {}).exige_vendedor && !this.doc.is_return) {
+			const sp = (this.controls.sales_partner && this.controls.sales_partner.get_value()) || this.doc.sales_partner;
+			if (!sp) {
+				frappe.show_alert({ message: "Seleccione un Vendedor antes de validar.", indicator: "orange" }, 5);
+				if (this.controls.sales_partner && this.controls.sales_partner.$input) this.controls.sales_partner.$input.focus();
+				return;
+			}
+		}
 		// Entero/Fracción: resumen de fracciones antes de validar.
 		if (!opts.fraccion_ok && facex_multi.fraccion.summary(this._frac_cfg(), this.doc.items)) {
 			facex_multi.fraccion.confirm_summary(this._frac_cfg(), this.doc.items, "Validar", () => this._action_submit({ ...opts, fraccion_ok: true }));
@@ -9089,6 +9129,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 							this._dirty = false;
 							this.doc = r.message;
 							this.doc._taxes_template = null;
+							this._reset_sales_partner_origin();
 							this._sync_ui_from_doc();
 							this._update_action_bar_state();
 							if (this.doc.taxes_and_charges) {
@@ -9304,6 +9345,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					this._dirty = false;
 					this.doc = r.message;
 					this.doc._taxes_template = null;
+					this._reset_sales_partner_origin();
 					this._redate_draft_on_open();
 					this._sync_ui_from_doc();
 					this._update_action_bar_state();

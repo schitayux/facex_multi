@@ -113,6 +113,8 @@ doc_events = {
             "facex_multi.api.invoice.sync_contra_entrega_from_price_list",
             "facex_multi.api.recargo.set_totales_con_recargo",
             "facex_multi.api.cierre.guard_sales_invoice_closed_date",
+            # Vendedor obligatorio al validar (FacEx Configuracion Compania.exige_vendedor).
+            "facex_multi.api.invoice.validate_vendedor_obligatorio",
         ],
         # Inventario validado por fecha, no por hora (ver api/stock_fecha.py).
         "on_submit": "facex_multi.api.stock_fecha.validar_saldo_por_fecha",

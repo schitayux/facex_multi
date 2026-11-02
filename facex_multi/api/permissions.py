@@ -330,6 +330,7 @@ _COMPANY_CONFIG_FIELDS = [
     "exige_pago_completo", "permite_pago_credito", "permite_pago_contra_entrega",
     "validar_pagos_automaticamente",
     "exige_familia_item",
+    "exige_vendedor",
     "item_flete", "mayusculas_items", "mayusculas_clientes",
     "sin_sufijo_compania_items",
     "cuenta_recargo_entrega", "cuenta_flete", "recargo_flete_con_iva",
