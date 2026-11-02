@@ -50,9 +50,15 @@ vinculados → Vincular un dispositivo*. La sesión queda guardada en `.sesion_w
 - Abra la sesión de Live en FacEx, con su WhatsApp, **antes** de empezar el live:
   solo cuentan los mensajes que llegan después de abrirla. Un número solo puede
   tener una sesión abierta a la vez.
-- Si el bot arranca tarde, revisa los chats recientes y registra los «mío» que ya
-  llegaron (no duplica).
+- Cada minuto (y al arrancar) revisa los chats recientes y registra lo que no haya
+  registrado (no duplica).
 - Si el mensaje no menciona un personaje de la sesión, queda **Por revisar** en la
   bandeja con su captura.
+- Solo un mensaje con «mío» crea un pedido. Lo que el mismo cliente mande sin «mío»
+  en los 5 minutos siguientes se le junta a ese pedido: si nombra el personaje que
+  faltaba, se lo pone; si es una imagen y el pedido no tenía captura, la usa; lo
+  demás (preguntas, tallas, instrucciones) queda en el mensaje del pedido con la
+  etiqueta **Consulta** para que el vendedor lo lea. Un «mío» con «?» siempre queda
+  Por revisar.
 - Para pedir varios conjuntos: «mío Luffy x2» o «mío Luffy 2 conjuntos».
 - La PC debe quedar encendida y con internet durante el live.

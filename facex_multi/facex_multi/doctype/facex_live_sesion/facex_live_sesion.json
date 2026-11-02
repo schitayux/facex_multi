@@ -16,6 +16,7 @@
   "bodega",
   "lista_precios",
   "incluir_flete",
+  "bfel_status",
   "sb_personajes",
   "personajes",
   "sb_prendas",
@@ -103,6 +104,14 @@
    "default": "1"
   },
   {
+   "fieldname": "bfel_status",
+   "fieldtype": "Select",
+   "label": "Estado FEL por defecto",
+   "options": "00 No enviar\n01 Enviar",
+   "default": "01 Enviar",
+   "description": "Con el que se arman las cotizaciones de la sesión. Se precarga con el del usuario (FacEx Settings)."
+  },
+  {
    "fieldname": "sb_personajes",
    "fieldtype": "Section Break",
    "label": "Personajes (conjuntos)"
@@ -127,7 +136,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-27 12:00:00.000000",
+ "modified": "2026-10-27 01:10:16.541316",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Live Sesion",

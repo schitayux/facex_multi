@@ -10,9 +10,11 @@
 // con su línea, el teléfono, el texto, la hora del mensaje y la captura del
 // live. Nunca envía mensajes ni los marca como leídos.
 //
-// La captura suele llegar como imagen aparte del texto «mío Luffy»: se junta
-// la última imagen del mismo chat (hasta VENTANA_MS antes) o se espera
-// ESPERA_IMAGEN_MS a que llegue después.
+// La captura suele llegar como imagen aparte del texto «mío Luffy»: si llegó
+// antes, se junta la última imagen del mismo chat (hasta VENTANA_MS antes); si
+// llega después, va como seguimiento. Los mensajes sin «mío» que el cliente
+// manda poco después (el personaje, la captura, preguntas) se le juntan a su
+// pedido con recibir_seguimiento.
 
 const fs = require("fs");
 const path = require("path");
@@ -24,7 +26,6 @@ const CFG = JSON.parse(fs.readFileSync(CFG_FILE, "utf8"));
 const PERFIL = path.basename(CFG_FILE, ".json"); // carpeta de la sesión de WhatsApp de este número
 let LINEA = ""; // número propio, se conoce al conectar
 const VENTANA_MS = (CFG.ventana_imagen_seg || 180) * 1000;
-const ESPERA_IMAGEN_MS = (CFG.espera_imagen_seg || 30) * 1000;
 const MIO_RE = /\b(mio|mia|mios|mias)\b/;
 
 const norm = (s) => String(s || "").normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase();
@@ -75,60 +76,93 @@ function tomarImagen(chat, cerca) {
 	return lista.splice(i, 1)[0].msg;
 }
 
-const procesados = new Set();
-async function enviar(msg, texto, imgMsg) {
-	const id = msg.id._serialized;
-	if (procesados.has(id)) return;
-	procesados.add(id);
-	const contacto = await msg.getContact();
-	const telefono = contacto.number || msg.from.split("@")[0];
-	const body = {
-		linea: LINEA, telefono, texto, nombre: contacto.pushname || contacto.name || "",
-		llegada: fecha(msg.timestamp), msg_id: id, company: CFG.company || undefined,
+const esImagen = (m) => m.hasMedia && m.type === "image";
+const idDe = (m) => m.id?._serialized || m.id?.id || `${m.from}_${m.timestamp}_${(m.body || "").slice(0, 20)}`;
+
+async function datosBase(msg) {
+	const contacto = await msg.getContact().catch(() => ({}));
+	return {
+		linea: LINEA, telefono: contacto.number || msg.from.split("@")[0], nombre: contacto.pushname || contacto.name || "",
+		texto: msg.body || "", llegada: fecha(msg.timestamp), msg_id: idDe(msg), company: CFG.company || undefined,
 	};
-	const fuente = imgMsg || (msg.hasMedia && msg.type === "image" ? msg : null);
-	if (fuente) {
+}
+async function conImagen(body, fuente) {
+	if (!fuente) return body;
+	for (let intento = 1; intento <= 3; intento++) {
 		try {
 			const media = await fuente.downloadMedia();
-			if (media) { body.imagen = media.data; body.imagen_nombre = media.filename || `captura.${(media.mimetype || "image/jpeg").split("/")[1]}`; }
-		} catch (e) { log("No se pudo bajar la captura:", e.message); }
+			if (media && media.data) {
+				body.imagen = media.data;
+				body.imagen_nombre = media.filename || `captura.${(media.mimetype || "image/jpeg").split("/")[1]}`;
+				return body;
+			}
+		} catch (e) { if (intento === 3) log("No se pudo bajar la captura:", e.message); }
+		await new Promise((r) => setTimeout(r, 2000 * intento));
 	}
-	try {
-		const r = await api("recibir_mio", body);
-		log(r.pedido ? `«mío» ${telefono} → ${r.pedido} ${r.estado} ${r.alias || "(sin personaje)"}` : `Ignorado (${r.ignorado}) ${telefono}`);
-	} catch (e) {
-		procesados.delete(id); // reintenta en el próximo barrido
-		log(`Error al registrar ${telefono}:`, e.message);
-	}
+	log("La captura llegó vacía; quedó sin imagen.");
+	return body;
 }
 
-async function procesar(msg) {
+// Mensajes ya tratados en esta corrida (el servidor además descarta duplicados).
+const procesados = new Set();
+
+// «mío»: crea el pedido. Si la captura llegó antes en el mismo chat, va junto.
+async function enviarMio(msg) {
+	const body = await conImagen(await datosBase(msg), esImagen(msg) ? msg : tomarImagen(msg.from, msg.timestamp * 1000));
+	const r = await api("recibir_mio", body);
+	log(r.pedido ? `«mío» ${body.telefono} → ${r.pedido} ${r.estado} ${r.alias || "(sin personaje)"}${body.imagen ? " con captura" : " sin captura"}` : `Ignorado (${r.ignorado}) ${body.telefono}`);
+}
+
+// Sin «mío»: se le junta al «mío» reciente del mismo cliente (personaje que
+// faltaba, captura, o consulta para que la lea el vendedor). Nunca crea pedidos.
+async function enviarSeguimiento(msg) {
+	const body = await conImagen(await datosBase(msg), esImagen(msg) ? msg : null);
+	if (!body.texto && !body.imagen) return;
+	const r = await api("recibir_seguimiento", body);
+	if (r.pedido && r.ignorado !== "duplicado") log(`   ↳ ${body.telefono} → ${r.pedido}: ${(r.uso || []).join(", ") || "mensaje agregado"} · ${r.estado} ${r.alias || ""}`);
+	// Una imagen que no se usó puede ser la captura del próximo «mío».
+	if (esImagen(msg) && !(r.uso || []).includes("captura")) guardarImagen(msg);
+}
+
+// Un chat a la vez y en orden, para que el «mío» llegue antes que lo que sigue.
+const colas = new Map();
+function procesar(msg) {
 	if (msg.fromMe || msg.isStatus || !(msg.from.endsWith("@c.us") || msg.from.endsWith("@lid"))) return; // sin grupos ni estados
 	if (msg.timestamp < desdeUnix()) return;
-	if (msg.hasMedia && msg.type === "image") guardarImagen(msg);
-	const texto = msg.body || "";
-	if (!MIO_RE.test(norm(texto))) return;
-	if (msg.hasMedia && msg.type === "image") return enviar(msg, texto, null); // captura con el «mío» en el pie
-	const img = tomarImagen(msg.from, msg.timestamp * 1000);
-	if (img) return enviar(msg, texto, img);
-	// La captura todavía no llega: se espera un poco.
-	setTimeout(() => enviar(msg, texto, tomarImagen(msg.from, msg.timestamp * 1000)), ESPERA_IMAGEN_MS);
+	const id = idDe(msg);
+	if (procesados.has(id)) return;
+	procesados.add(id);
+	const tarea = async () => {
+		const mio = MIO_RE.test(norm(msg.body));
+		log(`Mensaje de ${msg.from.split("@")[0]}: ${esImagen(msg) ? "[imagen] " : ""}${(msg.body || "").slice(0, 60)}`);
+		try {
+			await (mio ? enviarMio(msg) : enviarSeguimiento(msg));
+		} catch (e) {
+			procesados.delete(id); // reintenta en el próximo barrido
+			log("Error al registrar:", e.message);
+		}
+	};
+	const cola = (colas.get(msg.from) || Promise.resolve()).then(tarea);
+	colas.set(msg.from, cola);
+	return cola;
 }
 
-// Al arrancar (o al abrirse una sesión) revisa los chats recientes para no
-// perder los «mío» que llegaron con el bot apagado. El servidor descarta
-// duplicados por ID de mensaje.
+// Cada minuto (y al arrancar) revisa los chats recientes: así no se pierde
+// ningún mensaje aunque WhatsApp Web no avise o el bot haya estado apagado.
+let barriendo = false;
 async function barrer(client) {
-	if (!sesion.sesion) return;
-	const desde = desdeUnix();
-	const chats = (await client.getChats()).filter((c) => !c.isGroup && c.timestamp >= desde);
-	for (const chat of chats) {
-		const msgs = (await chat.fetchMessages({ limit: 30 })).filter((m) => !m.fromMe && m.timestamp >= desde);
-		msgs.filter((m) => m.hasMedia && m.type === "image").forEach(guardarImagen);
-		for (const m of msgs) {
-			if (!MIO_RE.test(norm(m.body))) continue;
-			await enviar(m, m.body, m.type === "image" ? null : tomarImagen(m.from, m.timestamp * 1000));
+	if (!sesion.sesion || barriendo) return;
+	barriendo = true;
+	try {
+		const desde = desdeUnix();
+		const chats = (await client.getChats()).filter((c) => !c.isGroup && c.timestamp >= desde);
+		for (const chat of chats) {
+			const msgs = (await chat.fetchMessages({ limit: 30 })).filter((m) => !m.fromMe && m.timestamp >= desde);
+			msgs.sort((a, b) => a.timestamp - b.timestamp);
+			for (const m of msgs) await procesar(m);
 		}
+	} finally {
+		barriendo = false;
 	}
 }
 
@@ -137,18 +171,24 @@ const client = new Client({
 	puppeteer: { headless: !!CFG.headless, args: ["--no-sandbox"] },
 });
 client.on("qr", (qr) => { log("Escanee este QR con el WhatsApp del negocio (Dispositivos vinculados):"); qrcode.generate(qr, { small: true }); });
+client.on("authenticated", () => log("Sesión de WhatsApp reconocida, cargando chats…"));
+client.on("auth_failure", (m) => { log("WhatsApp rechazó la sesión guardada:", m, "— borre la carpeta .sesion_wa y vuelva a escanear el QR."); process.exit(1); });
+client.on("loading_screen", (pct) => log(`Cargando WhatsApp Web ${pct}%`));
 client.on("ready", async () => {
+	clearTimeout(lento);
 	LINEA = client.info.wid.user.replace(/\D/g, "").slice(-8);
 	log("WhatsApp conectado (solo lectura).");
 	await refrescarSesion();
 	await barrer(client).catch((e) => log("Barrido:", e.message));
-	let anterior = sesion.sesion;
 	setInterval(async () => {
 		await refrescarSesion();
-		if (sesion.sesion && sesion.sesion !== anterior) await barrer(client).catch((e) => log("Barrido:", e.message));
-		anterior = sesion.sesion;
+		await barrer(client).catch((e) => log("Barrido:", e.message));
 	}, 60 * 1000);
 });
-client.on("message", (msg) => procesar(msg).catch((e) => log("Mensaje:", e.message)));
+client.on("message", (msg) => { procesar(msg); });
 client.on("disconnected", (r) => { log("WhatsApp desconectado:", r, "— reinicie el bot."); process.exit(1); });
-client.initialize();
+client.on("change_state", (st) => log("Estado de WhatsApp:", st));
+process.on("unhandledRejection", (e) => log("Error:", e && e.message ? e.message : e));
+log(`Abriendo WhatsApp Web (perfil ${PERFIL}, FacEx ${CFG.url})…`);
+const lento = setTimeout(() => log("Lleva 2 minutos sin conectar. Revise que no haya otro bot abierto con el mismo perfil (ps aux | grep node) y que la ventana de Chromium no muestre un aviso."), 120 * 1000);
+client.initialize().catch((e) => { log("No se pudo abrir WhatsApp Web:", e.message); process.exit(1); });

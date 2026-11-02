@@ -4,6 +4,5 @@
   "api_secret": "PEGAR_API_SECRET_DEL_USUARIO_BOT",
   "company": "Neko",
   "headless": false,
-  "ventana_imagen_seg": 180,
-  "espera_imagen_seg": 30
+  "ventana_imagen_seg": 180
 }

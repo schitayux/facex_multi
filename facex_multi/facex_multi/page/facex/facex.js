@@ -68,6 +68,7 @@ frappe.pages["facex"].on_page_show = function (wrapper) {
 		// líneas de pago recién guardadas "desaparecían" hasta refrescar.
 		const ef = wrapper.efast;
 		const already = ef.doc && ef.doc.name === params.invoice && !ef._page_was_hidden;
+		if (params.volver) { ef._capture_volver(params); ef._update_back_chip(); }
 		if (!already) ef.load_invoice(params.invoice);
 	} else if (wrapper.efast._page_was_hidden && params.view) {
 		// Re-entrada real desde OTRA página (Inventario, POS, Cierre…): ahí sí
@@ -2428,6 +2429,13 @@ class EFastSalePage {
 	// hay a dónde volver": el back guard entonces aplica su comportamiento de
 	// siempre (confirmar cambios sin guardar y salir a /app).
 	_handle_internal_back() {
+		if (!this._nav_stack.length && this._volver) {
+			// Llegó desde otra página de FacEx (?volver=…): regresa allá.
+			const go = () => { this._dirty = false; window.location.href = this._volver.url; };
+			if (this._dirty) frappe.confirm("Hay cambios sin guardar. ¿Desea salir de todos modos?", go);
+			else go();
+			return true;
+		}
 		if (!this._nav_stack.length) return false;
 		const snap = this._nav_stack.pop();
 		if (snap.view === "reports" && snap.report) this._active_report = snap.report;
@@ -2437,7 +2445,7 @@ class EFastSalePage {
 
 	_update_back_chip() {
 		const $chip = this.$body.find("#ef-back-chip");
-		const top = this._nav_stack[this._nav_stack.length - 1];
+		const top = this._nav_stack[this._nav_stack.length - 1] || this._volver;
 		if (!top) {
 			$chip.hide();
 			return;
@@ -2536,13 +2544,26 @@ class EFastSalePage {
 		set_list(this.rep_sales_partner_ctrl, p.vendedores);
 	}
 
+	// ?volver=/app/facex-live/… : la página que abrió esta pestaña (p. ej.
+	// «Actualizar cotización» de Ventas por Live). Solo rutas internas de
+	// páginas FacEx, para que el parámetro no sirva para mandar a otro sitio.
+	_capture_volver(params) {
+		const url = String(params.volver || "");
+		if (!/^\/app\/facex-[a-z-]+(\/[^?#]*)?$/.test(url)) return;
+		const LABELS = { "facex-live": "Ventas por Live" };
+		const page = url.split("/")[2];
+		this._volver = { url, label: LABELS[page] || "la página anterior" };
+	}
+
 	// Aterrizaje según la URL: ?invoice=… abre esa factura, ?view=… esa vista.
 	// Permite compartir un link o abrir en pestaña nueva y caer en el mismo
 	// lugar. Sin parámetros (o sin permiso) cae en Inicio, como siempre.
 	_apply_route_from_url() {
 		const params = frappe.urllib.get_dict();
+		this._capture_volver(params);
 		if (params.invoice) {
 			this.load_invoice(params.invoice);
+			this._update_back_chip();
 			return;
 		}
 		// Link compartido de un reporte: el id viene de la URL, así que se

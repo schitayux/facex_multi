@@ -9,6 +9,7 @@
   "company",
   "llegada",
   "estado",
+  "motivo_cancelacion",
   "origen",
   "cb_1",
   "telefono",
@@ -18,10 +19,13 @@
   "sb_pedido",
   "alias",
   "cantidad",
+  "uom",
   "mensaje",
+  "consulta",
   "cb_2",
   "captura",
   "wa_msg_id",
+  "wa_seguimiento",
   "sb_cobro",
   "cotizacion",
   "referencia_pago",
@@ -72,6 +76,14 @@
    "in_standard_filter": 1
   },
   {
+   "fieldname": "motivo_cancelacion",
+   "fieldtype": "Select",
+   "label": "Motivo de cancelación",
+   "options": "\nError del cliente\nNo hay producto\nMala digitación\nTraducción incorrecta\nCliente canceló\nCliente no confirmó",
+   "depends_on": "eval:doc.estado=='Cancelado'",
+   "read_only": 1
+  },
+  {
    "fieldname": "origen",
    "fieldtype": "Select",
    "label": "Origen",
@@ -120,13 +132,28 @@
   {
    "fieldname": "cantidad",
    "fieldtype": "Int",
-   "label": "Conjuntos",
+   "label": "Cantidad",
    "default": "1"
+  },
+  {
+   "fieldname": "uom",
+   "fieldtype": "Link",
+   "options": "UOM",
+   "label": "Unidad",
+   "description": "Unidad de la cantidad (p. ej. Docena o Media Docena). Vacío = la unidad de inventario de la prenda."
   },
   {
    "fieldname": "mensaje",
    "fieldtype": "Small Text",
    "label": "Mensaje recibido"
+  },
+  {
+   "default": "0",
+   "description": "El cliente escribió algo más que «mío» y el personaje (preguntas, instrucciones). Leer el mensaje.",
+   "fieldname": "consulta",
+   "fieldtype": "Check",
+   "label": "Tiene consultas",
+   "in_list_view": 0
   },
   {
    "fieldname": "cb_2",
@@ -143,6 +170,13 @@
    "label": "ID del mensaje de WhatsApp",
    "read_only": 1,
    "unique": 1
+  },
+  {
+   "fieldname": "wa_seguimiento",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "label": "IDs de mensajes de seguimiento",
+   "read_only": 1
   },
   {
    "fieldname": "sb_cobro",
@@ -165,7 +199,7 @@
    "fieldname": "metodo_pago",
    "fieldtype": "Select",
    "label": "Método de pago",
-   "options": "\nTransferencia\nDepósito\nEfectivo\nTarjeta de Crédito"
+   "options": "\nTransferencia\nDepósito\nEfectivo\nTarjeta de Crédito\nContra Entrega"
   },
   {
    "fieldname": "cb_3",
@@ -184,7 +218,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-27 00:00:00.000000",
+ "modified": "2026-10-27 02:02:25.710277",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Live Pedido",

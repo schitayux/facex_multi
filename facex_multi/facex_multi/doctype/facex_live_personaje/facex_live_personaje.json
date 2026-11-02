@@ -20,11 +20,12 @@
   },
   {
    "fieldname": "unidades",
-   "fieldtype": "Int",
-   "label": "Conjuntos disponibles",
+   "fieldtype": "Float",
+   "label": "Cantidad",
    "default": "1",
    "in_list_view": 1,
-   "columns": 2
+   "columns": 2,
+   "description": "En la unidad de inventario de la prenda."
   },
   {
    "fieldname": "foto",
@@ -43,7 +44,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-27 00:00:00.000000",
+ "modified": "2026-10-27 02:02:25.710277",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Live Personaje",

@@ -33,7 +33,7 @@ import re
 import unicodedata
 
 import frappe
-from frappe.utils import cint, flt, get_datetime, now_datetime, today
+from frappe.utils import add_to_date, cint, flt, get_datetime, now_datetime, today
 
 SESION = "FacEx Live Sesion"
 PEDIDO = "FacEx Live Pedido"
@@ -48,6 +48,9 @@ ESTADOS_MANUALES = ("Mío", "Confirmado", "Pagado", "Contra entrega", "Cancelado
 TRANSPORTISTA_DEFAULT = "Cargo Expreso"
 
 _MIO_RE = re.compile(r"\b(mio|mia|mios|mias)\b")
+BFEL_STATUS_LIVE = ("00 No enviar", "01 Enviar")
+MOTIVOS_CANCELACION = ("Error del cliente", "No hay producto", "Mala digitación", "Traducción incorrecta",
+                       "Cliente canceló", "Cliente no confirmó")
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +93,11 @@ def _sesion(name, company=None):
     return doc
 
 
+def _bfel_status_live(valor) -> str:
+    """En un live solo se arma en «00 No enviar» o «01 Enviar»."""
+    return valor if valor in BFEL_STATUS_LIVE else "01 Enviar"
+
+
 def _precio(item_code, price_list) -> float:
     if not price_list:
         return 0.0
@@ -97,13 +105,36 @@ def _precio(item_code, price_list) -> float:
         "Item Price", {"item_code": item_code, "price_list": price_list, "selling": 1}, "price_list_rate"))
 
 
+def _uoms_item(item_code) -> list:
+    """[{uom, factor}] de la prenda: su unidad de inventario (factor 1) y las
+    conversiones del ítem (p. ej. Media Docena = 0.5 Docena)."""
+    stock_uom = frappe.get_cached_value("Item", item_code, "stock_uom") if item_code else ""
+    out = [{"uom": stock_uom, "factor": 1.0}] if stock_uom else []
+    for r in frappe.get_all("UOM Conversion Detail", filters={"parenttype": "Item", "parent": item_code},
+                            fields=["uom", "conversion_factor"], order_by="idx") if item_code else []:
+        if r.uom and r.uom not in {u["uom"] for u in out} and flt(r.conversion_factor) > 0:
+            out.append({"uom": r.uom, "factor": flt(r.conversion_factor)})
+    return out
+
+
+def _cant_stock(p, per) -> float:
+    """Cantidad del pedido en la unidad de inventario de la prenda."""
+    cant = cint(p.get("cantidad")) or 1
+    uom = p.get("uom")
+    if not uom or not per:
+        return float(cant)
+    f = next((u["factor"] for u in per.get("uoms") or [] if u["uom"] == uom), 1.0)
+    return cant * f
+
+
 def _personajes(ses) -> dict:
-    """{alias_norm: {alias, unidades, foto, notas, prendas:[{item_code,item_name,qty,rate}], precio}}"""
+    """{alias_norm: {alias, unidades, foto, notas, prendas:[{item_code,item_name,qty,rate}], precio, uom, uoms}}
+    `unidades` y `precio` van en la unidad de inventario de la prenda."""
     out = {}
     for p in ses.personajes:
         out[_norm(p.alias)] = {
-            "alias": p.alias, "unidades": cint(p.unidades), "foto": p.foto or "",
-            "notas": p.notas or "", "prendas": [], "precio": 0.0,
+            "alias": p.alias, "unidades": flt(p.unidades), "foto": p.foto or "",
+            "notas": p.notas or "", "prendas": [], "precio": 0.0, "uom": "", "uoms": [],
         }
     for r in ses.prendas:
         per = out.get(_norm(r.alias))
@@ -114,6 +145,9 @@ def _personajes(ses) -> dict:
         per["prendas"].append({"item_code": r.item_code, "item_name": r.item_name or r.item_code,
                                "qty": qty, "rate": rate})
         per["precio"] += rate * qty
+        if not per["uoms"]:
+            per["uoms"] = _uoms_item(r.item_code)
+            per["uom"] = per["uoms"][0]["uom"] if per["uoms"] else ""
     return out
 
 
@@ -125,9 +159,38 @@ def _alias_en_texto(texto, personajes: dict) -> str:
 
 
 def _cantidad_en_texto(texto) -> int:
+    return _cantidad_uom_en_texto(texto)[0]
+
+
+def _cantidad_uom_en_texto(texto, uoms=()) -> tuple:
+    """(cantidad, unidad) del mensaje: «3 medias docenas» → (3, Media Docena)
+    si la prenda maneja esa unidad; «x2» o «2 conjuntos» → (2, "")."""
     t = _norm(texto)
+    for u in sorted((u for u in uoms if u), key=lambda u: -len(u)):
+        patron = r"\s+".join(re.escape(w) + r"(?:es|s)?" for w in _norm(u).split())
+        m = re.search(rf"\b(?:(\d{{1,3}})\s*)?{patron}\b", t)
+        if m:
+            return max(cint(m.group(1) or 1), 1), u
     m = re.search(r"\bx\s*(\d{1,2})\b", t) or re.search(r"\b(\d{1,2})\s*(conjuntos?|juegos?|sets?)\b", t)
-    return max(cint(m.group(1)), 1) if m else 1
+    return (max(cint(m.group(1)), 1) if m else 1), ""
+
+
+# Palabras que acompañan al «mío» sin decir nada más.
+_RELLENO = set("""mio mia mios mias yo me lo la el los las de del un una uno quiero quisiera porfa porfavor
+    por favor plis pls gracias si x conjunto conjuntos juego juegos set sets ese esa este esta ok va
+    docena docenas media medias unidad unidades par pares""".split())
+
+
+def _es_consulta(texto, alias="") -> bool:
+    """El texto trae algo más que «mío», el personaje y la cantidad: una
+    pregunta, una instrucción, una talla... El bot no lo interpreta; lo marca
+    para que el vendedor lo lea."""
+    if "?" in (texto or ""):
+        return True
+    t = f" {_norm(texto)} "
+    if alias:
+        t = t.replace(f" {_norm(alias)} ", " ")
+    return any(w not in _RELLENO and not re.fullmatch(r"x?\d{1,2}", w) for w in t.split())
 
 
 # ---------------------------------------------------------------------------
@@ -143,19 +206,19 @@ def _reacomodar(sesion: str, alias: str):
     if not alias:
         return
     ses = frappe.get_doc(SESION, sesion)
-    per = next((p for p in ses.personajes if _norm(p.alias) == _norm(alias)), None)
-    unidades = cint(per.unidades) if per else 0
+    per = _personajes(ses).get(_norm(alias))
+    unidades = flt(per["unidades"]) if per else 0
     pedidos = frappe.get_all(
         PEDIDO, filters={"sesion": sesion, "estado": ["in", OCUPAN + ("En espera",)]},
-        fields=["name", "alias", "estado", "cantidad", "llegada"], order_by="llegada asc, creation asc",
+        fields=["name", "alias", "estado", "cantidad", "uom", "llegada"], order_by="llegada asc, creation asc",
     )
     pedidos = [p for p in pedidos if _norm(p.alias) == _norm(alias)]
-    libres = unidades - sum(cint(p.cantidad) or 1 for p in pedidos if p.estado not in ("Mío", "En espera"))
+    libres = unidades - sum(_cant_stock(p, per) for p in pedidos if p.estado not in ("Mío", "En espera"))
     for p in pedidos:
         if p.estado not in ("Mío", "En espera"):
             continue
-        cant = cint(p.cantidad) or 1
-        nuevo = "Mío" if libres >= cant else "En espera"
+        cant = _cant_stock(p, per)
+        nuevo = "Mío" if libres + 1e-9 >= cant else "En espera"
         if nuevo == "Mío":
             libres -= cant
         if nuevo != p.estado:
@@ -172,7 +235,7 @@ def get_contexto(company: str = None) -> dict:
     sesiones recientes."""
     from facex_multi.api.permissions import (
         get_facex_allowed_price_lists, get_facex_allowed_warehouses, get_facex_can_edit_price,
-        get_facex_default_price_list, get_facex_default_sales_partner, get_facex_default_warehouse,
+        get_facex_default_bfel_status, get_facex_default_price_list, get_facex_default_sales_partner, get_facex_default_warehouse,
         get_facex_flete_item, get_facex_user_sales_partner, _value,
     )
     from facex_multi.api.recargo import get_flete_rate
@@ -195,6 +258,7 @@ def get_contexto(company: str = None) -> dict:
             k: cint(p.get(k)) for k in (
                 "live_acceso", "live_sesiones", "live_facturar", "puede_guardar", "puede_validar",
                 "puede_certificar", "crea_clientes", "puede_editar_guias_transporte", "puede_editar_precio",
+                "puede_cambiar_password",
             )
         },
         "defaults": {
@@ -204,6 +268,7 @@ def get_contexto(company: str = None) -> dict:
             "lista_precios": lista,
             "incluir_flete": 1,
             "linea_whatsapp": _tel8(_value(company, "live_whatsapp")),
+            "bfel_status": _bfel_status_live(get_facex_default_bfel_status(company)),
         },
         "listas_permitidas": get_facex_allowed_price_lists(company),
         "bodegas_permitidas": get_facex_allowed_warehouses(company, "venta"),
@@ -238,6 +303,13 @@ def guardar_sesion(data_json: str) -> dict:
         if f in data:
             doc.set(f, data.get(f) or None)
     doc.fecha = doc.fecha or today()
+    if "bfel_status" in data:
+        if data["bfel_status"] not in BFEL_STATUS_LIVE:
+            frappe.throw("El estado FEL de la sesión debe ser «00 No enviar» o «01 Enviar».")
+        doc.bfel_status = data["bfel_status"]
+    elif not doc.bfel_status:
+        from facex_multi.api.permissions import get_facex_default_bfel_status
+        doc.bfel_status = _bfel_status_live(get_facex_default_bfel_status(company))
     if "linea_whatsapp" in data:
         linea = _tel8(data.get("linea_whatsapp"))
         if linea and len(linea) != 8:
@@ -282,7 +354,7 @@ def guardar_sesion(data_json: str) -> dict:
             if _norm(alias) in vistos:
                 frappe.throw(f"El personaje «{alias}» está repetido.")
             vistos.add(_norm(alias))
-            doc.append("personajes", {"alias": alias, "unidades": max(cint(r.get("unidades")), 0),
+            doc.append("personajes", {"alias": alias, "unidades": max(flt(r.get("unidades")), 0),
                                       "foto": r.get("foto") or "", "notas": r.get("notas") or ""})
     if "prendas" in data:
         doc.prendas = []
@@ -298,7 +370,12 @@ def guardar_sesion(data_json: str) -> dict:
         frappe.throw("Hay prendas de personajes que no existen: " + ", ".join(huerfanas))
     sin_prendas = [p.alias for p in doc.personajes if not any(_norm(r.alias) == _norm(p.alias) for r in doc.prendas)]
     if sin_prendas:
-        frappe.throw("Cada personaje necesita al menos una prenda. Sin prendas: " + ", ".join(sin_prendas))
+        frappe.throw("Cada personaje necesita su prenda. Sin prenda: " + ", ".join(sin_prendas))
+    # Un personaje = una prenda.
+    varias = sorted({r.alias for r in doc.prendas
+                     if sum(_norm(x.alias) == _norm(r.alias) for x in doc.prendas) > 1})
+    if varias:
+        frappe.throw("Cada personaje lleva una sola prenda. Con varias: " + ", ".join(varias))
 
     doc.flags.ignore_permissions = True
     doc.save()
@@ -318,7 +395,7 @@ def get_sesion(name: str) -> dict:
     pedidos = frappe.get_all(
         PEDIDO, filters={"sesion": ses.name},
         fields=["name", "llegada", "estado", "origen", "telefono", "nombre_wa", "cliente", "cliente_nombre",
-                "alias", "cantidad", "mensaje", "captura", "cotizacion", "metodo_pago",
+                "alias", "cantidad", "uom", "motivo_cancelacion", "mensaje", "consulta", "captura", "cotizacion", "metodo_pago",
                 "referencia_pago", "numero_guia", "notas"],
         order_by="llegada asc, creation asc",
     )
@@ -329,44 +406,132 @@ def get_sesion(name: str) -> dict:
         if not per:
             continue
         if p.estado in OCUPAN:
-            per["ocupados"] += cint(p.cantidad) or 1
+            per["ocupados"] += _cant_stock(p, per)
         elif p.estado == "En espera":
-            per["en_espera"] += cint(p.cantidad) or 1
+            per["en_espera"] += _cant_stock(p, per)
 
-    # Por cliente
-    clientes = {}
+    # Cotizado / facturado por pedido, según el documento (puede haberse
+    # validado desde FacEx clásico sin pasar por «Facturar listos»).
+    docs = {d.name: d for d in frappe.get_all(
+        "Sales Invoice", filters={"name": ["in", list({p.cotizacion for p in pedidos if p.cotizacion}) or [""]]},
+        fields=["name", "docstatus", "grand_total", "bfel_status", "bfel_uuid", "bfel_pago_contra_entrega",
+                "custom_pagado"])}
     for p in pedidos:
-        if not p.cliente or p.estado in ("Cancelado", "Por revisar"):
-            continue
-        c = clientes.setdefault(p.cliente, {
-            "cliente": p.cliente, "nombre": p.cliente_nombre or p.cliente, "telefono": p.telefono,
-            "pedidos": [], "conjuntos": 0, "subtotal": 0.0, "cotizacion": "", "estados": set(),
-        })
-        c["pedidos"].append(p.name)
-        c["estados"].add(p.estado)
-        if p.estado in EN_COTIZACION or p.estado == "Facturado":
-            per = personajes.get(_norm(p.alias)) or {}
-            c["conjuntos"] += cint(p.cantidad) or 1
-            c["subtotal"] += flt(per.get("precio")) * (cint(p.cantidad) or 1)
-        if p.cotizacion:
-            c["cotizacion"] = p.cotizacion
-    for c in clientes.values():
-        c["estados"] = sorted(c["estados"])
-        if c["cotizacion"]:
-            c["cotizacion_info"] = frappe.db.get_value(
-                "Sales Invoice", c["cotizacion"],
-                ["docstatus", "grand_total", "bfel_status", "bfel_uuid", "bfel_pago_contra_entrega"], as_dict=True)
+        d = docs.get(p.cotizacion)
+        p["facturada"] = 1 if (p.estado == "Facturado" or (d and d.docstatus == 1)) else 0
+        p["cotizada"] = 1 if (d and d.docstatus == 0) else 0
+        p["uom"] = p.uom or (personajes.get(_norm(p.alias)) or {}).get("uom") or ""
 
     d = ses.as_dict()
     return {
         "sesion": {k: d.get(k) for k in ("name", "titulo", "company", "fecha", "estado", "abierta_desde", "linea_whatsapp",
-                                          "vendedor", "bodega", "lista_precios", "incluir_flete")},
+                                          "vendedor", "bodega", "lista_precios", "incluir_flete", "bfel_status")},
         "personajes": list(personajes.values()),
         "prendas": [{"alias": r.alias, "item_code": r.item_code, "item_name": r.item_name, "qty": r.qty}
                     for r in ses.prendas],
         "pedidos": pedidos,
-        "clientes": sorted(clientes.values(), key=lambda c: c["nombre"] or ""),
+        "documentos": _documentos(pedidos, personajes, docs),
     }
+
+
+def _documentos(pedidos, personajes, docs) -> list:
+    """Pestaña «Cotizar y Facturar»: una tarjeta por documento de venta (y una
+    por cliente con lo que aún no está en ninguno), en su grupo. Como en
+    FacEx, la forma de pago se indica en la factura, no en la cotización:
+    Cotizaciones → por_cotizar · por_confirmar
+    Facturación  → listos (borrador confirmado) · por_forma_pago (facturada sin
+    pago ni contra entrega) · pendiente_guia (contra entrega sin guía) ·
+    facturadas (ciclo completo)."""
+    out = {}
+    for p in pedidos:
+        if not p.cliente or p.estado in ("Cancelado", "Por revisar", "En espera"):
+            continue
+        d = docs.get(p.cotizacion) if p.cotizacion else None
+        if not d and p.estado not in EN_COTIZACION:
+            continue
+        key = d.name if d else f"cli:{p.cliente}"
+        doc = out.setdefault(key, {
+            "key": key, "cliente": p.cliente, "nombre": p.cliente_nombre or p.cliente, "telefono": p.telefono,
+            "cotizacion": d.name if d else "", "info": dict(d) if d else {}, "pedidos": [], "lineas": [],
+            "estados": set(), "subtotal": 0.0, "numero_guia": "", "consultas": [], "tiene_consultas": 0,
+        })
+        per = personajes.get(_norm(p.alias)) or {}
+        doc["pedidos"].append(p.name)
+        doc["estados"].add(p.estado)
+        doc["lineas"].append({"pedido": p.name, "alias": p.alias, "cantidad": cint(p.cantidad) or 1,
+                              "uom": p.uom, "estado": p.estado})
+        doc["subtotal"] += flt(per.get("precio")) * _cant_stock(p, per)
+        if p.numero_guia:
+            doc["numero_guia"] = p.numero_guia
+        if p.mensaje:
+            doc["consultas"].append({"pedido": p.name, "alias": p.alias, "llegada": str(p.llegada or ""),
+                                     "mensaje": p.mensaje, "consulta": cint(p.consulta)})
+            doc["tiene_consultas"] = doc["tiene_consultas"] or cint(p.consulta)
+        if p.metodo_pago:
+            doc["metodo_pago"], doc["referencia_pago"] = p.metodo_pago, p.referencia_pago or ""
+    abiertas = {}
+    for doc in out.values():
+        if doc["info"].get("docstatus") == 0:
+            abiertas.setdefault(doc["cliente"], []).append(doc["cotizacion"])
+    for doc in out.values():
+        doc["estados"] = sorted(doc["estados"])
+        st = doc["info"].get("docstatus")
+        if not doc["cotizacion"]:
+            doc["grupo"] = "por_cotizar"
+            doc["abiertas"] = abiertas.get(doc["cliente"], [])
+        elif st == 0:
+            doc["grupo"] = "listos" if _listo_para_facturar(doc["estados"]) else "por_confirmar"
+        elif st == 2:
+            doc["grupo"] = "facturadas"
+        elif cint(doc["info"].get("bfel_pago_contra_entrega")):
+            doc["grupo"] = "facturadas" if doc["numero_guia"] else "pendiente_guia"
+        elif not cint(doc["info"].get("custom_pagado")):
+            doc["grupo"] = "por_forma_pago"
+        else:
+            doc["grupo"] = "facturadas"
+    return sorted(out.values(), key=lambda d: ((d["nombre"] or "").lower(), d["cotizacion"]))
+
+
+def _listo_para_facturar(estados) -> bool:
+    """Todos los pedidos confirmados (Pagado / Contra entrega son de antes,
+    cuando el cobro se marcaba en la cotización)."""
+    return bool(estados) and set(estados) <= {"Confirmado", "Pagado", "Contra entrega"}
+
+
+def _info_item(item_code, bodega, price_list) -> dict:
+    it = frappe.db.get_value("Item", item_code, ["item_name", "image", "stock_uom"], as_dict=True) or {}
+    stock = flt(frappe.db.get_value("Bin", {"item_code": item_code, "warehouse": bodega}, "actual_qty")) if bodega else None
+    return {"item_code": item_code, "item_name": it.get("item_name") or item_code, "image": it.get("image") or "",
+            "uom": it.get("stock_uom") or "", "stock": stock, "precio": _precio(item_code, price_list)}
+
+
+@frappe.whitelist()
+def item_escaneado(txt: str, bodega: str = None, price_list: str = None, company: str = None) -> dict:
+    """Código leído con el escáner (QR o barras) o escrito: código de barras
+    exacto o código de producto exacto, de la compañía. Devuelve lo que la
+    sesión muestra del ítem: nombre, foto principal, stock en la bodega y precio."""
+    from facex_multi.api.item import _variantes_layout_teclado
+
+    company = _company(company)
+    _require(company, "live_sesiones")
+    txt = (txt or "").strip()
+    item_code = None
+    for cand in _variantes_layout_teclado(txt) if txt else []:
+        item_code = frappe.db.get_value("Item Barcode", {"barcode": cand}, "parent") or (
+            cand if frappe.db.exists("Item", cand) else None)
+        if item_code:
+            break
+    it = frappe.db.get_value("Item", item_code, ["disabled", "bfel_company"], as_dict=True) if item_code else None
+    if not it or it.disabled or (it.bfel_company and it.bfel_company != company):
+        frappe.throw(f"No se encontró un producto con el código «{txt}».")
+    return _info_item(item_code, bodega, price_list)
+
+
+@frappe.whitelist()
+def info_items(items_json: str, bodega: str = None, price_list: str = None) -> dict:
+    """Nombre, foto, stock en la bodega y precio de los ítems de la sesión."""
+    items = frappe.parse_json(items_json) or []
+    return {i: _info_item(i, bodega, price_list) for i in items if i and frappe.db.exists("Item", i)}
 
 
 @frappe.whitelist()
@@ -429,7 +594,7 @@ def buscar_cliente_telefono(telefono: str, company: str = None) -> dict:
 # ---------------------------------------------------------------------------
 
 def _crear_pedido(ses, telefono, alias="", cantidad=1, nombre="", mensaje="", llegada=None,
-                  origen="Manual", wa_msg_id=None, cliente=None) -> "frappe.Document":
+                  origen="Manual", wa_msg_id=None, cliente=None, uom="") -> "frappe.Document":
     personajes = _personajes(ses)
     alias = (alias or "").strip()
     if alias:
@@ -446,6 +611,7 @@ def _crear_pedido(ses, telefono, alias="", cantidad=1, nombre="", mensaje="", ll
         "estado": "Mío" if (reconocido and cliente) else "Por revisar",
         "origen": origen, "telefono": _tel8(telefono) or telefono, "nombre_wa": nombre or "",
         "cliente": cliente or None, "alias": alias, "cantidad": max(cint(cantidad), 1),
+        "uom": _uom_valida(personajes.get(_norm(alias)), uom) or None,
         "mensaje": mensaje or "", "wa_msg_id": wa_msg_id or None,
     })
     ped.flags.ignore_permissions = True
@@ -457,17 +623,26 @@ def _crear_pedido(ses, telefono, alias="", cantidad=1, nombre="", mensaje="", ll
 
 @frappe.whitelist()
 def registrar_mio(sesion: str, telefono: str, alias: str = "", cantidad: int = 1, nombre: str = "",
-                  captura: str = "", mensaje: str = "", llegada: str = None, cliente: str = None) -> dict:
+                  captura: str = "", mensaje: str = "", llegada: str = None, cliente: str = None,
+                  uom: str = "") -> dict:
     """Registro manual desde la bandeja. `captura` = file_url ya subido (opcional)."""
     ses = _sesion(sesion)
     _require(ses.company, "live_acceso")
     if ses.estado != "Abierta":
         frappe.throw("La sesión está cerrada.")
-    ped = _crear_pedido(ses, telefono, alias, cantidad, nombre, mensaje, llegada, "Manual", cliente=cliente)
+    ped = _crear_pedido(ses, telefono, alias, cantidad, nombre, mensaje, llegada, "Manual", cliente=cliente, uom=uom)
     if captura:
         _adjuntar_url(ped, captura)
     frappe.db.commit()
     return {"name": ped.name, "estado": frappe.db.get_value(PEDIDO, ped.name, "estado")}
+
+
+def _uom_valida(per, uom) -> str:
+    """La unidad pedida si la prenda del personaje la maneja; si no, ninguna
+    (= unidad de inventario)."""
+    if not uom or not per:
+        return ""
+    return uom if uom in {u["uom"] for u in per.get("uoms") or []} else ""
 
 
 def _adjuntar_url(ped, file_url):
@@ -491,6 +666,8 @@ def actualizar_pedido(name: str, data_json: str) -> dict:
     for f in ("telefono", "nombre_wa", "cantidad", "metodo_pago", "referencia_pago", "numero_guia", "notas"):
         if f in data:
             ped.set(f, data[f])
+    if "uom" in data:
+        ped.uom = _uom_valida(_personajes(ses).get(_norm(data.get("alias", ped.alias))), data["uom"]) or None
     if "cliente" in data:
         ped.cliente = data["cliente"] or None
     if "alias" in data:
@@ -509,16 +686,55 @@ def actualizar_pedido(name: str, data_json: str) -> dict:
         # Confirmar / cobrar a alguien En espera solo si ya le tocó conjunto.
         if ped.estado == "En espera" and nuevo != "Cancelado":
             frappe.throw("El pedido está En espera: sube solo cuando se libere un conjunto.")
+        if nuevo == "Cancelado":
+            if data.get("motivo_cancelacion") not in MOTIVOS_CANCELACION:
+                frappe.throw("Elija el motivo de la cancelación.")
+            ped.motivo_cancelacion = data["motivo_cancelacion"]
         ped.estado = nuevo
     elif ped.estado == "Por revisar" and ped.cliente and ped.alias:
         ped.estado = "Mío"  # ya revisado: entra a la cola en su orden de llegada
+
+    antes = frappe.db.get_value(PEDIDO, ped.name, ["cliente", "alias", "cantidad", "uom", "estado"], as_dict=True)
+    cotizacion_antes = ped.cotizacion
+    cambio_conjuntos = ped.cotizacion and any(
+        str(antes.get(f) or "") != str(ped.get(f) or "") for f in ("cliente", "alias", "cantidad", "uom", "estado"))
+    if ped.cotizacion and (ped.cliente != antes.cliente or ped.estado == "Cancelado"):
+        ped.cotizacion = None  # sale del documento: era de otro cliente o se canceló
 
     ped.flags.ignore_permissions = True
     ped.save()
     for a in {alias_antes, ped.alias}:
         _reacomodar(ses.name, a)
+    aviso = _resincronizar(ses, cotizacion_antes) if cambio_conjuntos else ""
     frappe.db.commit()
-    return {"name": ped.name, "estado": frappe.db.get_value(PEDIDO, ped.name, "estado")}
+    return {"name": ped.name, "estado": frappe.db.get_value(PEDIDO, ped.name, "estado"), "aviso": aviso}
+
+
+def _resincronizar(ses, inv) -> str:
+    """Un cambio en la bandeja (personaje, cantidad, unidad, cliente, cancelar)
+    se refleja en la cotización en borrador: se vuelve a armar con los pedidos
+    que siguen en ella. Si ya no le queda ninguno, se elimina el borrador
+    (con el permiso de FacEx para eliminar borradores). Las facturas validadas
+    no se tocan."""
+    if not inv or frappe.db.get_value("Sales Invoice", inv, "docstatus") != 0:
+        return ""
+    if not _perms(ses.company).get("puede_guardar"):
+        return f"La cotización {inv} no se actualizó: no tiene permiso para guardar."
+    pedidos = _pedidos_doc(ses, inv)
+    if pedidos:
+        _armar(ses, pedidos[0].cliente, pedidos, inv)
+        return ""
+    return _eliminar_borrador(inv)
+
+
+def _eliminar_borrador(inv) -> str:
+    from facex_multi.api.invoice import delete_draft_invoice
+    try:
+        delete_draft_invoice(inv)
+        return f"La cotización {inv} se eliminó (ya no tenía pedidos)."
+    except frappe.PermissionError:
+        frappe.clear_messages()
+        return f"La cotización {inv} quedó en borrador: no tiene permiso para eliminar borradores."
 
 
 @frappe.whitelist()
@@ -562,30 +778,65 @@ def _guardar_imagen(ped, b64: str, filename: str) -> str:
 # Cotización por cliente
 # ---------------------------------------------------------------------------
 
-def _pedidos_cliente(ses, cliente, estados=EN_COTIZACION):
-    return frappe.get_all(PEDIDO, filters={"sesion": ses.name, "cliente": cliente, "estado": ["in", estados]},
-                          fields=["name", "alias", "cantidad", "estado", "cotizacion", "metodo_pago",
-                                  "referencia_pago"], order_by="llegada asc")
+_CAMPOS_PED = ["name", "cliente", "alias", "cantidad", "uom", "estado", "cotizacion", "metodo_pago",
+               "referencia_pago", "numero_guia"]
 
 
-def _cotizacion_abierta(pedidos) -> str:
-    for p in pedidos:
-        if p.cotizacion and frappe.db.get_value("Sales Invoice", p.cotizacion, "docstatus") == 0:
-            return p.cotizacion
-    return ""
+def _pedidos_doc(ses, inv, estados=EN_COTIZACION):
+    """Pedidos de la sesión que están en el documento de venta `inv`."""
+    return frappe.get_all(PEDIDO, filters={"sesion": ses.name, "cotizacion": inv, "estado": ["in", estados]},
+                          fields=_CAMPOS_PED, order_by="llegada asc")
+
+
+def _pedidos_sin_documento(ses, cliente):
+    return frappe.get_all(PEDIDO, filters={"sesion": ses.name, "cliente": cliente, "estado": ["in", EN_COTIZACION],
+                                           "cotizacion": ["is", "not set"]},
+                          fields=_CAMPOS_PED, order_by="llegada asc")
+
+
+def _borradores_cliente(ses, cliente) -> list:
+    invs = {p.cotizacion for p in frappe.get_all(
+        PEDIDO, filters={"sesion": ses.name, "cliente": cliente, "cotizacion": ["is", "set"]}, fields=["cotizacion"])}
+    return [i for i in invs if frappe.db.get_value("Sales Invoice", i, "docstatus") == 0]
+
+
+def _doc_de_sesion(ses, inv, cliente=None):
+    """Valida que `inv` sea un documento de esta sesión (y del cliente)."""
+    filtros = {"sesion": ses.name, "cotizacion": inv}
+    if cliente:
+        filtros["cliente"] = cliente
+    if not inv or not frappe.db.exists(PEDIDO, filtros):
+        frappe.throw(f"El documento {inv} no es de esta sesión.")
+    return frappe.db.get_value("Sales Invoice", inv, ["name", "docstatus", "customer"], as_dict=True)
 
 
 @frappe.whitelist()
-def armar_cotizacion(sesion: str, cliente: str) -> dict:
-    """Crea o actualiza la cotización (Sales Invoice en borrador) del cliente con
-    todos sus conjuntos de la sesión, más el flete de la lista."""
-    from facex_multi.api.invoice import get_defaults, save_draft
-
+def armar_cotizacion(sesion: str, cliente: str, destino: str = "") -> dict:
+    """Cotiza los pedidos del cliente que aún no están en ningún documento.
+    `destino`: el número de una cotización en borrador del cliente para
+    sumarlos a ella, o «nueva» para crear otra. Si el cliente ya tiene una
+    abierta y no se indica, se pregunta (la pantalla manda el destino)."""
     ses = _sesion(sesion)
     _require(ses.company, "live_acceso", "puede_guardar")
-    pedidos = _pedidos_cliente(ses, cliente)
-    if not pedidos:
-        frappe.throw("El cliente no tiene conjuntos apartados en esta sesión.")
+    nuevos = _pedidos_sin_documento(ses, cliente)
+    if not nuevos:
+        frappe.throw("El cliente no tiene pedidos pendientes de cotizar en esta sesión.")
+    abiertas = _borradores_cliente(ses, cliente)
+    if not destino:
+        if abiertas:
+            frappe.throw("El cliente ya tiene una cotización abierta: elija si los suma a ella o crea una nueva.")
+        destino = "nueva"
+    if destino == "nueva":
+        return _armar(ses, cliente, nuevos, None)
+    if destino not in abiertas:
+        frappe.throw(f"La cotización {destino} no está abierta para este cliente.")
+    return _armar(ses, cliente, _pedidos_doc(ses, destino) + nuevos, destino)
+
+
+def _armar(ses, cliente, pedidos, nombre) -> dict:
+    """Crea (nombre=None) o rehace la cotización (Sales Invoice en borrador)
+    con exactamente estos pedidos, más el flete de la lista."""
+    from facex_multi.api.invoice import get_defaults, save_draft
 
     personajes = _personajes(ses)
     items = {}
@@ -593,8 +844,11 @@ def armar_cotizacion(sesion: str, cliente: str) -> dict:
         per = personajes.get(_norm(p.alias))
         if not per:
             frappe.throw(f"El personaje «{p.alias}» ya no está en la sesión.")
+        uom = p.uom or per["uom"]
+        factor = next((u["factor"] for u in per["uoms"] if u["uom"] == uom), 1.0)
         for r in per["prendas"]:
-            row = items.setdefault(r["item_code"], {"item_code": r["item_code"], "qty": 0, "rate": r["rate"]})
+            row = items.setdefault((r["item_code"], uom), {
+                "item_code": r["item_code"], "qty": 0, "uom": uom, "rate": r["rate"] * factor})
             row["qty"] += r["qty"] * (cint(p.cantidad) or 1)
 
     defaults = get_defaults(ses.company)
@@ -603,7 +857,6 @@ def armar_cotizacion(sesion: str, cliente: str) -> dict:
     cust = frappe.db.get_value("Customer", cliente, ["customer_name", "tax_id", "bfel_id_receptor"],
                                as_dict=True) or {}
     contra = any(p.estado == "Contra entrega" for p in pedidos)
-    nombre = _cotizacion_abierta(pedidos)
 
     payload = {
         "doctype": "Sales Invoice",
@@ -619,7 +872,7 @@ def armar_cotizacion(sesion: str, cliente: str) -> dict:
         "sales_partner": ses.vendedor or "",
         "selling_price_list": ses.lista_precios or "",
         "bfel_establecimiento": str(est) if est is not None else "",
-        "bfel_status": defaults.get("bfel_status_default") or "01 Enviar",
+        "bfel_status": ses.bfel_status or defaults.get("bfel_status_default") or "01 Enviar",
         "bfel_nit": cust.get("bfel_id_receptor") or cust.get("tax_id") or "CF",
         "bfel_nombre": cust.get("customer_name") or "",
         "bfel_pago_contra_entrega": 1 if contra else 0,
@@ -627,7 +880,7 @@ def armar_cotizacion(sesion: str, cliente: str) -> dict:
         "facex_flete_amount": 0,
         "terms": f"Live {ses.titulo or ses.name} — {', '.join(p.alias for p in pedidos)}",
         "items": [{
-            "item_code": r["item_code"], "qty": r["qty"], "rate": r["rate"],
+            "item_code": r["item_code"], "qty": r["qty"], "rate": r["rate"], "uom": r["uom"],
             "warehouse": ses.bodega or defaults.get("default_warehouse") or "",
             "cost_center": defaults.get("default_cost_center") or "",
         } for r in items.values()],
@@ -652,7 +905,7 @@ def armar_cotizacion(sesion: str, cliente: str) -> dict:
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
-def anotar_guia(sesion: str, cliente: str, numero_guia: str, transportista: str = None) -> dict:
+def anotar_guia(sesion: str, cotizacion: str, numero_guia: str, transportista: str = None) -> dict:
     """Solo se anota el número de guía; lo demás se llena solo. La liquidación
     del transportista sigue su flujo normal."""
     from facex_multi.api.invoice import clean_numero_guia, save_guias_transporte
@@ -662,12 +915,10 @@ def anotar_guia(sesion: str, cliente: str, numero_guia: str, transportista: str 
     numero = clean_numero_guia(numero_guia)
     if not numero:
         frappe.throw("Escriba el número de guía.")
-    pedidos = _pedidos_cliente(ses, cliente, EN_COTIZACION + ("Facturado",))
-    inv = next((p.cotizacion for p in pedidos if p.cotizacion), "")
-    if not inv:
-        frappe.throw("Primero arme la cotización del cliente.")
-
+    inv = _doc_de_sesion(ses, cotizacion).name
+    pedidos = _pedidos_doc(ses, inv, EN_COTIZACION + ("Facturado",))
     si = frappe.get_doc("Sales Invoice", inv)
+    cliente = si.customer
     transportista = transportista or (
         TRANSPORTISTA_DEFAULT if frappe.db.exists("FacEx Transportista", TRANSPORTISTA_DEFAULT) else None)
     if not transportista:
@@ -687,7 +938,13 @@ def anotar_guia(sesion: str, cliente: str, numero_guia: str, transportista: str 
         "destino": (destino[0][0] if destino and destino[0][0] else "") or "",
         "monto_cod": flt(si.grand_total) if cint(si.bfel_pago_contra_entrega) else 0,
     }
-    if si.docstatus == 1:
+    # Cambiar la guía ya anotada reemplaza su fila en vez de sumar otra.
+    anterior = next((p.numero_guia for p in pedidos if p.numero_guia), "")
+    fila = next((g for g in si.get("bfel_guias_transportista") or [] if anterior and g.numero_guia == anterior), None)
+    if fila:
+        fila.update({"transportista": transportista, "numero_guia": numero, "monto_cod": row["monto_cod"]})
+        si.save()
+    elif si.docstatus == 1:
         save_guias_transporte(si.name, frappe.as_json([row]))
     else:
         si.append("bfel_guias_transportista", row)
@@ -699,36 +956,143 @@ def anotar_guia(sesion: str, cliente: str, numero_guia: str, transportista: str 
 
 
 # ---------------------------------------------------------------------------
+# Acciones por documento (pestaña «Cotizar y Facturar»)
+# ---------------------------------------------------------------------------
+
+# En la cotización solo se confirma; la forma de pago va en la factura.
+ESTADOS_DOCUMENTO = ("Confirmado", "Pagado", "Contra entrega")
+METODOS_PAGO = ("Transferencia", "Depósito", "Efectivo", "Tarjeta de Crédito")
+
+
+@frappe.whitelist()
+def estado_documento(sesion: str, cotizacion: str, estado: str, metodo_pago: str = "",
+                     referencia_pago: str = "") -> dict:
+    """Cotización en borrador: Confirmado (lo confirmó el cliente por WA).
+    Factura ya validada: indicar la forma de pago, Pagado (método y
+    referencia) o Contra entrega, con los pagos de FacEx (save_payments)."""
+    ses = _sesion(sesion)
+    _require(ses.company, "live_acceso")
+    if estado not in ESTADOS_DOCUMENTO:
+        frappe.throw(f"Estado no válido: {estado}")
+    si = _doc_de_sesion(ses, cotizacion)
+    if si.docstatus == 0:
+        if estado != "Confirmado":
+            frappe.throw("La forma de pago se indica después de facturar.")
+        pedidos = _pedidos_doc(ses, cotizacion)
+        if not pedidos:
+            frappe.throw("El documento no tiene pedidos activos.")
+        for p in pedidos:
+            frappe.db.set_value(PEDIDO, p.name, {"estado": "Confirmado", "metodo_pago": None, "referencia_pago": None})
+        aviso = _resincronizar(ses, cotizacion)
+        frappe.db.commit()
+        return {"cotizacion": cotizacion, "estado": estado, "aviso": aviso}
+
+    if si.docstatus != 1:
+        frappe.throw("El documento está anulado.")
+    if estado == "Confirmado":
+        frappe.throw("La factura ya está validada.")
+    _registrar_pago(si, estado, metodo_pago, referencia_pago)
+    for p in _pedidos_doc(ses, cotizacion, ("Facturado",)):
+        frappe.db.set_value(PEDIDO, p.name, {
+            "metodo_pago": metodo_pago if estado == "Pagado" else "Contra Entrega",
+            "referencia_pago": referencia_pago if estado == "Pagado" else None,
+        })
+    frappe.db.commit()
+    return {"cotizacion": cotizacion, "estado": estado}
+
+
+def _registrar_pago(si, estado, metodo_pago="", referencia_pago=""):
+    """Pago por el total de la factura con save_payments (como la pestaña
+    Pagos de FacEx). Contra Entrega no genera Payment Entry y marca la
+    factura contra entrega."""
+    from facex_multi.api.invoice import save_payments
+
+    if estado == "Pagado" and metodo_pago not in METODOS_PAGO:
+        frappe.throw("Elija el método de pago.")
+    if cint(si.get("custom_pagado")):
+        frappe.throw("La factura ya tiene forma de pago; se cambia desde FacEx.")
+    pago = {
+        "payment_method": "Contra Entrega" if estado == "Contra entrega" else metodo_pago,
+        "payment_date": today(),
+        "reference": "" if estado == "Contra entrega" else (referencia_pago or ""),
+        "amount": flt(si.grand_total),
+    }
+    save_payments(si.name, frappe.as_json([pago]), "1")
+
+
+@frappe.whitelist()
+def cancelar_documento(sesion: str, cotizacion: str, motivo: str) -> dict:
+    """Cancela con su motivo todos los pedidos de una cotización en borrador
+    (ya tiene correlativo) y elimina el borrador con el permiso de FacEx para
+    eliminar borradores. Los conjuntos se liberan para los que estén en espera."""
+    ses = _sesion(sesion)
+    _require(ses.company, "live_acceso")
+    if motivo not in MOTIVOS_CANCELACION:
+        frappe.throw("Elija el motivo de la cancelación.")
+    si = _doc_de_sesion(ses, cotizacion)
+    if si.docstatus != 0:
+        frappe.throw("El documento ya está facturado: se anula desde FacEx, no desde el live.")
+    pedidos = _pedidos_doc(ses, cotizacion)
+    for p in pedidos:
+        frappe.db.set_value(PEDIDO, p.name, {"estado": "Cancelado", "motivo_cancelacion": motivo, "cotizacion": None})
+    for alias in {p.alias for p in pedidos}:
+        _reacomodar(ses.name, alias)
+    aviso = _eliminar_borrador(cotizacion)
+    frappe.db.commit()
+    return {"cancelados": len(pedidos), "aviso": aviso}
+
+
+@frappe.whitelist()
+def formato_vista(sesion: str, cotizacion: str) -> dict:
+    """Formato de impresión para la vista rápida del documento: el de
+    cotización en borrador, el de factura certificada si ya se validó."""
+    from facex_multi.api.whatsapp import _print_format
+
+    ses = _sesion(sesion)
+    _require(ses.company, "live_acceso")
+    si = _doc_de_sesion(ses, cotizacion)
+    return {"format": _print_format(ses.company, "factura" if si.docstatus == 1 else "cotizacion") or ""}
+
+
+# ---------------------------------------------------------------------------
 # Facturar en lote
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
-def facturar_listos(sesion: str) -> dict:
-    """Por cada cliente cuyos conjuntos están todos Pagados o Contra entrega:
-    actualiza la cotización, valida, certifica en FEL y registra el pago
-    (mismo orden que FacEx Screen: submit → certify → save_payments)."""
-    from facex_multi.api.invoice import certify_invoice, save_payments, submit_invoice
+def facturar_listos(sesion: str, cotizacion: str = None) -> dict:
+    """Por cada cotización en borrador con todos sus pedidos confirmados: la
+    rehace, valida y certifica en FEL (submit → certify, como FacEx Screen).
+    La forma de pago se indica después en la tarjeta de la factura; solo si
+    el pedido ya traía Pagado / Contra entrega (flujo anterior) se registra aquí.
+    Con `cotizacion`, solo esa (botón Facturar de la tarjeta)."""
+    from facex_multi.api.invoice import certify_invoice, submit_invoice
 
     ses = _sesion(sesion)
     _require(ses.company, "live_acceso", "live_facturar", "puede_guardar", "puede_validar", "puede_certificar")
 
-    activos = frappe.get_all(PEDIDO, filters={"sesion": ses.name, "estado": ["in", EN_COTIZACION]},
-                             fields=["cliente", "estado"])
-    por_cliente = {}
+    activos = frappe.get_all(PEDIDO, filters={"sesion": ses.name, "estado": ["in", EN_COTIZACION],
+                                              "cotizacion": ["is", "set"]},
+                             fields=["cotizacion", "cliente", "estado"])
+    por_doc = {}
     for p in activos:
-        por_cliente.setdefault(p.cliente, set()).add(p.estado)
-    listos = [c for c, est in por_cliente.items() if c and est <= {"Pagado", "Contra entrega"}]
+        por_doc.setdefault(p.cotizacion, {"cliente": p.cliente, "estados": set()})["estados"].add(p.estado)
+    listos = [inv for inv, x in por_doc.items()
+              if _listo_para_facturar(x["estados"])
+              and frappe.db.get_value("Sales Invoice", inv, "docstatus") == 0]
+    if cotizacion:
+        if cotizacion not in listos:
+            frappe.throw(f"{cotizacion} no está lista para facturar (todos sus pedidos deben estar confirmados).")
+        listos = [cotizacion]
 
     resultados = []
-    for cliente in listos:
-        res = {"cliente": cliente, "nombre": frappe.db.get_value("Customer", cliente, "customer_name")}
+    for inv in listos:
+        cliente = por_doc[inv]["cliente"]
+        res = {"cliente": cliente, "nombre": frappe.db.get_value("Customer", cliente, "customer_name"), "invoice": inv}
         try:
-            cot = armar_cotizacion(ses.name, cliente)
-            inv = cot["invoice"]
-            res["invoice"] = inv
+            pedidos = _pedidos_doc(ses, inv)
+            _armar(ses, cliente, pedidos, inv)
             submit_invoice(inv)
             frappe.db.commit()
-            pedidos = _pedidos_cliente(ses, cliente)
             for p in pedidos:
                 frappe.db.set_value(PEDIDO, p.name, "estado", "Facturado")
             frappe.db.commit()
@@ -748,23 +1112,21 @@ def facturar_listos(sesion: str) -> dict:
                 frappe.db.rollback()
                 res["error_fel"] = _msg(e)
 
-        try:
-            contra = any(p.estado == "Contra entrega" for p in pedidos)
-            pagado = next((p for p in pedidos if p.estado == "Pagado"), None)
-            pago = {
-                "payment_method": "Contra Entrega" if contra else ((pagado and pagado.metodo_pago) or "Transferencia"),
-                "payment_date": today(),
-                "reference": "" if contra else ((pagado and pagado.referencia_pago) or ""),
-                "amount": flt(si.grand_total),
-            }
-            save_payments(inv, frappe.as_json([pago]), "1")
-            frappe.db.commit()
-        except Exception as e:
-            frappe.db.rollback()
-            res["error_pago"] = _msg(e)
+        contra = any(p.estado == "Contra entrega" for p in pedidos)
+        pagado = next((p for p in pedidos if p.estado == "Pagado"), None)
+        if contra or pagado:
+            try:
+                _registrar_pago(frappe.get_doc("Sales Invoice", inv), "Contra entrega" if contra else "Pagado",
+                                (pagado and pagado.metodo_pago) or "Transferencia",
+                                (pagado and pagado.referencia_pago) or "")
+                frappe.db.commit()
+                res["pago"] = True
+            except Exception as e:
+                frappe.db.rollback()
+                res["error_pago"] = _msg(e)
         resultados.append(res)
 
-    return {"resultados": resultados, "pendientes": len([c for c in por_cliente if c not in listos])}
+    return {"resultados": resultados, "pendientes": len([i for i in por_doc if i not in listos])}
 
 
 def _msg(e) -> str:
@@ -804,13 +1166,84 @@ def recibir_mio(linea: str, telefono: str, texto: str = "", nombre: str = "", ll
         return {"ignorado": f"la línea {linea} no tiene sesión abierta"}
     ses = frappe.get_doc(SESION, name)
 
-    alias = _alias_en_texto(texto, _personajes(ses))
-    ped = _crear_pedido(ses, telefono, alias, _cantidad_en_texto(texto), nombre, texto, llegada_dt,
-                        "Bot WhatsApp", wa_msg_id=msg_id)
+    personajes = _personajes(ses)
+    alias = _alias_en_texto(texto, personajes)
+    cant, uom = _cantidad_uom_en_texto(texto, [u["uom"] for u in (personajes.get(_norm(alias)) or {}).get("uoms", [])])
+    ped = _crear_pedido(ses, telefono, alias, cant, nombre, texto, llegada_dt,
+                        "Bot WhatsApp", wa_msg_id=msg_id, uom=uom)
+    if _es_consulta(texto, alias):
+        # «¿todavía hay Luffy? mío» no es un pedido seguro: lo decide el vendedor.
+        ped.db_set({"consulta": 1, "estado": "Por revisar"} if "?" in texto else {"consulta": 1})
+        if "?" in texto and alias:
+            _reacomodar(ses.name, alias)
     if imagen:
         _guardar_imagen(ped, imagen, imagen_nombre or "captura.jpg")
     frappe.db.commit()
     return {"pedido": ped.name, "estado": frappe.db.get_value(PEDIDO, ped.name, "estado"), "alias": alias}
+
+
+SEGUIMIENTO_MIN = 5  # minutos después del «mío» en que los mensajes del cliente se le juntan
+
+
+@frappe.whitelist()
+def recibir_seguimiento(linea: str, telefono: str, texto: str = "", llegada: str = None, msg_id: str = None,
+                        imagen: str = None, imagen_nombre: str = "captura.jpg", company: str = None) -> dict:
+    """Mensaje SIN «mío» que el cliente manda poco después de su «mío»: se le
+    junta a su último pedido del bot. Si el pedido no tiene personaje y el
+    texto lo nombra, se lo pone; si no tiene captura y llega una imagen, la
+    usa. Cualquier otra cosa (preguntas, tallas, instrucciones) queda en el
+    mensaje del pedido y lo marca «Tiene consultas»; nunca crea pedidos."""
+    company = _company(company)
+    _require(company, "live_acceso")
+    linea, tel = _tel8(linea), _tel8(telefono)
+    llegada_dt = get_datetime(llegada) if llegada else now_datetime()
+    ses_name = frappe.db.get_value(
+        SESION, {"company": company, "estado": "Abierta", "linea_whatsapp": linea,
+                 "abierta_desde": ["<=", llegada_dt]}, "name", order_by="abierta_desde desc")
+    if not ses_name:
+        return {"ignorado": f"la línea {linea} no tiene sesión abierta"}
+    name = frappe.db.get_value(
+        PEDIDO, {"sesion": ses_name, "telefono": tel, "origen": "Bot WhatsApp",
+                 "estado": ["not in", ("Cancelado", "Facturado")],
+                 "llegada": ["between", (add_to_date(llegada_dt, minutes=-SEGUIMIENTO_MIN), llegada_dt)]},
+        "name", order_by="llegada desc, creation desc")
+    if not name:
+        return {"ignorado": "sin «mío» reciente de ese teléfono"}
+    ped = frappe.get_doc(PEDIDO, name)
+    vistos = (ped.wa_seguimiento or "").split()
+    if msg_id and msg_id in vistos:
+        return {"ignorado": "duplicado", "pedido": name}
+
+    cambios, uso = {}, []
+    if imagen and not ped.captura:
+        _guardar_imagen(ped, imagen, imagen_nombre or "captura.jpg")
+        uso.append("captura")
+    texto = (texto or "").strip()
+    if texto:
+        alias = ""
+        if not ped.alias:
+            personajes = _personajes(frappe.get_doc(SESION, ses_name))
+            alias = _alias_en_texto(texto, personajes)
+            if alias:
+                cant, uom = _cantidad_uom_en_texto(
+                    f"{ped.mensaje or ''} {texto}", [u["uom"] for u in personajes[_norm(alias)]["uoms"]])
+                cambios.update({"alias": alias, "cantidad": cant, "uom": uom or None})
+                if ped.estado == "Por revisar" and ped.cliente and not ped.consulta:
+                    cambios["estado"] = "Mío"
+                uso.append("personaje")
+        if _es_consulta(texto, alias or ped.alias):
+            cambios["consulta"] = 1
+            uso.append("consulta")
+        cambios["mensaje"] = f"{ped.mensaje or ''}\n[{llegada_dt.strftime('%H:%M')}] {texto}".strip()
+    if msg_id:
+        cambios["wa_seguimiento"] = " ".join(vistos + [msg_id])
+    if cambios:
+        ped.db_set(cambios)
+    if "personaje" in uso:
+        _reacomodar(ses_name, cambios["alias"])
+    frappe.db.commit()
+    return {"pedido": name, "uso": uso, "estado": frappe.db.get_value(PEDIDO, name, "estado"),
+            "alias": cambios.get("alias") or ped.alias}
 
 
 @frappe.whitelist()
