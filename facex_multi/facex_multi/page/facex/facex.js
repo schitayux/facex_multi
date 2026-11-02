@@ -3446,8 +3446,9 @@ class EFastSalePage {
 		const inv = data.invoice || {};
 		const money = (n) => _fmtCurrency(n, inv.currency || "GTQ");
 		const date = (d) => (d ? frappe.datetime.str_to_user(d) : "—");
-		const row = (label, value, cls = "") =>
-			`<div class="ef-peek-row ${cls}"><span class="ef-peek-row-label">${_esc(label)}</span><span class="ef-peek-row-value">${value}</span></div>`;
+		// label se escapa; label_html es marcado ya armado (y escapado) por quien llama.
+		const row = (label, value, cls = "", label_html = null) =>
+			`<div class="ef-peek-row ${cls}"><span class="ef-peek-row-label">${label_html !== null ? label_html : _esc(label)}</span><span class="ef-peek-row-value">${value}</span></div>`;
 
 		this.$body.find("#ef-peek-sub").text(
 			`${inv.customer_name || inv.customer || "—"} · ${date(inv.posting_date)} · ${this._peek_status_label(inv)}`
@@ -3473,7 +3474,8 @@ class EFastSalePage {
 		const shown = items.slice(0, 8);
 		const items_html = shown.length
 			? shown.map((it) =>
-				row(`${it.qty}${this.company_config.mostrar_uom && it.uom ? ` <b>${_esc(it.uom)}</b>` : ""} × ${_esc(it.item_name || it.item_code || "")}`, money(it.amount))
+				row("", money(it.amount), "",
+					`${_esc(it.qty)}${this.company_config.mostrar_uom && it.uom ? ` <b>${_esc(it.uom)}</b>` : ""} × ${_esc(it.item_name || it.item_code || "")}`)
 			).join("") + (items.length > shown.length
 				? `<div class="ef-peek-muted">y ${items.length - shown.length} línea(s) más…</div>`
 				: "")
