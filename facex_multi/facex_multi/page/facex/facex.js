@@ -3173,6 +3173,12 @@ class EFastSalePage {
 				icon: icon(`<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>`),
 				action: () => { window.location.href = "/app/facex-comisiones"; },
 			},
+			p.analitica && {
+				label: "Analítica",
+				desc: "Clientes que recompran o dejaron de comprar, horarios, productos, crédito y tickets.",
+				icon: icon(`<path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>`),
+				action: () => { window.location.href = "/app/facex-analitica"; },
+			},
 			p.live_acceso && {
 				label: "Ventas por Live",
 				desc: "Pedidos «mío» del live por WhatsApp, cotizaciones y facturación en lote.",
@@ -3290,6 +3296,9 @@ class EFastSalePage {
 		}
 		if (p.comisionador) {
 			cmds.push({ group: "Pantallas", label: "Comisionador", run: () => { window.location.href = "/app/facex-comisiones"; } });
+		}
+		if (p.analitica) {
+			cmds.push({ group: "Pantallas", label: "Analítica", run: () => { window.location.href = "/app/facex-analitica"; } });
 		}
 		if (p.live_acceso) {
 			cmds.push({ group: "Pantallas", label: "Ventas por Live", run: () => { window.location.href = "/app/facex-live"; } });

@@ -58,6 +58,7 @@
   "reporte_ventas_vendedor",
   "reporte_cierre_general",
   "comisionador",
+  "analitica",
   "sec_3",
   "puede_compras",
   "sb_compras_docs",
@@ -491,6 +492,13 @@
    "fieldname": "comisionador",
    "fieldtype": "Check",
    "label": "Comisionador (Gerencia)"
+  },
+  {
+   "default": "0",
+   "description": "Página «Analítica» (Gerencia): recompra y clientes que dejaron de comprar, horas y días de mayor venta, contado / crédito / contra entrega, productos sin venta y para ofertar, productos que se compran juntos, pronóstico de crédito y tickets. Denegado por defecto.",
+   "fieldname": "analitica",
+   "fieldtype": "Check",
+   "label": "Analítica (Gerencia)"
   },
   {
    "fieldname": "sec_3",
@@ -1117,7 +1125,7 @@
   }
  ],
  "links": [],
- "modified": "2026-10-27 00:00:00.000000",
+ "modified": "2026-11-01 20:34:58.124132",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Perfil de Permisos",

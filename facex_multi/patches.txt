@@ -59,3 +59,4 @@ facex_multi.patches.v1_0.compras_reportes
 facex_multi.patches.v1_0.ventas_live
 facex_multi.patches.v1_0.ventas_live_lineas
 facex_multi.patches.v1_0.exige_vendedor
+facex_multi.patches.v1_0.analitica
