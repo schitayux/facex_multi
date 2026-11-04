@@ -157,7 +157,11 @@
   "live_acceso",
   "live_sesiones",
   "cb_live",
-  "live_facturar"
+  "live_facturar",
+  "sb_pagina_web",
+  "pagina_web_acceso",
+  "cb_pagina_web",
+  "pagina_web_gestionar"
  ],
  "fields": [
   {
@@ -1103,6 +1107,30 @@
    "description": "Además exige Validar y Certificar."
   },
   {
+   "fieldname": "sb_pagina_web",
+   "fieldtype": "Section Break",
+   "label": "Página web",
+   "description": "Solo aplica si la compañía tiene «Página web» activada en su Configuración de la Compañía."
+  },
+  {
+   "default": "0",
+   "fieldname": "pagina_web_acceso",
+   "fieldtype": "Check",
+   "label": "Ver pedidos en línea",
+   "description": "Pedidos que llegan de la página web de la compañía (llegan como cotización) y el dominio de la página."
+  },
+  {
+   "fieldname": "cb_pagina_web",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "pagina_web_gestionar",
+   "fieldtype": "Check",
+   "label": "Configurar la página web",
+   "description": "Publicar el catálogo y revisar las categorías automáticas de los productos."
+  },
+  {
    "default": "0",
    "description": "Reporte de cuentas por pagar por rangos de vencimiento, con el detalle de facturas por proveedor. Denegado por defecto.",
    "fieldname": "reporte_compras_antiguedad",
@@ -1125,7 +1153,7 @@
   }
  ],
  "links": [],
- "modified": "2026-11-01 20:34:58.124132",
+ "modified": "2026-11-04 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Perfil de Permisos",

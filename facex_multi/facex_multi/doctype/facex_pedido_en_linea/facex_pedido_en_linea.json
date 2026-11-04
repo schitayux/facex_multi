@@ -1,0 +1,211 @@
+{
+ "actions": [],
+ "creation": "2026-11-04 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "company",
+  "abbr",
+  "estado",
+  "cotizacion",
+  "cb_1",
+  "recibido_el",
+  "facturado_el",
+  "token",
+  "sb_cliente",
+  "comprador_nombre",
+  "empresa_cliente",
+  "nit",
+  "cliente",
+  "cb_2",
+  "correo",
+  "telefono",
+  "direccion",
+  "comentario",
+  "sb_articulos",
+  "articulos",
+  "sb_notas",
+  "notas",
+  "error"
+ ],
+ "fields": [
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Compañía",
+   "options": "Company",
+   "reqd": 1,
+   "in_standard_filter": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "abbr",
+   "fieldtype": "Data",
+   "label": "Abreviatura",
+   "hidden": 1,
+   "read_only": 1
+  },
+  {
+   "default": "Recibido",
+   "fieldname": "estado",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Estado",
+   "options": "Recibido\nCotizado\nFacturado\nCancelado",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cotizacion",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Cotización (factura en borrador)",
+   "options": "Sales Invoice",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "recibido_el",
+   "fieldtype": "Datetime",
+   "label": "Recibido el",
+   "read_only": 1
+  },
+  {
+   "fieldname": "facturado_el",
+   "fieldtype": "Datetime",
+   "label": "Facturado el",
+   "read_only": 1
+  },
+  {
+   "fieldname": "token",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Token",
+   "unique": 1,
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_cliente",
+   "fieldtype": "Section Break",
+   "label": "Cliente"
+  },
+  {
+   "fieldname": "comprador_nombre",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Nombre",
+   "read_only": 1
+  },
+  {
+   "fieldname": "empresa_cliente",
+   "fieldtype": "Data",
+   "label": "Empresa",
+   "read_only": 1
+  },
+  {
+   "fieldname": "nit",
+   "fieldtype": "Data",
+   "label": "NIT",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cliente",
+   "fieldtype": "Link",
+   "label": "Cliente",
+   "options": "Customer",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "correo",
+   "fieldtype": "Data",
+   "label": "Correo",
+   "options": "Email",
+   "read_only": 1
+  },
+  {
+   "fieldname": "telefono",
+   "fieldtype": "Data",
+   "label": "Teléfono",
+   "options": "Phone",
+   "read_only": 1
+  },
+  {
+   "fieldname": "direccion",
+   "fieldtype": "Small Text",
+   "label": "Dirección de entrega",
+   "read_only": 1
+  },
+  {
+   "fieldname": "comentario",
+   "fieldtype": "Small Text",
+   "label": "Comentario del cliente",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_articulos",
+   "fieldtype": "Section Break",
+   "label": "Productos solicitados"
+  },
+  {
+   "fieldname": "articulos",
+   "fieldtype": "Table",
+   "label": "Productos",
+   "options": "FacEx Pedido en Linea Articulo",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_notas",
+   "fieldtype": "Section Break",
+   "label": "Seguimiento"
+  },
+  {
+   "fieldname": "notas",
+   "fieldtype": "Small Text",
+   "label": "Notas internas"
+  },
+  {
+   "fieldname": "error",
+   "fieldtype": "Small Text",
+   "label": "Detalle del error",
+   "depends_on": "error",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-11-04 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FacEx Multi",
+ "name": "FacEx Pedido en Linea",
+ "owner": "Administrator",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "autoname": "format:PL-{abbr}-{#####}",
+ "in_create": 1,
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "track_changes": 1,
+ "title_field": "comprador_nombre",
+ "show_title_field_in_link": 1,
+ "search_fields": "comprador_nombre,empresa_cliente,nit"
+}

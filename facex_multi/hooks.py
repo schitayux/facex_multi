@@ -88,9 +88,24 @@ doc_events = {
             "facex_multi.api.item.normalize_item_casing",
             "facex_multi.api.item.validate_lista_materiales",
             "facex_multi.api.familia.validate_item_familia",
-            "facex_multi.api.fraccion.validate_item_fraccion"
+            "facex_multi.api.fraccion.validate_item_fraccion",
+            # Página web: grupo automático según las reglas de la compañía.
+            "facex_multi.api.pagina_web.asignar_grupo",
         ],
-        "on_update": "facex_multi.api.item.sync_lista_materiales_product_bundle"
+        "on_update": [
+            "facex_multi.api.item.sync_lista_materiales_product_bundle",
+            # Página web: el catálogo de la compañía se vuelve a publicar.
+            "facex_multi.api.pagina_web.programar",
+        ],
+        "on_trash": "facex_multi.api.pagina_web.programar",
+    },
+    # Página web: los grupos de ítems son las categorías del catálogo.
+    "Item Group": {
+        "on_update": "facex_multi.api.pagina_web.programar",
+        "on_trash": "facex_multi.api.pagina_web.programar",
+    },
+    "FacEx Configuracion Compania": {
+        "on_update": "facex_multi.api.pagina_web.programar",
     },
     "Sales Invoice": {
         "before_insert": [
@@ -117,7 +132,13 @@ doc_events = {
             "facex_multi.api.invoice.validate_vendedor_obligatorio",
         ],
         # Inventario validado por fecha, no por hora (ver api/stock_fecha.py).
-        "on_submit": "facex_multi.api.stock_fecha.validar_saldo_por_fecha",
+        "on_submit": [
+            "facex_multi.api.stock_fecha.validar_saldo_por_fecha",
+            # Pedido en línea: su cotización se facturó.
+            "facex_multi.api.pagina_web.al_validar_factura",
+        ],
+        # Pedido en línea: se eliminó el borrador (cotización) del pedido.
+        "on_trash": "facex_multi.api.pagina_web.al_borrar_factura",
         # Cierre Diario: una factura / sus pagos quedan congelados una vez que
         # el día del usuario está Cerrado (ver facex_multi.api.cierre).
         "before_cancel": "facex_multi.api.cierre.guard_sales_invoice_cancel",
@@ -214,6 +235,7 @@ after_migrate = [
     "facex_multi.api.corte.ensure_corte_fields",
     "facex_multi.api.cierre.ensure_anulacion_fields",
     "facex_multi.api.stock_fecha.ensure_validacion_por_fecha",
+    "facex_multi.api.pagina_web.ensure_pagina_web_fields",
 ]
 
 fixtures = [
@@ -290,4 +312,8 @@ scheduler_events = {
     "daily": [
         "facex_multi.api.whatsapp.purge_expired_links",
     ],
+    "cron": {
+        # Página web: catálogo de las compañías con página (solo si cambió).
+        "*/10 * * * *": ["facex_multi.api.pagina_web.tarea"],
+    },
 }

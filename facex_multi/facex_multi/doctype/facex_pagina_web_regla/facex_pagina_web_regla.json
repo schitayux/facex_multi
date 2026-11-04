@@ -1,0 +1,61 @@
+{
+ "actions": [],
+ "creation": "2026-11-04 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "activa",
+  "palabras",
+  "excluir",
+  "grupo"
+ ],
+ "fields": [
+  {
+   "default": "1",
+   "fieldname": "activa",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Activa",
+   "columns": 1
+  },
+  {
+   "fieldname": "palabras",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Palabras",
+   "reqd": 1,
+   "columns": 4,
+   "description": "Todas deben aparecer en el nombre del producto (sin importar mayúsculas ni tildes). Cada palabra puede ser el inicio de una palabra del nombre: «BASUR» encuentra BASURA."
+  },
+  {
+   "fieldname": "excluir",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Excepto si contiene",
+   "columns": 2
+  },
+  {
+   "fieldname": "grupo",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Grupo de ítems",
+   "options": "Item Group",
+   "reqd": 1,
+   "columns": 3
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-11-04 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FacEx Multi",
+ "name": "FacEx Pagina Web Regla",
+ "owner": "Administrator",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "autoname": "hash",
+ "editable_grid": 1,
+ "istable": 1,
+ "permissions": []
+}

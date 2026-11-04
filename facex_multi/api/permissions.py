@@ -31,6 +31,7 @@ _ALL_PERM_FIELDS = [
     "comisionador", "analitica",
     "reporte_compras_antiguedad", "reporte_compras_periodo", "reporte_compras_pagos",
     "live_acceso", "live_sesiones", "live_facturar",
+    "pagina_web_acceso", "pagina_web_gestionar",
 ]
 
 # Flags de _ALL_PERM_FIELDS que NO se conceden a un usuario sin fila de FacEx
@@ -47,6 +48,8 @@ _DENY_BY_DEFAULT_FIELDS = (
     "pago_proveedor_grabar_borrador", "pago_proveedor_validar", "pago_proveedor_cancelar",
     # Ventas por Live: módulo nuevo, solo donde Gerencia lo active.
     "live_acceso", "live_sesiones", "live_facturar",
+    # Página web: solo en compañías con página web y usuarios con el check.
+    "pagina_web_acceso", "pagina_web_gestionar",
 )
 
 def get_usuarios_ocultos() -> tuple:
@@ -158,10 +161,24 @@ def get_facex_permissions_for_company(company: str) -> dict:
             perms = {k: int(row.get(k) or 0) for k in _ALL_PERM_FIELDS}
     if not _live_habilitado():
         perms.update({f: 0 for f in _LIVE_FIELDS})
+    if not pagina_web_habilitada(company):
+        perms.update({f: 0 for f in _PAGINA_WEB_FIELDS})
     return perms
 
 
 _LIVE_FIELDS = ("live_acceso", "live_sesiones", "live_facturar")
+_PAGINA_WEB_FIELDS = ("pagina_web_acceso", "pagina_web_gestionar")
+
+
+def pagina_web_habilitada(company: str) -> bool:
+    """La página web se enciende por compañía en FacEx Configuracion Compania
+    (`pagina_web_activa`). Sin compañía o sin la casilla: apagado para todos,
+    aun para System Manager (las demás compañías no ven nada de esto)."""
+    if not company or not frappe.db.table_exists(CONFIG_DOCTYPE):
+        return False
+    if not frappe.get_meta(CONFIG_DOCTYPE).has_field("pagina_web_activa"):
+        return False  # campo aún sin migrar
+    return bool(int(frappe.db.get_value(CONFIG_DOCTYPE, company, "pagina_web_activa") or 0))
 
 
 def _live_habilitado(user: str = None) -> bool:
@@ -310,6 +327,8 @@ PROFILE_PERM_FIELDS = [
     "live_acceso",
     "live_sesiones",
     "live_facturar",
+    "pagina_web_acceso",
+    "pagina_web_gestionar",
     "reportes_todas_bodegas",
     "puede_autorellenar_recepcion",
 ]
@@ -341,11 +360,13 @@ _COMPANY_CONFIG_FIELDS = [
     "cuenta_dif_comision_ganancia", "cuenta_dif_comision_perdida",
     "maneja_cierre_diario", "cierre_pendiente_modo", "cierre_pendiente_dias_gracia",
     "lineas_nuevas_al_inicio",
+    # Página web de la compañía (ver api/pagina_web.py): solo si existe y su dominio.
+    "pagina_web_activa", "pagina_web_dominio",
 ]
 # Campos texto (Select/Data/Link) — no convertir a int
 _CONFIG_TEXT_FIELDS = {"tipo_x_defecto", "item_flete", "cuenta_recargo_entrega", "cuenta_flete",
                        "cuenta_dif_comision_ganancia", "cuenta_dif_comision_perdida",
-                       "cierre_pendiente_modo"}
+                       "cierre_pendiente_modo", "pagina_web_dominio"}
 # Check fields que están ON por defecto cuando no hay config
 _CONFIG_DEFAULT_ON = {"mostrar_almacen", "mostrar_desc_pct", "mostrar_adenda", "mostrar_tipo"}
 

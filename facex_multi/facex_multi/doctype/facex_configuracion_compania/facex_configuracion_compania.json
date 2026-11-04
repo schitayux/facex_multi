@@ -69,6 +69,24 @@
   "sb_wa",
   "wa_habilitado",
   "wa_documentos",
+  "sb_pagina_web",
+  "pagina_web_activa",
+  "pagina_web_dominio",
+  "pagina_web_usuario",
+  "pagina_web_vendedor",
+  "cb_pagina_web",
+  "pagina_web_llave",
+  "pagina_web_mostrar_precios",
+  "pagina_web_lista_precios",
+  "sb_pagina_web_catalogo",
+  "pagina_web_grupo_raiz",
+  "pagina_web_grupo_sin_clasificar",
+  "cb_pagina_web_catalogo",
+  "pagina_web_ultimo_envio",
+  "pagina_web_estado",
+  "pagina_web_huella",
+  "sb_pagina_web_reglas",
+  "pagina_web_reglas",
   "sb_navegacion",
   "pagina_inicio_restringida"
  ],
@@ -488,6 +506,131 @@
    "description": "Qué documentos se pueden enviar, su mensaje y si se adjunta el formato de impresión. Variables: {cliente} {documento} {tipo_doc} {total} {saldo} {monto} (lo pagado; en cotización = {total}) {fecha} {empresa}."
   },
   {
+   "fieldname": "sb_pagina_web",
+   "fieldtype": "Section Break",
+   "label": "Página web",
+   "description": "Solo para compañías con página web propia. Los usuarios necesitan además «Ver pedidos en línea» en su FacEx Settings."
+  },
+  {
+   "default": "0",
+   "fieldname": "pagina_web_activa",
+   "fieldtype": "Check",
+   "label": "Tiene página web"
+  },
+  {
+   "depends_on": "pagina_web_activa",
+   "fieldname": "pagina_web_dominio",
+   "fieldtype": "Data",
+   "label": "Dominio",
+   "description": "Ej.: distotall.com (sin https://). Ahí está el puente (api/recibir.php)."
+  },
+  {
+   "depends_on": "pagina_web_activa",
+   "fieldname": "pagina_web_usuario",
+   "fieldtype": "Link",
+   "options": "User",
+   "label": "Usuario que registra los pedidos en línea",
+   "description": "Las cotizaciones de la página se crean a nombre de este usuario: necesita FacEx Settings de esta compañía con «Guardar»."
+  },
+  {
+   "depends_on": "pagina_web_activa",
+   "fieldname": "pagina_web_vendedor",
+   "fieldtype": "Link",
+   "options": "Sales Partner",
+   "label": "Vendedor de los pedidos en línea"
+  },
+  {
+   "fieldname": "cb_pagina_web",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "pagina_web_activa",
+   "fieldname": "pagina_web_llave",
+   "fieldtype": "Password",
+   "label": "Llave del puente",
+   "description": "La misma que está en api/config.php de la página."
+  },
+  {
+   "default": "0",
+   "depends_on": "pagina_web_activa",
+   "fieldname": "pagina_web_mostrar_precios",
+   "fieldtype": "Check",
+   "label": "Mostrar precios en la página",
+   "description": "Apagado: la página muestra «Solicitar cotización»."
+  },
+  {
+   "depends_on": "pagina_web_activa",
+   "fieldname": "pagina_web_lista_precios",
+   "fieldtype": "Link",
+   "options": "Price List",
+   "label": "Lista de precios",
+   "description": "Para las cotizaciones de la página (y los precios, si se muestran)."
+  },
+  {
+   "depends_on": "pagina_web_activa",
+   "fieldname": "sb_pagina_web_catalogo",
+   "fieldtype": "Section Break",
+   "label": "Página web: catálogo y categorías"
+  },
+  {
+   "depends_on": "pagina_web_activa",
+   "fieldname": "pagina_web_grupo_raiz",
+   "fieldtype": "Link",
+   "options": "Item Group",
+   "label": "Grupo raíz del catálogo",
+   "description": "Se publican los productos de la compañía que estén en este grupo o sus subgrupos (ej.: Distotall - DT)."
+  },
+  {
+   "depends_on": "pagina_web_activa",
+   "fieldname": "pagina_web_grupo_sin_clasificar",
+   "fieldtype": "Link",
+   "options": "Item Group",
+   "label": "Grupo para productos sin clasificar",
+   "description": "Donde quedan los productos nuevos que ninguna regla reconoce, para revisarlos a mano."
+  },
+  {
+   "fieldname": "cb_pagina_web_catalogo",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "pagina_web_ultimo_envio",
+   "fieldtype": "Datetime",
+   "label": "Último envío del catálogo",
+   "read_only": 1,
+   "no_copy": 1,
+   "depends_on": "pagina_web_activa"
+  },
+  {
+   "fieldname": "pagina_web_estado",
+   "fieldtype": "Small Text",
+   "label": "Resultado del último envío",
+   "read_only": 1,
+   "no_copy": 1,
+   "depends_on": "pagina_web_activa"
+  },
+  {
+   "fieldname": "pagina_web_huella",
+   "fieldtype": "Data",
+   "label": "Huella del catálogo enviado",
+   "read_only": 1,
+   "hidden": 1,
+   "no_copy": 1
+  },
+  {
+   "depends_on": "pagina_web_activa",
+   "fieldname": "sb_pagina_web_reglas",
+   "fieldtype": "Section Break",
+   "label": "Categorías automáticas",
+   "description": "Al crear o editar un producto de la compañía se le asigna el grupo de la primera regla que coincida con su nombre. No cambia un grupo que ya esté dentro del grupo raíz (elegido a mano)."
+  },
+  {
+   "depends_on": "pagina_web_activa",
+   "fieldname": "pagina_web_reglas",
+   "fieldtype": "Table",
+   "options": "FacEx Pagina Web Regla",
+   "label": "Reglas"
+  },
+  {
    "fieldname": "sb_navegacion",
    "fieldtype": "Section Break",
    "label": "Navegación restringida"
@@ -503,7 +646,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-11-01 19:07:12.756806",
+ "modified": "2026-11-04 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Configuracion Compania",

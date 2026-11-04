@@ -54,3 +54,31 @@ frappe.ui.form.on("FacEx Serie Documento", {
 		});
 	},
 });
+
+// ── Página web (ver api/pagina_web.py) ──────────────────────────────────
+frappe.ui.form.on("FacEx Configuracion Compania", {
+	refresh(frm) {
+		if (frm.is_new() || !frm.doc.pagina_web_activa) return;
+		frm.add_custom_button("Generar llave nueva", () =>
+			frappe.call("facex_multi.api.pagina_web.generar_llave").then((r) => {
+				frappe.msgprint({
+					title: "Llave nueva",
+					message: "Copie esta llave en <b>api/config.php</b> de la página y guarde la configuración. Hasta que estén iguales en los dos lados no se envía nada." +
+						`<pre style="margin-top:10px;user-select:all">${frappe.utils.escape_html(r.message)}</pre>`,
+				});
+				frm.set_value("pagina_web_llave", r.message);
+			}), "Página web");
+		frm.add_custom_button("Publicar catálogo ahora", () =>
+			frappe.call({
+				method: "facex_multi.api.pagina_web.publicar_ahora",
+				args: { company: frm.doc.company },
+				freeze: true,
+				freeze_message: "Enviando el catálogo a la página…",
+			}).then((r) => {
+				const m = r.message || {};
+				frappe.msgprint({ title: m.ok ? "Catálogo enviado" : "No se pudo enviar", message: frappe.utils.escape_html(m.mensaje || ""), indicator: m.ok ? "green" : "red" });
+				frm.reload_doc();
+			}), "Página web");
+		frm.add_custom_button("Pedidos en línea", () => frappe.set_route("facex-pedidos-web"), "Página web");
+	},
+});

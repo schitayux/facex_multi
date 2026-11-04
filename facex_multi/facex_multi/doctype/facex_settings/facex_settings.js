@@ -107,3 +107,15 @@ frappe.ui.form.on("FacEx Serie Documento", {
 		});
 	},
 });
+
+// ── Página web: la sección solo se muestra si la compañía tiene página ──────
+frappe.ui.form.on("FacEx Settings", {
+	refresh(frm) { facex_settings_pagina_web(frm); },
+	bfel_company(frm) { facex_settings_pagina_web(frm); },
+});
+
+function facex_settings_pagina_web(frm) {
+	const mostrar = (v) => ["sb_pagina_web", "pagina_web_acceso", "cb_pagina_web", "pagina_web_gestionar"].forEach((f) => frm.toggle_display(f, v));
+	if (!frm.doc.bfel_company || !frm.fields_dict.pagina_web_acceso) return mostrar(false);
+	frappe.call({ method: "facex_multi.api.pagina_web.compania_tiene_pagina", args: { company: frm.doc.bfel_company } }).then((r) => mostrar(!!r.message));
+}
