@@ -1125,15 +1125,32 @@ class FacexTransporteModule {
 			.split(/\s+/).filter(Boolean).join(" ").toUpperCase();
 	}
 
-	// {guia_normalizada: motivo} de las guías que no se pueden liquidar (no
-	// registradas en factura, en varias facturas o ya liquidadas). El guardado
+	// Mismo criterio que api.invoice._clave_guia: solo letras y dígitos.
+	// «419566215-1» y «4195662151» son la misma guía (para repetidas y match).
+	_claveGuiaLiq(v) {
+		return this._normGuiaLiq(v).replace(/[^A-Z0-9]/g, "");
+	}
+
+	// guias: [{guia, monto_cod, efectivo}]. Devuelve
+	// { problemas: {guia_normalizada: motivo}, coincidencias: {guia_normalizada:
+	// {porcentaje, detalle, factura, guia_factura}} }. Problemas = no
+	// registradas en factura, en varias facturas o ya liquidadas. El guardado
 	// lo vuelve a exigir en validate(); esto es para avisar en el momento.
 	_revisarGuiasLiq(transportista, guias, name) {
-		if (!transportista || !guias.length) return Promise.resolve({});
+		const vacio = { problemas: {}, coincidencias: {} };
+		if (!transportista || !guias.length) return Promise.resolve(vacio);
 		return frappe.xcall(
 			"facex_multi.facex_multi.doctype.facex_liquidacion_transportista.facex_liquidacion_transportista.revisar_guias",
 			{ transportista, guias, name: name || null }
-		).then((r) => r || {});
+		).then((r) => Object.assign({}, vacio, r || {}));
+	}
+
+	// Etiqueta «97% coincidencia» con color según qué tan seguro es el match.
+	_pctCoincidenciaHtml(pct, detalle) {
+		if (pct == null || pct === "" || !(flt(pct) > 0)) return "";
+		const p = flt(pct);
+		const nivel = p >= 95 ? "alta" : (p >= 80 ? "media" : "baja");
+		return `<div class="efs-liq-pct efs-liq-pct-${nivel}" title="${_eft_esc(detalle || "")}">${_eft_fmt(p).replace(/\.00$/, "")}% ${__("coincidencia")}</div>${detalle ? `<div class="efs-liq-pct-detalle">${_eft_esc(detalle)}</div>` : ""}`;
 	}
 
 	showLiquidacionEditor(name) {
@@ -1264,16 +1281,19 @@ class FacexTransporteModule {
 						<td data-label="${__("Autorización")}"><input type="text" class="efs-liq-autorizacion" value="${_eft_esc(data.autorizacion || "")}" /></td>
 						<td data-label="${__("Núm. Cuenta")}"><input type="text" class="efs-liq-numero-cuenta" value="${_eft_esc(data.numero_cuenta || "")}" /></td>
 						<td class="efs-liq-match" data-label="${__("Match")}">${data.match_encontrado
-							? `✓ <a class="efs-liq-match-link" href="/app/facex?invoice=${encodeURIComponent(data.sales_invoice || "")}" target="_blank" rel="noopener" title="${__("Abrir la factura en FacEx, en una pestaña nueva")}">${_eft_esc(data.sales_invoice || "")}</a>${data.fecha_factura ? `<div class="efs-liq-match-fecha">${__("Fecha factura")}: ${_eft_esc(data.fecha_factura)}</div>` : ""}${flt(data.excedente) > 0.005 ? `<div class="efs-liq-excedente" title="${__("Abonado a la factura")}: Q ${_eft_fmt(data.monto_aplicado)}">${__("Excedente")}: Q ${_eft_fmt(data.excedente)}</div>` : ""}`
+							? `✓ <a class="efs-liq-match-link" href="/app/facex?invoice=${encodeURIComponent(data.sales_invoice || "")}" target="_blank" rel="noopener" title="${__("Abrir la factura en FacEx, en una pestaña nueva")}">${_eft_esc(data.sales_invoice || "")}</a>${this._pctCoincidenciaHtml(data.porcentaje_coincidencia, data.detalle_coincidencia)}${data.fecha_factura ? `<div class="efs-liq-match-fecha">${__("Fecha factura")}: ${_eft_esc(data.fecha_factura)}</div>` : ""}${flt(data.excedente) > 0.005 ? `<div class="efs-liq-excedente" title="${__("Abonado a la factura")}: Q ${_eft_fmt(data.monto_aplicado)}">${__("Excedente")}: Q ${_eft_fmt(data.excedente)}</div>` : ""}`
 							: (data.guia ? "—" : "")}</td>
 						<td class="efs-liq-row-remove"><button type="button" class="efs-line-remove" title="${__("Quitar la fila")}">×</button></td>
 					</tr>
 				`);
 				$row.data("guia-orig", this._normGuiaLiq(data.guia));
+				// Lo que se escribió antes de que el guardado pusiera la guía de la
+				// factura (p. ej. sin guión): se reenvía para conservar el % real.
+				if (data.guia_original) $row.data("guia-escrita", data.guia_original);
 				$row.data("match-html", $row.find(".efs-liq-match").html());
 				// Filas que ya vienen conciliadas o recién revisadas no se vuelven
-				// a consultar al salir de ellas mientras la guía no cambie.
-				if (data.match_encontrado || data._revisada) $row.data("revisada", this._normGuiaLiq(data.guia));
+				// a consultar al salir de ellas mientras la guía y el monto no cambien.
+				if (data.match_encontrado || data._revisada) $row.data("revisada", firmaDe($row));
 				$row.find(".efs-line-remove").on("click", () => {
 					if ($tbody.children().length > 1) {
 						$row.remove();
@@ -1295,19 +1315,28 @@ class FacexTransporteModule {
 			const docName = doc && doc.name;
 			const getTransportista = () => $editor.find("#eft-liq-transportista").val() || "";
 			const guiaDe = ($r) => this._normGuiaLiq($r.find(".efs-liq-guia").val());
-			const marcarFila = ($r, motivo) => {
+			const claveDe = ($r) => this._claveGuiaLiq($r.find(".efs-liq-guia").val());
+			const montoCodDe = ($r) => parseFloat($r.find(".efs-liq-monto-cod").val()) || 0;
+			const efectivoDe = ($r) => parseFloat($r.find(".efs-liq-efectivo").val()) || 0;
+			// Lo que se manda a revisar_guias: el monto también puntúa el match.
+			const consultaDe = ($r) => ({ guia: guiaDe($r), monto_cod: montoCodDe($r), efectivo: efectivoDe($r) });
+			const firmaDe = ($r) => `${guiaDe($r)}|${montoCodDe($r)}|${efectivoDe($r)}`;
+			// coincidencia: {porcentaje, detalle, factura, guia_factura} de revisar_guias.
+			const marcarFila = ($r, motivo, coincidencia) => {
 				const $m = $r.find(".efs-liq-match");
 				$r.toggleClass("efs-liq-row-invalid", !!motivo).data("motivo", motivo || "");
 				if (motivo) {
 					$m.html(`<span class="efs-liq-match-error">⚠ ${_eft_esc(motivo)}</span>`);
+				} else if (coincidencia) {
+					$m.html(`<span class="efs-liq-match-ok">✓ ${__("Registrada")}: ${_eft_esc(coincidencia.factura || "")}</span>${this._pctCoincidenciaHtml(coincidencia.porcentaje, coincidencia.detalle)}`);
 				} else if (guiaDe($r) && guiaDe($r) === $r.data("guia-orig") && $r.data("match-html")) {
 					$m.html($r.data("match-html"));
 				} else {
 					$m.html(guiaDe($r) ? `<span class="efs-liq-match-ok">✓ ${__("Registrada")}</span>` : "");
 				}
 			};
-			const repetidaEnTabla = ($r, guia) => $tbody.find(".efs-liq-row").toArray()
-				.some((el) => el !== $r[0] && guiaDe($(el)) === guia);
+			const repetidaEnTabla = ($r, clave) => $tbody.find(".efs-liq-row").toArray()
+				.some((el) => el !== $r[0] && claveDe($(el)) === clave);
 
 			const mostrarRechazadas = (lista, titulo, intro = "") => {
 				frappe.msgprint({
@@ -1322,18 +1351,19 @@ class FacexTransporteModule {
 			// quiet: solo marca la fila, sin mensaje emergente.
 			const revisarFila = ($r, { quiet = false } = {}) => {
 				const guia = guiaDe($r);
+				const firma = firmaDe($r);
 				const transportista = getTransportista();
 				if (!guia) { marcarFila($r, ""); $r.removeData("revisada"); return Promise.resolve(); }
-				if (!transportista || $r.data("revisada") === guia) return Promise.resolve();
-				if (repetidaEnTabla($r, guia)) {
+				if (!transportista || $r.data("revisada") === firma) return Promise.resolve();
+				if (repetidaEnTabla($r, claveDe($r))) {
 					marcarFila($r, __("Repetida en esta liquidación."));
 					if (!quiet) frappe.msgprint({ title: __("Guía duplicada"), indicator: "orange", message: __("La guía <b>{0}</b> ya está en otra fila de esta liquidación.", [_eft_esc(guia)]) });
 					return Promise.resolve();
 				}
-				return this._revisarGuiasLiq(transportista, [guia], docName).then((problemas) => {
-					if (guiaDe($r) !== guia) return; // cambió mientras se consultaba
-					$r.data("revisada", guia);
-					marcarFila($r, problemas[guia]);
+				return this._revisarGuiasLiq(transportista, [consultaDe($r)], docName).then(({ problemas, coincidencias }) => {
+					if (firmaDe($r) !== firma) return; // cambió mientras se consultaba
+					$r.data("revisada", firma);
+					marcarFila($r, problemas[guia], coincidencias[guia]);
 					if (problemas[guia] && !quiet) {
 						frappe.msgprint({
 							title: __("Guía no válida"), indicator: "orange",
@@ -1359,15 +1389,16 @@ class FacexTransporteModule {
 				const $rows = $tbody.find(".efs-liq-row").filter((_, el) => !!guiaDe($(el)));
 				if (!transportista || !$rows.length) return Promise.resolve();
 				const conteo = {};
-				$rows.each((_, el) => { const g = guiaDe($(el)); conteo[g] = (conteo[g] || 0) + 1; });
-				return this._revisarGuiasLiq(transportista, Object.keys(conteo), docName).then((problemas) => {
+				$rows.each((_, el) => { const k = claveDe($(el)); conteo[k] = (conteo[k] || 0) + 1; });
+				const consultas = $rows.toArray().map((el) => consultaDe($(el)));
+				return this._revisarGuiasLiq(transportista, consultas, docName).then(({ problemas, coincidencias }) => {
 					const malas = [];
 					$rows.each((_, el) => {
 						const $r = $(el);
 						const g = guiaDe($r);
-						const motivo = conteo[g] > 1 ? __("Repetida en esta liquidación.") : problemas[g];
-						$r.data("revisada", g);
-						marcarFila($r, motivo);
+						const motivo = conteo[claveDe($r)] > 1 ? __("Repetida en esta liquidación.") : problemas[g];
+						$r.data("revisada", firmaDe($r));
+						marcarFila($r, motivo, coincidencias[g]);
 						if (motivo) malas.push([g, motivo]);
 					});
 					if (malas.length && !quiet) mostrarRechazadas(malas, __("Guías no válidas para este transportista"));
@@ -1399,17 +1430,18 @@ class FacexTransporteModule {
 						return false;
 					}
 					// Repetidas contra lo que ya hay en la tabla o dentro de lo pegado.
-					const enTabla = new Set($tbody.find(".efs-liq-row").toArray().map((el) => guiaDe($(el))).filter(Boolean));
+					const enTabla = new Set($tbody.find(".efs-liq-row").toArray().map((el) => claveDe($(el))).filter(Boolean));
 					const vistas = new Set();
 					const rechazadas = [];
 					const candidatas = [];
 					parsedRows.forEach((r) => {
-						const g = this._normGuiaLiq(r.guia);
+						const g = this._claveGuiaLiq(r.guia);
 						if (enTabla.has(g)) rechazadas.push([r.guia, __("Ya está en esta liquidación.")]);
 						else if (vistas.has(g)) rechazadas.push([r.guia, __("Repetida en lo pegado.")]);
 						else { vistas.add(g); candidatas.push(r); }
 					});
-					return this._revisarGuiasLiq(transportista, candidatas.map((r) => r.guia), docName).then((problemas) => {
+					const consultas = candidatas.map((r) => ({ guia: r.guia, monto_cod: r.monto_cod || 0, efectivo: r.efectivo || 0 }));
+					return this._revisarGuiasLiq(transportista, consultas, docName).then(({ problemas, coincidencias }) => {
 						const validas = candidatas.filter((r) => {
 							const motivo = problemas[this._normGuiaLiq(r.guia)];
 							if (motivo) rechazadas.push([r.guia, motivo]);
@@ -1424,7 +1456,7 @@ class FacexTransporteModule {
 							});
 							validas.forEach((r) => {
 								addRow(Object.assign({}, r, { _revisada: 1 }));
-								marcarFila($tbody.find(".efs-liq-row").last(), "");
+								marcarFila($tbody.find(".efs-liq-row").last(), "", coincidencias[this._normGuiaLiq(r.guia)]);
 							});
 							recalcTotals();
 						}
@@ -1448,8 +1480,10 @@ class FacexTransporteModule {
 					const $r = $(el);
 					const guia = ($r.find(".efs-liq-guia").val() || "").trim();
 					if (!guia) return;
+					const escrita = $r.data("guia-escrita");
 					detalle.push({
 						guia,
+						guia_original: escrita && this._claveGuiaLiq(escrita) === this._claveGuiaLiq(guia) ? escrita : null,
 						piezas: parseInt($r.find(".efs-liq-piezas").val()) || 0,
 						estado: $r.find(".efs-liq-estado").val() || "",
 						monto_cod: parseFloat($r.find(".efs-liq-monto-cod").val()) || 0,
@@ -1675,6 +1709,11 @@ const EFT_STYLES = `
   .efs-liq-row-remove::before { content: none; }
 }
 .efs-liq-match-fecha { color: var(--efs-text-muted); font-size: 10px; margin-top: 2px; }
+.efs-liq-pct { display: inline-block; margin-top: 3px; padding: 1px 6px; border-radius: 6px; font-size: 10px; font-weight: 700; }
+.efs-liq-pct-alta { background: #dcfce7; color: #166534; }
+.efs-liq-pct-media { background: #fef3c7; color: #92400e; }
+.efs-liq-pct-baja { background: #fee2e2; color: #991b1b; }
+.efs-liq-pct-detalle { color: var(--efs-text-muted); font-size: 10px; margin-top: 2px; }
 .efs-liq-excedente { display: inline-block; margin-top: 3px; padding: 1px 6px; border-radius: 6px; background: #fdf2f8; color: #be185d; font-size: 10px; font-weight: 700; }
 .efs-liq-especial-banner { margin: 4px 0 16px; padding: 12px 16px; border-radius: var(--efs-radius); background: linear-gradient(90deg, #db2777, #f97316); color: #fff; font-size: 13px; box-shadow: 0 4px 14px rgba(219, 39, 119, .35); }
 .efs-liq-especial-title { font-size: 18px; font-weight: 800; letter-spacing: .3px; margin-bottom: 2px; }

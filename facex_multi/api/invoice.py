@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import frappe
 import json
+import re
 from collections import Counter
 from frappe.utils import today, add_days, getdate, cint, flt
 
@@ -182,6 +183,18 @@ def _norm_numero_guia(value) -> str:
     """Igual que clean_numero_guia pero en mayúsculas — la forma con la que se
     comparan dos números de guía entre sí."""
     return clean_numero_guia(value).upper()
+
+
+_GUIA_SEPARADORES = re.compile(r"[^A-Z0-9]")
+
+
+def _clave_guia(value) -> str:
+    """Clave «tolerante» de un No. de guía: solo letras y dígitos, en
+    mayúsculas. «419566215-1», «419566215 1» y «4195662151» dan la misma clave
+    — el empleado a veces quita el guión al teclear o pegar desde Excel. Solo
+    se usa para ENCONTRAR la guía; lo que se guarda es el número tal como se
+    capturó en la factura."""
+    return _GUIA_SEPARADORES.sub("", _norm_numero_guia(value))
 
 
 def validate_vendedor_obligatorio(doc, method=None):

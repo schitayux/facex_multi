@@ -1,6 +1,8 @@
 # Copyright (c) 2026, CHAPPSA and contributors
 # For license information, please see license.txt
 
+import difflib
+
 import frappe
 from frappe.model.document import Document
 from frappe.utils import flt
@@ -8,6 +10,7 @@ from frappe.utils import flt
 from facex_multi.api.invoice import (
 	FORMA_PAGO_LIQUIDACION,
 	_create_payment_entry,
+	_clave_guia,
 	_norm_numero_guia,
 	_sync_pago_facex,
 	clean_numero_guia,
@@ -59,45 +62,162 @@ def _assert_payment_entry_reversible(payment_entry, guia, accion):
 		)
 
 
+# ── Búsqueda tolerante de guías ────────────────────────────────────────────
+# La guía de la liquidación se busca por su CLAVE (solo letras y dígitos, ver
+# api.invoice._clave_guia): «419566215-1» y «4195662151» son la misma guía.
+# Sobre los candidatos con la misma clave se calcula un % de coincidencia:
+#
+#   * Guía (60%): 100 si es idéntica, 95 si solo difiere en guiones/espacios.
+#   * Monto (40%): Monto COD de la fila (o Efectivo si viene vacío) contra el
+#     Monto COD capturado en la guía y contra el total de la factura; vale el
+#     que más se parezca. 100 si cuadra al centavo, baja 5 puntos por cada 1%
+#     de diferencia (20% o más de diferencia = 0).
+#
+# Sin monto que comparar, el % es solo el de la guía.
+# El monto también desempata: si la misma clave está en varias facturas y solo
+# una cuadra al centavo con el monto, esa es la del match.
+#
+# Una guía que NO comparte clave con ninguna registrada nunca se concilia sola
+# (el match somete el abono en el acto); solo se sugiere la más parecida en el
+# mensaje de error para que el usuario la corrija.
+
+PESO_GUIA = 0.6
+PESO_MONTO = 0.4
+PUNTOS_GUIA_EXACTA = 100
+PUNTOS_GUIA_SIN_SEPARADORES = 95
+SIMILITUD_MINIMA_SUGERENCIA = 0.8
+
+
 def _indice_guias_registradas(transportista):
-	"""Guías capturadas en facturas para el transportista, indexadas por número
-	normalizado → lista de {name, parent, monto_cod}. Mismo criterio de
-	comparación que el respaldo normalizado de match_guias, así que «está
-	registrada» aquí equivale a «match_guias la va a encontrar»."""
+	"""Guías capturadas en facturas para el transportista, indexadas por clave
+	tolerante → lista de {name, parent, monto_cod, numero_guia, liquidado,
+	grand_total}. Mismo criterio que usa match_guias, así que «está registrada»
+	aquí equivale a «match_guias la va a encontrar»."""
 	indice = {}
-	for g in frappe.get_all(
-		"FacEx Guia Transportista",
-		filters={"transportista": transportista},
-		fields=["name", "parent", "monto_cod", "numero_guia"],
+	for g in frappe.db.sql(
+		"""
+		select g.name, g.parent, g.monto_cod, g.numero_guia, g.liquidado,
+		       si.grand_total
+		from `tabFacEx Guia Transportista` g
+		left join `tabSales Invoice` si on si.name = g.parent
+		where g.transportista = %s
+		""",
+		transportista,
+		as_dict=True,
 	):
-		indice.setdefault(_norm_numero_guia(g.numero_guia), []).append(g)
+		clave = _clave_guia(g.numero_guia)
+		if clave:
+			indice.setdefault(clave, []).append(g)
 	return indice
 
 
-def _problemas_guias(transportista, guias, name=None):
-	"""Revisa una lista de No. de guía contra el sistema y devuelve
-	{guia_normalizada: motivo} solo para las que NO se pueden liquidar:
+def _monto_fila(monto_cod, efectivo=None):
+	return flt(monto_cod) or flt(efectivo)
 
-	  * no registrada: ninguna factura tiene esa guía para el transportista —
-	    la fila nunca haría match ni generaría el abono, solo ensuciaría la
-	    liquidación (y bloquearía cargarla bien después, ver duplicadas).
-	  * en varias facturas: match_guias exige un único resultado.
-	  * ya liquidada: la misma guía está en otra liquidación del transportista.
-	"""
-	numeros = {_norm_numero_guia(g) for g in guias if _norm_numero_guia(g)}
-	if not numeros or not transportista:
+
+def _puntaje_monto(monto, cand):
+	"""(puntos 0–100 o None si no hay qué comparar, texto)."""
+	refs = [
+		("Monto COD de la guía", flt(cand.monto_cod)),
+		("total de la factura", flt(cand.grand_total)),
+	]
+	refs = [(etq, ref) for etq, ref in refs if ref > 0]
+	if monto <= 0 or not refs:
+		return None, "monto no comparado"
+	mejor = None
+	for etq, ref in refs:
+		diff = abs(monto - ref)
+		pts = 100.0 if diff <= 0.01 else max(0.0, 100.0 - diff / ref * 500.0)
+		if mejor is None or pts > mejor[0]:
+			mejor = (pts, etq, diff)
+	pts, etq, diff = mejor
+	if pts >= 100:
+		return pts, f"monto igual al {etq}"
+	return pts, f"monto difiere Q{diff:,.2f} del {etq}"
+
+
+def _puntuar(guia_escrita, monto, cand):
+	if _norm_numero_guia(cand.numero_guia) == _norm_numero_guia(guia_escrita):
+		pts_guia, txt_guia = PUNTOS_GUIA_EXACTA, "Guía idéntica"
+	else:
+		pts_guia = PUNTOS_GUIA_SIN_SEPARADORES
+		txt_guia = f"Guía sin guión/espacios (en factura: {clean_numero_guia(cand.numero_guia)})"
+	pts_monto, txt_monto = _puntaje_monto(monto, cand)
+	if pts_monto is None:
+		pct = float(pts_guia)
+	else:
+		pct = PESO_GUIA * pts_guia + PESO_MONTO * pts_monto
+	return {
+		"cand": cand,
+		"porcentaje": round(pct, 1),
+		"monto_exacto": pts_monto is not None and pts_monto >= 100,
+		"detalle": f"{txt_guia} · {txt_monto}",
+	}
+
+
+def _sugerencia(guia, monto, indice):
+	"""La guía registrada (aún sin liquidar) más parecida, para el mensaje de
+	«no registrada». Nunca se concilia sola."""
+	clave = _clave_guia(guia)
+	if not clave:
+		return ""
+	mejor = None
+	for clave_cand, cands in indice.items():
+		sm = difflib.SequenceMatcher(None, clave, clave_cand)
+		if sm.real_quick_ratio() < SIMILITUD_MINIMA_SUGERENCIA or sm.quick_ratio() < SIMILITUD_MINIMA_SUGERENCIA:
+			continue
+		ratio = sm.ratio()
+		if ratio < SIMILITUD_MINIMA_SUGERENCIA:
+			continue
+		for c in cands:
+			if c.liquidado:
+				continue
+			pts_monto, _ = _puntaje_monto(monto, c)
+			pct = PESO_GUIA * ratio * 100 + PESO_MONTO * (pts_monto or 0)
+			if mejor is None or pct > mejor[0]:
+				mejor = (pct, c)
+	if not mejor:
+		return ""
+	pct, c = mejor
+	monto_txt = f", COD Q{flt(c.monto_cod or c.grand_total):,.2f}" if flt(c.monto_cod or c.grand_total) else ""
+	return f" ¿Quiso decir {clean_numero_guia(c.numero_guia)} ({c.parent}{monto_txt}, {pct:.0f}% de coincidencia)?"
+
+
+def _evaluar_guia(guia, monto, indice):
+	"""→ {"match": dict|None, "motivo": str|None}. match trae cand, porcentaje,
+	detalle (ver _puntuar)."""
+	cands = indice.get(_clave_guia(guia)) or []
+	if not cands:
+		return {
+			"match": None,
+			"motivo": "No está registrada en ninguna factura para este transportista."
+			+ _sugerencia(guia, monto, indice),
+		}
+	puntuados = [_puntuar(guia, monto, c) for c in cands]
+	if len(puntuados) == 1:
+		return {"match": puntuados[0], "motivo": None}
+
+	# Varias facturas con la misma guía: el monto desempata solo si UNA cuadra
+	# al centavo.
+	exactos = [p for p in puntuados if p["monto_exacto"]]
+	if len(exactos) == 1:
+		m = exactos[0]
+		n_fact = len({c.parent for c in cands})
+		m["detalle"] += f" · elegida por monto entre {n_fact} facturas" if n_fact > 1 else " · elegida por monto"
+		return {"match": m, "motivo": None}
+	facturas = ", ".join(sorted({c.parent for c in cands}))
+	return {
+		"match": None,
+		"motivo": f"Está registrada en más de una factura ({facturas}) y el Monto COD no permite distinguir cuál.",
+	}
+
+
+def _liquidadas_en_otra(transportista, claves, name=None):
+	"""{clave: liquidación} de las guías que ya están en OTRA liquidación del
+	transportista, comparando por clave tolerante."""
+	if not claves or not transportista:
 		return {}
-
-	indice = _indice_guias_registradas(transportista)
-	problemas = {}
-	for n in numeros:
-		matches = indice.get(n) or []
-		if not matches:
-			problemas[n] = "No está registrada en ninguna factura para este transportista."
-		elif len(matches) > 1:
-			facturas = ", ".join(sorted({m.parent for m in matches}))
-			problemas[n] = f"Está registrada en más de una factura ({facturas})."
-
+	res = {}
 	for c in frappe.db.sql(
 		"""
 		select d.guia, d.parent
@@ -106,21 +226,57 @@ def _problemas_guias(transportista, guias, name=None):
 		where d.parenttype = 'FacEx Liquidacion Transportista'
 		  and l.name != %(name)s
 		  and l.transportista = %(transportista)s
-		  and upper(trim(d.guia)) in %(numeros)s
+		  and regexp_replace(upper(d.guia), '[^A-Z0-9]', '') in %(claves)s
 		""",
-		{"name": name or "", "transportista": transportista, "numeros": tuple(numeros)},
+		{"name": name or "", "transportista": transportista, "claves": tuple(claves)},
 		as_dict=True,
 	):
-		n = _norm_numero_guia(c.guia)
-		problemas.setdefault(n, f"Ya fue liquidada en {c.parent}.")
-	return problemas
+		res.setdefault(_clave_guia(c.guia), c)
+	return res
+
+
+def _revisar(transportista, guias, name=None):
+	"""guias: lista de str o de {guia, monto_cod, efectivo}. Devuelve
+	{"problemas": {guia_normalizada: motivo}, "coincidencias": {guia_normalizada:
+	{porcentaje, detalle, factura, guia_factura}}}."""
+	entradas = []
+	for g in guias or []:
+		if isinstance(g, dict):
+			entradas.append((g.get("guia"), _monto_fila(g.get("monto_cod"), g.get("efectivo"))))
+		else:
+			entradas.append((g, 0.0))
+	entradas = [(g, m) for g, m in entradas if _clave_guia(g)]
+	if not entradas or not transportista:
+		return {"problemas": {}, "coincidencias": {}}
+
+	indice = _indice_guias_registradas(transportista)
+	otras = _liquidadas_en_otra(transportista, {_clave_guia(g) for g, _ in entradas}, name)
+	problemas, coincidencias = {}, {}
+	for guia, monto in entradas:
+		n = _norm_numero_guia(guia)
+		previa = otras.get(_clave_guia(guia))
+		if previa:
+			problemas[n] = f"Ya fue liquidada en {previa.parent}."
+			continue
+		ev = _evaluar_guia(guia, monto, indice)
+		if ev["motivo"]:
+			problemas[n] = ev["motivo"]
+			continue
+		m = ev["match"]
+		coincidencias[n] = {
+			"porcentaje": m["porcentaje"],
+			"detalle": m["detalle"],
+			"factura": m["cand"].parent,
+			"guia_factura": clean_numero_guia(m["cand"].numero_guia),
+		}
+	return {"problemas": problemas, "coincidencias": coincidencias}
 
 
 @frappe.whitelist()
 def revisar_guias(transportista, guias, name=None):
 	"""Usado por el editor de Liquidaciones al pegar desde Excel y al salir de
-	cada fila: avisa en el momento qué guías no se van a poder guardar, en vez
-	de esperar al error de validate()."""
+	cada fila: avisa en el momento qué guías no se van a poder guardar (en vez
+	de esperar al error de validate()) y con qué % coincide cada una."""
 	if not get_facex_can_upload_liquidaciones_transporte(get_effective_company()):
 		frappe.throw(
 			"No tiene permiso para cargar Liquidaciones de Transportistas.",
@@ -128,7 +284,7 @@ def revisar_guias(transportista, guias, name=None):
 		)
 	if isinstance(guias, str):
 		guias = frappe.parse_json(guias)
-	return _problemas_guias(transportista, guias or [], name)
+	return _revisar(transportista, guias or [], name)
 
 
 class FacExLiquidacionTransportista(Document):
@@ -276,17 +432,17 @@ class FacExLiquidacionTransportista(Document):
 		# Un mismo No. de guía no puede aparecer dos veces para el mismo
 		# transportista: cada fila con match genera su propio abono
 		# (_create_payment_entry) y marca la guía como liquidada, así que
-		# repetirla paga dos veces la misma factura. Se compara normalizado
-		# (sin espacios sobrantes, sin distinguir mayúsculas) porque el detalle
-		# casi siempre se pega desde el Excel del transportista.
+		# repetirla paga dos veces la misma factura. Se compara por la clave
+		# tolerante (sin guiones, espacios ni marcas invisibles, sin distinguir
+		# mayúsculas): «419566215-1» y «4195662151» son la misma guía.
 		vistas = {}
 		for row in self.detalle:
 			limpio = clean_numero_guia(row.guia)
 			if limpio != (row.guia or ""):
 				row.guia = limpio
-			if not limpio:
+			key = _clave_guia(limpio)
+			if not key:
 				continue
-			key = limpio.upper()
 			previa = vistas.get(key)
 			if previa:
 				frappe.throw(
@@ -299,25 +455,9 @@ class FacExLiquidacionTransportista(Document):
 		if not vistas or not self.transportista:
 			return
 
-		conflictos = frappe.db.sql(
-			"""
-			select d.guia, d.parent
-			from `tabFacEx Liquidacion Transportista Detalle` d
-			inner join `tabFacEx Liquidacion Transportista` l on l.name = d.parent
-			where d.parenttype = 'FacEx Liquidacion Transportista'
-			  and l.name != %(name)s
-			  and l.transportista = %(transportista)s
-			  and upper(trim(d.guia)) in %(numeros)s
-			""",
-			{
-				"name": self.name or "",
-				"transportista": self.transportista,
-				"numeros": tuple(vistas),
-			},
-			as_dict=True,
-		)
+		conflictos = _liquidadas_en_otra(self.transportista, set(vistas), self.name)
 		if conflictos:
-			c = conflictos[0]
+			c = next(iter(conflictos.values()))
 			frappe.throw(
 				f"El No. de guía <b>{frappe.utils.escape_html(c.guia or '')}</b> ya fue liquidado "
 				f"en <b>{frappe.utils.escape_html(c.parent or '')}</b> para este transportista.",
@@ -330,18 +470,36 @@ class FacExLiquidacionTransportista(Document):
 		# número para este transportista (validate_guias_no_duplicadas), así que
 		# cuando la guía sí se capture ya no se podría liquidar. Se listan todas
 		# de una vez para que el usuario las corrija juntas.
+		#
+		# Aquí también se resuelve el match (ver _evaluar_guia) y la fila pasa a
+		# llevar la guía TAL COMO está en la factura: todo lo de después (abono,
+		# Pagos eFast, Cierre, marcar liquidado) compara contra ese número. Lo
+		# que escribió el usuario queda en guia_original si era distinto.
 		if not self.transportista:
 			return
 		indice = _indice_guias_registradas(self.transportista)
 		faltantes = []
 		for row in self.detalle:
+			row.flags.coincidencia = None
 			if not row.guia:
 				continue
-			matches = indice.get(_norm_numero_guia(row.guia)) or []
-			if not matches:
-				faltantes.append(f"Línea {row.idx}: <b>{frappe.utils.escape_html(row.guia)}</b> — no registrada en ninguna factura")
-			elif len(matches) > 1:
-				faltantes.append(f"Línea {row.idx}: <b>{frappe.utils.escape_html(row.guia)}</b> — registrada en más de una factura")
+			# Al re-guardar, row.guia ya es la de la factura: el % se sigue
+			# calculando con lo que se escribió originalmente.
+			escrita = row.guia
+			if row.guia_original and _clave_guia(row.guia_original) == _clave_guia(row.guia):
+				escrita = row.guia_original
+			ev = _evaluar_guia(escrita, _monto_fila(row.monto_cod, row.efectivo), indice)
+			if ev["motivo"]:
+				faltantes.append(
+					f"Línea {row.idx}: <b>{frappe.utils.escape_html(row.guia)}</b> — "
+					f"{frappe.utils.escape_html(ev['motivo'])}"
+				)
+				continue
+			m = ev["match"]
+			canonica = clean_numero_guia(m["cand"].numero_guia)
+			row.guia_original = escrita if escrita != canonica else None
+			row.guia = canonica
+			row.flags.coincidencia = m
 		if faltantes:
 			frappe.throw(
 				"Estas guías no se pueden liquidar para "
@@ -365,9 +523,12 @@ class FacExLiquidacionTransportista(Document):
 		before = self.get_doc_before_save()
 		if not before:
 			return
-		current_keys = {(row.guia, self.transportista) for row in self.detalle if row.guia}
+		# Por clave tolerante: una fila vieja guardada como la escribió el
+		# usuario («gua-111») sigue siendo la misma que ahora quedó con la guía
+		# de la factura («GUA-111»).
+		current_keys = {(_clave_guia(row.guia), self.transportista) for row in self.detalle if row.guia}
 		for old_row in before.detalle:
-			key = (old_row.guia, before.transportista)
+			key = (_clave_guia(old_row.guia), before.transportista)
 			if old_row.match_encontrado and old_row.guia and key not in current_keys:
 				_assert_payment_entry_reversible(
 					old_row.payment_entry, old_row.guia, "desligar esta guía de la liquidación"
@@ -378,6 +539,8 @@ class FacExLiquidacionTransportista(Document):
 	def match_guias(self):
 		for row in self.detalle:
 			row.match_encontrado = 0
+			row.porcentaje_coincidencia = 0
+			row.detalle_coincidencia = None
 			row.sales_invoice = None
 			row.fecha_factura = None
 			row.monto_aplicado = 0
@@ -390,31 +553,15 @@ class FacExLiquidacionTransportista(Document):
 			if not row.guia or not self.transportista:
 				continue
 
-			matches = frappe.get_all(
-				"FacEx Guia Transportista",
-				filters={"numero_guia": row.guia, "transportista": self.transportista},
-				fields=["name", "parent", "monto_cod"],
-			)
-
-			if not matches:
-				# La guía capturada en la factura puede traer marcas invisibles
-				# o espacios (venía pegada del Excel del transportista antes de
-				# que se limpiaran al guardar): se reintenta comparando
-				# normalizado para no perder el match por algo que no se ve.
-				objetivo = _norm_numero_guia(row.guia)
-				matches = [
-					g for g in frappe.get_all(
-						"FacEx Guia Transportista",
-						filters={"transportista": self.transportista},
-						fields=["name", "parent", "monto_cod", "numero_guia"],
-					)
-					if _norm_numero_guia(g.numero_guia) == objetivo
-				]
-
-			if len(matches) != 1:
+			# Resuelto en validate_guias_registradas (guía por clave tolerante +
+			# desempate por monto); sin match ya habría lanzado error.
+			coincidencia = row.flags.get("coincidencia")
+			if not coincidencia:
 				continue
 
-			match = matches[0]
+			match = coincidencia["cand"]
+			row.porcentaje_coincidencia = coincidencia["porcentaje"]
+			row.detalle_coincidencia = coincidencia["detalle"]
 			row.match_encontrado = 1
 			row.sales_invoice = match.parent
 			# Fecha de emisión de la factura conciliada: se guarda en la fila
@@ -498,8 +645,10 @@ class FacExLiquidacionTransportista(Document):
 		# importar el DocType (ver NOT_NULL_TYPES en frappe/database/schema.py),
 		# así que no puede guardarse None. No importa: con liquidado=0 el KPI
 		# usa monto_cod completo e ignora monto_pendiente, ver get_transporte_kpis.
-		frappe.db.set_value(
-			"FacEx Guia Transportista",
-			{"numero_guia": numero_guia, "transportista": transportista},
-			{"liquidado": 0, "fecha_liquidacion": None, "monto_pendiente": 0},
-		)
+		# Se busca por clave tolerante, igual que el match.
+		for g in _indice_guias_registradas(transportista).get(_clave_guia(numero_guia)) or []:
+			frappe.db.set_value(
+				"FacEx Guia Transportista",
+				g.name,
+				{"liquidado": 0, "fecha_liquidacion": None, "monto_pendiente": 0},
+			)
