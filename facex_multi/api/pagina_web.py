@@ -44,6 +44,7 @@ PEDIDO = "FacEx Pedido en Linea"
 AGENTE = "FacExPuente/1.0"  # ModSecurity de algunos hostings rechaza «python-requests»
 TOLERANCIA_FIRMA = 300  # segundos
 LADO_MAXIMO = 1600  # px de las imágenes que se mandan a la página
+MAX_IMAGENES = 8  # por producto (la principal primero)
 NO_ES_IMAGEN = "-"
 MAX_LINEAS = 60
 MAX_CANTIDAD = 9999
@@ -381,6 +382,13 @@ def _reducir(ruta: str):
             elif im.mode != "RGB":
                 im = im.convert("RGB")
             im.thumbnail((LADO_MAXIMO, LADO_MAXIMO), Image.LANCZOS)
+            # Lienzo cuadrado blanco con la imagen centrada (sin agrandarla):
+            # el catálogo se ve parejo aunque las fotos tengan proporciones distintas.
+            lado = max(im.size)
+            if im.size != (lado, lado):
+                lienzo = Image.new("RGB", (lado, lado), (255, 255, 255))
+                lienzo.paste(im, ((lado - im.width) // 2, (lado - im.height) // 2))
+                im = lienzo
             salida = BytesIO()
             im.save(salida, "JPEG", quality=84, optimize=True, progressive=True)
             return salida.getvalue()
@@ -394,7 +402,7 @@ def _imagen(url, imagenes: dict):
     if not ruta:
         return None
     st = os.stat(ruta)
-    clave = f"facex_web_img:{ruta}:{st.st_mtime_ns}:{st.st_size}"
+    clave = f"facex_web_img:v2:{ruta}:{st.st_mtime_ns}:{st.st_size}"  # v2: lienzo cuadrado
     carpeta = frappe.get_site_path("private", "facex_pagina_web")
     nombre = frappe.cache.get_value(clave)
     if nombre == NO_ES_IMAGEN:
@@ -411,6 +419,34 @@ def _imagen(url, imagenes: dict):
         frappe.cache.set_value(clave, nombre, expires_in_sec=30 * 24 * 3600)
     imagenes[nombre] = os.path.join(carpeta, nombre)
     return nombre
+
+
+def _huella_visual(nombre: str, ruta):
+    """dHash de 64 bits de la imagen ya reducida (en caché: el nombre es el hash del contenido)."""
+    if not ruta:
+        return None
+    clave = f"facex_web_dhash:{nombre}"
+    h = frappe.cache.get_value(clave)
+    if h is not None:
+        return int(h) if h != NO_ES_IMAGEN else None
+    from PIL import Image
+
+    try:
+        with Image.open(ruta) as im:
+            px = list(im.convert("L").resize((9, 8), Image.LANCZOS).getdata())
+        h = 0
+        for fila in range(8):
+            for col in range(8):
+                h = (h << 1) | (px[fila * 9 + col] > px[fila * 9 + col + 1])
+    except Exception:
+        frappe.cache.set_value(clave, NO_ES_IMAGEN, expires_in_sec=30 * 24 * 3600)
+        return None
+    frappe.cache.set_value(clave, str(h), expires_in_sec=30 * 24 * 3600)
+    return h
+
+
+def _parecidas(a: int, b: int) -> bool:
+    return bin(a ^ b).count("1") <= 6
 
 
 def _sin_sufijo(nombre: str, abbr: str) -> str:
@@ -444,13 +480,40 @@ def armar_catalogo(company: str):
                                     fields=["item_code", "price_list_rate"], order_by="valid_from asc")
         }
     productos, por_grupo = [], {}
-    for i in frappe.get_all(
+    items = frappe.get_all(
         "Item",
         filters={"bfel_company": company, "disabled": 0, "is_sales_item": 1, "facex_publicar_web": 1,
                  "item_group": ["in", list(en_catalogo) or [""]]},
         fields=["name", "item_name", "item_group", "description", "stock_uom", "image"],
         order_by="item_name asc",
-    ):
+    )
+    # Galería: imagen principal primero y después las demás imágenes del producto.
+    from facex_multi.api.item_imagenes import es_extension_web
+
+    adjuntas = {}
+    if items:
+        for f in frappe.get_all(
+            "File",
+            filters={"attached_to_doctype": "Item", "attached_to_name": ["in", [i.name for i in items]]},
+            fields=["attached_to_name", "file_name", "file_url"],
+            order_by="creation asc",
+        ):
+            if es_extension_web(f.file_name or f.file_url):
+                adjuntas.setdefault(f.attached_to_name, []).append(f.file_url)
+    for i in items:
+        nombres_img, vistas = [], []
+        for url in [i.image] + adjuntas.get(i.name, []):
+            n = _imagen(url, imagenes) if url else None
+            if not n or n in nombres_img:
+                continue
+            h = _huella_visual(n, imagenes.get(n))
+            if h is not None and any(_parecidas(h, v) for v in vistas):
+                continue  # la misma foto subida otra vez (otro tamaño o formato)
+            nombres_img.append(n)
+            if h is not None:
+                vistas.append(h)
+            if len(nombres_img) >= MAX_IMAGENES:
+                break
         descripcion = strip_html(i.description or "").strip()
         fila = {
             "id": f"p-{i.name}",
@@ -459,7 +522,7 @@ def armar_catalogo(company: str):
             "descripcion": "" if _norm(descripcion) == _norm(i.item_name) else descripcion,
             "categoria": _slug(_sin_sufijo(i.item_group, abbr)),
             "unidad": i.stock_uom,
-            "imagenes": [n for n in [_imagen(i.image, imagenes)] if n],
+            "imagenes": nombres_img,
         }
         if c.mostrar_precios:
             fila["precio"] = precios.get(i.name)

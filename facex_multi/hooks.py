@@ -77,6 +77,12 @@ has_permission = {
 }
 
 doc_events = {
+    # Imágenes de productos para la página web: solo actúa en compañías con
+    # página web activa (api/item_imagenes.py); las demás no se tocan.
+    "File": {
+        "after_insert": "facex_multi.api.item_imagenes.al_subir_archivo",
+        "on_trash": "facex_multi.api.item_imagenes.al_borrar_archivo",
+    },
     "Customer": {
         "before_insert": "facex_multi.api.customer.normalize_customer_casing",
         "validate": "facex_multi.api.customer.validate_customer_on_save"

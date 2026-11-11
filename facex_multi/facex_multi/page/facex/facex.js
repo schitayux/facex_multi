@@ -7539,12 +7539,33 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const $main = $wrapper.find(".ef-img-main");
 		const $mainLink = $wrapper.find(".ef-img-main-link");
 		const $caption = $wrapper.find(".ef-img-caption");
+		// Compañías con página web: marca y botón de imagen principal.
+		const web = images.some((img) => img.web);
+		const $principal = $('<div class="ef-img-principal" style="display:none; text-align:center; margin-top:4px;"></div>');
+		if (web) $caption.after($principal);
 
 		const render = () => {
 			const img = images[idx];
 			$main.attr("src", img.file_url);
 			$mainLink.attr("href", img.file_url);
 			$caption.text(`${img.file_name || ""} (${idx + 1}/${images.length})`);
+			if (web) {
+				$principal.show().html(img.es_principal
+					? '<span style="display:inline-block; padding:2px 10px; border-radius:10px; background:#dcfce7; color:#166534; font-size:12px; font-weight:600;">★ Imagen principal · se publica en la página web</span>'
+					: (editable && img.name ? '<button type="button" class="ef-btn ef-btn-sm ef-btn-secondary ef-img-set-main">Usar como principal</button>' : ""));
+				$principal.find(".ef-img-set-main").on("click", () => {
+					frappe.call({
+						method: "facex_multi.api.item_imagenes.usar_como_principal",
+						args: { item_code: opts.item_code, file_name: img.name },
+						freeze: true,
+						callback: (r) => {
+							if (r.exc) return;
+							frappe.show_alert({ message: "Imagen principal actualizada.", indicator: "green" });
+							if (opts.onDeleted) opts.onDeleted();
+						},
+					});
+				});
+			}
 			$wrapper.find(".ef-img-thumb").removeClass("ef-img-thumb-active")
 				.filter(`[data-idx="${idx}"]`).addClass("ef-img-thumb-active");
 			$wrapper.find(".ef-img-nav").toggle(images.length > 1);

@@ -82,7 +82,16 @@ function facex_multi_load_item_images(frm, $wrapper) {
 					doctype: 'Item',
 					docname: frm.doc.name,
 					frm: frm,
-					on_success: reload,
+					on_success: () => {
+						// Página web: la subida puede fijar la imagen principal en el
+						// servidor; si el producto cambió y no hay cambios sin guardar,
+						// se recarga para no chocar al guardar.
+						frappe.db.get_value('Item', frm.doc.name, 'modified').then((r) => {
+							const modified = r && r.message && r.message.modified;
+							if (modified && modified !== frm.doc.modified && !frm.is_dirty()) frm.reload_doc();
+							else reload();
+						});
+					},
 				});
 			});
 		},
@@ -112,10 +121,33 @@ function facex_multi_render_carousel(frm, $wrapper, images, reload) {
 	const $main = $wrapper.find('.facex-img-main');
 	const $caption = $wrapper.find('.facex-img-caption');
 
+	// Compañías con página web: marca y botón de imagen principal.
+	const web = images.some((img) => img.web);
+	const $principal = $(`<div class="facex-img-principal" style="display:none; text-align:center;"></div>`);
+	if (web) $wrapper.find('.facex-img-caption').after($principal);
+
 	const render = () => {
 		const img = images[idx];
 		$main.attr('src', img.file_url);
 		$caption.text(`${img.file_name || ''} (${idx + 1}/${images.length})`);
+		if (web) {
+			$principal.show().html(img.es_principal
+				? `<span class="indicator-pill green">${__('Imagen principal · se publica en la página web')}</span>`
+				: (img.name ? `<button class="btn btn-xs btn-default facex-img-set-main">${__('Usar como principal')}</button>` : ''));
+			$principal.find('.facex-img-set-main').on('click', () => {
+				frappe.call({
+					method: 'facex_multi.api.item_imagenes.usar_como_principal',
+					args: { item_code: frm.doc.name, file_name: img.name },
+					freeze: true,
+					callback: (r) => {
+						if (!r.exc) {
+							frappe.show_alert({ message: __('Imagen principal actualizada.'), indicator: 'green' });
+							frm.reload_doc();
+						}
+					},
+				});
+			});
+		}
 		$wrapper.find('.facex-img-thumb').removeClass('facex-img-thumb-active')
 			.filter(`[data-idx="${idx}"]`).addClass('facex-img-thumb-active');
 		$wrapper.find('.facex-img-nav').toggle(images.length > 1);

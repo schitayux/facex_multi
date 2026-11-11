@@ -1044,7 +1044,12 @@ def get_item_images(item_code: str):
     if not frappe.has_permission("Item", ptype="read", doc=item_code):
         frappe.throw("No tiene permisos para ver este producto.", frappe.PermissionError)
 
-    exts = (".png", ".jpg", ".jpeg")
+    # Compañías con página web (hoy solo Distotall): todos los formatos que el
+    # navegador muestra + marca de imagen principal (ver api/item_imagenes.py).
+    from facex_multi.api.item_imagenes import EXTENSIONES_WEB, compania_web
+
+    web = bool(compania_web(item_code))
+    exts = EXTENSIONES_WEB if web else (".png", ".jpg", ".jpeg")
     files = frappe.get_all(
         "File",
         filters={"attached_to_doctype": "Item", "attached_to_name": item_code},
@@ -1061,6 +1066,12 @@ def get_item_images(item_code: str):
             "file_url": main_image,
             "is_private": 0,
         })
+
+    if web:
+        for img in images:
+            img["web"] = 1
+            img["es_principal"] = 1 if main_image and img["file_url"] == main_image else 0
+        images.sort(key=lambda img: -img["es_principal"])
 
     return images
 
