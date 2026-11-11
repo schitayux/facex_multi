@@ -1652,6 +1652,14 @@ class EFastSalePage {
               <label class="ef-label">Familia <span id="ef-maint-item-familia-req" style="color:#dc2626; display:none;">*</span> <span style="color:#64748b; font-weight:400; font-size:11px;">(precio y costo compartidos)</span></label>
               <div id="ef-maint-item-familia-ctrl" class="ef-link-ctrl" style="min-height: 32px;"></div>
             </div>
+            <div class="ef-field-group" id="ef-maint-item-tipo-familia-group" style="display:none;">
+              <label class="ef-label">Tipo (IVA) <span style="color:#64748b; font-weight:400; font-size:11px;">(genérico = exento de IVA)</span></label>
+              <select id="ef-maint-item-tipo-familia" class="ef-input" style="width:100%">
+                <option value="">— Sin clasificar —</option>
+                <option value="GENERICO">GENÉRICO — exento de IVA</option>
+                <option value="ETICO">ÉTICO — con IVA 12%</option>
+              </select>
+            </div>
             <div class="ef-field-group">
               <label class="ef-label">Gestionado por</label>
               <select id="ef-maint-item-gestionado-por" class="ef-input" style="width:100%">
@@ -14676,7 +14684,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			// sin ajustes: la ficha ya es corta
 		} else {
 			pane("general").append(grp("#ef-maint-item-code"), grp("#ef-maint-item-name"), grp("#ef-maint-item-uom-ctrl"),
-				grp("#ef-maint-item-group-ctrl"), grp("#ef-maint-item-familia-ctrl"), grp("#ef-maint-item-desc"));
+				grp("#ef-maint-item-group-ctrl"), grp("#ef-maint-item-familia-ctrl"), grp("#ef-maint-item-tipo-familia"), grp("#ef-maint-item-desc"));
 			grp("#ef-maint-item-code").append(`<div class="ef-ml-warn" id="ef-ml-dup-item" style="display:none;"></div>`);
 			pane("inventario").append(grp("#ef-maint-item-gestionado-por"), grp("#ef-maint-item-is-stock"), grp("#ef-maint-item-costo-estandar"));
 			pane("extras").append(grp("#ef-maint-item-images-body"), grp("#ef-maint-item-keywords"));
@@ -15687,8 +15695,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 		this.$body.find(
 			"#ef-maint-item-name, #ef-maint-item-auto-code, #ef-maint-item-gestionado-por, " +
-			"#ef-maint-item-is-stock, #ef-maint-item-desc, #ef-maint-item-keywords, #ef-maint-item-costo-estandar"
+			"#ef-maint-item-is-stock, #ef-maint-item-desc, #ef-maint-item-keywords, #ef-maint-item-costo-estandar, " +
+			"#ef-maint-item-tipo-familia"
 		).prop("disabled", !enable);
+		this._maint_item_iva_ui();
 
 		[this.maint_item_uom_ctrl, this.maint_item_group_ctrl, this.maint_item_familia_ctrl].forEach((ctrl) => {
 			if (!ctrl) return;
@@ -15713,6 +15723,22 @@ body.facex-fullscreen-mode .ef-main-layout {
 			if (this.perms.modifica_items) $delete.show(); else $delete.hide();
 		}
 		this._ml_mode_ui("item", mode);
+	}
+
+	// Muestra «Tipo (IVA)» solo si la compañía tiene plantilla exenta (p. ej. disfavil).
+	_maint_item_iva_ui() {
+		const company = this.doc.company || this.defaults.company || "";
+		const apply = () => this.$body.find("#ef-maint-item-tipo-familia-group")
+			.toggle(!!(this._maint_iva_cfg && this._maint_iva_cfg.disponible));
+		if (this._maint_iva_cfg && this._maint_iva_cfg.company === company) return apply();
+		frappe.call({
+			method: "facex_multi.api.exencion.get_clasificacion_iva",
+			args: { company },
+			callback: (r) => {
+				this._maint_iva_cfg = { company, disponible: !!(r.message && r.message.disponible) };
+				apply();
+			},
+		});
 	}
 
 	_load_maint_item_details(name) {
@@ -15751,6 +15777,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					this._maint_load_item_images(it.item_code);
 					this.$body.find("#ef-maint-item-keywords").val(it.palabras_busqueda || "");
 					this.$body.find("#ef-maint-item-costo-estandar").val(it.costo_estandar || "");
+					this.$body.find("#ef-maint-item-tipo-familia").val(it.tipo_familia || "");
 					this.$body.find("#ef-maint-item-relations-wrap").show();
 					this._load_maint_item_relations(it.item_code);
 				}
@@ -15940,6 +15967,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-maint-item-btn-print-label, #ef-maint-item-btn-preview-label").hide();
 		this.$body.find("#ef-maint-item-keywords").val("");
 		this.$body.find("#ef-maint-item-costo-estandar").val("");
+		this.$body.find("#ef-maint-item-tipo-familia").val("");
 		this.$body.find("#ef-maint-item-relations-wrap").hide();
 		this._maint_relations = { Par: [], Alternativo: [] };
 	}
@@ -15977,6 +16005,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 			palabras_busqueda: this.$body.find("#ef-maint-item-keywords").val() || "",
 			costo_estandar: parseFloat(this.$body.find("#ef-maint-item-costo-estandar").val()) || 0,
 		};
+		// Tipo GENÉRICO/ÉTICO: solo se envía si la compañía lo maneja (campo visible).
+		if (this._maint_iva_cfg && this._maint_iva_cfg.disponible) {
+			data.tipo_familia = this.$body.find("#ef-maint-item-tipo-familia").val() || "";
+		}
 		if (is_new && this._maint_new_image) data.image = this._maint_new_image;
 
 		frappe.call({

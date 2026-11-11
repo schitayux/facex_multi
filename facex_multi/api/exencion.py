@@ -127,3 +127,82 @@ def get_exemption_legends(items) -> list:
             seen.add(frase)
             out.append(frase)
     return out
+
+
+# ── Clasificación desde la ficha FacEx (Mantenimiento / Inventario) ──────────
+
+TIPOS_FAMILIA = ("GENERICO", "ETICO")
+
+
+def get_iva_templates(company: str) -> dict:
+    """Plantillas de impuesto de la compañía: `exento` (todas sus tasas en 0) y
+    `gravado` (alguna tasa > 0). Si hay varias de un tipo gana la más usada
+    por los ítems."""
+    out = {"exento": None, "gravado": None}
+    if not company:
+        return out
+    rows = frappe.db.sql(
+        """
+        SELECT t.name, MAX(IFNULL(d.tax_rate, 0)) AS max_rate,
+               (SELECT COUNT(*) FROM `tabItem Tax` it
+                 WHERE it.item_tax_template = t.name AND it.parenttype = 'Item') AS usos
+        FROM `tabItem Tax Template` t
+        LEFT JOIN `tabItem Tax Template Detail` d ON d.parent = t.name
+        WHERE t.company = %(company)s AND IFNULL(t.disabled, 0) = 0
+        GROUP BY t.name
+        ORDER BY usos DESC, t.name
+        """,
+        {"company": company}, as_dict=True,
+    )
+    for r in rows:
+        key = "gravado" if (r.max_rate or 0) > 0 else "exento"
+        if not out[key]:
+            out[key] = r.name
+    return out
+
+
+def clasificacion_iva_disponible(company: str) -> bool:
+    """El campo Tipo (IVA) se muestra/acepta en los mantenimientos solo si la
+    compañía lo activa en FacEx Configuracion Compania (mostrar_tipo_iva_item)."""
+    if not company or not _item_fields_available():
+        return False
+    from facex_multi.api.permissions import get_facex_company_config
+
+    return bool(int(get_facex_company_config(company).get("mostrar_tipo_iva_item") or 0))
+
+
+@frappe.whitelist()
+def get_clasificacion_iva(company: str = None):
+    from facex_multi.api.invoice import get_effective_company, has_efast_permission
+
+    if not has_efast_permission():
+        frappe.throw("No tiene permisos para realizar esta acción.", frappe.PermissionError)
+    company = get_effective_company(company)
+    return {"disponible": int(clasificacion_iva_disponible(company)), "tipos": list(TIPOS_FAMILIA)}
+
+
+def apply_tipo_familia(doc, tipo: str, company: str) -> None:
+    """Fija tipo de familia, indicador IVA, frase de exención y la plantilla de
+    impuesto del ítem (fila de la compañía en la tabla `taxes`)."""
+    tipo = (tipo or "").strip().upper()
+    if tipo and tipo not in TIPOS_FAMILIA:
+        frappe.throw(f"Tipo de familia no válido: {tipo}")
+    tpls = get_iva_templates(company)
+    if tipo == "GENERICO" and not tpls["exento"]:
+        frappe.throw(
+            "La compañía no tiene una plantilla de impuesto de artículo (Item Tax Template) "
+            "con tasa 0%. Créela antes de clasificar productos como GENÉRICO."
+        )
+
+    doc.custom_facex_tipo_familia = tipo
+    doc.custom_facex_indicador_iva = {"GENERICO": "EXE", "ETICO": "IVA"}.get(tipo, "")
+    if doc.meta.has_field("custom_facex_frase_exencion"):
+        doc.custom_facex_frase_exencion = FRASE_EXENCION_GENERICOS if tipo == "GENERICO" else ""
+
+    target = tpls["exento"] if tipo == "GENERICO" else (tpls["gravado"] if tipo == "ETICO" else None)
+    # Se reemplazan las plantillas de la compañía; ÉTICO sin plantilla gravada
+    # habilitada deja que el 12% salga de la plantilla de impuestos de la factura.
+    company_tpls = set(frappe.get_all("Item Tax Template", filters={"company": company}, pluck="name"))
+    doc.set("taxes", [r for r in (doc.get("taxes") or []) if r.item_tax_template not in company_tpls])
+    if target:
+        doc.append("taxes", {"item_tax_template": target})

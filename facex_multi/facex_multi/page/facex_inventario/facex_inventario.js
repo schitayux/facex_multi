@@ -4068,6 +4068,12 @@ ${rows.map(r => `<tr>
 				get_query: () => ({ filters: { bfel_company: this.defaults.company, activa: 1 } }),
 				description: "Agrupa los ítems que comparten precio y costo. Al crear un ítem nuevo con familia se le generan solos sus precios.",
 			},
+			{
+				// Visible solo si la compañía maneja plantilla exenta (p. ej. disfavil).
+				fieldtype: "Select", fieldname: "tipo_familia", label: "Tipo (IVA)", hidden: 1,
+				options: "\nGENERICO\nETICO",
+				description: "GENERICO = exento de IVA · ETICO = con IVA 12%.",
+			},
 			{ fieldtype: "Link", fieldname: "stock_uom", label: "UOM (unidad)", options: "UOM", only_select: 1 },
 			{
 				fieldtype: "Select", fieldname: "gestionado_por", label: "Gestión de stock", options: "General\nLote\nSerie", default: "General",
@@ -4102,7 +4108,7 @@ ${rows.map(r => `<tr>
 				dlg.get_primary_btn().prop("disabled", true);
 				frappe.call({
 					method: "facex_multi.api.item.create_or_update_item",
-					args: { data_json: JSON.stringify(v), company: this.defaults.company },
+					args: { data_json: JSON.stringify(dlg.fields_dict.tipo_familia.df.hidden ? Object.assign({}, v, { tipo_familia: undefined }) : Object.assign({}, v, { tipo_familia: v.tipo_familia || "" })), company: this.defaults.company },
 					callback: (r) => {
 						dlg.get_primary_btn().prop("disabled", false);
 						if (r.exc) return;
@@ -4131,10 +4137,16 @@ ${rows.map(r => `<tr>
 						gestionado_por: it.has_serial_no ? "Serie" : (it.has_batch_no ? "Lote" : "General"),
 						is_stock_item: it.is_stock_item ? 1 : 0,
 						costo_estandar: it.costo_estandar || 0,
+						tipo_familia: it.tipo_familia || "",
 					});
 				},
 			});
 		}
+		frappe.call({
+			method: "facex_multi.api.exencion.get_clasificacion_iva",
+			args: { company: this.defaults.company },
+			callback: (r) => { if (r.message && r.message.disponible) dlg.set_df_property("tipo_familia", "hidden", 0); },
+		});
 		dlg.show();
 	}
 

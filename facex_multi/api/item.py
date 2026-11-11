@@ -9,7 +9,11 @@ import frappe
 import json
 from frappe.utils import flt, cint
 from facex_multi.api.costs import get_item_costs as _get_item_costs
-from facex_multi.api.exencion import is_item_tax_exempt as _is_item_tax_exempt
+from facex_multi.api.exencion import (
+    apply_tipo_familia as _apply_tipo_familia,
+    clasificacion_iva_disponible as _clasificacion_iva_disponible,
+    is_item_tax_exempt as _is_item_tax_exempt,
+)
 from facex_multi.api.invoice import has_efast_permission, get_effective_company
 from facex_multi.api.permissions import (
     get_facex_allowed_warehouses,
@@ -349,6 +353,7 @@ def get_item(name: str, price_list: str = None, company: str = None):
                            if get_facex_can_view_costs(company) else None),
         "palabras_busqueda": doc.get("custom_facex_palabras_busqueda") or "",
         "tipo_familia": doc.get("custom_facex_tipo_familia") or "",
+        "clasificacion_iva": int(_clasificacion_iva_disponible(company)),
         "tax_exempt": int(_is_item_tax_exempt(doc.name, company)),
         "familia": doc.get("custom_facex_familia") or "",
     }
@@ -571,6 +576,10 @@ def create_or_update_item(data_json: str, company: str = None):
         doc.custom_facex_palabras_busqueda = data.get("palabras_busqueda") or ""
     if doc.meta.has_field("custom_facex_familia") and "familia" in data:
         doc.custom_facex_familia = (data.get("familia") or "").strip() or None
+    # Tipo de familia (GENERICO exento / ETICO con IVA): fija indicador, frase y
+    # la plantilla de impuesto de la compañía. Solo si la compañía la maneja.
+    if "tipo_familia" in data and _clasificacion_iva_disponible(company):
+        _apply_tipo_familia(doc, data.get("tipo_familia"), company)
     # El Costo Estándar solo se escribe si el usuario tiene permiso de ver costos
     # — así un usuario sin permiso (que no ve el campo) no lo pisa con 0 al guardar.
     if (doc.meta.has_field("custom_costo_estandar") and "costo_estandar" in data

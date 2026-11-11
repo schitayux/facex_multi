@@ -39,6 +39,7 @@
   "mayusculas_clientes",
   "sin_sufijo_compania_items",
   "exige_familia_item",
+  "mostrar_tipo_iva_item",
   "exige_vendedor",
   "sb_pagos_proveedores",
   "pago_cuenta_efectivo",
@@ -303,6 +304,13 @@
    "fieldname": "exige_familia_item",
    "fieldtype": "Check",
    "label": "Exigir Familia en los ítems (política de la compañía)"
+  },
+  {
+   "default": "0",
+   "description": "Muestra el campo «Tipo (IVA)» (GENÉRICO exento / ÉTICO con IVA) en Mantenimiento de Productos y en el Maestro de productos de Inventario. GENÉRICO asigna la plantilla de impuesto de la compañía con tasa 0% (Item Tax Template), el indicador EXE y la frase de exención.",
+   "fieldname": "mostrar_tipo_iva_item",
+   "fieldtype": "Check",
+   "label": "Mostrar Tipo IVA (Genérico/Ético) en los mantenimientos de ítems"
   },
   {
    "default": "0",
@@ -646,7 +654,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-11-04 12:00:00.000000",
+ "modified": "2026-11-11 17:14:30.326934",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Configuracion Compania",
