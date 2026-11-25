@@ -232,6 +232,7 @@ PROFILE_PERM_FIELDS = [
     "modifica_items",
     "actualiza_precios",
     "puede_editar_precio",
+    "edita_tipo_cambio",
     "gestiona_listas_materiales",
     "asignacion_precios",
     "puede_eliminar_ventas_espera",
@@ -476,6 +477,13 @@ def get_facex_default_bfel_status(company: str) -> str:
 
 def get_facex_can_edit_price(company: str) -> bool:
     return _flag(company, "puede_editar_precio")
+
+
+# Multimoneda (ver api/moneda.py): el tipo de cambio de una venta en moneda
+# extranjera es el de referencia de Banguat del día. Solo con este check (o
+# System Manager) se puede escribir otro. Deny-by-default como el precio.
+def get_facex_can_edit_exchange_rate(company: str) -> bool:
+    return _flag(company, "edita_tipo_cambio")
 
 
 # ---------------------------------------------------------------------------
@@ -742,6 +750,9 @@ def get_facex_company_config(company: str) -> dict:
     # dentro de company_config.
     from facex_multi.api.fraccion import get_fraction_config
     result["fraccion"] = get_fraction_config(company)
+    # Multimoneda (ver facex_multi.api.moneda): moneda por defecto y permitidas.
+    from facex_multi.api.moneda import get_currency_config
+    result["monedas"] = get_currency_config(company)
     return result
 
 

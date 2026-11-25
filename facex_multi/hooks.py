@@ -111,7 +111,17 @@ doc_events = {
         "on_trash": "facex_multi.api.pagina_web.programar",
     },
     "FacEx Configuracion Compania": {
-        "on_update": "facex_multi.api.pagina_web.programar",
+        # Multimoneda: moneda por defecto ∈ permitidas; compañía multimoneda
+        # activa en el sitio las facturas en otra moneda contra la CxC en GTQ.
+        "validate": "facex_multi.api.moneda.validate_company_config",
+        "on_update": [
+            "facex_multi.api.pagina_web.programar",
+            "facex_multi.api.moneda.on_update_company_config",
+        ],
+    },
+    # Multimoneda: una lista de venta solo en una moneda permitida de su compañía.
+    "Price List": {
+        "validate": "facex_multi.api.moneda.validate_price_list",
     },
     "Sales Invoice": {
         "before_insert": [
@@ -122,6 +132,9 @@ doc_events = {
         # Recargo Contra Entrega / Flete como filas de cargos: tiene que ir en
         # before_validate porque ERPNext calcula totales dentro de validate.
         "before_validate": [
+            # Multimoneda: moneda permitida + tipo de cambio Banguat antes de que
+            # ERPNext calcule los montos en moneda de la compañía (api/moneda.py).
+            "facex_multi.api.moneda.sales_invoice_before_validate",
             "facex_multi.api.invoice.enforce_update_stock",
             "facex_multi.api.recargo.apply_recargo_y_flete",
             # "Nombre para Factura" nunca en blanco (default Consumidor Final).
@@ -242,6 +255,7 @@ after_migrate = [
     "facex_multi.api.cierre.ensure_anulacion_fields",
     "facex_multi.api.stock_fecha.ensure_validacion_por_fecha",
     "facex_multi.api.pagina_web.ensure_pagina_web_fields",
+    "facex_multi.api.moneda.ensure_moneda_fields",
 ]
 
 fixtures = [
@@ -317,6 +331,10 @@ web_include_js = "/assets/facex_multi/js/facex_login.js"
 scheduler_events = {
     "daily": [
         "facex_multi.api.whatsapp.purge_expired_links",
+    ],
+    # Multimoneda: tipo de cambio de referencia Banguat (solo sitios con USD).
+    "hourly": [
+        "facex_multi.api.moneda.sincronizar_banguat_diario",
     ],
     "cron": {
         # Página web: catálogo de las compañías con página (solo si cambió).

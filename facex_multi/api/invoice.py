@@ -748,8 +748,10 @@ def get_defaults(company: str = None):
         or ""
     )
 
-    # Moneda de la empresa
-    currency = frappe.db.get_value("Company", company, "default_currency") or "GTQ"
+    # Moneda con la que arranca una factura nueva: la por defecto de FacEx
+    # Configuración de Compañía (multimoneda) o, sin configurar, la de la empresa.
+    from facex_multi.api.moneda import get_currency_config
+    currency = get_currency_config(company)["por_defecto"]
 
     # Selling Settings no tiene campo payment_terms en ERPNext v15
     default_payment_terms = ""
@@ -787,6 +789,8 @@ def get_defaults(company: str = None):
     permissions["puede_cambiar_password"] = int(get_facex_can_change_password(company))
     permissions["puede_ver_costos"] = int(get_facex_can_view_costs(company))
     permissions["puede_editar_precio"] = int(get_facex_can_edit_price(company))
+    from facex_multi.api.permissions import get_facex_can_edit_exchange_rate
+    permissions["edita_tipo_cambio"] = int(get_facex_can_edit_exchange_rate(company))
     permissions["puede_eliminar_ventas_espera"] = int(get_facex_can_delete_held_sales(company))
     permissions["puede_anular_facturas"] = int(get_facex_can_cancel_invoices(company))
     permissions["permite_descargar_xml"] = int(get_facex_can_download_xml(company))
@@ -1917,6 +1921,9 @@ def _redate_draft_to_today(target) -> str:
         "posting_date": hoy,
         "set_posting_time": 0,
         "payment_schedule": [],
+        # Multimoneda: un tipo de cambio escrito a mano era para la fecha vieja;
+        # al re-fechar vuelve a la referencia Banguat de hoy (api/moneda.py).
+        "facex_tipo_cambio_manual": 0,
     }
     if nuevo_due:
         valores["due_date"] = nuevo_due
@@ -2179,6 +2186,9 @@ def save_draft(doc_json: str):
             "selling_price_list", "sales_partner", "bfel_establecimiento", "vendedor",
             "bfel_pago_contra_entrega",
             "facex_incluir_flete", "facex_flete_amount", "facex_flete_amount_original",
+            # Multimoneda: la moneda y el tipo de cambio los valida/fija el hook
+            # before_validate (api/moneda.py) — Banguat salvo permiso.
+            "currency", "conversion_rate", "facex_tipo_cambio_manual",
         ):
             # No pisar selling_price_list con vacío si el doc ya tiene uno
             if field == "selling_price_list" and not data.get(field) and doc.selling_price_list:
@@ -2954,6 +2964,16 @@ def _delete_draft_payment_entries(invoice_name):
 
 
 def _create_payment_entry(invoice_doc, payment_method, payment_date, reference, amount):
+    # Multimoneda fase 1: los cobros de facturas en otra moneda (tipo de cambio,
+    # cuentas en USD y diferencial cambiario) llegan en la fase 2. Mientras
+    # tanto no se arma un recibo con tipo de cambio 1 que descuadre la CxC.
+    _company_cur = frappe.get_cached_value("Company", invoice_doc.company, "default_currency")
+    if invoice_doc.currency and _company_cur and invoice_doc.currency != _company_cur:
+        frappe.throw(
+            f"Los pagos de facturas en {invoice_doc.currency} todavía no están habilitados en FacEx "
+            f"(llegan con la fase 2 de multimoneda). Deje la factura al crédito.",
+            title="Pago en moneda extranjera",
+        )
     mode, paid_to = _resolve_mode_of_payment_account(payment_method, invoice_doc.company)
 
     paid_from = frappe.db.get_value("Company", invoice_doc.company, "default_receivable_account")

@@ -227,6 +227,11 @@ class EFastSalePage {
 		if (this._frac_mode === "fraccion") this._set_frac_mode("entero", false);
 		this.doc = this._empty_doc();
 		this.doc.company = this.defaults.company || "";
+		// Multimoneda: arranca en la moneda por defecto de la compañía.
+		this.doc.currency = this.defaults.currency || "GTQ";
+		this.doc.conversion_rate = 1;
+		this.doc.facex_tipo_cambio_manual = 0;
+		this._customer_currency_rule = null;
 		this.doc.naming_series = (this.defaults.naming_series || [])[0] || "SINV-.YYYY.-";
 		this.doc.taxes_and_charges = "";
 		this.doc.payment_terms_template = this.defaults.default_payment_terms_template || "";
@@ -719,6 +724,16 @@ class EFastSalePage {
                 <div class="ef-field-group">
                   <label class="ef-label">Vendedor</label>
                   <div data-ctrl="sales_partner" class="ef-link-ctrl" tabindex="12"></div>
+                </div>
+              </div>
+              <div class="ef-field-row2" id="ef-moneda-group" style="display:none;">
+                <div class="ef-field-group">
+                  <label class="ef-label">Moneda</label>
+                  <select id="ef-currency" class="ef-select" tabindex="12"></select>
+                </div>
+                <div class="ef-field-group">
+                  <label class="ef-label">Tipo de Cambio <span id="ef-tc-fuente" style="font-weight:400;color:var(--ef-text-muted);"></span></label>
+                  <input id="ef-conversion-rate" type="number" step="0.00001" min="0" class="ef-input" tabindex="12" readonly />
                 </div>
               </div>
               <div class="ef-field-group" id="ef-price-list-group" style="display:none;">
@@ -1584,6 +1599,16 @@ class EFastSalePage {
                   <div class="ef-field-group">
                     <label class="ef-label">Límite de Crédito <span style="color:#64748b; font-weight:400; font-size:11px;">(para la compañía activa)</span></label>
                     <input type="number" id="ef-maint-cust-credit-limit" class="ef-input" style="width:100%" min="0" step="any" placeholder="0.00" />
+                  </div>
+                  <div class="ef-field-group ef-maint-cust-moneda" style="display:none;">
+                    <label class="ef-label">Moneda de facturación <span style="color:#64748b; font-weight:400; font-size:11px;">(la lista de precios debe estar en esta moneda)</span></label>
+                    <select id="ef-maint-cust-moneda" class="ef-select" style="width:100%"></select>
+                  </div>
+                  <div class="ef-field-group ef-maint-cust-moneda" style="display:none;">
+                    <label class="ef-label">&nbsp;</label>
+                    <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
+                      <input type="checkbox" id="ef-maint-cust-multimoneda" /> Multimoneda (puede facturarse en cualquier moneda permitida)
+                    </label>
                   </div>
                 </div>
               </details>
@@ -5804,6 +5829,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		});
 		this._load_price_list_selector();
 		this._load_cod_links();
+		this._setup_currency_controls();
 
 		// Link fields vía Frappe ControlLink
 		this._make_link_ctrl("customer", "Customer", true);
@@ -6117,6 +6143,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 						this._load_recargo_context();
 						this._cod_sync_from_list(this.doc.selling_price_list);
 					}
+					// Multimoneda: moneda del cliente (fija o la suya por defecto).
+					this._apply_customer_currency(customer);
 
 					this.doc.bfel_identificacion = r.message.bfel_identificacion || "";
 					this.$body.find("#ef-bfel-identificacion").val(this.doc.bfel_identificacion);
@@ -7115,20 +7143,190 @@ body.facex-fullscreen-mode .ef-main-layout {
 			method: "facex_multi.api.item.get_selectable_price_lists",
 			args: { company: this.doc.company || this.defaults.company || "" },
 			callback: (r) => {
-				this._selectable_price_lists = (r.message || []).map((p) => p.name);
-				const $grp = this.$body.find("#ef-price-list-group");
-				const $sel = this.$body.find("#ef-price-list");
-				// Solo se muestra si el usuario tiene más de una lista para elegir.
-				if (this._selectable_price_lists.length < 2) {
-					$grp.hide();
+				this._all_selectable_price_lists = r.message || [];
+				this._price_list_currency = {};
+				this._all_selectable_price_lists.forEach((p) => { this._price_list_currency[p.name] = p.currency || ""; });
+				this._render_price_list_options();
+			},
+		});
+	}
+
+	// Opciones del selector de listas. Multimoneda: solo las de la moneda del
+	// documento (una lista por moneda, sin conversión — ver api/moneda.py).
+	_render_price_list_options() {
+		const all = this._all_selectable_price_lists || [];
+		const cur = (this.doc && this.doc.currency) || this.defaults.currency || "";
+		const multi = this._is_multimoneda();
+		this._selectable_price_lists = all
+			.filter((p) => !multi || !cur || (p.currency || "") === cur)
+			.map((p) => p.name);
+		const $grp = this.$body.find("#ef-price-list-group");
+		const $sel = this.$body.find("#ef-price-list");
+		// Solo se muestra si el usuario tiene más de una lista para elegir.
+		if (this._selectable_price_lists.length < 2) {
+			$grp.hide();
+			return;
+		}
+		$sel.empty();
+		this._selectable_price_lists.forEach((name) => {
+			$sel.append(`<option value="${_esc(name)}">${_esc(name)}</option>`);
+		});
+		$grp.show();
+		this._sync_price_list_selector();
+	}
+
+	// ── Multimoneda (ver facex_multi.api.moneda) ─────────────────────────
+
+	_currency_cfg() {
+		const m = (this.company_config || {}).monedas;
+		if (m && Array.isArray(m.permitidas)) return m;
+		const c = this.defaults.currency || "GTQ";
+		return { compania: c, por_defecto: c, permitidas: [c], multimoneda: false };
+	}
+
+	_is_multimoneda() {
+		return !!this._currency_cfg().multimoneda;
+	}
+
+	// Monedas que se pueden elegir para el documento en pantalla.
+	_doc_allowed_currencies() {
+		const cfg = this._currency_cfg();
+		const regla = this._customer_currency_rule;
+		if (regla && Array.isArray(regla.permitidas) && regla.permitidas.length) return regla.permitidas;
+		return cfg.permitidas;
+	}
+
+	_setup_currency_controls() {
+		this.$body.find("#ef-currency").on("change", (e) => {
+			const val = e.target.value || "";
+			if (!val || val === this.doc.currency) return;
+			this._set_doc_currency(val);
+		});
+		this.$body.find("#ef-conversion-rate").on("change", (e) => {
+			const v = parseFloat(e.target.value);
+			if (!(v > 0)) {
+				e.target.value = this.doc.conversion_rate || "";
+				return;
+			}
+			this.doc.conversion_rate = v;
+			this.doc.facex_tipo_cambio_manual = 1;
+			this.$body.find("#ef-tc-fuente").text("(manual)");
+			this._mark_dirty();
+		});
+	}
+
+	// Cambia la moneda del documento: lista de precios en esa moneda (la del
+	// cliente si coincide, si no la por defecto del usuario, si no la primera),
+	// re-cotiza y trae el tipo de cambio.
+	_set_doc_currency(cur, opts = {}) {
+		const d = this.doc;
+		if (!d || d.docstatus !== 0) return;
+		d.currency = cur;
+		d.facex_tipo_cambio_manual = 0;
+		d.conversion_rate = cur === this._currency_cfg().compania ? 1 : 0;
+		this._render_price_list_options();
+		const plc = this._price_list_currency || {};
+		const actual = d.selling_price_list || "";
+		if (!actual || (plc[actual] !== undefined && plc[actual] !== cur)) {
+			const cands = [this._customer_price_list, this.defaults.default_price_list]
+				.concat(this._selectable_price_lists || []);
+			const next = cands.find((n) => n && plc[n] === cur) || "";
+			if (!next) {
+				frappe.show_alert({ message: __("No tiene una lista de precios en {0}.", [cur]), indicator: "orange" }, 7);
+			}
+			if (next !== actual) {
+				d.selling_price_list = next;
+				this._sync_price_list_selector();
+				this._reprice_all_items();
+				this._load_recargo_context();
+				this._cod_sync_from_list(d.selling_price_list);
+			}
+		}
+		this._sync_currency_ui();
+		if (!opts.silent) this._mark_dirty();
+		this._update_local_footer();
+	}
+
+	// Moneda del cliente (multimoneda): un cliente de moneda fija arrastra su
+	// moneda; uno multimoneda arranca en la suya y se puede cambiar.
+	_apply_customer_currency(customer) {
+		this._customer_currency_rule = null;
+		if (!this._is_multimoneda() || !customer) {
+			this._sync_currency_ui();
+			return;
+		}
+		frappe.call({
+			method: "facex_multi.api.moneda.get_customer_currency",
+			args: { customer, company: this.doc.company || this.defaults.company || "" },
+			callback: (r) => {
+				if (r.exc || !r.message || (this.doc.customer || "") !== customer) return;
+				this._customer_currency_rule = r.message;
+				if (r.message.lista && r.message.lista_moneda && this._price_list_currency) {
+					this._price_list_currency[r.message.lista] = r.message.lista_moneda;
+				}
+				if ((this.doc.currency || "") !== r.message.moneda) {
+					this._set_doc_currency(r.message.moneda);
+				} else {
+					this._sync_currency_ui();
+				}
+			},
+		});
+	}
+
+	_sync_currency_ui() {
+		const d = this.doc || {};
+		const cfg = this._currency_cfg();
+		const $grp = this.$body.find("#ef-moneda-group");
+		const cur = d.currency || cfg.por_defecto;
+		// Se muestra en compañías multimoneda o si el documento ya está en otra moneda.
+		if (!cfg.multimoneda && cur === cfg.compania) {
+			$grp.hide();
+			return;
+		}
+		$grp.show();
+		const editable = d.docstatus === 0 && !d.is_return && !d.return_against;
+		const opciones = editable ? this._doc_allowed_currencies().slice() : [];
+		if (opciones.indexOf(cur) === -1) opciones.push(cur);
+		const $sel = this.$body.find("#ef-currency");
+		$sel.empty();
+		opciones.forEach((c) => $sel.append(`<option value="${_esc(c)}">${_esc(c)}</option>`));
+		$sel.val(cur).prop("disabled", !editable || opciones.length < 2);
+
+		const $tc = this.$body.find("#ef-conversion-rate");
+		const $f = this.$body.find("#ef-tc-fuente");
+		if (cur === cfg.compania) {
+			$tc.val("1").prop("readonly", true);
+			$f.text("");
+			return;
+		}
+		const puedeEditar = editable && !!(this.perms || {}).edita_tipo_cambio;
+		$tc.prop("readonly", !puedeEditar)
+			.attr("title", puedeEditar
+				? "Referencia Banguat del día. Puede escribir otro tipo de cambio (queda marcado como manual)."
+				: "Referencia Banguat del día de la factura.");
+		if (parseFloat(d.conversion_rate) > 0) $tc.val(parseFloat(d.conversion_rate));
+		$f.text(d.facex_tipo_cambio_manual ? "(manual)" : "(Banguat)");
+		// Borrador sin tipo de cambio manual: se muestra el de Banguat del día
+		// (el servidor lo vuelve a fijar al grabar/validar).
+		if (editable && !d.facex_tipo_cambio_manual) this._fetch_exchange_rate();
+	}
+
+	_fetch_exchange_rate() {
+		const d = this.doc;
+		const cur = d.currency;
+		frappe.call({
+			method: "facex_multi.api.moneda.get_tipo_cambio_venta",
+			args: { company: d.company || this.defaults.company || "", moneda: cur },
+			callback: (r) => {
+				if (r.exc || !r.message || this.doc !== d || d.currency !== cur || d.facex_tipo_cambio_manual) return;
+				const tc = parseFloat(r.message.tipo_cambio) || 0;
+				if (!(tc > 0)) {
+					this.$body.find("#ef-tc-fuente").text("(sin tipo de cambio)");
 					return;
 				}
-				$sel.empty();
-				this._selectable_price_lists.forEach((name) => {
-					$sel.append(`<option value="${_esc(name)}">${_esc(name)}</option>`);
-				});
-				$grp.show();
-				this._sync_price_list_selector();
+				d.conversion_rate = tc;
+				this.$body.find("#ef-conversion-rate").val(tc);
+				this.$body.find("#ef-tc-fuente").text(`(${r.message.fuente} ${frappe.datetime.str_to_user(r.message.fecha)})`);
 			},
 		});
 	}
@@ -8481,6 +8679,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this._cod_prev_list = undefined;
 		this._cod_prev_terms = undefined;
 		this._customer_price_list = "";
+		this._sync_currency_ui();
 
 		this._render_items();
 		this._update_footer();
@@ -9479,6 +9678,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 			d.due_date = frappe.datetime.add_days(hoy, dias).substring(0, 10);
 		}
 		d.posting_date = hoy;
+		// Multimoneda: el tipo de cambio vuelve a ser el de Banguat de hoy.
+		d.facex_tipo_cambio_manual = 0;
 		frappe.show_alert({
 			message: `Borrador del ${anterior}: la fecha del documento se actualizó a hoy (${hoy}).`,
 			indicator: "orange",
@@ -9948,6 +10149,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 			bfel_escenario_exento: d.bfel_escenario_exento || "",
 			selling_price_list: d.selling_price_list || "",
 			bfel_establecimiento: d.bfel_establecimiento || "",
+			// Multimoneda: el servidor fija el tipo de cambio (Banguat) salvo
+			// que un usuario con «Editar Tipo de Cambio» lo haya escrito.
+			currency: d.currency || this.defaults.currency || "GTQ",
+			conversion_rate: parseFloat(d.conversion_rate) || 1,
+			facex_tipo_cambio_manual: d.facex_tipo_cambio_manual ? 1 : 0,
 			// Flete como cargo del documento (ver facex_multi.api.recargo)
 			facex_incluir_flete: d.facex_incluir_flete ? 1 : 0,
 			facex_flete_amount: d.facex_incluir_flete ? (parseFloat(d.facex_flete_amount) || 0) : 0,
@@ -10469,6 +10675,12 @@ body.facex-fullscreen-mode .ef-main-layout {
 				{ fieldname: "default_price_list",    fieldtype: "Link", label: "Lista de Precios",   options: "Price List" },
 				{ fieldtype: "Column Break" },
 				{ fieldname: "default_sales_partner", fieldtype: "Link", label: "Socio de Ventas",    options: "Sales Partner" },
+				// Multimoneda (solo compañías con más de una moneda permitida)
+				{ fieldname: "facex_moneda", fieldtype: "Select", label: "Moneda de facturación",
+				  options: ["", ...this._currency_cfg().permitidas].join("\n"), hidden: this._is_multimoneda() ? 0 : 1,
+				  description: `En blanco = ${this._currency_cfg().por_defecto}. La Lista de Precios debe estar en esta moneda.` },
+				{ fieldname: "facex_multimoneda", fieldtype: "Check", label: "Multimoneda (puede facturarse en cualquier moneda permitida)",
+				  hidden: this._is_multimoneda() ? 0 : 1 },
 			],
 			primary_action_label: "Guardar",
 			primary_action: (values) => this._save_customer_from_dialog(dlg, values),
@@ -10615,9 +10827,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 						"customer_name", "bfel_identificacion", "bfel_id_receptor",
 						"custom_direccion", "custom_departamento", "custom_telefono",
 						"payment_terms", "default_price_list", "default_sales_partner",
+						"facex_moneda", "facex_multimoneda",
 					];
 					fieldnames.forEach((f) => {
-						if (dlg.fields_dict[f]) dlg.fields_dict[f].set_value(c[f] || "");
+						if (dlg.fields_dict[f]) dlg.fields_dict[f].set_value(c[f] || (f === "facex_multimoneda" ? 0 : ""));
 					});
 					// Re-aplicar readonly si estamos en modo vista (los set_value pueden habilitar campos)
 					if (dlg._ef_mode === "view") {
@@ -10644,6 +10857,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 			default_price_list: values.default_price_list || "",
 			default_sales_partner: values.default_sales_partner || "",
 		};
+		if (this._is_multimoneda()) {
+			data.facex_moneda = values.facex_moneda || "";
+			data.facex_multimoneda = values.facex_multimoneda ? 1 : 0;
+		}
 		frappe.call({
 			method: "facex_multi.api.customer.create_or_update_customer",
 			args: { 
@@ -10673,6 +10890,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			"customer_name", "bfel_identificacion", "bfel_id_receptor",
 			"custom_direccion", "custom_departamento", "custom_telefono",
 			"payment_terms", "default_price_list", "default_sales_partner",
+			"facex_moneda", "facex_multimoneda",
 		];
 		fieldnames.forEach((f) => {
 			const fd = dlg.fields_dict[f];
@@ -10707,6 +10925,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			"customer_name", "bfel_identificacion", "bfel_id_receptor",
 			"custom_direccion", "custom_departamento", "custom_telefono",
 			"payment_terms", "default_price_list", "default_sales_partner",
+			"facex_moneda", "facex_multimoneda",
 		];
 		fieldnames.forEach((f) => {
 			if (dlg.fields_dict[f]) dlg.fields_dict[f].set_value("");
@@ -13652,6 +13871,15 @@ body.facex-fullscreen-mode .ef-main-layout {
 	/* ── Maintenance Section ────────────────────────────────────────── */
 
 	_setup_maintenance() {
+		// Multimoneda: moneda del cliente (solo compañías con más de una moneda).
+		{
+			const cfg = this._currency_cfg();
+			const $m = this.$body.find("#ef-maint-cust-moneda");
+			$m.empty().append(`<option value="">${_esc(cfg.por_defecto)} (por defecto)</option>`);
+			cfg.permitidas.filter((c) => c !== cfg.por_defecto)
+				.forEach((c) => $m.append(`<option value="${_esc(c)}">${_esc(c)}</option>`));
+			this.$body.find(".ef-maint-cust-moneda").css("display", cfg.multimoneda ? "" : "none");
+		}
 		if (!this.maint_cust_price_list_ctrl) {
 			const get_query_fn = () => {
 				const comp = this.doc.company || this.defaults.company || "";
@@ -15301,7 +15529,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 			"#ef-maint-cust-name, #ef-maint-cust-ident, #ef-maint-cust-receptor, " +
 			"#ef-maint-cust-contact-nombre, #ef-maint-cust-contact-apellido, " +
 			"#ef-maint-cust-contact-email, #ef-maint-cust-contact-telefono, " +
-			"#ef-maint-cust-addr, #ef-maint-cust-dept, #ef-maint-cust-credit-limit"
+			"#ef-maint-cust-addr, #ef-maint-cust-dept, #ef-maint-cust-credit-limit, " +
+			"#ef-maint-cust-moneda, #ef-maint-cust-multimoneda"
 		).prop("disabled", !enable);
 
 		[
@@ -15369,6 +15598,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 					this.$body.find("#ef-maint-cust-contact-email").val(c.contacto_email);
 					this.$body.find("#ef-maint-cust-contact-telefono").val(c.contacto_telefono);
 					this.$body.find("#ef-maint-cust-credit-limit").val(c.credit_limit || 0);
+					this.$body.find("#ef-maint-cust-moneda").val(c.facex_moneda === this._currency_cfg().por_defecto ? "" : (c.facex_moneda || ""));
+					this.$body.find("#ef-maint-cust-multimoneda").prop("checked", !!c.facex_multimoneda);
 					if (this.maint_cust_price_list_ctrl) {
 						this.maint_cust_price_list_ctrl.set_value(c.default_price_list || "");
 					}
@@ -15399,6 +15630,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 		this.$body.find("#ef-maint-cust-contact-email").val("");
 		this.$body.find("#ef-maint-cust-contact-telefono").val("");
 		this.$body.find("#ef-maint-cust-credit-limit").val("");
+		this.$body.find("#ef-maint-cust-moneda").val("");
+		this.$body.find("#ef-maint-cust-multimoneda").prop("checked", false);
 		if (this.maint_cust_price_list_ctrl) {
 			this.maint_cust_price_list_ctrl.set_value("");
 		}
@@ -15438,6 +15671,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 			customer_group: this.maint_cust_group_ctrl ? this.maint_cust_group_ctrl.get_value() : "",
 			credit_limit: parseFloat(this.$body.find("#ef-maint-cust-credit-limit").val()) || 0,
 		};
+		if (this._is_multimoneda()) {
+			data.facex_moneda = this.$body.find("#ef-maint-cust-moneda").val() || "";
+			data.facex_multimoneda = this.$body.find("#ef-maint-cust-multimoneda").prop("checked") ? 1 : 0;
+		}
 		const company = this.doc.company || this.defaults.company || "";
 
 		frappe.call({
@@ -17563,7 +17800,7 @@ function _peekBtn(name) {
 }
 
 function _fmtCurrency(n, currency) {
-	const symbol = currency === "GTQ" ? "Q" : (currency || "Q");
+	const symbol = currency === "GTQ" ? "Q" : currency === "USD" ? "US$" : (currency || "Q");
 	return `${symbol} ${parseFloat(n || 0).toLocaleString("es-GT", {
 		minimumFractionDigits: 2,
 		maximumFractionDigits: 2,

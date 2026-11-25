@@ -25,6 +25,10 @@
   "permite_pago_credito",
   "permite_pago_contra_entrega",
   "validar_pagos_automaticamente",
+  "sb_monedas",
+  "moneda_por_defecto",
+  "cb_monedas",
+  "monedas_permitidas",
   "sec_flete",
   "item_flete",
   "recargo_es_venta",
@@ -210,6 +214,29 @@
    "fieldname": "validar_pagos_automaticamente",
    "fieldtype": "Check",
    "label": "Validar pagos automáticamente"
+  },
+  {
+   "fieldname": "sb_monedas",
+   "fieldtype": "Section Break",
+   "label": "Monedas (Multimoneda)"
+  },
+  {
+   "fieldname": "moneda_por_defecto",
+   "fieldtype": "Link",
+   "options": "Currency",
+   "label": "Moneda por defecto",
+   "description": "Moneda con la que arrancan las cotizaciones y facturas nuevas y la de los clientes sin moneda propia. En blanco = moneda de la compañía."
+  },
+  {
+   "fieldname": "cb_monedas",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "monedas_permitidas",
+   "fieldtype": "Table MultiSelect",
+   "options": "FacEx Moneda Permitida",
+   "label": "Monedas permitidas",
+   "description": "Monedas en que la compañía puede cotizar, facturar y certificar. En blanco = solo la moneda por defecto (sin multimoneda). La moneda de la compañía y la moneda por defecto siempre se incluyen."
   },
   {
    "fieldname": "sec_flete",
@@ -654,7 +681,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-11-11 17:14:30.326934",
+ "modified": "2026-11-25 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Configuracion Compania",

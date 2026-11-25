@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import frappe
 import json
-from frappe.utils import flt
+from frappe.utils import cint, flt
 from facex_multi.api.invoice import get_effective_company, has_efast_permission
 
 
@@ -382,6 +382,9 @@ def get_customer(name: str, company: str = None):
         "default_sales_partner": doc.get("default_sales_partner") or "",
         "customer_group": doc.get("customer_group") or "",
         "credit_limit": _get_credit_limit_for_company(doc, company),
+        # Multimoneda (api/moneda.py): vacío = moneda por defecto de la compañía.
+        "facex_moneda": doc.get("facex_moneda") or "",
+        "facex_multimoneda": cint(doc.get("facex_multimoneda")),
     }
 
 
@@ -423,6 +426,8 @@ def create_or_update_customer(data_json: str, company: str = None):
         "payment_terms", "default_price_list", "default_sales_partner",
         "customer_group",
     ]
+    if doc.meta.has_field("facex_moneda"):
+        editable += ["facex_moneda", "facex_multimoneda"]
     for field in editable:
         if field in data:
             # customer_group ya recibe un valor por defecto al crear el cliente
@@ -502,6 +507,11 @@ def validate_customer_on_save(doc, method=None):
     if doc.meta.has_field("bfel_company") and doc.bfel_company:
         company = doc.bfel_company
 
+        # Multimoneda: la lista automática tiene que estar en la moneda del cliente.
+        from facex_multi.api.moneda import get_currency_config
+        _cfg_mon = get_currency_config(company)
+        _moneda_cli = (doc.get("facex_moneda") or _cfg_mon["por_defecto"]) if _cfg_mon["multimoneda"] else ""
+
         # Si no tiene lista de precios, intentar auto-asignar o requerirla
         if not doc.default_price_list:
             plists = frappe.db.sql(
@@ -512,8 +522,9 @@ def validate_customer_on_save(doc, method=None):
                       bfel_company = %(company)s
                       OR ((bfel_company IS NULL OR bfel_company = '') AND IFNULL(bfel_company_null,0) = 0)
                   )
+                  AND (%(moneda)s = '' OR currency = %(moneda)s)
                 """,
-                {"company": company},
+                {"company": company, "moneda": _moneda_cli},
                 as_dict=True,
             )
             # Con varias listas de venta se asigna la general (LP-GEN) si existe.
@@ -535,6 +546,10 @@ def validate_customer_on_save(doc, method=None):
         if doc.default_sales_partner:
             from facex_multi.api.sales_partner import validate_sales_partner_company
             validate_sales_partner_company(doc.default_sales_partner, company)
+
+        # Multimoneda: moneda permitida y lista en la moneda del cliente.
+        from facex_multi.api.moneda import validate_customer_moneda
+        validate_customer_moneda(doc)
 
 
 @frappe.whitelist()

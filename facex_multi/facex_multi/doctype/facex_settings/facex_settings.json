@@ -37,6 +37,7 @@
   "modifica_items",
   "actualiza_precios",
   "puede_editar_precio",
+  "edita_tipo_cambio",
   "gestiona_listas_materiales",
   "asignacion_precios",
   "puede_eliminar_ventas_espera",
@@ -438,6 +439,13 @@
    "fieldname": "puede_editar_precio",
    "fieldtype": "Check",
    "label": "Editar Precio Manualmente en Venta (FacEx Screen y Clásico)"
+  },
+  {
+   "default": "0",
+   "fieldname": "edita_tipo_cambio",
+   "fieldtype": "Check",
+   "label": "Editar Tipo de Cambio en Venta (Multimoneda)",
+   "description": "Por defecto el tipo de cambio de una venta en moneda extranjera es el de referencia de Banguat del día de la factura. Actívalo solo para usuarios autorizados a escribir otro tipo de cambio."
   },
   {
    "default": "1",
@@ -1604,7 +1612,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-11-04 12:00:00.000000",
+ "modified": "2026-11-25 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Settings",

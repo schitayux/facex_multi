@@ -91,7 +91,7 @@ def get_price_lists(company: str = None):
 
 
 @frappe.whitelist()
-def get_selectable_price_lists(company: str = None):
+def get_selectable_price_lists(company: str = None, currency: str = None):
     """Listas de precios de VENTA que el usuario puede elegir manualmente en el
     selector de FacEx / FacEx Screen. Es get_price_lists() acotado a
     listas_precios_habilitadas de FacEx Settings cuando el usuario está
@@ -109,6 +109,9 @@ def get_selectable_price_lists(company: str = None):
     if allowed is not None:
         allowed_set = set(allowed)
         rows = [r for r in rows if r["name"] in allowed_set]
+    # Multimoneda: el facturador pide solo las listas de la moneda elegida.
+    if currency:
+        rows = [r for r in rows if (r.get("currency") or "") == currency]
     return rows
 
 
