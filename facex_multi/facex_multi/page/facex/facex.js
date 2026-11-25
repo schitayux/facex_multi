@@ -10971,7 +10971,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			}
 			// Marcar: pre-confirmación antes de aplicar el pago total automático
 			const currency = this.doc.currency || "GTQ";
-			const monto    = _fmtCurrency(parseFloat(this.doc.outstanding_amount) || 0, currency);
+			const monto    = _fmtCurrency(this._saldo_factura(), currency);
 			const revert   = () => {
 				e.target.checked = false;
 				this._sync_pagado_ui();
@@ -10991,7 +10991,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 						// tiene redondeo (rounding_adjustment != 0), ERPNext valida el
 						// Payment Entry contra el saldo pendiente real, no contra el
 						// grand_total sin redondear.
-						amount: parseFloat(this.doc.outstanding_amount) || 0,
+						amount: this._saldo_factura(),
+						// Multimoneda: se cobra en la moneda de la factura.
+						moneda_pago: this.doc.currency || "",
+						monto_recibido: this._saldo_factura(),
 					}];
 					this._manualPayment = false;
 					this._sync_pagado_ui();
@@ -11103,7 +11106,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					<td class="ef-td">${pe.mode_of_payment || ""}</td>
 					<td class="ef-td">${pe.posting_date || ""}</td>
 					<td class="ef-td"><a href="${link}" target="_blank" style="color:#2563eb;text-decoration:underline;font-size:11px">${pe.name}</a></td>
-					<td class="ef-td ef-td-num">${_fmtCurrency(pe.paid_amount, this.doc.currency || "GTQ")}</td>
+					<td class="ef-td ef-td-num">${_fmtCurrency(pe.received_amount !== undefined ? pe.received_amount : pe.paid_amount, pe.paid_to_account_currency || this.doc.currency || "GTQ")}</td>
 					<td class="ef-td">${autoVal ? `<button class="ef-btn-del ef-del-pe" data-pe="${pe.name}" title="Anular este pago">×</button>` : ""}</td>
 				</tr>`;
 				$tbody.append(row);
@@ -11115,7 +11118,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					<td class="ef-td">${pe.mode_of_payment || ""}</td>
 					<td class="ef-td">${pe.posting_date || ""}</td>
 					<td class="ef-td"><a href="${link}" target="_blank" style="color:#2563eb;text-decoration:underline;font-size:11px">${pe.name}</a> (borrador)</td>
-					<td class="ef-td ef-td-num">${_fmtCurrency(pe.paid_amount, this.doc.currency || "GTQ")}</td>
+					<td class="ef-td ef-td-num">${_fmtCurrency(pe.received_amount !== undefined ? pe.received_amount : pe.paid_amount, pe.paid_to_account_currency || this.doc.currency || "GTQ")}</td>
 					<td class="ef-td"><button class="ef-btn-del ef-del-pe" data-pe="${pe.name}" title="Borrar este borrador">×</button></td>
 				</tr>`);
 			});
@@ -11157,9 +11160,143 @@ body.facex-fullscreen-mode .ef-main-layout {
 	// servidor); por omisión se propone hoy.
 	_abono_saldo() {
 		const pes = this.doc._payment_entries || {};
-		const enBorrador = (pes.draft || []).reduce((s, pe) => s + (parseFloat(pe.paid_amount) || 0), 0);
+		// Lo acreditado por los borradores (moneda de la cuenta por cobrar).
+		const enBorrador = (pes.draft || []).reduce((s, pe) => s + (parseFloat(
+			pe.allocated_amount !== undefined ? pe.allocated_amount : pe.paid_amount) || 0), 0);
 		const abonos = (this._abonos || []).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
-		return (parseFloat(this.doc.outstanding_amount) || 0) - enBorrador - abonos;
+		return this._saldo_factura((parseFloat(this.doc.outstanding_amount) || 0) - enBorrador) - abonos;
+	}
+
+	// ── Multimoneda en pagos (ver facex_multi.api.moneda) ─────────────────
+
+	// Saldo en la moneda de la factura. ERPNext lo lleva en la moneda de la
+	// cuenta por cobrar (la de la compañía) al tipo de cambio de la factura.
+	_saldo_factura(outBase) {
+		const d = this.doc || {};
+		const o = outBase === undefined ? (parseFloat(d.outstanding_amount) || 0) : outBase;
+		const comp = this._currency_cfg().compania;
+		if (d.currency && d.currency !== comp && parseFloat(d.conversion_rate) > 0) {
+			return Math.round((o / parseFloat(d.conversion_rate)) * 100) / 100;
+		}
+		return o;
+	}
+
+	_pay_multimoneda() {
+		const comp = this._currency_cfg().compania;
+		return this._is_multimoneda() || ((this.doc || {}).currency && this.doc.currency !== comp);
+	}
+
+	// Moneda extranjera involucrada en la fila (la del pago o la de la factura).
+	_pay_foreign(p) {
+		const comp = this._currency_cfg().compania;
+		const m = p.moneda_pago || this.doc.currency || comp;
+		if (m !== comp) return m;
+		if ((this.doc.currency || comp) !== comp) return this.doc.currency;
+		return "";
+	}
+
+	// Recalcula `amount` (moneda de la factura) desde lo recibido.
+	_pay_recalc(p) {
+		const comp = this._currency_cfg().compania;
+		const inv = this.doc.currency || comp;
+		const m = p.moneda_pago || inv;
+		if (m === inv) {
+			p.monto_recibido = parseFloat(p.amount) || 0;
+			return;
+		}
+		const tc = parseFloat(p.tipo_cambio) || 0;
+		if (!(tc > 0)) { p.amount = 0; return; }
+		const aBase = (c) => (c === comp ? 1 : tc);
+		p.amount = Math.round(((parseFloat(p.monto_recibido) || 0) * aBase(m) / aBase(inv)) * 100) / 100;
+	}
+
+	// Tipo de cambio Banguat del día del pago (en caché por fecha y moneda).
+	_pay_load_rate(p, done) {
+		const f = this._pay_foreign(p);
+		if (!f) { p.tipo_cambio = 1; this._pay_recalc(p); done && done(); return; }
+		if (p._tc_manual && parseFloat(p.tipo_cambio) > 0) { this._pay_recalc(p); done && done(); return; }
+		const fecha = p.payment_date || frappe.datetime.get_today();
+		const key = `${f}|${fecha}`;
+		this._tc_cache = this._tc_cache || {};
+		const apply = (tc) => { p.tipo_cambio = tc; this._pay_recalc(p); done && done(); };
+		if (this._tc_cache[key]) { apply(this._tc_cache[key]); return; }
+		frappe.call({
+			method: "facex_multi.api.moneda.get_tipo_cambio_venta",
+			args: { company: this.doc.company || this.defaults.company || "", moneda: f, fecha },
+			callback: (r) => {
+				const tc = parseFloat((r.message || {}).tipo_cambio) || 0;
+				if (tc > 0) this._tc_cache[key] = tc;
+				apply(tc);
+			},
+		});
+	}
+
+	// Celda de monto de una fila: moneda recibida + monto + equivalente.
+	_pay_amount_cell(idx, p) {
+		const inv = this.doc.currency || this._currency_cfg().compania;
+		if (!this._pay_multimoneda()) {
+			return `<input type="number" class="ef-cell-input ef-input-num ef-pay-amount" data-pay-idx="${idx}"
+      value="${parseFloat(p.amount) || 0}" min="0" step="any" />`;
+		}
+		const m = p.moneda_pago || inv;
+		const monedas = this._currency_cfg().permitidas.slice();
+		[m, inv].forEach((c) => { if (monedas.indexOf(c) === -1) monedas.push(c); });
+		const opts = monedas.map((c) => `<option value="${_esc(c)}"${c === m ? " selected" : ""}>${_esc(c)}</option>`).join("");
+		const monto = m === inv ? (parseFloat(p.amount) || 0) : (parseFloat(p.monto_recibido) || 0);
+		return `<div style="display:flex;gap:4px;align-items:center;justify-content:flex-end">
+      <select class="ef-cell-input ef-pay-moneda" data-pay-idx="${idx}" style="width:72px">${opts}</select>
+      <input type="number" class="ef-cell-input ef-input-num ef-pay-amount" data-pay-idx="${idx}"
+        value="${monto}" min="0" step="any" />
+    </div>
+    <div class="ef-pay-equiv" style="font-size:10px;color:var(--ef-text-muted);text-align:right;margin-top:2px">${this._pay_equiv_html(p)}</div>`;
+	}
+
+	_pay_equiv_html(p) {
+		const comp = this._currency_cfg().compania;
+		const inv = this.doc.currency || comp;
+		const m = p.moneda_pago || inv;
+		const f = this._pay_foreign(p);
+		if (!f) return "";
+		const tc = parseFloat(p.tipo_cambio) || 0;
+		const puede = !!(this.perms || {}).edita_tipo_cambio;
+		const tcHtml = puede
+			? `TC <input type="number" class="ef-pay-tc" step="0.00001" min="0" value="${tc || ""}" style="width:78px;font-size:10px;padding:0 2px" title="Referencia Banguat del día del pago. Puede escribir otro.">`
+			: `TC ${tc ? tc : "…"}`;
+		const eq = m !== inv ? `= ${_fmtCurrency(p.amount, inv)} · ` : "";
+		return `${eq}${tcHtml}${p._tc_manual ? " (manual)" : ""}`;
+	}
+
+	// Eventos de moneda / tipo de cambio de una fila. `onChange` refresca totales.
+	_bind_pay_currency($row, p, onChange) {
+		const inv = this.doc.currency || this._currency_cfg().compania;
+		const refresh = () => {
+			$row.find(".ef-pay-equiv").html(this._pay_equiv_html(p));
+			bindTc();
+			onChange && onChange();
+		};
+		const bindTc = () => {
+			$row.find(".ef-pay-tc").off("change").on("change", (e) => {
+				const v = parseFloat(e.target.value);
+				if (v > 0) { p.tipo_cambio = v; p._tc_manual = true; this._pay_recalc(p); }
+				refresh();
+			});
+		};
+		bindTc();
+		$row.find(".ef-pay-moneda").off("change").on("change", (e) => {
+			const prev = p.moneda_pago || inv;
+			const val = parseFloat($row.find(".ef-pay-amount").val()) || 0;
+			p.moneda_pago = e.target.value;
+			if (p.moneda_pago === inv) { p.amount = val; }
+			else { p.monto_recibido = val; }
+			if (prev !== p.moneda_pago) p._tc_manual = false;
+			this._pay_load_rate(p, refresh);
+		});
+		$row.find(".ef-pay-date").on("change", () => {
+			p._tc_manual = false;
+			this._pay_load_rate(p, refresh);
+		});
+		if (!(parseFloat(p.tipo_cambio) > 0) && this._pay_foreign(p)) this._pay_load_rate(p, refresh);
+		return refresh;
 	}
 
 	_render_abonos_nuevos($tbody) {
@@ -11173,11 +11310,14 @@ body.facex-fullscreen-mode .ef-main-layout {
 		</td></tr>`);
 		$tbody.append($bar);
 		$bar.find("#ef-abono-add").on("click", () => {
+			const saldoAb = Math.max(this._abono_saldo(), 0);
 			this._abonos.push({
 				payment_method: "Efectivo",
 				payment_date: frappe.datetime.get_today(),
 				reference: "",
-				amount: Math.max(this._abono_saldo(), 0),
+				amount: saldoAb,
+				moneda_pago: this.doc.currency || "",
+				monto_recibido: saldoAb,
 			});
 			this._render_payments_tab();
 		});
@@ -11187,10 +11327,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 			$row.find(".ef-pay-method").on("change", (e) => { p.payment_method = e.target.value; });
 			$row.find(".ef-pay-date").on("change", (e) => { p.payment_date = e.target.value; });
 			$row.find(".ef-pay-ref").on("input", (e) => { p.reference = e.target.value; });
+			const inv = this.doc.currency || this._currency_cfg().compania;
 			$row.find(".ef-pay-amount").on("change", (e) => {
-				p.amount = Math.max(parseFloat(e.target.value) || 0, 0);
-				this._render_payments_tab();
+				const v = Math.max(parseFloat(e.target.value) || 0, 0);
+				if ((p.moneda_pago || inv) === inv) p.amount = v; else p.monto_recibido = v;
+				this._pay_load_rate(p, () => this._render_payments_tab());
 			});
+			if (this._pay_multimoneda()) this._bind_pay_currency($row, p, () => this._render_payments_tab());
 			$row.find(".ef-del-payment").on("click", () => { this._abonos.splice(i, 1); this._render_payments_tab(); });
 		});
 	}
@@ -11270,8 +11413,7 @@ body.facex-fullscreen-mode .ef-main-layout {
       value="${_esc(p.reference || "")}" placeholder="Ref..." />
   </td>
   <td class="ef-td ef-td-num">
-    <input type="number" class="ef-cell-input ef-input-num ef-pay-amount" data-pay-idx="${idx}"
-      value="${parseFloat(p.amount) || 0}" min="0" step="any" />
+    ${this._pay_amount_cell(idx, p)}
   </td>
   <td class="ef-td">
     <button class="ef-btn-del ef-del-payment" data-pay-idx="${idx}" title="Eliminar">×</button>
@@ -11293,20 +11435,33 @@ body.facex-fullscreen-mode .ef-main-layout {
 			$row.find(".ef-pay-ref").off("input").on("input", (e) => {
 				payments[idx].reference = e.target.value;
 			});
+			const inv = this.doc.currency || this._currency_cfg().compania;
 			$row.find(".ef-pay-amount").off("input change").on("input change", (e) => {
 				let val = parseFloat(e.target.value) || 0;
+				const p = payments[idx];
+				if ((p.moneda_pago || inv) !== inv) {
+					// Multimoneda: lo recibido en otra moneda; `amount` se
+					// convierte al tipo de cambio del día (el servidor valida el saldo).
+					p.monto_recibido = val;
+					this._pay_recalc(p);
+					$row.find(".ef-pay-equiv").html(this._pay_equiv_html(p));
+					this._update_payments_total();
+					return;
+				}
 				// Validar que no exceda el saldo de la factura (outstanding_amount,
 				// que ya refleja el redondeo aplicado por ERPNext)
-				const grandTotal = parseFloat(this.doc.outstanding_amount) || 0;
+				const grandTotal = this._saldo_factura();
 				const currentOthers = payments.reduce((s, p, i) => s + (i !== idx ? (parseFloat(p.amount) || 0) : 0), 0);
 				const maxAllowed = grandTotal - currentOthers;
 				if (val > maxAllowed) {
 					val = maxAllowed;
 					e.target.value = val;
 				}
-				payments[idx].amount = val;
+				p.amount = val;
+				p.monto_recibido = val;
 				this._update_payments_total();
 			});
+			if (this._pay_multimoneda()) this._bind_pay_currency($row, payments[idx], () => this._update_payments_total());
 			$row.find(".ef-del-payment").off("click").on("click", () => {
 				payments.splice(idx, 1);
 				this._render_payments_tab();
@@ -11317,16 +11472,19 @@ body.facex-fullscreen-mode .ef-main-layout {
 	_add_payment_row() {
 		if (!this.doc.custom_efast_payments) this.doc.custom_efast_payments = [];
 		const payments = this.doc.custom_efast_payments;
-		const grandTotal = parseFloat(this.doc.outstanding_amount) || 0;
+		const grandTotal = this._saldo_factura();
 		const totalPaid = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
 		let balance = grandTotal - totalPaid;
 		if (balance < 0) balance = 0;
+		balance = Math.round(balance * 100) / 100;
 
 		this.doc.custom_efast_payments.push({
 			payment_method: "Efectivo",
 			payment_date: frappe.datetime.get_today(),
 			reference: "",
 			amount: balance,
+			moneda_pago: this.doc.currency || "",
+			monto_recibido: balance,
 		});
 		this._render_payments_tab();
 	}
@@ -11334,7 +11492,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 	_update_payments_total() {
 		this._update_wa_buttons();
 		const payments = this.doc.custom_efast_payments || [];
-		const grandTotal = parseFloat(this.doc.outstanding_amount) || 0;
+		const grandTotal = this._saldo_factura();
 		const totalPaid  = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
 		const balance    = grandTotal - totalPaid;
 		const currency   = this.doc.currency || "GTQ";
@@ -11350,7 +11508,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		// única vía para quitar un desglose detallado (el toggle queda
 		// bloqueado en ese caso) y dejar la factura Pendiente.
 		const isClearing = payments.length === 0 && !!this.doc.custom_pagado;
-		const isValid = isClearing || (payments.length > 0 && totalPaid > 0 && totalPaid <= grandTotal);
+		const isValid = isClearing || (payments.length > 0 && totalPaid > 0 && totalPaid <= grandTotal + 0.005);
 		const $btnSave = this.$body.find("#ef-btn-save-payments");
 		if (isValid) {
 			$btnSave.prop("disabled", false).removeClass("ef-btn-disabled");
@@ -11386,7 +11544,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		}
 		// Si hay filas de pago, la factura se marca como pagada independientemente del toggle
 		const pagado     = payments.length > 0 ? 1 : 0;
-		const grandTotal = parseFloat(this.doc.outstanding_amount) || 0;
+		const grandTotal = this._saldo_factura();
 		const totalPaid  = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
 		const diff       = Math.abs(grandTotal - totalPaid);
 		const currency   = this.doc.currency || "GTQ";
@@ -13792,7 +13950,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 	_load_invoice_payment_receipt_details(inv_name) {
 		if (!inv_name) return;
 
-		frappe.db.get_value("Sales Invoice", inv_name, ["company", "customer_name", "grand_total", "outstanding_amount", "custom_pagado"], (res) => {
+		frappe.db.get_value("Sales Invoice", inv_name, ["company", "customer_name", "grand_total", "outstanding_amount", "custom_pagado", "currency"], (res) => {
 			if (!res) {
 				frappe.show_alert({ message: __("Factura no encontrada"), indicator: "red" });
 				this.$body.find("#ef-print-receipt-details").hide();
@@ -13802,7 +13960,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			this.$body.find("#ef-receipt-cust-name").text(res.customer_name || "");
 			frappe.xcall("facex_multi.api.cliente_generico.get_invoice_display_name", { invoice: inv_name })
 				.then((nombre) => { if (nombre) this.$body.find("#ef-receipt-cust-name").text(nombre); });
-			this.$body.find("#ef-receipt-grand-total").text(_fmtCurrency(res.grand_total, "GTQ"));
+			this.$body.find("#ef-receipt-grand-total").text(_fmtCurrency(res.grand_total, res.currency || "GTQ"));
 
 			frappe.call({
 				method: "frappe.client.get_list",
@@ -13820,8 +13978,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 					// con el Payment Entry ya validado, restarle los pagos los cuenta dos veces.
 					const balance = Math.max(0.0, parseFloat(res.grand_total || 0) - totalPaid);
 
-					this.$body.find("#ef-receipt-total-paid").text(_fmtCurrency(totalPaid, "GTQ"));
-					this.$body.find("#ef-receipt-balance").text(_fmtCurrency(balance, "GTQ"));
+					this.$body.find("#ef-receipt-total-paid").text(_fmtCurrency(totalPaid, res.currency || "GTQ"));
+					this.$body.find("#ef-receipt-balance").text(_fmtCurrency(balance, res.currency || "GTQ"));
 
 					const $tbody = this.$body.find("#ef-receipt-payments-tbody");
 					$tbody.empty();
@@ -13834,7 +13992,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 								<tr>
 									<td style="padding: 4px 8px; font-weight:600;">${p.payment_method}</td>
 									<td style="padding: 4px 8px; color:var(--ef-text-muted);">${p.payment_date}</td>
-									<td style="padding: 4px 8px; text-align:right; font-family:monospace; font-weight:700;">${_fmtCurrency(p.amount, "GTQ")}</td>
+									<td style="padding: 4px 8px; text-align:right; font-family:monospace; font-weight:700;">${_fmtCurrency(p.amount, res.currency || "GTQ")}</td>
 								</tr>
 							`);
 						});

@@ -29,6 +29,8 @@
   "moneda_por_defecto",
   "cb_monedas",
   "monedas_permitidas",
+  "sb_cuentas_pago_moneda",
+  "cuentas_pago_moneda",
   "sec_flete",
   "item_flete",
   "recargo_es_venta",
@@ -237,6 +239,19 @@
    "options": "FacEx Moneda Permitida",
    "label": "Monedas permitidas",
    "description": "Monedas en que la compañía puede cotizar, facturar y certificar. En blanco = solo la moneda por defecto (sin multimoneda). La moneda de la compañía y la moneda por defecto siempre se incluyen."
+  },
+  {
+   "fieldname": "sb_cuentas_pago_moneda",
+   "fieldtype": "Section Break",
+   "label": "Cuentas de cobro en otra moneda",
+   "depends_on": "eval:(doc.monedas_permitidas||[]).length>1"
+  },
+  {
+   "fieldname": "cuentas_pago_moneda",
+   "fieldtype": "Table",
+   "options": "FacEx Cuenta Pago Moneda",
+   "label": "Cuentas de cobro por moneda",
+   "description": "Caja o banco donde entra un pago recibido en una moneda distinta a la de la compañía (ej. USD → Efectivo USD). La cuenta debe estar en esa moneda. Los pagos en la moneda de la compañía usan las Formas de Pago de siempre."
   },
   {
    "fieldname": "sec_flete",
@@ -681,7 +696,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-11-25 12:00:00.000000",
+ "modified": "2026-11-25 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "FacEx Multi",
  "name": "FacEx Configuracion Compania",

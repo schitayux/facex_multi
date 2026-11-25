@@ -2935,10 +2935,18 @@ def _get_linked_payment_entries(invoice_name):
         pe = frappe.db.get_value(
             "Payment Entry",
             pe_name,
-            ["name", "docstatus", "paid_amount", "posting_date", "mode_of_payment"],
+            ["name", "docstatus", "paid_amount", "posting_date", "mode_of_payment",
+             # Multimoneda: lo que entró a caja/banco (moneda de esa cuenta) y lo
+             # acreditado a esta factura (moneda de la cuenta por cobrar).
+             "received_amount", "paid_to_account_currency"],
             as_dict=True,
         )
         if pe:
+            pe["allocated_amount"] = flt(frappe.db.sql(
+                """SELECT COALESCE(SUM(allocated_amount), 0) FROM `tabPayment Entry Reference`
+                   WHERE parent = %s AND reference_doctype = 'Sales Invoice' AND reference_name = %s""",
+                (pe_name, invoice_name),
+            )[0][0])
             result.append(pe)
     return result
 
@@ -2963,16 +2971,20 @@ def _delete_draft_payment_entries(invoice_name):
             frappe.delete_doc("Payment Entry", pe["name"], ignore_permissions=True, force=True)
 
 
-def _create_payment_entry(invoice_doc, payment_method, payment_date, reference, amount):
-    # Multimoneda fase 1: los cobros de facturas en otra moneda (tipo de cambio,
-    # cuentas en USD y diferencial cambiario) llegan en la fase 2. Mientras
-    # tanto no se arma un recibo con tipo de cambio 1 que descuadre la CxC.
-    _company_cur = frappe.get_cached_value("Company", invoice_doc.company, "default_currency")
-    if invoice_doc.currency and _company_cur and invoice_doc.currency != _company_cur:
-        frappe.throw(
-            f"Los pagos de facturas en {invoice_doc.currency} todavía no están habilitados en FacEx "
-            f"(llegan con la fase 2 de multimoneda). Deje la factura al crédito.",
-            title="Pago en moneda extranjera",
+def _create_payment_entry(invoice_doc, payment_method, payment_date, reference, amount,
+                          moneda_pago=None, monto_recibido=None, tipo_cambio=None, allocated=None):
+    """Payment Entry en borrador de un cobro FacEx. `amount` va en la moneda de
+    la factura. Multimoneda (ver api/moneda.py): `moneda_pago`/`monto_recibido`
+    es lo que entró a caja, `tipo_cambio` el del día del pago y `allocated` lo
+    que se acredita en la cuenta por cobrar (moneda de la compañía)."""
+    company_cur = frappe.get_cached_value("Company", invoice_doc.company, "default_currency") or "GTQ"
+    inv_cur = invoice_doc.currency or company_cur
+    moneda_pago = moneda_pago or inv_cur
+    if inv_cur != company_cur or moneda_pago != company_cur:
+        return _create_payment_entry_moneda(
+            invoice_doc, payment_method, payment_date, reference, amount,
+            moneda_pago, flt(monto_recibido) or flt(amount), flt(tipo_cambio) or 1.0, allocated,
+            company_cur,
         )
     mode, paid_to = _resolve_mode_of_payment_account(payment_method, invoice_doc.company)
 
@@ -3026,6 +3038,103 @@ def _create_payment_entry(invoice_doc, payment_method, payment_date, reference, 
         "outstanding_amount": invoice_doc.outstanding_amount,
     })
 
+    pe.insert(ignore_permissions=True)
+    return pe.name
+
+
+def _create_payment_entry_moneda(invoice_doc, payment_method, payment_date, reference, amount,
+                                 moneda_pago, monto_recibido, tipo_cambio, allocated, company_cur):
+    """Cobro con moneda extranjera de por medio (factura y/o pago).
+
+    - Cuenta por cobrar (paid_from): la de la compañía, en su moneda.
+    - Caja/banco (paid_to): la de la forma de pago si se pagó en la moneda de la
+      compañía; si no, la de «Cuentas de cobro por moneda» de la compañía.
+    - paid_amount: lo que entró a caja valuado al tipo del día del pago.
+    - allocated: lo abonado al tipo de cambio de la factura.
+    - La diferencia va como deducción a la cuenta de Ganancia/Pérdida en Cambio.
+    """
+    from facex_multi.api.moneda import cuenta_pago_moneda
+
+    company = invoice_doc.company
+    if moneda_pago == company_cur:
+        mode, paid_to = _resolve_mode_of_payment_account(payment_method, company)
+    else:
+        mode = _resolve_mode_of_payment_account(payment_method, company)[0]
+        paid_to = cuenta_pago_moneda(company, payment_method, moneda_pago)
+        if not paid_to:
+            frappe.throw(
+                f"No hay cuenta de cobro en {moneda_pago} para «{payment_method}» en {company}. "
+                "Configúrela en FacEx Configuración de Compañía → Cuentas de cobro por moneda.",
+                title="Pago en moneda extranjera",
+            )
+    if not paid_to:
+        frappe.throw(f"No se encontró cuenta de pago para '{payment_method}' en {company}.")
+
+    paid_from = frappe.db.get_value("Company", company, "default_receivable_account")
+    if not paid_from:
+        frappe.throw(f"La empresa {company} no tiene cuenta por cobrar configurada.")
+    paid_from_currency = frappe.db.get_value("Account", paid_from, "account_currency") or company_cur
+    paid_to_currency = frappe.db.get_value("Account", paid_to, "account_currency") or company_cur
+    if paid_from_currency != company_cur:
+        frappe.throw(f"La cuenta por cobrar {paid_from} debe estar en {company_cur}.")
+    if paid_to_currency != moneda_pago:
+        frappe.throw(f"La cuenta {paid_to} está en {paid_to_currency} y el pago es en {moneda_pago}.")
+
+    tc_pago = tipo_cambio if moneda_pago != company_cur else 1.0
+    valor_caja = flt(monto_recibido * tc_pago, 2)
+    if allocated is None:
+        tc_fact = flt(invoice_doc.conversion_rate) or 1.0
+        allocated = flt(flt(amount) * (tc_fact if invoice_doc.currency != company_cur else 1.0), 2)
+    allocated = min(flt(allocated, 2), flt(invoice_doc.outstanding_amount, 2))
+
+    pe = frappe.new_doc("Payment Entry")
+    from facex_multi.api.series import get_default_series, TIPO_RECIBO
+    recibo_series = get_default_series(company, TIPO_RECIBO)
+    if recibo_series:
+        pe.naming_series = recibo_series
+    pe.payment_type               = "Receive"
+    pe.party_type                 = "Customer"
+    pe.party                      = invoice_doc.customer
+    pe.company                    = company
+    pe.posting_date               = payment_date or today()
+    pe.mode_of_payment            = mode
+    pe.paid_from                  = paid_from
+    pe.paid_to                    = paid_to
+    pe.paid_from_account_currency = paid_from_currency
+    pe.paid_to_account_currency   = paid_to_currency
+    pe.source_exchange_rate       = 1
+    pe.target_exchange_rate       = tc_pago
+    pe.paid_amount                = valor_caja
+    pe.received_amount            = flt(monto_recibido, 2) if paid_to_currency != company_cur else valor_caja
+    pe.remarks = (
+        f"FacEx | {invoice_doc.name} | {moneda_pago} {flt(monto_recibido):,.2f}"
+        + (f" @ {tc_pago:g}" if moneda_pago != company_cur else "")
+        + (f" | factura {invoice_doc.currency} @ {flt(invoice_doc.conversion_rate):g}"
+           if invoice_doc.currency != company_cur else "")
+    )
+    pe.reference_no   = reference or f"{invoice_doc.name}-{frappe.generate_hash(length=8)}"
+    pe.reference_date = payment_date or today()
+    pe.append("references", {
+        "reference_doctype":  "Sales Invoice",
+        "reference_name":     invoice_doc.name,
+        "allocated_amount":   allocated,
+        "total_amount":       flt(invoice_doc.base_grand_total) if invoice_doc.currency != company_cur
+                              else flt(invoice_doc.grand_total),
+        "outstanding_amount": flt(invoice_doc.outstanding_amount),
+    })
+    # Diferencial cambiario: lo acreditado (tipo de la factura) contra lo que
+    # entró a caja (tipo del día). Positivo = pérdida, negativo = ganancia.
+    dif = flt(allocated - valor_caja, 2)
+    if abs(dif) >= 0.01:
+        cuenta_dif = frappe.get_cached_value("Company", company, "exchange_gain_loss_account")
+        if not cuenta_dif:
+            frappe.throw(f"La compañía {company} no tiene cuenta de Ganancia/Pérdida en Cambio.")
+        pe.append("deductions", {
+            "account": cuenta_dif,
+            "cost_center": frappe.get_cached_value("Company", company, "cost_center"),
+            "amount": dif,
+            "description": "Diferencial cambiario (FacEx)",
+        })
     pe.insert(ignore_permissions=True)
     return pe.name
 
@@ -3099,13 +3208,21 @@ def anular_abono(invoice_name: str, payment_entry: str):
     else:
         frappe.throw(f"El comprobante {pe.name} ya está cancelado.")
 
+    _campos = ["name", "payment_date", "amount", "reference"]
+    if frappe.get_meta("eFast Invoice Payment").has_field("payment_entry"):
+        _campos += ["payment_entry", "monto_recibido"]
     filas = frappe.get_all(
         "eFast Invoice Payment",
         filters={"parenttype": "Sales Invoice", "parent": name},
-        fields=["name", "payment_date", "amount", "reference"],
+        fields=_campos,
         order_by="idx desc",
     )
-    cand = [f for f in filas if str(f.payment_date) == str(fecha) and abs(flt(f.amount) - monto) < 0.01]
+    # Multimoneda: la fila guarda su comprobante; las viejas se ubican por
+    # fecha + monto (paid_amount = monto en la moneda de la compañía).
+    cand = [f for f in filas if f.get("payment_entry") == pe.name]
+    if not cand:
+        cand = [f for f in filas if not f.get("payment_entry") and str(f.payment_date) == str(fecha)
+                and abs(flt(f.amount) - monto) < 0.01]
     cand.sort(key=lambda f: (f.reference or "").strip() != ref_no)
     if cand:
         frappe.db.delete("eFast Invoice Payment", {"name": cand[0].name})
@@ -3125,41 +3242,52 @@ def _append_abonos(name, payments, submitted, all_pes):
     if doc.docstatus != 1:
         frappe.throw(f"La factura {name} no está validada.")
 
+    from facex_multi.api.moneda import (
+        asignado_en_borradores, asignar_en_base, es_moneda_extranjera, preparar_pago,
+        saldo_moneda_factura,
+    )
+    if any((row.get("payment_method") or "") == "Contra Entrega" for row in payments):
+        frappe.throw("Un abono sobre una factura con pagos validados no puede ser Contra Entrega.")
     nuevos = []
     for row in payments:
-        amount = float(row.get("amount") or 0)
-        if amount <= 0:
+        # Multimoneda: `amount` se recalcula en la moneda de la factura a partir
+        # de lo recibido (moneda_pago / monto_recibido / tipo de cambio del día).
+        n = preparar_pago(doc, row)
+        if n["amount"] <= 0:
             continue
-        nuevos.append({
-            "payment_method": row.get("payment_method") or "Efectivo",
-            "payment_date":   row.get("payment_date") or today(),
-            "reference":      row.get("reference") or "",
-            "amount":         amount,
-        })
+        nuevos.append(n)
     if not nuevos:
         frappe.throw("Ingrese al menos un abono con monto mayor a cero.")
-    if any(n["payment_method"] == "Contra Entrega" for n in nuevos):
-        frappe.throw("Un abono sobre una factura con pagos validados no puede ser Contra Entrega.")
 
     # Los borradores aún no bajan el saldo de la factura: se descuentan aquí
     # para no permitir abonar dos veces el mismo saldo.
-    en_borrador = sum(float(pe.get("paid_amount") or 0) for pe in all_pes if pe.get("docstatus") == 0)
-    disponible  = float(doc.outstanding_amount or 0) - en_borrador
+    borradores = [pe["name"] for pe in all_pes if pe.get("docstatus") == 0]
+    if es_moneda_extranjera(doc):
+        disponible_base = flt(doc.outstanding_amount) - asignado_en_borradores(name, borradores)
+        disponible = saldo_moneda_factura(doc, disponible_base)
+    else:
+        en_borrador = sum(float(pe.get("paid_amount") or 0) for pe in all_pes if pe.get("docstatus") == 0)
+        disponible = disponible_base = float(doc.outstanding_amount or 0) - en_borrador
     if sum(n["amount"] for n in nuevos) > disponible + 0.01:
         frappe.throw(
-            f"Los abonos ({sum(n['amount'] for n in nuevos):,.2f}) superan el saldo disponible "
-            f"de la factura {name} ({max(disponible, 0):,.2f})."
+            f"Los abonos ({doc.currency} {sum(n['amount'] for n in nuevos):,.2f}) superan el saldo disponible "
+            f"de la factura {name} ({doc.currency} {max(disponible, 0):,.2f})."
         )
 
     for n in nuevos:
         _assert_pago_facex_no_congelado(name, n["payment_date"])
 
+    asignaciones = asignar_en_base(doc, nuevos, disponible_base)
     created_pes = []
-    for n in nuevos:
-        doc.append("custom_efast_payments", n)
-        created_pes.append(
-            _create_payment_entry(doc, n["payment_method"], n["payment_date"], n["reference"], n["amount"])
+    for n, asign in zip(nuevos, asignaciones):
+        fila = doc.append("custom_efast_payments", n)
+        pe_name = _create_payment_entry(
+            doc, n["payment_method"], n["payment_date"], n["reference"], n["amount"],
+            n["moneda_pago"], n["monto_recibido"], n["tipo_cambio"], asign,
         )
+        if fila.meta.has_field("payment_entry"):
+            fila.payment_entry = pe_name
+        created_pes.append(pe_name)
     doc.custom_pagado = 1
     doc.flags.ignore_validate_update_after_submit = True
     doc.save(ignore_permissions=False)
@@ -3216,28 +3344,37 @@ def save_payments(invoice_name: str, payments_json: str, pagado: str = "0"):
     created_pes = []
     has_contra_entrega = False
     if pagado_val:
-        for row in payments:
-            amount = float(row.get("amount") or 0)
-            if amount <= 0:
-                continue
-            method = row.get("payment_method") or "Efectivo"
-            date   = row.get("payment_date") or today()
-            ref    = row.get("reference") or ""
-            doc.append("custom_efast_payments", {
-                "payment_method": method,
-                "payment_date":   date,
-                "reference":      ref,
-                "amount":         amount,
-            })
+        from facex_multi.api.moneda import (
+            asignar_en_base, es_moneda_extranjera, preparar_pago, saldo_moneda_factura,
+        )
+        # Multimoneda: `amount` en la moneda de la factura, calculado de lo
+        # recibido (moneda_pago / monto_recibido / tipo de cambio del día).
+        filas = [preparar_pago(doc, row) for row in payments]
+        filas = [f for f in filas if f["amount"] > 0]
+        if es_moneda_extranjera(doc) and sum(f["amount"] for f in filas) > saldo_moneda_factura(doc) + 0.01:
+            frappe.throw(
+                f"Los pagos ({doc.currency} {sum(f['amount'] for f in filas):,.2f}) superan el saldo "
+                f"de la factura ({doc.currency} {saldo_moneda_factura(doc):,.2f})."
+            )
+        con_pe = [f for f in filas if f["payment_method"] != "Contra Entrega"]
+        asignaciones = dict(zip(
+            [id(f) for f in con_pe], asignar_en_base(doc, con_pe, flt(doc.outstanding_amount))
+        ))
+        for f in filas:
+            fila = doc.append("custom_efast_payments", f)
             # Contra Entrega: el transportista cobra al entregar, todavía no
             # entró dinero a ninguna cuenta — no genera Payment Entry (eso
             # sucede después, automático, cuando la liquidación hace match).
-            if method == "Contra Entrega":
+            if f["payment_method"] == "Contra Entrega":
                 has_contra_entrega = True
                 continue
-            created_pes.append(
-                _create_payment_entry(doc, method, date, ref, amount)
+            pe_name = _create_payment_entry(
+                doc, f["payment_method"], f["payment_date"], f["reference"], f["amount"],
+                f["moneda_pago"], f["monto_recibido"], f["tipo_cambio"], asignaciones[id(f)],
             )
+            if fila.meta.has_field("payment_entry"):
+                fila.payment_entry = pe_name
+            created_pes.append(pe_name)
 
     # Solo se ACTIVA aquí; no se desactiva si esta fila no aparece, para no
     # pisar un bfel_pago_contra_entrega=1 que pueda venir de otro origen

@@ -1,0 +1,50 @@
+{
+ "autoname": "hash",
+ "creation": "2026-11-25 18:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "forma_pago",
+  "moneda",
+  "cuenta"
+ ],
+ "fields": [
+  {
+   "description": "En blanco = cualquier forma de pago en esa moneda.",
+   "fieldname": "forma_pago",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Forma de Pago",
+   "options": "\nEfectivo\nTarjeta de Crédito\nTransferencia\nDepósito\nCheque\nRetención"
+  },
+  {
+   "fieldname": "moneda",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Moneda",
+   "options": "Currency",
+   "reqd": 1
+  },
+  {
+   "fieldname": "cuenta",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Cuenta (caja / banco)",
+   "options": "Account",
+   "reqd": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-11-25 18:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FacEx Multi",
+ "name": "FacEx Cuenta Pago Moneda",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

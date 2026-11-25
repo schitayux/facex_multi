@@ -144,6 +144,16 @@ def validate_company_config(doc, method=None):
             f"La moneda por defecto <b>{default}</b> debe estar entre las monedas permitidas.",
             title="Monedas",
         )
+    company = doc.company or doc.name
+    for r in (doc.get("cuentas_pago_moneda") or []) if doc.meta.has_field("cuentas_pago_moneda") else []:
+        acc = frappe.db.get_value("Account", r.cuenta, ["company", "account_currency", "is_group"], as_dict=True)
+        if not acc or acc.company != company or cint(acc.is_group):
+            frappe.throw(f"Fila {r.idx}: la cuenta {r.cuenta} no es una cuenta de {company}.", title="Monedas")
+        if acc.account_currency != r.moneda:
+            frappe.throw(
+                f"Fila {r.idx}: la cuenta {r.cuenta} está en {acc.account_currency}, no en {r.moneda}.",
+                title="Monedas",
+            )
     if default != base and not listadas:
         frappe.throw(
             f"La moneda por defecto <b>{default}</b> no es la de la compañía ({base}): "
@@ -523,3 +533,139 @@ def sales_invoice_before_validate(doc, method=None):
             doc.facex_tipo_cambio_manual = 0
     # Lista en la misma moneda de la factura: precio de lista = precio de venta.
     doc.plc_conversion_rate = doc.conversion_rate
+
+
+# ---------------------------------------------------------------------------
+# Pagos (fase 2)
+# ---------------------------------------------------------------------------
+# La cuenta por cobrar es siempre la de la compañía (GTQ): ERPNext lleva el
+# saldo de una factura en USD en quetzales al tipo de cambio de la factura.
+# Una fila de pago FacEx guarda:
+#   amount         → lo que abona, en la MONEDA DE LA FACTURA (los reportes lo
+#                    comparan contra grand_total, como siempre)
+#   moneda_pago    → moneda en que pagó el cliente
+#   monto_recibido → lo que entró a caja/banco, en moneda_pago
+#   tipo_cambio    → referencia Banguat del día del pago (USD→GTQ)
+# El Payment Entry acredita al cliente lo abonado al tipo de cambio de la
+# factura y la diferencia contra lo que entró a caja (al tipo del día) va a la
+# cuenta de Ganancia/Pérdida en Cambio de la compañía.
+
+def _r2(v) -> float:
+    return flt(v, 2)
+
+
+def es_moneda_extranjera(doc) -> bool:
+    return bool(doc.get("currency")) and doc.currency != company_currency(doc.company)
+
+
+def saldo_moneda_factura(doc, outstanding_base=None) -> float:
+    """Saldo de la factura en SU moneda. ERPNext lo lleva en la moneda de la
+    cuenta por cobrar (la de la compañía) al tipo de cambio de la factura."""
+    out = flt(doc.outstanding_amount if outstanding_base is None else outstanding_base)
+    if es_moneda_extranjera(doc) and flt(doc.conversion_rate) > 0:
+        return _r2(out / flt(doc.conversion_rate))
+    return _r2(out)
+
+
+def cuenta_pago_moneda(company: str, forma_pago: str, moneda: str) -> str:
+    """Cuenta de caja/banco para un cobro en `moneda` (≠ moneda de la compañía):
+    la fila de esa forma de pago y, si no hay, la fila sin forma de pago."""
+    if not frappe.db.table_exists("FacEx Cuenta Pago Moneda"):
+        return ""
+    filas = frappe.get_all(
+        "FacEx Cuenta Pago Moneda",
+        filters={"parent": company, "parenttype": CONFIG_DOCTYPE, "moneda": moneda},
+        fields=["forma_pago", "cuenta"],
+        order_by="idx asc",
+    )
+    for f in filas:
+        if (f.forma_pago or "") == (forma_pago or ""):
+            return f.cuenta
+    for f in filas:
+        if not f.forma_pago:
+            return f.cuenta
+    return ""
+
+
+def preparar_pago(doc, row: dict, cfg: dict = None) -> dict:
+    """Normaliza una fila de pago de la pestaña Pagos y calcula `amount` (en la
+    moneda de la factura). Valida moneda permitida y el tipo de cambio: el de
+    Banguat del día del pago salvo permiso «Editar Tipo de Cambio»."""
+    base = company_currency(doc.company)
+    inv_cur = doc.get("currency") or base
+    fecha = getdate(row.get("payment_date") or today())
+    metodo = row.get("payment_method") or "Efectivo"
+    moneda = (row.get("moneda_pago") or "").strip() or inv_cur
+
+    # Misma moneda que la factura: lo recibido ES lo abonado (`amount` manda;
+    # un monto_recibido viejo de la fila no se usa).
+    if moneda == inv_cur:
+        monto = flt(row.get("amount"))
+    else:
+        monto = flt(row.get("monto_recibido"))
+
+    if moneda != inv_cur or inv_cur != base:
+        cfg = cfg or get_currency_config(doc.company)
+        if moneda not in cfg["permitidas"]:
+            frappe.throw(f"La moneda {moneda} no está permitida en {doc.company}.", title="Pago")
+        if metodo == "Contra Entrega":
+            frappe.throw(
+                f"Contra Entrega solo aplica a facturas y pagos en {base}.", title="Pago"
+            )
+
+    extranjera = moneda if moneda != base else (inv_cur if inv_cur != base else "")
+    tc = 1.0
+    if extranjera:
+        banguat = get_tipo_cambio(extranjera, base, fecha)
+        tc = banguat
+        pedido = flt(row.get("tipo_cambio"))
+        if pedido > 0 and abs(pedido - banguat) > 1e-9:
+            from facex_multi.api.permissions import get_facex_can_edit_exchange_rate
+
+            if get_facex_can_edit_exchange_rate(doc.company):
+                tc = pedido
+        if tc <= 0:
+            frappe.throw(
+                f"No hay tipo de cambio {extranjera}→{base} para el {formatdate(fecha)}.",
+                title="Tipo de cambio",
+            )
+
+    def a_base(cur):
+        return 1.0 if cur == base else tc
+
+    amount = _r2(monto * a_base(moneda) / a_base(inv_cur))
+    return {
+        "payment_method": metodo,
+        "payment_date": fecha,
+        "reference": row.get("reference") or "",
+        "amount": amount,
+        "moneda_pago": moneda,
+        "monto_recibido": _r2(monto),
+        "tipo_cambio": tc if extranjera else 1.0,
+    }
+
+
+def asignar_en_base(doc, filas: list, disponible_base: float) -> list:
+    """Monto a acreditar en la cuenta por cobrar (moneda de la compañía) por
+    cada fila: lo abonado × tipo de cambio de la FACTURA. Si las filas liquidan
+    el saldo, la última toma el resto exacto (sin centavos sueltos)."""
+    if not es_moneda_extranjera(doc):
+        return [flt(f["amount"]) for f in filas]
+    tc_fact = flt(doc.conversion_rate) or 1.0
+    asign = [_r2(flt(f["amount"]) * tc_fact) for f in filas]
+    total_inv = sum(flt(f["amount"]) for f in filas)
+    saldo_inv = _r2(flt(disponible_base) / tc_fact)
+    if filas and abs(total_inv - saldo_inv) <= 0.01:
+        asign[-1] = _r2(flt(disponible_base) - sum(asign[:-1]))
+    return asign
+
+
+def asignado_en_borradores(invoice_name: str, pe_names: list) -> float:
+    """Lo ya asignado a la factura por Payment Entry en borrador (moneda de la CxC)."""
+    if not pe_names:
+        return 0.0
+    return flt(frappe.db.sql(
+        """SELECT COALESCE(SUM(allocated_amount), 0) FROM `tabPayment Entry Reference`
+           WHERE parent IN %(p)s AND reference_doctype = 'Sales Invoice' AND reference_name = %(n)s""",
+        {"p": tuple(pe_names), "n": invoice_name},
+    )[0][0])
