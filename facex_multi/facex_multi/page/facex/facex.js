@@ -7230,7 +7230,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const plc = this._price_list_currency || {};
 		const actual = d.selling_price_list || "";
 		if (!actual || (plc[actual] !== undefined && plc[actual] !== cur)) {
-			const cands = [this._customer_price_list, this.defaults.default_price_list]
+			const porMoneda = (this._currency_cfg().listas || {})[cur];
+			if (porMoneda) plc[porMoneda] = cur;
+			const cands = [this._customer_price_list, this.defaults.default_price_list, porMoneda]
 				.concat(this._selectable_price_lists || []);
 			const next = cands.find((n) => n && plc[n] === cur) || "";
 			if (!next) {
@@ -10680,6 +10682,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 				// Multimoneda (solo compañías con más de una moneda permitida)
 				{ fieldname: "facex_moneda", fieldtype: "Select", label: "Moneda de facturación",
 				  options: ["", ...this._currency_cfg().permitidas].join("\n"), hidden: this._is_multimoneda() ? 0 : 1,
+				  // Lista de precios por defecto de la moneda elegida (no al cargar un cliente).
+				  onchange: () => {
+					if (dlg._ef_loading) return;
+					const c = this._currency_cfg();
+					const lista = (c.listas || {})[dlg.get_value("facex_moneda") || c.por_defecto];
+					if (lista) dlg.set_value("default_price_list", lista);
+				  },
 				  description: `En blanco = ${this._currency_cfg().por_defecto}. La Lista de Precios debe estar en esta moneda.` },
 				{ fieldname: "facex_multimoneda", fieldtype: "Check", label: "Multimoneda (puede facturarse en cualquier moneda permitida)",
 				  hidden: this._is_multimoneda() ? 0 : 1 },
@@ -10831,9 +10840,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 						"payment_terms", "default_price_list", "default_sales_partner",
 						"facex_moneda", "facex_multimoneda",
 					];
+					dlg._ef_loading = true;
 					fieldnames.forEach((f) => {
 						if (dlg.fields_dict[f]) dlg.fields_dict[f].set_value(c[f] || (f === "facex_multimoneda" ? 0 : ""));
 					});
+					setTimeout(() => { dlg._ef_loading = false; }, 500);
 					// Re-aplicar readonly si estamos en modo vista (los set_value pueden habilitar campos)
 					if (dlg._ef_mode === "view") {
 						this._set_dialog_fields_readonly(dlg, true);
@@ -14039,6 +14050,14 @@ body.facex-fullscreen-mode .ef-main-layout {
 			cfg.permitidas.filter((c) => c !== cfg.por_defecto)
 				.forEach((c) => $m.append(`<option value="${_esc(c)}">${_esc(c)}</option>`));
 			this.$body.find(".ef-maint-cust-moneda").css("display", cfg.multimoneda ? "" : "none");
+			// Al elegir la moneda se pone la lista de precios por defecto de esa
+			// moneda (FacEx Configuración Compañía → Monedas): evita dejar al
+			// cliente con una lista en otra moneda.
+			$m.off("change.fxmon").on("change.fxmon", () => {
+				const c = this._currency_cfg();
+				const lista = (c.listas || {})[$m.val() || c.por_defecto];
+				if (lista && this.maint_cust_price_list_ctrl) this.maint_cust_price_list_ctrl.set_value(lista);
+			});
 		}
 		if (!this.maint_cust_price_list_ctrl) {
 			const get_query_fn = () => {

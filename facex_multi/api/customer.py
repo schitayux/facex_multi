@@ -511,6 +511,8 @@ def validate_customer_on_save(doc, method=None):
         from facex_multi.api.moneda import get_currency_config
         _cfg_mon = get_currency_config(company)
         _moneda_cli = (doc.get("facex_moneda") or _cfg_mon["por_defecto"]) if _cfg_mon["multimoneda"] else ""
+        if _moneda_cli and not doc.default_price_list and _cfg_mon["listas"].get(_moneda_cli):
+            doc.default_price_list = _cfg_mon["listas"][_moneda_cli]
 
         # Si no tiene lista de precios, intentar auto-asignar o requerirla
         if not doc.default_price_list:

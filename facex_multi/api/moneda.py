@@ -107,17 +107,21 @@ def get_currency_config(company: str) -> dict:
 
     Sin configuración (o sin migrar) → solo la moneda de la compañía."""
     base = company_currency(company)
-    default, extra = base, []
+    default, extra, listas = base, [], {}
     meta = frappe.get_meta(CONFIG_DOCTYPE) if frappe.db.table_exists(CONFIG_DOCTYPE) else None
     if company and meta and meta.has_field("moneda_por_defecto") and frappe.db.exists(CONFIG_DOCTYPE, company):
         default = frappe.db.get_value(CONFIG_DOCTYPE, company, "moneda_por_defecto") or base
         if frappe.db.table_exists("FacEx Moneda Permitida"):
-            extra = frappe.get_all(
+            con_lista = frappe.get_meta("FacEx Moneda Permitida").has_field("lista_precios")
+            filas = frappe.get_all(
                 "FacEx Moneda Permitida",
                 filters={"parent": company, "parenttype": CONFIG_DOCTYPE},
-                pluck="moneda",
+                fields=["moneda"] + (["lista_precios"] if con_lista else []),
                 order_by="idx asc",
             )
+            extra = [f.moneda for f in filas]
+            # Lista de venta por defecto de cada moneda (se asigna al cliente).
+            listas = {f.moneda: f.lista_precios for f in filas if f.get("lista_precios")}
     permitidas = []
     # Solo hay multimoneda si se listan monedas: en blanco = solo la por defecto.
     for c in [default] + ([base] if extra else []) + list(extra):
@@ -128,6 +132,7 @@ def get_currency_config(company: str) -> dict:
         "por_defecto": default,
         "permitidas": permitidas,
         "multimoneda": len(permitidas) > 1,
+        "listas": listas,
     }
 
 
@@ -145,6 +150,17 @@ def validate_company_config(doc, method=None):
             title="Monedas",
         )
     company = doc.company or doc.name
+    for r in doc.get("monedas_permitidas") or []:
+        if not r.get("lista_precios"):
+            continue
+        pl = frappe.db.get_value("Price List", r.lista_precios, ["currency", "selling", "bfel_company"], as_dict=True)
+        if not pl or not cint(pl.selling):
+            frappe.throw(f"Monedas, fila {r.idx}: «{r.lista_precios}» no es una lista de venta.", title="Monedas")
+        if pl.currency != r.moneda:
+            frappe.throw(f"Monedas, fila {r.idx}: la lista «{r.lista_precios}» está en {pl.currency}, no en {r.moneda}.",
+                         title="Monedas")
+        if pl.bfel_company and pl.bfel_company != company:
+            frappe.throw(f"Monedas, fila {r.idx}: la lista «{r.lista_precios}» es de {pl.bfel_company}.", title="Monedas")
     for r in (doc.get("cuentas_pago_moneda") or []) if doc.meta.has_field("cuentas_pago_moneda") else []:
         acc = frappe.db.get_value("Account", r.cuenta, ["company", "account_currency", "is_group"], as_dict=True)
         if not acc or acc.company != company or cint(acc.is_group):
@@ -394,12 +410,18 @@ def validate_customer_moneda(doc, method=None):
             f"La moneda {moneda} no está permitida en {company} "
             f"(permitidas: {', '.join(cfg['permitidas'])})."
         )
-    if doc.get("default_price_list"):
-        plc = frappe.db.get_value("Price List", doc.default_price_list, "currency")
-        if plc and plc != moneda:
+    # Lista en la moneda del cliente: si no tiene o está en otra moneda, se le
+    # asigna la lista por defecto de su moneda (FacEx Configuración Compañía).
+    plc = frappe.db.get_value("Price List", doc.default_price_list, "currency") if doc.get("default_price_list") else ""
+    if plc != moneda:
+        por_defecto = cfg["listas"].get(moneda)
+        if por_defecto:
+            doc.default_price_list = por_defecto
+        elif doc.get("default_price_list"):
             frappe.throw(
                 f"La Lista de Precios «{doc.default_price_list}» está en {plc} y la Moneda de "
-                f"facturación del cliente es {moneda}: elija una lista en {moneda}."
+                f"facturación del cliente es {moneda}: elija una lista en {moneda} (o configure la lista "
+                f"por defecto de {moneda} en FacEx Configuración Compañía → Monedas)."
             )
 
 
