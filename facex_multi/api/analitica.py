@@ -10,7 +10,8 @@ Cada pestaña tiene su endpoint y se pide al abrirla.
 Criterios comunes:
 - Venta = Sales Invoice validada (docstatus 1), sin devoluciones, de la
   compañía, desde el corte de inicio de operación (sin datos de prueba).
-- Monto = grand_total (el total certificado ante la SAT manda).
+- Monto = grand_total (el total certificado ante la SAT manda), en la moneda de
+  la compañía (× tipo de cambio de la factura; multimoneda, ver api/moneda.py).
 - Condición: Contra Entrega (marcada o con pago CE), Crédito (vence después
   de la fecha de la factura) o Contado.
 - Los clientes genéricos (Consumidor Final) cuentan en ventas y tickets, pero
@@ -66,7 +67,9 @@ def _ventas(ctx, desde=None, hasta=None) -> list:
     return frappe.db.sql(
         f"""
         SELECT si.name, si.customer, si.customer_name, si.posting_date, si.posting_time,
-               si.grand_total AS total, si.total_qty, si.due_date, si.owner,
+               ROUND(si.grand_total * COALESCE(NULLIF(si.conversion_rate, 0), 1), 2) AS total,
+               COALESCE(NULLIF(si.conversion_rate, 0), 1) AS tc,
+               si.total_qty, si.due_date, si.owner,
                IFNULL(si.sales_partner, '') AS vendedor,
                IFNULL(si.bfel_pago_contra_entrega, 0) AS pago_ce,
                EXISTS(SELECT 1 FROM `tabeFast Invoice Payment` p
@@ -88,7 +91,8 @@ def _lineas(ctx, desde=None, hasta=None) -> list:
     return frappe.db.sql(
         f"""
         SELECT sii.parent, si.customer, si.posting_date, sii.item_code, sii.item_name,
-               sii.item_group, sii.stock_qty AS qty, sii.amount
+               sii.item_group, sii.stock_qty AS qty,
+               ROUND(sii.amount * COALESCE(NULLIF(si.conversion_rate, 0), 1), 2) AS amount
         FROM `tabSales Invoice Item` sii
         JOIN `tabSales Invoice` si ON si.name = sii.parent
         WHERE si.company = %(company)s AND si.docstatus = 1 AND si.is_return = 0
@@ -195,7 +199,7 @@ def get_resumen(company=None, desde=None, hasta=None) -> dict:
     k["nuevos"] = sum(1 for c in por_cliente if primeras.get(c) and getdate(primeras[c]) >= ctx.desde)
 
     devol = frappe.db.sql(
-        f"""SELECT COUNT(*), IFNULL(SUM(si.grand_total), 0) FROM `tabSales Invoice` si
+        f"""SELECT COUNT(*), IFNULL(SUM(ROUND(si.grand_total * COALESCE(NULLIF(si.conversion_rate, 0), 1), 2)), 0) FROM `tabSales Invoice` si
             WHERE si.company = %(company)s AND si.docstatus = 1 AND si.is_return = 1
               AND si.posting_date BETWEEN %(desde)s AND %(hasta)s AND {ctx.corte}""",
         {"company": ctx.company, "desde": ctx.desde, "hasta": ctx.hasta, **ctx.cv})[0]
@@ -559,7 +563,9 @@ def get_credito(company=None, desde=None, hasta=None) -> dict:
     cartera, vencido = 0.0, 0.0
     for r in creditos:
         p = pagos.get(r.name)
-        saldo = max(flt(r.total) - flt(p.pagado if p else 0), 0)
+        # Multimoneda: `total` ya está en la moneda de la compañía; los pagos
+        # FacEx van en la moneda de la factura → × su tipo de cambio.
+        saldo = max(flt(r.total) - flt(p.pagado if p else 0) * flt(r.tc or 1), 0)
         due = getdate(r.due_date)
         x = cli[r.customer]
         x["nombre"] = r.customer_name

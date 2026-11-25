@@ -885,7 +885,7 @@ def get_invoice_history(company: str = None, from_date: str = None, to_date: str
         "Sales Invoice",
         filters=_si_filters,
         or_filters=invoice_corte_filters(company) or None,
-        fields=["name", "customer", "customer_name", "bfel_nombre", "posting_date", "grand_total", "docstatus", "bfel_status", "bfel_uuid", "custom_pagado"],
+        fields=["name", "customer", "customer_name", "bfel_nombre", "posting_date", "grand_total", "currency", "docstatus", "bfel_status", "bfel_uuid", "custom_pagado"],
         order_by="posting_date desc, creation desc",
         limit_page_length=500,
     )
@@ -3459,7 +3459,7 @@ def get_dashboard_stats(start_date=None, end_date=None, customer=None, item_code
         filters=filters,
         or_filters=invoice_corte_filters(company) or None,
         fields=["name", "customer", "customer_name", "bfel_nombre", "posting_date", "grand_total",
-                "rounded_total", "disable_rounded_total",
+                "rounded_total", "disable_rounded_total", "currency", "conversion_rate",
                 "bfel_status", "bfel_uuid", "docstatus", "bfel_documento_anulado"],
         order_by="posting_date desc, creation desc"
     )
@@ -3480,14 +3480,19 @@ def get_dashboard_stats(start_date=None, end_date=None, customer=None, item_code
     from facex_multi.api.cierre import _inv_total
     pasarela = pasarela_por_factura([inv.name for inv in invoices])
 
+    # Multimoneda: el tablero suma en la moneda de la compañía (× tipo de
+    # cambio de la factura; 1 en quetzales).
+    def _tc(inv):
+        return float(inv.get("conversion_rate") or 0) or 1.0
+
     def _venta(inv):
         # El total que paga el cliente es el redondeado (mismo criterio que el
         # Cierre Diario y los informes); usar `grand_total` descuadra el tablero
         # contra Reportes por los centavos del redondeo.
-        return float(_inv_total(inv)) - float(pasarela.get(inv.name, 0.0))
+        return flt((float(_inv_total(inv)) - float(pasarela.get(inv.name, 0.0))) * _tc(inv), 2)
 
     def _pasarela(rows):
-        return sum(float(pasarela.get(inv.name, 0.0)) for inv in rows)
+        return sum(flt(float(pasarela.get(inv.name, 0.0)) * _tc(inv), 2) for inv in rows)
 
     # 2. Ventas del día (hoy) - Solo facturas vigentes y validadas (docstatus=1,
     # sin anular), no borradores (0) ni canceladas (2).
@@ -3518,8 +3523,9 @@ def get_dashboard_stats(start_date=None, end_date=None, customer=None, item_code
         item_details = frappe.db.get_all(
             "Sales Invoice Item",
             filters=item_filters,
-            fields=["item_code", "item_name", "qty", "stock_qty", "rate", "amount"]
+            fields=["item_code", "item_name", "qty", "stock_qty", "rate", "amount", "parent"]
         )
+        _tc_por_factura = {inv.name: _tc(inv) for inv in invoices}
     else:
         item_details = []
 
@@ -3539,7 +3545,7 @@ def get_dashboard_stats(start_date=None, end_date=None, customer=None, item_code
         # Unidad base: una Media Docena suma 0.5 (igual que antes, cuando se
         # registraba como 0.5 Docena).
         items_summary[code]["qty"] += float(d.stock_qty if d.stock_qty is not None else (d.qty or 0))
-        items_summary[code]["amount"] += float(d.amount or 0)
+        items_summary[code]["amount"] += flt(float(d.amount or 0) * _tc_por_factura.get(d.parent, 1.0), 2)
 
     items_summary_list = sorted(items_summary.values(), key=lambda x: x["amount"], reverse=True)
 
@@ -3588,9 +3594,10 @@ def get_dashboard_stats(start_date=None, end_date=None, customer=None, item_code
     invoices_out = []
     for inv in invoices[:50]:
         row = dict(inv)
-        row["total_cobrable"] = float(_inv_total(inv))
-        row["cargos_pasarela"] = float(pasarela.get(inv.name, 0.0))
+        row["total_cobrable"] = flt(float(_inv_total(inv)) * _tc(inv), 2)
+        row["cargos_pasarela"] = flt(float(pasarela.get(inv.name, 0.0)) * _tc(inv), 2)
         row["grand_total"] = _venta(inv)
+        row["grand_total_moneda"] = float(inv.grand_total or 0)
         invoices_out.append(row)
 
     return {

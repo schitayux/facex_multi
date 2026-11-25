@@ -45,8 +45,10 @@ def get_customer_analytics(customer: str, company: str = None):
     # modo pasarela los paga el cliente por el servicio de entrega y no son
     # ingreso de la empresa (ver facex_multi.api.recargo). El saldo pendiente, en
     # cambio, se calcula sobre el total completo: es lo que el cliente debe.
+    # Multimoneda: todo en la moneda de la compañía (× tipo de cambio de la
+    # factura; 1 en facturas en quetzales). Ver api/moneda.py.
     from facex_multi.api.recargo import venta_neta_sql
-    neta = venta_neta_sql("tabSales Invoice")
+    neta = venta_neta_sql("tabSales Invoice", base=True)
 
     # Corte por inicio de operación: el historial del cliente tampoco puede
     # mostrar las facturas de las pruebas previas al arranque (ver api.corte).
@@ -91,6 +93,7 @@ def get_customer_analytics(customer: str, company: str = None):
             name, 
             posting_date, 
             grand_total, 
+            COALESCE(NULLIF(conversion_rate, 0), 1) AS tc,
             docstatus, 
             bfel_status, 
             COALESCE((
@@ -114,6 +117,7 @@ def get_customer_analytics(customer: str, company: str = None):
             name, 
             posting_date, 
             grand_total, 
+            COALESCE(NULLIF(conversion_rate, 0), 1) AS tc,
             COALESCE((
                 SELECT SUM(amount) 
                 FROM `tabeFast Invoice Payment` 
@@ -130,8 +134,9 @@ def get_customer_analytics(customer: str, company: str = None):
 
     outstanding = []
     for r in outstanding_raw:
-        tot_paid = float(r.get("total_payments") or 0.0)
-        gt = float(r.get("grand_total") or 0.0)
+        k = float(r.get("tc") or 1.0)
+        tot_paid = round(float(r.get("total_payments") or 0.0) * k, 2)
+        gt = round(float(r.get("grand_total") or 0.0) * k, 2)
         bal = max(0.0, gt - tot_paid)
         if bal > 0.009:
             outstanding.append({
@@ -166,8 +171,8 @@ def get_customer_analytics(customer: str, company: str = None):
             {
                 "name": r["name"],
                 "posting_date": str(r["posting_date"] or ""),
-                "grand_total": float(r["grand_total"] or 0),
-                "outstanding_amount": max(0.0, float(r["grand_total"] or 0) - float(r.get("total_payments") or 0)),
+                "grand_total": round(float(r["grand_total"] or 0) * float(r.get("tc") or 1.0), 2),
+                "outstanding_amount": round(max(0.0, float(r["grand_total"] or 0) - float(r.get("total_payments") or 0)) * float(r.get("tc") or 1.0), 2),
                 "docstatus": r["docstatus"],
                 "bfel_status": r.get("bfel_status") or "",
                 "custom_pagado": 1 if max(0.0, float(r["grand_total"] or 0) - float(r.get("total_payments") or 0)) <= 0.009 else 0,

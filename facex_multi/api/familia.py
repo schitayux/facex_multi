@@ -231,7 +231,9 @@ def get_familia(name: str, company: str = None):
         "activa": int(doc.activa or 0),
         "costo_estandar": flt(doc.costo_estandar),
         "precios": [
-            {"price_list": p.price_list, "price_list_rate": flt(p.price_list_rate)}
+            {"price_list": p.price_list, "price_list_rate": flt(p.price_list_rate),
+             # Multimoneda: cada lista tiene su moneda.
+             "currency": frappe.get_cached_value("Price List", p.price_list, "currency") or ""}
             for p in doc.precios
         ],
         "items": frappe.db.count("Item", {"custom_facex_familia": doc.name}),

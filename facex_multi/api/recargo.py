@@ -567,34 +567,64 @@ def _cargos_meta_ok() -> bool:
         return False
 
 
-def pasarela_sql(alias: str = "si") -> str:
+def tc_sql(alias: str = "si") -> str:
+    """Tipo de cambio de la factura `alias` (multimoneda, ver api/moneda.py):
+    multiplicar un monto de la factura por esto lo deja en la moneda de la
+    compañía. En facturas en la moneda de la compañía vale 1 (no cambia nada)."""
+    return f"COALESCE(NULLIF(`{alias}`.conversion_rate, 0), 1)"
+
+
+def pago_base_sql(ip: str = "ip", p: str = "p") -> str:
+    """Línea de pago FacEx (`ip`, de la factura `p`) en la moneda de la compañía:
+    lo que entró a caja/banco = monto recibido × tipo de cambio del día del pago.
+    Filas sin moneda (anteriores a multimoneda): monto × tipo de la factura."""
+    if not frappe.get_meta("eFast Invoice Payment").has_field("moneda_pago"):
+        return f"`{ip}`.amount"
+    return (
+        f"ROUND(CASE WHEN IFNULL(`{ip}`.moneda_pago, '') = '' THEN `{ip}`.amount * {tc_sql(p)} "
+        f"WHEN `{ip}`.moneda_pago = (SELECT _fxco.default_currency FROM `tabCompany` _fxco WHERE _fxco.name = `{p}`.company) "
+        f"THEN `{ip}`.monto_recibido "
+        f"ELSE `{ip}`.monto_recibido * COALESCE(NULLIF(`{ip}`.tipo_cambio, 0), 1) END, 2)"
+    )
+
+
+def _en_base(expr: str, alias: str, base: bool) -> str:
+    # Redondeado por factura, como el asiento contable (base_grand_total).
+    return f"ROUND({expr} * {tc_sql(alias)}, 2)" if base else expr
+
+
+def pasarela_sql(alias: str = "si", base: bool = False) -> str:
     """Expresión SQL con el total de cargos PASARELA de la factura `alias`
     (0 si todavía no se migraron los campos). Sin parámetros: no interpola nada
-    del usuario, solo el alias que pone el caller."""
+    del usuario, solo el alias que pone el caller. `base`: en la moneda de la
+    compañía (para sumar facturas de distintas monedas)."""
     if not _cargos_meta_ok():
         return "0"
-    return (
+    return _en_base(
         "COALESCE((SELECT SUM(_fxc.tax_amount) FROM `tabSales Taxes and Charges` _fxc "
         f"WHERE _fxc.parent = `{alias}`.name AND _fxc.parenttype = 'Sales Invoice' "
         "AND IFNULL(_fxc.facex_tipo_cargo, '') != '' "
-        "AND IFNULL(_fxc.facex_cargo_es_venta, 0) = 0), 0)"
+        "AND IFNULL(_fxc.facex_cargo_es_venta, 0) = 0), 0)",
+        alias, base,
     )
 
 
-def total_cobrable_sql(alias: str = "si") -> str:
+def total_cobrable_sql(alias: str = "si", base: bool = False) -> str:
     """Total que paga el cliente: `rounded_total` salvo que esté deshabilitado
     (mismo criterio que `cierre._inv_total`). Es la base de cobranza —
     estados de cuenta, antigüedad de saldos, pagos — y NO se le resta nada."""
-    return (
+    return _en_base(
         f"(CASE WHEN IFNULL(`{alias}`.disable_rounded_total, 0) = 0 AND `{alias}`.rounded_total != 0 "
-        f"THEN `{alias}`.rounded_total ELSE `{alias}`.grand_total END)"
+        f"THEN `{alias}`.rounded_total ELSE `{alias}`.grand_total END)",
+        alias, base,
     )
 
 
-def venta_neta_sql(alias: str = "si") -> str:
+def venta_neta_sql(alias: str = "si", base: bool = False) -> str:
     """Venta de la empresa: total cobrable menos los cargos pasarela. Es lo que
-    deben sumar los informes de venta, los KPIs y el tablero."""
-    return f"({total_cobrable_sql(alias)} - {pasarela_sql(alias)})"
+    deben sumar los informes de venta, los KPIs y el tablero. `base`: en la
+    moneda de la compañía (multimoneda)."""
+    return _en_base(f"({total_cobrable_sql(alias)} - {pasarela_sql(alias)})", alias, base)
 
 
 def recargo_estimado_por_factura(invoice_names: list) -> dict:

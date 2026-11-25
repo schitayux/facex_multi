@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import frappe
 from frappe.utils import today
+from facex_multi.api.recargo import pago_base_sql
 
 from facex_multi.api.invoice import get_effective_company
 from facex_multi.api.reports import (
@@ -53,8 +54,8 @@ def _kpi_ventas_hoy(company: str) -> dict:
     row = frappe.db.sql(
         f"""
         SELECT COUNT(*) AS cnt,
-            COALESCE(SUM({venta_neta_sql("tabSales Invoice")}), 0) AS total,
-            COALESCE(SUM({pasarela_sql("tabSales Invoice")}), 0) AS pasarela
+            COALESCE(SUM({venta_neta_sql("tabSales Invoice", base=True)}), 0) AS total,
+            COALESCE(SUM({pasarela_sql("tabSales Invoice", base=True)}), 0) AS pasarela
         FROM `tabSales Invoice`
         WHERE docstatus = 1 AND COALESCE(bfel_documento_anulado, 0) != 1
             AND posting_date = %(today)s AND { " AND ".join(conds) }
@@ -82,11 +83,11 @@ def _kpi_por_cobrar(company: str) -> dict:
     row = frappe.db.sql(
         f"""
         SELECT COUNT(*) AS cnt, COALESCE(SUM(saldo), 0) AS total FROM (
-            SELECT GREATEST(si.grand_total - COALESCE((
+            SELECT ROUND(GREATEST(si.grand_total - COALESCE((
                 SELECT SUM(amount) FROM `tabeFast Invoice Payment`
                 WHERE parent = si.name AND parenttype = 'Sales Invoice'
                     AND parentfield = 'custom_efast_payments'
-            ), 0), 0) AS saldo
+            ), 0), 0) * COALESCE(NULLIF(si.conversion_rate, 0), 1), 2) AS saldo
             FROM `tabSales Invoice` si
             WHERE si.docstatus = 1 AND si.is_return = 0
                 AND COALESCE(si.bfel_documento_anulado, 0) != 1
@@ -113,7 +114,7 @@ def _kpi_cotizaciones(company: str) -> dict:
     from facex_multi.api.recargo import venta_neta_sql
     row = frappe.db.sql(
         f"""
-        SELECT COUNT(*) AS cnt, COALESCE(SUM({venta_neta_sql("tabSales Invoice")}), 0) AS total
+        SELECT COUNT(*) AS cnt, COALESCE(SUM({venta_neta_sql("tabSales Invoice", base=True)}), 0) AS total
         FROM `tabSales Invoice`
         WHERE docstatus = 0 AND is_return = 0 AND is_debit_note = 0
             AND COALESCE(bfel_documento_anulado, 0) != 1
@@ -140,7 +141,7 @@ def _kpi_sin_certificar(company: str) -> dict:
     from facex_multi.api.recargo import venta_neta_sql
     row = frappe.db.sql(
         f"""
-        SELECT COUNT(*) AS cnt, COALESCE(SUM({venta_neta_sql("tabSales Invoice")}), 0) AS total
+        SELECT COUNT(*) AS cnt, COALESCE(SUM({venta_neta_sql("tabSales Invoice", base=True)}), 0) AS total
         FROM `tabSales Invoice`
         WHERE docstatus = 1 AND bfel_status = '01 Enviar'
             AND (bfel_uuid IS NULL OR bfel_uuid = '')
@@ -173,7 +174,7 @@ def _kpi_pagos_hoy(company: str) -> dict:
     values = {"today": today(), **company_vals, **sp_vals, **owner_vals, **corte_vals}
     row = frappe.db.sql(
         f"""
-        SELECT COUNT(*) AS cnt, COALESCE(SUM(ip.amount), 0) AS total
+        SELECT COUNT(*) AS cnt, COALESCE(SUM({pago_base_sql("ip", "p")}), 0) AS total
         FROM `tabeFast Invoice Payment` ip
         JOIN `tabSales Invoice` p ON ip.parent = p.name
             AND ip.parenttype = 'Sales Invoice'

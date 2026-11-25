@@ -7,6 +7,7 @@ Consultas seguras parametrizadas aisladas a Sales Invoice y eFast Invoice Paymen
 from __future__ import annotations
 
 import frappe
+from facex_multi.api.recargo import tc_sql
 from frappe.utils import today, getdate, add_days, flt
 import datetime
 from facex_multi.api.invoice import get_effective_company
@@ -301,20 +302,26 @@ def get_sales_by_date(start_date: str, end_date: str, customer: str = None, ware
     # `cargos_pasarela` / `venta_neta`: el recargo y el flete en modo pasarela no
     # son venta de la empresa (ver facex_multi.api.recargo). El SALDO se sigue
     # calculando sobre el total completo, que es lo que el cliente debe.
-    from facex_multi.api.recargo import pasarela_sql, total_cobrable_sql, venta_neta_sql
-    pas = pasarela_sql("tabSales Invoice")
-    neta = venta_neta_sql("tabSales Invoice")
-    cobrable = total_cobrable_sql("tabSales Invoice")
+    # Multimoneda: todo en la moneda de la compañía (× tipo de cambio de la
+    # factura; 1 en facturas en quetzales). `currency` / `grand_total_moneda`
+    # dejan ver el monto original de una factura en otra moneda.
+    from facex_multi.api.recargo import pasarela_sql, tc_sql, total_cobrable_sql, venta_neta_sql
+    tc = tc_sql("tabSales Invoice")
+    pas = pasarela_sql("tabSales Invoice", base=True)
+    neta = venta_neta_sql("tabSales Invoice", base=True)
+    cobrable = total_cobrable_sql("tabSales Invoice", base=True)
     query = f"""
-        SELECT name, posting_date, customer, {display_name_sql()} AS customer_name, total, total_taxes_and_charges, grand_total,
+        SELECT name, posting_date, customer, {display_name_sql()} AS customer_name,
+            ROUND(total * {tc}, 2) AS total, ROUND(total_taxes_and_charges * {tc}, 2) AS total_taxes_and_charges,
+            ROUND(grand_total * {tc}, 2) AS grand_total, currency, grand_total AS grand_total_moneda,
             {pas} AS cargos_pasarela,
             {neta} AS venta_neta,
             {cobrable} AS total_cobrable,
-            GREATEST(grand_total - COALESCE((
+            ROUND(GREATEST(grand_total - COALESCE((
                 SELECT SUM(amount)
                 FROM `tabeFast Invoice Payment`
                 WHERE parent = `tabSales Invoice`.name AND parenttype = 'Sales Invoice' AND parentfield = 'custom_efast_payments'
-            ), 0), 0) AS outstanding_amount
+            ), 0), 0) * {tc}, 2) AS outstanding_amount
         FROM `tabSales Invoice`
         WHERE posting_date BETWEEN %(start)s AND %(end)s AND { " AND ".join(conditions) }
         ORDER BY posting_date DESC, name DESC
@@ -385,11 +392,14 @@ def get_sales_by_product(start_date: str, end_date: str, item_code: str = None,
         conditions.append("p.bfel_establecimiento = %(establecimiento)s")
         values["establecimiento"] = establecimiento
         
+    # Multimoneda: montos en la moneda de la compañía (× tipo de cambio).
+    from facex_multi.api.recargo import tc_sql
+    tc = tc_sql("p")
     query = f"""
         SELECT i.item_code, i.item_name,
                SUM(COALESCE(i.stock_qty, i.qty)) AS total_qty,
-               AVG(i.rate / COALESCE(NULLIF(i.conversion_factor, 0), 1)) AS avg_rate,
-               SUM(i.amount) AS total_amount
+               AVG(i.rate * {tc} / COALESCE(NULLIF(i.conversion_factor, 0), 1)) AS avg_rate,
+               SUM(ROUND(i.amount * {tc}, 2)) AS total_amount
         FROM `tabSales Invoice Item` i
         JOIN `tabSales Invoice` p ON i.parent = p.name AND i.parenttype = 'Sales Invoice' AND i.parentfield = 'items'
         WHERE { " AND ".join(conditions) }
@@ -437,7 +447,9 @@ def get_cancelled_invoices(start_date: str, end_date: str, customer: str = None,
         values["establecimiento"] = establecimiento
         
     query = f"""
-        SELECT name, posting_date, customer, {display_name_sql()} AS customer_name, grand_total, modified_by, modified, bfel_documento_anulado
+        SELECT name, posting_date, customer, {display_name_sql()} AS customer_name,
+            ROUND(grand_total * {tc_sql("tabSales Invoice")}, 2) AS grand_total, currency, grand_total AS grand_total_moneda,
+            modified_by, modified, bfel_documento_anulado
         FROM `tabSales Invoice`
         WHERE { " AND ".join(conditions) }
         ORDER BY posting_date DESC, name DESC
@@ -498,6 +510,9 @@ def get_customer_statement(customer: str, start_date: str = None, end_date: str 
             bfel_docto_serie,
             bfel_docto_no,
             grand_total,
+            currency,
+            conversion_rate,
+            company,
             is_return,
             is_debit_note,
             COALESCE((
@@ -511,7 +526,15 @@ def get_customer_statement(customer: str, start_date: str = None, end_date: str 
     """
     
     invoices = frappe.db.sql(query, values, as_dict=True)
-    
+
+    # Multimoneda: si todos los documentos del cliente están en una sola moneda,
+    # el estado de cuenta va en esa moneda (un cliente en USD lo ve en dólares);
+    # si mezcla monedas, todo en la moneda de la compañía.
+    from facex_multi.api.moneda import company_currency
+    monedas = {inv.currency for inv in invoices if inv.currency}
+    base_cur = company_currency(company or (invoices[0].company if invoices else None))
+    moneda_estado = monedas.pop() if len(monedas) == 1 else base_cur
+
     # Construir historial/libro mayor detallado
     ledger = []
     running_balance = 0.0
@@ -519,8 +542,9 @@ def get_customer_statement(customer: str, start_date: str = None, end_date: str 
     total_paid = 0.0
     
     for inv in invoices:
-        inv_total = float(inv.grand_total or 0.0)
-        inv_paid = float(inv.total_paid or 0.0)
+        k = 1.0 if (inv.currency or moneda_estado) == moneda_estado else (flt(inv.conversion_rate) or 1.0)
+        inv_total = flt(float(inv.grand_total or 0.0) * k, 2)
+        inv_paid = flt(float(inv.total_paid or 0.0) * k, 2)
         inv_balance = max(0.0, inv_total - inv_paid)
         
         total_invoiced += inv_total
@@ -544,7 +568,9 @@ def get_customer_statement(customer: str, start_date: str = None, end_date: str 
             "paid_amount": inv_paid,
             "balance": inv_balance,
             "status": status,
-            "doc_type_desc": doc_type_desc
+            "doc_type_desc": doc_type_desc,
+            "currency": inv.currency,
+            "grand_total_moneda": float(inv.grand_total or 0.0),
         })
         
     # Obtener límite de crédito del cliente
@@ -560,7 +586,8 @@ def get_customer_statement(customer: str, start_date: str = None, end_date: str 
             "total_invoiced": total_invoiced,
             "total_paid": total_paid,
             "outstanding_balance": running_balance,
-            "credit_limit": credit_limit
+            "credit_limit": credit_limit,
+            "currency": moneda_estado,
         }
     }
 
@@ -599,6 +626,8 @@ def get_aging_receivables(customer: str = None, owners=None, company: str = None
             bfel_docto_serie,
             bfel_docto_no,
             grand_total,
+            currency,
+            COALESCE(NULLIF(conversion_rate, 0), 1) AS conversion_rate,
             COALESCE((
                 SELECT SUM(amount) 
                 FROM `tabeFast Invoice Payment` 
@@ -616,10 +645,13 @@ def get_aging_receivables(customer: str = None, owners=None, company: str = None
     aging_data = {}
     
     for inv in invoices:
-        paid = float(inv.total_paid or 0.0)
-        outstanding = float(inv.grand_total or 0.0) - paid
+        # Multimoneda: saldo en la moneda de la factura → moneda de la compañía.
+        k = flt(inv.conversion_rate) or 1.0
+        outstanding_moneda = float(inv.grand_total or 0.0) - float(inv.total_paid or 0.0)
+        paid = flt(float(inv.total_paid or 0.0) * k, 2)
+        outstanding = flt(outstanding_moneda * k, 2)
         
-        if outstanding <= 0.009:
+        if outstanding_moneda <= 0.009:
             continue
             
         # Cliente genérico con nombre propio en la factura: grupo aparte por nombre.
@@ -662,11 +694,14 @@ def get_aging_receivables(customer: str = None, owners=None, company: str = None
             "serie_no": serie_no,
             "posting_date": str(inv.posting_date),
             "due_date": str(inv.due_date) if inv.due_date else "",
-            "grand_total": float(inv.grand_total or 0.0),
+            "grand_total": flt(float(inv.grand_total or 0.0) * k, 2),
             "paid_amount": paid,
             "outstanding_amount": outstanding,
             "days_due": days,
-            "bucket": bucket
+            "bucket": bucket,
+            "currency": inv.currency,
+            "grand_total_moneda": float(inv.grand_total or 0.0),
+            "outstanding_moneda": outstanding_moneda,
         })
             
     aging_list = sorted(aging_data.values(), key=lambda x: x["total_outstanding"], reverse=True)
@@ -719,7 +754,9 @@ def get_quotations_report(start_date: str = None, end_date: str = None, customer
         values["establecimiento"] = establecimiento
         
     query = f"""
-        SELECT name, company, posting_date, customer, {display_name_sql()} AS customer_name, grand_total, bfel_status, creation
+        SELECT name, company, posting_date, customer, {display_name_sql()} AS customer_name,
+            ROUND(grand_total * {tc_sql("tabSales Invoice")}, 2) AS grand_total, currency, grand_total AS grand_total_moneda,
+            bfel_status, creation
         FROM `tabSales Invoice`
         WHERE { " AND ".join(conditions) }
         ORDER BY posting_date DESC, creation DESC
@@ -761,17 +798,34 @@ def get_payments_report(start_date: str, end_date: str, payment_method: str = No
         conditions.append("p.bfel_establecimiento = %(establecimiento)s")
         values["establecimiento"] = establecimiento
         
+    # Multimoneda: lo que ENTRÓ a caja/banco valuado en la moneda de la
+    # compañía (monto recibido × tipo de cambio del día del pago). Filas viejas
+    # sin moneda: el monto de la factura × su tipo de cambio (1 en quetzales).
+    from facex_multi.api.recargo import tc_sql
+    multi = frappe.get_meta("eFast Invoice Payment").has_field("moneda_pago")
+    if multi:
+        base_expr = (
+            "ROUND(CASE WHEN IFNULL(ip.moneda_pago, '') = '' THEN ip.amount * " + tc_sql("p") + " "
+            "WHEN ip.moneda_pago = c.default_currency THEN ip.monto_recibido "
+            "ELSE ip.monto_recibido * COALESCE(NULLIF(ip.tipo_cambio, 0), 1) END, 2)"
+        )
+        extra = ", ip.moneda_pago, ip.monto_recibido, c.default_currency AS moneda_compania"
+    else:
+        base_expr, extra = "ip.amount", ""
     query = f"""
-        SELECT ip.payment_date, ip.parent AS invoice, p.company, p.customer, {display_name_sql('p')} AS customer_name, ip.payment_method, ip.reference, ip.amount
+        SELECT ip.payment_date, ip.parent AS invoice, p.company, p.customer, {display_name_sql('p')} AS customer_name, ip.payment_method, ip.reference,
+            {base_expr} AS amount, p.currency, ip.amount AS amount_moneda_factura{extra}
         FROM `tabeFast Invoice Payment` ip
         JOIN `tabSales Invoice` p ON ip.parent = p.name AND ip.parenttype = 'Sales Invoice' AND ip.parentfield = 'custom_efast_payments'
+        JOIN `tabCompany` c ON c.name = p.company
         WHERE { " AND ".join(conditions) }
         ORDER BY ip.payment_date DESC, ip.creation DESC
     """
     
     payments = frappe.db.sql(query, values, as_dict=True)
     
-    # Calcular totales por método de pago
+    # Calcular totales por método de pago (y moneda recibida, si no es la de
+    # la compañía: el efectivo en dólares se cuenta aparte)
     method_totals = {}
     total_received = 0.0
     
@@ -779,6 +833,8 @@ def get_payments_report(start_date: str, end_date: str, payment_method: str = No
         amount = float(pay.amount or 0.0)
         total_received += amount
         method = pay.payment_method or "Otros"
+        if pay.get("moneda_pago") and pay.moneda_pago != pay.get("moneda_compania"):
+            method = f"{method} ({pay.moneda_pago})"
         if method not in method_totals:
             method_totals[method] = 0.0
         method_totals[method] += amount
@@ -821,8 +877,9 @@ def get_uncertified_invoices(owners=None, company: str = None, establecimiento: 
         values["establecimiento"] = establecimiento
         
     query = f"""
-        SELECT name, posting_date, customer, {display_name_sql()} AS customer_name, grand_total, bfel_status,
-            bfel_mensaje AS bfel_error_log
+        SELECT name, posting_date, customer, {display_name_sql()} AS customer_name,
+            ROUND(grand_total * {tc_sql("tabSales Invoice")}, 2) AS grand_total, currency, grand_total AS grand_total_moneda,
+            bfel_status, bfel_mensaje AS bfel_error_log
         FROM `tabSales Invoice`
         WHERE { " AND ".join(conditions) }
         ORDER BY posting_date DESC, name DESC
@@ -879,7 +936,7 @@ def get_sales_growth_analysis(year: str = None, month: str = None, owners=None,
     # Venta neta: sin el recargo/flete en modo pasarela, que no es ingreso de la
     # empresa (ver facex_multi.api.recargo).
     from facex_multi.api.recargo import venta_neta_sql
-    neta = venta_neta_sql("tabSales Invoice")
+    neta = venta_neta_sql("tabSales Invoice", base=True)
 
     curr_data = frappe.db.sql(f"""
         SELECT DAY(posting_date) AS day, SUM({neta}) AS total
@@ -1058,7 +1115,8 @@ def get_sales_by_seller(start_date: str, end_date: str, sales_partners=None,
         SELECT name, posting_date, due_date, customer, {display_name_sql()} AS customer_name,
             {nombre_cambiado_sql()} AS nombre_cambiado, sales_partner,
             bfel_establecimiento, company, owner, is_return, grand_total, rounded_total,
-            disable_rounded_total, total_taxes_and_charges
+            disable_rounded_total, total_taxes_and_charges,
+            COALESCE(NULLIF(conversion_rate, 0), 1) AS conversion_rate
             {"".join(", " + f for f in optional)}
         FROM `tabSales Invoice`
         WHERE posting_date BETWEEN %(start)s AND %(end)s AND {where}
@@ -1105,9 +1163,17 @@ def get_sales_by_seller(start_date: str, end_date: str, sales_partners=None,
         # `venta` = lo que vendió el vendedor, sin los cargos pasarela.
         gt = _inv_total(inv)
         pas = flt(pasarela.get(inv.name, 0.0))
-        venta = gt - pas
         pays = payments_by_inv.get(inv.name, [])
         pagado = sum(flt(p.amount) for p in pays)
+        # La condición (contado/crédito) se decide en la moneda de la factura;
+        # los montos se acumulan en la moneda de la compañía (multimoneda).
+        if not inv.is_return:
+            clase_inv = _clasificar_por_pagos(
+                gt, pays, getdate(inv.posting_date), inv.get("bfel_pago_contra_entrega"), inv.due_date,
+            )[0]
+        k = flt(inv.conversion_rate) or 1.0
+        gt, pas, pagado = flt(gt * k, 2), flt(pas * k, 2), flt(pagado * k, 2)
+        venta = gt - pas
         pendiente = max(gt - pagado, 0.0) if not inv.is_return else 0.0
         seller = inv.sales_partner or SIN_VENDEDOR
         # Cliente genérico con nombre propio en la factura: cuenta como cliente aparte.
@@ -1116,7 +1182,7 @@ def get_sales_by_seller(start_date: str, end_date: str, sales_partners=None,
             "vendedor": seller, "facturas": 0, "clientes": set(), "venta_bruta": 0.0,
             "devoluciones": 0.0, "saldo": 0.0, "cargos_pasarela": 0.0, **{c: 0.0 for c in _CLASES},
         })
-        impuestos += flt(inv.total_taxes_and_charges) - pas
+        impuestos += flt(flt(inv.total_taxes_and_charges) * k, 2) - pas
         total_pasarela += pas
         s["cargos_pasarela"] += pas
 
@@ -1127,9 +1193,7 @@ def get_sales_by_seller(start_date: str, end_date: str, sales_partners=None,
             devoluciones["clientes"].add(cliente)
             s["devoluciones"] += abs(venta)
         else:
-            clase, _ce, _cred = _clasificar_por_pagos(
-                gt, pays, getdate(inv.posting_date), inv.get("bfel_pago_contra_entrega"), inv.due_date,
-            )
+            clase = clase_inv
             b = clases[clase]
             b["monto"] += venta
             b["facturas"] += 1
@@ -1185,7 +1249,7 @@ def get_sales_by_seller(start_date: str, end_date: str, sales_partners=None,
     prev_start, prev_end = add_days(d0, -days), add_days(d0, -1)
     prev = frappe.db.sql(
         f"""
-        SELECT COALESCE(SUM({venta_neta_sql("tabSales Invoice")}), 0) AS neto
+        SELECT COALESCE(SUM({venta_neta_sql("tabSales Invoice", base=True)}), 0) AS neto
         FROM `tabSales Invoice`
         WHERE posting_date BETWEEN %(start)s AND %(end)s AND {where}
         """,

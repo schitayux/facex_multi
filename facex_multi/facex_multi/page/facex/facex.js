@@ -129,6 +129,8 @@ class EFastSalePage {
 					this.defaults = r.message;
 					this.perms = r.message.permissions || this._full_perms();
 					this.company_config = r.message.company_config || {};
+					// Multimoneda: base de reportes = moneda de la compañía.
+					_FX_BASE = ((this.company_config.monedas || {}).compania) || "GTQ";
 					// Permiso «Cambiar Mi Contraseña» (FacEx Settings): sin él no aparece la opción.
 					if (this.perms.puede_cambiar_password === 0) this.$body.find("#ef-btn-change-password").hide();
 					if (this.defaults.company) {
@@ -3287,7 +3289,7 @@ class EFastSalePage {
 					<div class="ef-home-kpi ef-home-kpi-${_esc(k.tone)}${k.report ? " ef-home-kpi-clickable" : ""}"
 						data-idx="${i}"${k.report ? ` title="Ver el informe completo"` : ""}>
 						<div class="ef-home-kpi-label">${_esc(k.label)}</div>
-						<div class="ef-home-kpi-value">${k.format === "currency" ? _fmtCurrency(k.value, "GTQ") : _esc(String(k.value))}</div>
+						<div class="ef-home-kpi-value">${k.format === "currency" ? _fmtCurrency(k.value, _FX_BASE) : _esc(String(k.value))}</div>
 						<div class="ef-home-kpi-sub">${_esc(k.sub)}</div>
 					</div>
 				`).join("")).show();
@@ -3768,14 +3770,14 @@ class EFastSalePage {
 					const _cargos_sub = (count, pasarela) => {
 						const txt = `${count} facturas`;
 						return pasarela > 0.009
-							? `${txt} · + ${format_currency(pasarela, "GTQ")} cargos de terceros`
+							? `${txt} · + ${format_currency(pasarela, _FX_BASE)} cargos de terceros`
 							: txt;
 					};
-					this.$body.find("#ef-kpi-today-total").text(format_currency(data.today_total, "GTQ"));
+					this.$body.find("#ef-kpi-today-total").text(format_currency(data.today_total, _FX_BASE));
 					this.$body.find("#ef-kpi-today-count").text(_cargos_sub(data.today_count, data.today_pasarela));
-					this.$body.find("#ef-kpi-month-total").text(format_currency(data.month_total, "GTQ"));
+					this.$body.find("#ef-kpi-month-total").text(format_currency(data.month_total, _FX_BASE));
 					this.$body.find("#ef-kpi-month-count").text(_cargos_sub(data.month_count, data.month_pasarela));
-					this.$body.find("#ef-kpi-draft-total").text(format_currency(data.draft_total, "GTQ"));
+					this.$body.find("#ef-kpi-draft-total").text(format_currency(data.draft_total, _FX_BASE));
 					this.$body.find("#ef-kpi-draft-count").text(`${data.draft_count} facturas`);
 					this.$body.find("#ef-kpi-fel-processed").text(data.fel_processed);
 					this.$body.find("#ef-kpi-fel-pending").text(`${data.fel_pending} pendientes`);
@@ -3783,10 +3785,10 @@ class EFastSalePage {
 					// Customer specific card
 					if (customer && data.customer_stats && data.customer_stats.invoice_count !== undefined) {
 						const stats = data.customer_stats;
-						this.$body.find("#ef-dash-cust-sales").text(format_currency(stats.total_sales, "GTQ"));
+						this.$body.find("#ef-dash-cust-sales").text(format_currency(stats.total_sales, _FX_BASE));
 						this.$body.find("#ef-dash-cust-invoices").text(stats.invoice_count);
-						this.$body.find("#ef-dash-cust-credit").text(format_currency(stats.credit_limit, "GTQ"));
-						this.$body.find("#ef-dash-cust-outstanding").text(format_currency(stats.outstanding_balance, "GTQ"));
+						this.$body.find("#ef-dash-cust-credit").text(format_currency(stats.credit_limit, _FX_BASE));
+						this.$body.find("#ef-dash-cust-outstanding").text(format_currency(stats.outstanding_balance, _FX_BASE));
 						this.$body.find("#ef-dash-customer-stats-card").show();
 					} else {
 						this.$body.find("#ef-dash-customer-stats-card").hide();
@@ -3818,7 +3820,7 @@ class EFastSalePage {
 									<td class="ef-td"><a class="ef-inv-link" href="#" style="color:var(--ef-primary); font-weight:700; text-decoration:underline;">${inv.name}</a></td>
 									<td class="ef-td"><a class="ef-cust-link" href="#" style="color:var(--ef-primary); font-weight:500; text-decoration:underline;">${_esc(inv.customer_name || inv.customer)}</a></td>
 									<td class="ef-td">${inv.posting_date}</td>
-									<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700;">${format_currency(inv.grand_total, "GTQ")}</td>
+									<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700;">${format_currency(inv.grand_total, _FX_BASE)}${_fxOrig(inv)}</td>
 									<td class="ef-td">${bfel_badge}</td>
 									<td class="ef-td" style="text-align:right;">
 										<button class="ef-btn ef-btn-sm ef-btn-secondary ef-dash-view-inv" data-name="${inv.name}" style="padding:2px 8px; font-size:10px;">Ver</button>
@@ -3862,7 +3864,7 @@ class EFastSalePage {
 								<div class="ef-item-progress" style="display:flex; flex-direction:column; gap:4px;">
 									<div style="display:flex; justify-content:space-between; font-size:11px;">
 										<span style="font-weight:600; color:var(--ef-text); max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${item.item_name}">${item.item_name}</span>
-										<span style="font-family:monospace; font-weight:700; color:var(--ef-primary);">${format_currency(item.amount, "GTQ")}</span>
+										<span style="font-family:monospace; font-weight:700; color:var(--ef-primary);">${format_currency(item.amount, _FX_BASE)}</span>
 									</div>
 									<div style="background:#e2e8f0; height:6px; border-radius:3px; overflow:hidden; width:100%;">
 										<div style="background:linear-gradient(90deg, #4361ee, #4cc9f0); width:${percent}%; height:100%; border-radius:3px;"></div>
@@ -11670,7 +11672,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 	_generate_analytics_html(data) {
 		const s        = data.stats_6m || {};
-		const currency = this.doc.currency || "GTQ";
+		const currency = _FX_BASE; // análisis del cliente: en la moneda de la compañía
 		const months   = (data.monthly_chart || []).map((m) => m.month);
 		const totals   = (data.monthly_chart || []).map((m) => parseFloat(m.total || 0));
 		const maxTotal = Math.max(...totals, 1);
@@ -12559,15 +12561,15 @@ body.facex-fullscreen-mode .ef-main-layout {
 			$kpis.append(`
 				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-primary); cursor: default;">
 					<div class="ef-stat-label">Total Facturado</div>
-					<div class="ef-stat-value" style="font-family:monospace;">${_fmtCurrency(sum.total_sales, "GTQ")}</div>
+					<div class="ef-stat-value" style="font-family:monospace;">${_fmtCurrency(sum.total_sales, _FX_BASE)}</div>
 				</div>
 				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-success); cursor: default;">
 					<div class="ef-stat-label">Impuestos Consolidados</div>
-					<div class="ef-stat-value" style="color: var(--ef-success); font-family:monospace;">${_fmtCurrency(sum.total_tax, "GTQ")}</div>
+					<div class="ef-stat-value" style="color: var(--ef-success); font-family:monospace;">${_fmtCurrency(sum.total_tax, _FX_BASE)}</div>
 				</div>
 				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-info); cursor: default;">
 					<div class="ef-stat-label">Ticket Promedio</div>
-					<div class="ef-stat-value" style="color: var(--ef-info); font-family:monospace;">${_fmtCurrency(sum.avg_sale, "GTQ")}</div>
+					<div class="ef-stat-value" style="color: var(--ef-info); font-family:monospace;">${_fmtCurrency(sum.avg_sale, _FX_BASE)}</div>
 				</div>
 				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-text-muted); cursor: default;">
 					<div class="ef-stat-label">Transacciones</div>
@@ -12598,10 +12600,10 @@ body.facex-fullscreen-mode .ef-main-layout {
 						<td class="ef-td"><a class="ef-inv-load-link" title="Clic: abrir aquí · Ctrl+clic: abrir en pestaña nueva" href="/app/facex?invoice=${encodeURIComponent(inv.name)}" data-name="${inv.name}" style="color:var(--ef-primary); font-weight:700; text-decoration:underline; cursor:pointer;">${inv.name}</a>${_peekBtn(inv.name)}</td>
 						<td class="ef-td">${inv.posting_date}</td>
 						<td class="ef-td">${_esc(inv.customer_name || inv.customer)}</td>
-						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(inv.total, "GTQ")}</td>
-						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(inv.total_taxes_and_charges, "GTQ")}</td>
-						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700;">${_fmtCurrency(inv.grand_total, "GTQ")}</td>
-						<td class="ef-td ef-td-num" style="font-family:monospace; color:${inv.outstanding_amount > 0 ? "var(--ef-warning)" : "var(--ef-success)"};">${_fmtCurrency(inv.outstanding_amount, "GTQ")}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(inv.total, _FX_BASE)}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(inv.total_taxes_and_charges, _FX_BASE)}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700;">${_fmtCurrency(inv.grand_total, _FX_BASE)}${_fxOrig(inv)}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace; color:${inv.outstanding_amount > 0 ? "var(--ef-warning)" : "var(--ef-success)"};">${_fmtCurrency(inv.outstanding_amount, _FX_BASE)}</td>
 					</tr>
 				`);
 			});
@@ -12613,7 +12615,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			$kpis.append(`
 				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-primary); cursor: default;">
 					<div class="ef-stat-label">Monto Total Vendido</div>
-					<div class="ef-stat-value" style="font-family:monospace;">${_fmtCurrency(sum.total_amount, "GTQ")}</div>
+					<div class="ef-stat-value" style="font-family:monospace;">${_fmtCurrency(sum.total_amount, _FX_BASE)}</div>
 				</div>
 				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-success); cursor: default;">
 					<div class="ef-stat-label">Unidades Vendidas</div>
@@ -12646,8 +12648,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 						<td class="ef-td" style="font-weight:600;">${p.item_code}</td>
 						<td class="ef-td">${p.item_name}</td>
 						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmt(p.total_qty)}</td>
-						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(p.avg_rate, "GTQ")}</td>
-						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700;">${_fmtCurrency(p.total_amount, "GTQ")}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(p.avg_rate, _FX_BASE)}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700;">${_fmtCurrency(p.total_amount, _FX_BASE)}</td>
 					</tr>
 				`);
 			});
@@ -12659,7 +12661,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			$kpis.append(`
 				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-danger); cursor: default;">
 					<div class="ef-stat-label">Monto Total Cancelado</div>
-					<div class="ef-stat-value" style="color: var(--ef-danger); font-family:monospace;">${_fmtCurrency(sum.total_amount, "GTQ")}</div>
+					<div class="ef-stat-value" style="color: var(--ef-danger); font-family:monospace;">${_fmtCurrency(sum.total_amount, _FX_BASE)}</div>
 				</div>
 				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-text-muted); cursor: default;">
 					<div class="ef-stat-label" style="font-weight:bold;">Facturas Anuladas</div>
@@ -12694,7 +12696,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 						<td class="ef-td"><a class="ef-inv-load-link" title="Clic: abrir aquí · Ctrl+clic: abrir en pestaña nueva" href="/app/facex?invoice=${encodeURIComponent(inv.name)}" data-name="${inv.name}" style="color:var(--ef-primary); font-weight:700; text-decoration:underline; cursor:pointer;">${inv.name}</a>${_peekBtn(inv.name)}</td>
 						<td class="ef-td">${inv.posting_date}</td>
 						<td class="ef-td">${_esc(inv.customer_name || inv.customer)}</td>
-						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700; color:var(--ef-danger);">${_fmtCurrency(inv.grand_total, "GTQ")}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700; color:var(--ef-danger);">${_fmtCurrency(inv.grand_total, _FX_BASE)}${_fxOrig(inv)}</td>
 						<td class="ef-td" style="text-align:center;">${anulado_badge}</td>
 						<td class="ef-td">${inv.modified_by}</td>
 						<td class="ef-td">${inv.modified}</td>
@@ -12709,19 +12711,19 @@ body.facex-fullscreen-mode .ef-main-layout {
 			$kpis.append(`
 				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-primary); cursor: default;">
 					<div class="ef-stat-label">Total Cargos (Facturado)</div>
-					<div class="ef-stat-value" style="font-family:monospace;">${_fmtCurrency(sum.total_invoiced, "GTQ")}</div>
+					<div class="ef-stat-value" style="font-family:monospace;">${_fmtCurrency(sum.total_invoiced, sum.currency || _FX_BASE)}</div>
 				</div>
 				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-success); cursor: default;">
 					<div class="ef-stat-label">Total Abonos (Pagado)</div>
-					<div class="ef-stat-value" style="color: var(--ef-success); font-family:monospace;">${_fmtCurrency(sum.total_paid, "GTQ")}</div>
+					<div class="ef-stat-value" style="color: var(--ef-success); font-family:monospace;">${_fmtCurrency(sum.total_paid, sum.currency || _FX_BASE)}</div>
 				</div>
 				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-warning); cursor: default;">
 					<div class="ef-stat-label">Saldo Pendiente</div>
-					<div class="ef-stat-value" style="color: var(--ef-warning); font-family:monospace;">${_fmtCurrency(sum.outstanding_balance, "GTQ")}</div>
+					<div class="ef-stat-value" style="color: var(--ef-warning); font-family:monospace;">${_fmtCurrency(sum.outstanding_balance, sum.currency || _FX_BASE)}</div>
 				</div>
 				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-text-muted); cursor: default;">
 					<div class="ef-stat-label">Límite de Crédito Autorizado</div>
-					<div class="ef-stat-value" style="color: var(--ef-text-muted); font-family:monospace;">${_fmtCurrency(sum.credit_limit, "GTQ")}</div>
+					<div class="ef-stat-value" style="color: var(--ef-text-muted); font-family:monospace;">${_fmtCurrency(sum.credit_limit, _FX_BASE)}</div>
 				</div>
 			`);
 
@@ -12756,9 +12758,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 						<td class="ef-td">${row.posting_date}</td>
 						<td class="ef-td">${row.due_date || "—"}</td>
 						<td class="ef-td"><span style="font-weight:600; color:var(--ef-text);">${row.doc_type_desc || "Factura"}</span></td>
-						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(row.grand_total, "GTQ")}</td>
-						<td class="ef-td ef-td-num" style="font-family:monospace; color:var(--ef-success);">${_fmtCurrency(row.paid_amount, "GTQ")}</td>
-						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700; color:${row.balance > 0 ? "var(--ef-warning)" : "var(--ef-success)"}">${_fmtCurrency(row.balance, "GTQ")}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(row.grand_total, sum.currency || _FX_BASE)}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace; color:var(--ef-success);">${_fmtCurrency(row.paid_amount, sum.currency || _FX_BASE)}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700; color:${row.balance > 0 ? "var(--ef-warning)" : "var(--ef-success)"}">${_fmtCurrency(row.balance, sum.currency || _FX_BASE)}</td>
 						<td class="ef-td">${status_badge}</td>
 					</tr>
 				`);
@@ -12771,19 +12773,19 @@ body.facex-fullscreen-mode .ef-main-layout {
 			$kpis.append(`
 				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-danger); cursor: default;">
 					<div class="ef-stat-label">Total Cartera Vencida</div>
-					<div class="ef-stat-value" style="color: var(--ef-danger); font-family:monospace;">${_fmtCurrency(sum.total_outstanding, "GTQ")}</div>
+					<div class="ef-stat-value" style="color: var(--ef-danger); font-family:monospace;">${_fmtCurrency(sum.total_outstanding, _FX_BASE)}</div>
 				</div>
 				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-primary); cursor: default;">
 					<div class="ef-stat-label">Corriente (0-30 días)</div>
-					<div class="ef-stat-value" style="color: var(--ef-primary); font-family:monospace;">${_fmtCurrency(sum.total_0_30, "GTQ")}</div>
+					<div class="ef-stat-value" style="color: var(--ef-primary); font-family:monospace;">${_fmtCurrency(sum.total_0_30, _FX_BASE)}</div>
 				</div>
 				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-warning); cursor: default;">
 					<div class="ef-stat-label">Vencido (31-60 días)</div>
-					<div class="ef-stat-value" style="color: var(--ef-warning); font-family:monospace;">${_fmtCurrency(sum.total_31_60, "GTQ")}</div>
+					<div class="ef-stat-value" style="color: var(--ef-warning); font-family:monospace;">${_fmtCurrency(sum.total_31_60, _FX_BASE)}</div>
 				</div>
 				<div class="ef-stat-card" style="border-left: 4px solid #7209b7; cursor: default;">
 					<div class="ef-stat-label">Vencido Crítico (61+ días)</div>
-					<div class="ef-stat-value" style="color: #7209b7; font-family:monospace;">${_fmtCurrency(sum.total_61_90 + sum.total_91_plus, "GTQ")}</div>
+					<div class="ef-stat-value" style="color: #7209b7; font-family:monospace;">${_fmtCurrency(sum.total_61_90 + sum.total_91_plus, _FX_BASE)}</div>
 				</div>
 			`);
 
@@ -12812,11 +12814,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 							<span class="ef-aging-toggle-icon" style="display: inline-block; transition: transform 0.2s; font-size: 10px;">▶</span>
 						</td>
 						<td class="ef-td" style="font-weight:700;">${_esc(row.customer_name)}</td>
-						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700; color:var(--ef-danger);">${_fmtCurrency(row.total_outstanding, "GTQ")}</td>
-						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(row.range_0_30, "GTQ")}</td>
-						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(row.range_31_60, "GTQ")}</td>
-						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(row.range_61_90, "GTQ")}</td>
-						<td class="ef-td ef-td-num" style="font-family:monospace; color:var(--ef-danger);">${_fmtCurrency(row.range_91_plus, "GTQ")}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700; color:var(--ef-danger);">${_fmtCurrency(row.total_outstanding, _FX_BASE)}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(row.range_0_30, _FX_BASE)}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(row.range_31_60, _FX_BASE)}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(row.range_61_90, _FX_BASE)}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace; color:var(--ef-danger);">${_fmtCurrency(row.range_91_plus, _FX_BASE)}</td>
 					</tr>
 					<tr id="${detailId}" class="ef-aging-detail-row" style="display: none; background-color: #f8fafc;">
 						<td colspan="7" style="padding: 12px 12px 16px 40px; border-top: none;">
@@ -12843,8 +12845,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 												<td style="padding: 8px 12px; border: none;">${inv.posting_date}</td>
 												<td style="padding: 8px 12px; border: none;">${inv.due_date || "—"}</td>
 												<td style="padding: 8px 12px; text-align: right; font-weight: 700; color: ${inv.days_due > 0 ? "var(--ef-danger)" : "var(--ef-text-muted)"}; border: none;">${inv.days_due}</td>
-												<td style="padding: 8px 12px; text-align: right; font-family: monospace; border: none;">${_fmtCurrency(inv.grand_total, "GTQ")}</td>
-												<td style="padding: 8px 12px; text-align: right; font-family: monospace; font-weight: 700; color: var(--ef-danger); border: none;">${_fmtCurrency(inv.outstanding_amount, "GTQ")}</td>
+												<td style="padding: 8px 12px; text-align: right; font-family: monospace; border: none;">${_fmtCurrency(inv.grand_total, _FX_BASE)}</td>
+												<td style="padding: 8px 12px; text-align: right; font-family: monospace; font-weight: 700; color: var(--ef-danger); border: none;">${_fmtCurrency(inv.outstanding_amount, _FX_BASE)}${_fxOrig(inv, "outstanding_moneda")}</td>
 												<td style="padding: 8px 12px; padding-left: 15px; border: none;">
 													<span class="ef-badge" style="background-color: ${inv.days_due <= 30 ? "#e0f2fe" : inv.days_due <= 60 ? "#fef3c7" : "#fee2e2"}; color: ${inv.days_due <= 30 ? "#0369a1" : inv.days_due <= 60 ? "#b45309" : "#b91c1c"}; font-weight: 700; padding: 2px 6px; border-radius: 4px;">${inv.bucket}</span>
 												</td>
@@ -12879,7 +12881,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			$kpis.append(`
 				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-warning); cursor: default;">
 					<div class="ef-stat-label">Total Cotizado (Pre-Facturas)</div>
-					<div class="ef-stat-value" style="color: var(--ef-warning); font-family:monospace;">${_fmtCurrency(sum.total_amount, "GTQ")}</div>
+					<div class="ef-stat-value" style="color: var(--ef-warning); font-family:monospace;">${_fmtCurrency(sum.total_amount, _FX_BASE)}</div>
 				</div>
 				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-text-muted); cursor: default;">
 					<div class="ef-stat-label">Cotizaciones Abiertas</div>
@@ -12909,7 +12911,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 						<td class="ef-td"><a class="ef-inv-load-link" title="Clic: abrir aquí · Ctrl+clic: abrir en pestaña nueva" href="/app/facex?invoice=${encodeURIComponent(inv.name)}" data-name="${inv.name}" style="color:var(--ef-primary); font-weight:700; text-decoration:underline; cursor:pointer;">${inv.name}</a>${_peekBtn(inv.name)}</td>
 						<td class="ef-td">${inv.posting_date}</td>
 						<td class="ef-td">${_esc(inv.customer_name || inv.customer)}</td>
-						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700;">${_fmtCurrency(inv.grand_total, "GTQ")}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700;">${_fmtCurrency(inv.grand_total, _FX_BASE)}${_fxOrig(inv)}</td>
 						<td class="ef-td"><span class="ef-badge ef-badge-draft">${inv.bfel_status}</span></td>
 						<td class="ef-td">
 							<button class="ef-btn ef-btn-sm ef-btn-secondary ef-rep-print-quot" data-name="${inv.name}" data-company="${inv.company || ""}" style="padding:2px 8px; font-size:10px;">Imprimir F4</button>
@@ -12948,7 +12950,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			$kpis.append(`
 				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-success); cursor: default;">
 					<div class="ef-stat-label">Total Recibido (Abonos)</div>
-					<div class="ef-stat-value" style="color: var(--ef-success); font-family:monospace;">${_fmtCurrency(sum.total_received, "GTQ")}</div>
+					<div class="ef-stat-value" style="color: var(--ef-success); font-family:monospace;">${_fmtCurrency(sum.total_received, _FX_BASE)}</div>
 				</div>
 				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-text-muted); cursor: default;">
 					<div class="ef-stat-label">Transacciones Realizadas</div>
@@ -12981,7 +12983,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 						<td class="ef-td">${_esc(pay.customer_name || pay.customer)}</td>
 						<td class="ef-td" style="font-weight:600;">${pay.payment_method}</td>
 						<td class="ef-td" style="font-family:monospace; font-size:11px;">${pay.reference || '—'}</td>
-						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700; color:var(--ef-success);">${_fmtCurrency(pay.amount, "GTQ")}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700; color:var(--ef-success);">${_fmtCurrency(pay.amount, _FX_BASE)}${_fxOrig({ currency: pay.moneda_pago, m: pay.monto_recibido }, "m")}</td>
 						<td class="ef-td" style="text-align:center;">
 							<button class="ef-btn ef-btn-sm ef-btn-secondary ef-rep-print-receipt" data-name="${pay.invoice}" data-company="${pay.company || ""}" style="padding:2px 8px; font-size:10px; font-weight:600;">Imprimir Recibo</button>
 							${facex_multi.wa.can((this.defaults || {}).wa, "pago") ? `<button class="ef-btn ef-btn-sm ef-btn-wa ef-rep-wa" data-name="${pay.invoice}" data-tipo="pago" title="Enviar el recibo de pago por WhatsApp" style="padding:2px 8px; font-size:10px;">${facex_multi.wa.ICON}</button>` : ""}
@@ -13006,7 +13008,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 			$kpis.append(`
 				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-danger); cursor: default;">
 					<div class="ef-stat-label">Total en Retención FEL</div>
-					<div class="ef-stat-value" style="color: var(--ef-danger); font-family:monospace;">${_fmtCurrency(sum.total_amount, "GTQ")}</div>
+					<div class="ef-stat-value" style="color: var(--ef-danger); font-family:monospace;">${_fmtCurrency(sum.total_amount, _FX_BASE)}</div>
 				</div>
 				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-warning); cursor: default;">
 					<div class="ef-stat-label">Facturas Pendientes de Firma</div>
@@ -13039,7 +13041,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 						<td class="ef-td"><a class="ef-inv-load-link" title="Clic: abrir aquí · Ctrl+clic: abrir en pestaña nueva" href="/app/facex?invoice=${encodeURIComponent(inv.name)}" data-name="${inv.name}" style="color:var(--ef-primary); font-weight:700; text-decoration:underline; cursor:pointer;">${inv.name}</a>${_peekBtn(inv.name)}</td>
 						<td class="ef-td">${inv.posting_date}</td>
 						<td class="ef-td">${_esc(inv.customer_name || inv.customer)}</td>
-						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700;">${_fmtCurrency(inv.grand_total, "GTQ")}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700;">${_fmtCurrency(inv.grand_total, _FX_BASE)}${_fxOrig(inv)}</td>
 						<td class="ef-td">${errorSnippet}</td>
 					</tr>
 				`);
@@ -13055,11 +13057,11 @@ body.facex-fullscreen-mode .ef-main-layout {
 			$kpis.append(`
 				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-primary); cursor: default;">
 					<div class="ef-stat-label">Ventas Mes Seleccionado (${data.month_name} ${data.year})</div>
-					<div class="ef-stat-value" style="font-family:monospace;">${_fmtCurrency(sum.total_current, "GTQ")}</div>
+					<div class="ef-stat-value" style="font-family:monospace;">${_fmtCurrency(sum.total_current, _FX_BASE)}</div>
 				</div>
 				<div class="ef-stat-card" style="border-left: 4px solid #153375; cursor: default;">
 					<div class="ef-stat-label">Ventas Mes Anterior (${data.prev_month_name} ${data.prev_year})</div>
-					<div class="ef-stat-value" style="color: #153375; font-family:monospace;">${_fmtCurrency(sum.total_previous, "GTQ")}</div>
+					<div class="ef-stat-value" style="color: #153375; font-family:monospace;">${_fmtCurrency(sum.total_previous, _FX_BASE)}</div>
 				</div>
 				<div class="ef-stat-card" style="border-left: 4px solid ${growth_color}; cursor: default;">
 					<div class="ef-stat-label">Crecimiento Consolidado</div>
@@ -13093,9 +13095,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 				$tbody.append(`
 					<tr>
 						<td class="ef-td" style="font-weight:700;">${row.month_name}</td>
-						<td class="ef-td ef-td-num" style="font-family:monospace; color:var(--ef-text-muted);">${_fmtCurrency(row.previous_year, "GTQ")}</td>
-						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700;">${_fmtCurrency(row.current_year, "GTQ")}</td>
-						<td class="ef-td ef-td-num" style="font-family:monospace; color:${diff_color}; font-weight:600;">${diff_prefix}${_fmtCurrency(diff, "GTQ")}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace; color:var(--ef-text-muted);">${_fmtCurrency(row.previous_year, _FX_BASE)}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace; font-weight:700;">${_fmtCurrency(row.current_year, _FX_BASE)}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace; color:${diff_color}; font-weight:600;">${diff_prefix}${_fmtCurrency(diff, _FX_BASE)}</td>
 						<td class="ef-td ef-td-num" style="font-family:monospace; color:${diff_color}; font-weight:700;">${growth_prefix_row}${row.growth}%</td>
 					</tr>
 				`);
@@ -13191,7 +13193,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 				</div>
 				<div class="ef-stat-card" style="border-left: 4px solid var(--ef-info); cursor: default;">
 					<div class="ef-stat-label">Monto Consolidado</div>
-					<div class="ef-stat-value" style="color: var(--ef-info); font-family:monospace;">${_fmtCurrency(sum.total_monto, "GTQ")}</div>
+					<div class="ef-stat-value" style="color: var(--ef-info); font-family:monospace;">${_fmtCurrency(sum.total_monto, _FX_BASE)}</div>
 				</div>
 			`);
 
@@ -13224,15 +13226,15 @@ body.facex-fullscreen-mode .ef-main-layout {
 					<tr>
 						<td class="ef-td" style="font-weight:600;">${_esc(r.usuario_nombre || r.usuario)}</td>
 						<td class="ef-td ef-td-num">${r.cotizaciones_count || 0}</td>
-						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(r.cotizaciones_monto, "GTQ")}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(r.cotizaciones_monto, _FX_BASE)}</td>
 						<td class="ef-td ef-td-num">${r.facturas_no_enviar_count || 0}</td>
-						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(r.facturas_no_enviar_monto, "GTQ")}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(r.facturas_no_enviar_monto, _FX_BASE)}</td>
 						<td class="ef-td ef-td-num">${r.facturas_enviar_count || 0}</td>
-						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(r.facturas_enviar_monto, "GTQ")}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(r.facturas_enviar_monto, _FX_BASE)}</td>
 						<td class="ef-td ef-td-num">${r.pagos_count || 0}</td>
-						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(r.pagos_monto, "GTQ")}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(r.pagos_monto, _FX_BASE)}</td>
 						<td class="ef-td ef-td-num">${r.guias_pendientes_count || 0}</td>
-						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(r.guias_pendientes_monto, "GTQ")}</td>
+						<td class="ef-td ef-td-num" style="font-family:monospace;">${_fmtCurrency(r.guias_pendientes_monto, _FX_BASE)}</td>
 						<td class="ef-td ef-td-num" style="font-weight:700;">${r.total_operaciones || 0}</td>
 					</tr>
 				`);
@@ -13270,7 +13272,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 		const sellers = data.sellers || [];
 		const invoices = data.invoices || [];
 		const COND = this._seller_condition_meta();
-		const Q = (v) => _fmtCurrency(v || 0, "GTQ");
+		const Q = (v) => _fmtCurrency(v || 0, _FX_BASE);
 		const pct = (v) => `${_fmt(v || 0)}%`;
 		const card = (accent, label, value, sub = "", valueStyle = "") => `
 			<div class="ef-stat-card" style="border-left: 4px solid ${accent}; cursor: default;">
@@ -13500,7 +13502,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 			svg += `
 				<line x1="${paddingLeft}" y1="${lineY}" x2="${svgWidth - paddingRight}" y2="${lineY}" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="2, 4"/>
-				<text x="${paddingLeft - 10}" y="${lineY + 3}" fill="var(--ef-text-muted)" text-anchor="end" font-family="monospace">${_fmtCurrency(gridVal, "GTQ")}</text>
+				<text x="${paddingLeft - 10}" y="${lineY + 3}" fill="var(--ef-text-muted)" text-anchor="end" font-family="monospace">${_fmtCurrency(gridVal, _FX_BASE)}</text>
 			`;
 		}
 
@@ -13592,8 +13594,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 
 			$tooltip.html(`
 				<div style="font-weight:700; margin-bottom:4px; border-bottom:1px solid #475569; padding-bottom:3px; text-transform:uppercase;">${m.month_name}</div>
-				<div>${month_name || year}: <span style="font-family:monospace; font-weight:700; color:#4cc9f0;">${_fmtCurrency(m.current_year, "GTQ")}</span></div>
-				<div>${prev_month_name || prev_year}: <span style="font-family:monospace; color:#cbd5e1;">${_fmtCurrency(m.previous_year, "GTQ")}</span></div>
+				<div>${month_name || year}: <span style="font-family:monospace; font-weight:700; color:#4cc9f0;">${_fmtCurrency(m.current_year, _FX_BASE)}</span></div>
+				<div>${prev_month_name || prev_year}: <span style="font-family:monospace; color:#cbd5e1;">${_fmtCurrency(m.previous_year, _FX_BASE)}</span></div>
 				<div style="margin-top:4px; font-weight:600; color:${changeColor};">${changeSymbol} Variación: ${m.growth}%</div>
 			`);
 			$tooltip.css("opacity", "1");
@@ -13637,19 +13639,19 @@ body.facex-fullscreen-mode .ef-main-layout {
 				<div class="kpis">
 					<div class="kpi-card">
 						<div class="label">Total Cargo (Facturado)</div>
-						<div class="value">${_fmtCurrency(sum.total_invoiced, "GTQ")}</div>
+						<div class="value">${_fmtCurrency(sum.total_invoiced, sum.currency || _FX_BASE)}</div>
 					</div>
 					<div class="kpi-card">
 						<div class="label">Total Abono (Pagado)</div>
-						<div class="value">${_fmtCurrency(sum.total_paid, "GTQ")}</div>
+						<div class="value">${_fmtCurrency(sum.total_paid, sum.currency || _FX_BASE)}</div>
 					</div>
 					<div class="kpi-card">
 						<div class="label">Saldo Pendiente</div>
-						<div class="value" style="color: #f8961e;">${_fmtCurrency(sum.outstanding_balance, "GTQ")}</div>
+						<div class="value" style="color: #f8961e;">${_fmtCurrency(sum.outstanding_balance, sum.currency || _FX_BASE)}</div>
 					</div>
 					<div class="kpi-card">
 						<div class="label">Límite de Crédito</div>
-						<div class="value">${_fmtCurrency(sum.credit_limit, "GTQ")}</div>
+						<div class="value">${_fmtCurrency(sum.credit_limit, _FX_BASE)}</div>
 					</div>
 				</div>
 				<table>
@@ -13674,9 +13676,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 								<td>${row.posting_date}</td>
 								<td>${row.due_date || "—"}</td>
 								<td>${row.doc_type_desc || "Factura"}</td>
-								<td class="num">${_fmtCurrency(row.grand_total, "GTQ")}</td>
-								<td class="num" style="color: #2dc653;">${_fmtCurrency(row.paid_amount, "GTQ")}</td>
-								<td class="num" style="font-weight: bold; color: ${row.balance > 0 ? "#f8961e" : "#2dc653"};">${_fmtCurrency(row.balance, "GTQ")}</td>
+								<td class="num">${_fmtCurrency(row.grand_total, sum.currency || _FX_BASE)}</td>
+								<td class="num" style="color: #2dc653;">${_fmtCurrency(row.paid_amount, sum.currency || _FX_BASE)}</td>
+								<td class="num" style="font-weight: bold; color: ${row.balance > 0 ? "#f8961e" : "#2dc653"};">${_fmtCurrency(row.balance, sum.currency || _FX_BASE)}</td>
 								<td>${row.status}</td>
 							</tr>
 						`).join("")}
@@ -13699,19 +13701,19 @@ body.facex-fullscreen-mode .ef-main-layout {
 				<div class="kpis">
 					<div class="kpi-card">
 						<div class="label">Total Cartera Vencida</div>
-						<div class="value" style="color: #e63946;">${_fmtCurrency(sum.total_outstanding, "GTQ")}</div>
+						<div class="value" style="color: #e63946;">${_fmtCurrency(sum.total_outstanding, _FX_BASE)}</div>
 					</div>
 					<div class="kpi-card">
 						<div class="label">Corriente (0-30 días)</div>
-						<div class="value">${_fmtCurrency(sum.total_0_30, "GTQ")}</div>
+						<div class="value">${_fmtCurrency(sum.total_0_30, _FX_BASE)}</div>
 					</div>
 					<div class="kpi-card">
 						<div class="label">Vencido (31-60 días)</div>
-						<div class="value">${_fmtCurrency(sum.total_31_60, "GTQ")}</div>
+						<div class="value">${_fmtCurrency(sum.total_31_60, _FX_BASE)}</div>
 					</div>
 					<div class="kpi-card">
 						<div class="label">Vencido Crítico (61+ días)</div>
-						<div class="value" style="color: #7209b7;">${_fmtCurrency(sum.total_61_90 + sum.total_91_plus, "GTQ")}</div>
+						<div class="value" style="color: #7209b7;">${_fmtCurrency(sum.total_61_90 + sum.total_91_plus, _FX_BASE)}</div>
 					</div>
 				</div>
 				
@@ -13719,13 +13721,13 @@ body.facex-fullscreen-mode .ef-main-layout {
 					<div style="margin-top: 25px; border-bottom: 2px solid #cbd5e1; padding-bottom: 5px; page-break-inside: avoid;">
 						<div style="display: flex; justify-content: space-between; align-items: center;">
 							<h3 style="margin: 0; color: #1e293b;">${_esc(row.customer_name)}</h3>
-							<span style="font-weight: bold; color: #e63946; font-size: 14px;">Total Saldo: ${_fmtCurrency(row.total_outstanding, "GTQ")}</span>
+							<span style="font-weight: bold; color: #e63946; font-size: 14px;">Total Saldo: ${_fmtCurrency(row.total_outstanding, _FX_BASE)}</span>
 						</div>
 						<div style="display: flex; gap: 20px; font-size: 11px; margin-top: 5px; color: #64748b;">
-							<div><strong>0-30 días:</strong> ${_fmtCurrency(row.range_0_30, "GTQ")}</div>
-							<div><strong>31-60 días:</strong> ${_fmtCurrency(row.range_31_60, "GTQ")}</div>
-							<div><strong>61-90 días:</strong> ${_fmtCurrency(row.range_61_90, "GTQ")}</div>
-							<div><strong>91+ días:</strong> ${_fmtCurrency(row.range_91_plus, "GTQ")}</div>
+							<div><strong>0-30 días:</strong> ${_fmtCurrency(row.range_0_30, _FX_BASE)}</div>
+							<div><strong>31-60 días:</strong> ${_fmtCurrency(row.range_31_60, _FX_BASE)}</div>
+							<div><strong>61-90 días:</strong> ${_fmtCurrency(row.range_61_90, _FX_BASE)}</div>
+							<div><strong>91+ días:</strong> ${_fmtCurrency(row.range_91_plus, _FX_BASE)}</div>
 						</div>
 					</div>
 					<table style="margin-top: 8px; margin-bottom: 15px; font-size: 11px; page-break-inside: avoid;">
@@ -13749,8 +13751,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 									<td>${inv.posting_date}</td>
 									<td>${inv.due_date || "—"}</td>
 									<td class="num" style="font-weight: bold; color: ${inv.days_due > 0 ? "#e63946" : "#64748b"};">${inv.days_due}</td>
-									<td class="num">${_fmtCurrency(inv.grand_total, "GTQ")}</td>
-									<td class="num" style="font-weight: bold; color: #e63946;">${_fmtCurrency(inv.outstanding_amount, "GTQ")}</td>
+									<td class="num">${_fmtCurrency(inv.grand_total, _FX_BASE)}</td>
+									<td class="num" style="font-weight: bold; color: #e63946;">${_fmtCurrency(inv.outstanding_amount, _FX_BASE)}${_fxOrig(inv, "outstanding_moneda")}</td>
 									<td>${inv.bucket}</td>
 								</tr>
 							`).join("")}
@@ -17205,7 +17207,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 					d.show();
 					const precios = data.precios || [];
 					const puedePrecios = !!(this.perms || {}).actualiza_precios;
-					const filas = precios.map((p) => `<tr><td>${_esc(p.price_list)}</td><td>${_fmtCurrency(p.price_list_rate, "GTQ")}</td></tr>`).join("");
+					const filas = precios.map((p) => `<tr><td>${_esc(p.price_list)}</td><td>${_fmtCurrency(p.price_list_rate, p.currency || _FX_BASE)}</td></tr>`).join("");
 					d.get_field("precios_html").$wrapper.html(`
 						${precios.length
 							? `<table class="ef-fam-prices-list"><thead><tr><th>Lista de precios</th><th>Precio</th></tr></thead><tbody>${filas}</tbody></table>`
@@ -17955,6 +17957,19 @@ function _fmt(n) {
 // Botón de vista rápida que acompaña a cada número de factura en los reportes.
 function _peekBtn(name) {
 	return `<button type="button" class="ef-peek-btn" data-peek="${_esc(name)}" title="Vista rápida (sin salir del reporte)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg></button>`;
+}
+
+// Multimoneda: moneda de la compañía (base de reportes, tablero y KPIs). Se
+// fija al cargar los defaults; las facturas en otra moneda se suman en esta.
+let _FX_BASE = "GTQ";
+
+// Monto original de un documento en otra moneda, junto al monto en la moneda
+// de la compañía: «(US$ 20.00)». Vacío si el documento está en la base.
+function _fxOrig(row, field) {
+	if (!row || !row.currency || row.currency === _FX_BASE) return "";
+	const v = row[field || "grand_total_moneda"];
+	if (v === undefined || v === null) return "";
+	return ` <span class="ef-fx-orig" style="display:block;font-size:10px;font-weight:400;color:var(--ef-text-muted);">(${_fmtCurrency(v, row.currency)})</span>`;
 }
 
 function _fmtCurrency(n, currency) {

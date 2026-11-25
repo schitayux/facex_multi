@@ -127,6 +127,7 @@ def _facturas(names) -> dict:
             f"""
             SELECT si.name, si.posting_date, si.due_date, {display_name_sql('si')} AS customer_name, si.sales_partner,
                    si.grand_total, si.net_total, si.docstatus, si.is_return, si.return_against,
+                   COALESCE(NULLIF(si.conversion_rate, 0), 1) AS tc,
                    {ce} AS pago_ce, {uuid} AS bfel_uuid, {st} AS bfel_status,
                    {_cancel_expr('si')} AS cancelado
             FROM `tabSales Invoice` si WHERE si.name IN %(n)s
@@ -270,7 +271,9 @@ def _calcular(company: str, desde, hasta, rates: dict, base_calculo: str) -> tup
     for p in pagos:
         f = facs[p.factura]
         con_r, sin_r = fact[p.factura]
-        amt = flt(p.amount)
+        # Multimoneda: el cobro va en la moneda de la factura → quetzales al tipo
+        # de cambio de la factura (la comisión no sigue al diferencial cambiario).
+        amt = flt(flt(p.amount) * flt(f.tc or 1), 2)
         con, sin = amt * con_r, amt * sin_r
         vend = _vend(f.sales_partner)
         kw = {"fecha_pago": str(p.fecha_pago), "forma_pago": p.forma or "", "referencia": p.reference or ""}
@@ -315,7 +318,7 @@ def _calcular(company: str, desde, hasta, rates: dict, base_calculo: str) -> tup
                 l["pct"] = round(flt(pv.com) / flt(pv.base) * 100, 4) if abs(flt(pv.base)) > EPS else 0.0
                 l["comision"] = round(-flt(pv.com), 2)
             else:
-                amt = previos_pagos.get(n, 0.0)
+                amt = previos_pagos.get(n, 0.0) * flt(f.tc or 1)
                 if amt < EPS:
                     continue
                 l = _linea(vend, C_ANUL, f, n, -amt * con_r, -amt * sin_r,
@@ -361,7 +364,7 @@ def _calcular(company: str, desde, hasta, rates: dict, base_calculo: str) -> tup
                     continue  # la original anulada ya se revierte completa arriba
                 fn = _facturas([nc.name])[nc.name]
                 con_r, sin_r = _factores(company, {nc.name: fn})[nc.name]
-                gt = abs(flt(nc.grand_total))
+                gt = abs(flt(nc.grand_total)) * flt(fn.tc or 1)
                 vend = _vend(nc.sales_partner)
                 l = _linea(vend, C_NC, fn, nc.name, -gt * con_r, -gt * sin_r, factura_origen=o or "",
                            nota="NC sin factura original: se resta completa")
@@ -376,6 +379,7 @@ def _calcular(company: str, desde, hasta, rates: dict, base_calculo: str) -> tup
             nc_e = sum(a for d, a in nc_all[o])
             ded = max(0.0, max(0.0, paid_e - (gt0 - nc_e)) - max(0.0, paid_s - (gt0 - nc_s)))
             ded *= (abs(flt(nc.grand_total)) / en_periodo[o]) if en_periodo[o] else 0.0
+            ded *= flt(f.tc or 1)  # moneda de la factura → quetzales (multimoneda)
             con_r, sin_r = ofact[o]
             vend, cond = _vend(f.sales_partner), _condicion(f)
             l = _linea(vend, C_NC, f, nc.name, -ded * con_r, -ded * sin_r, factura_origen=o,

@@ -62,8 +62,9 @@ def get_data(filters):
 	# Los montos de venta por usuario son VENTA NETA: sin el recargo/flete en
 	# modo pasarela, que el cliente paga por el servicio de entrega y no es
 	# ingreso de la empresa (ver facex_multi.api.recargo).
-	from facex_multi.api.recargo import venta_neta_sql
-	neta = venta_neta_sql("tabSales Invoice")
+	# Multimoneda: en la moneda de la compañía (× tipo de cambio de la factura).
+	from facex_multi.api.recargo import pago_base_sql, venta_neta_sql
+	neta = venta_neta_sql("tabSales Invoice", base=True)
 
 	users = {}
 
@@ -146,7 +147,7 @@ def get_data(filters):
 		values.update(owners_vals_p)
 	rows = frappe.db.sql(
 		f"""
-		SELECT ip.owner AS owner, COUNT(*) AS cnt, COALESCE(SUM(ip.amount), 0) AS total
+		SELECT ip.owner AS owner, COUNT(*) AS cnt, COALESCE(SUM({pago_base_sql("ip", "p")}), 0) AS total
 		FROM `tabeFast Invoice Payment` ip
 		JOIN `tabSales Invoice` p
 			ON ip.parent = p.name AND ip.parenttype = 'Sales Invoice' AND ip.parentfield = 'custom_efast_payments'
