@@ -1544,6 +1544,16 @@ class EFastSalePage {
               <label class="ef-label">Grupo de cliente</label>
               <div id="ef-maint-cust-group-ctrl" class="ef-link-ctrl" style="min-height: 32px;"></div>
             </div>
+            <div class="ef-field-group ef-maint-cust-moneda" style="display:none;">
+              <label class="ef-label">Moneda de facturación <span style="color:#64748b; font-weight:400; font-size:11px;">(la lista de precios debe estar en esta moneda)</span></label>
+              <select id="ef-maint-cust-moneda" class="ef-select" style="width:100%"></select>
+            </div>
+            <div class="ef-field-group ef-maint-cust-moneda" style="display:none;">
+              <label class="ef-label">&nbsp;</label>
+              <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
+                <input type="checkbox" id="ef-maint-cust-multimoneda" /> Multimoneda (puede facturarse en cualquier moneda permitida)
+              </label>
+            </div>
             <div class="ef-field-group" style="grid-column: span 2;">
               <details id="ef-maint-cust-contacto-section" style="border:1px solid var(--ef-border); border-radius:8px; padding:10px 14px;">
                 <summary style="cursor:pointer; font-weight:700; color:var(--ef-primary); font-size:13px;">Contacto</summary>
@@ -1601,16 +1611,6 @@ class EFastSalePage {
                   <div class="ef-field-group">
                     <label class="ef-label">Límite de Crédito <span style="color:#64748b; font-weight:400; font-size:11px;">(para la compañía activa)</span></label>
                     <input type="number" id="ef-maint-cust-credit-limit" class="ef-input" style="width:100%" min="0" step="any" placeholder="0.00" />
-                  </div>
-                  <div class="ef-field-group ef-maint-cust-moneda" style="display:none;">
-                    <label class="ef-label">Moneda de facturación <span style="color:#64748b; font-weight:400; font-size:11px;">(la lista de precios debe estar en esta moneda)</span></label>
-                    <select id="ef-maint-cust-moneda" class="ef-select" style="width:100%"></select>
-                  </div>
-                  <div class="ef-field-group ef-maint-cust-moneda" style="display:none;">
-                    <label class="ef-label">&nbsp;</label>
-                    <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
-                      <input type="checkbox" id="ef-maint-cust-multimoneda" /> Multimoneda (puede facturarse en cualquier moneda permitida)
-                    </label>
                   </div>
                 </div>
               </details>
@@ -15082,7 +15082,9 @@ body.facex-fullscreen-mode .ef-main-layout {
 		};
 
 		if (kind === "cust") {
-			pane("general").append(grp("#ef-maint-cust-name"), grp("#ef-maint-cust-ident"), grp("#ef-maint-cust-receptor"), grp("#ef-maint-cust-group-ctrl"));
+			pane("general").append(grp("#ef-maint-cust-name"), grp("#ef-maint-cust-ident"), grp("#ef-maint-cust-receptor"), grp("#ef-maint-cust-group-ctrl"),
+				// Multimoneda: moneda de facturación del cliente (oculta si la compañía no es multimoneda)
+				grp("#ef-maint-cust-moneda"), grp("#ef-maint-cust-multimoneda"));
 			grp("#ef-maint-cust-receptor").append(`<div class="ef-ml-warn" id="ef-ml-dup-cust" style="display:none;"></div>`);
 			unwrap("#ef-maint-cust-contacto-section", "Contacto", "contacto");
 			unwrap("#ef-maint-cust-direccion-section", "Dirección", "contacto");
@@ -15320,6 +15322,7 @@ body.facex-fullscreen-mode .ef-main-layout {
 				name: f("#ef-maint-cust-name").val(), group: v(this.maint_cust_group_ctrl), pl: v(this.maint_cust_price_list_ctrl),
 				pt: v(this.maint_cust_payment_terms_ctrl), sp: v(this.maint_cust_sales_partner_ctrl),
 				credit: f("#ef-maint-cust-credit-limit").val(), dept: f("#ef-maint-cust-dept").val(),
+				moneda: f("#ef-maint-cust-moneda").val(), multi: f("#ef-maint-cust-multimoneda").prop("checked"),
 			};
 		} else if (kind === "supp") {
 			snap = { name: f("#ef-maint-supp-name").val(), terms: f("#ef-maint-supp-terms").val(), addr: f("#ef-maint-supp-address").val() };
@@ -15344,6 +15347,8 @@ body.facex-fullscreen-mode .ef-main-layout {
 			if (this.maint_cust_price_list_ctrl) this.maint_cust_price_list_ctrl.set_value(snap.pl || "");
 			if (this.maint_cust_payment_terms_ctrl) this.maint_cust_payment_terms_ctrl.set_value(snap.pt || "");
 			if (this.maint_cust_sales_partner_ctrl) this.maint_cust_sales_partner_ctrl.set_value(snap.sp || "");
+			f("#ef-maint-cust-moneda").val(snap.moneda || "");
+			f("#ef-maint-cust-multimoneda").prop("checked", !!snap.multi);
 		} else if (kind === "supp") {
 			f("#ef-maint-supp-name").val(`${snap.name} (copia)`);
 			f("#ef-maint-supp-address").val(snap.addr);
